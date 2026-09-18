@@ -1,4 +1,4 @@
-import { runTransferAndWaitForOwner } from "./waitForTransferOwner";
+import { runTransferAndWaitForOwner, TransferOwnerChangedError, type TransferOwnerObservation } from "./waitForTransferOwner";
 import type { Host, Identity, KnownHost, SSHKey, TerminalSettings, TransferTask } from "../../../domain/models";
 import { validateTransferResumeSource } from "../../../domain/sftpTransferCenter";
 import { STORAGE_KEY_SFTP_TRANSFER_CONCURRENCY } from "../../../infrastructure/config/storageKeys";
@@ -62,7 +62,10 @@ export type DedicatedResumeResult = {
 
 export type DedicatedResumeOptions = {
   children?: readonly TransferTask[];
-  onChildUpdate?: (child: TransferTask) => void;
+  /** Return true only when the consumer takes responsibility for disposing the observation. */
+  onChildUpdate?: (child: TransferTask, observation?: TransferOwnerObservation) => unknown;
+  onChildSuperseded?: (taskId: string) => void;
+  flushChildUpdates?: () => void;
   onDirectoryCheckpointUpdate?: (checkpoint: TransferTask["directoryResumeCheckpoint"]) => void;
   shouldAbort?: () => boolean;
 };
@@ -1090,6 +1093,12 @@ async function resumeDirectoryWithDedicatedSession(
           // the source since the interrupted attempt, so rebuild it from empty.
           await resetDirectoryReplaceStage(parent, endpoints, targetSftpId);
         }
+        // Session setup and traversal may finish more children. Capture only
+        // after resetting the stage/checkpoint: all these completions refer to
+        // the discarded destination, while later completions remain valid.
+        const completedAtRestart = new Map(sftpTransferCenterStore.getSnapshot().tasks
+          .filter((child) => child.parentTaskId === parent.id && child.status === "completed")
+          .map((child) => [child.id, child]));
         const destRoot = resolveDirectoryResumeTargetRoot(parent);
         if (endpoints.isDownload) await ensureLocalDir(destRoot);
         if (targetSftpId) await ensureRemoteDir(targetSftpId, destRoot);
@@ -1188,8 +1197,25 @@ async function resumeDirectoryWithDedicatedSession(
             }
             if (targetSftpId) await ensureRemoteDir(targetSftpId, getParentPath(file.targetPath));
 
+            let countedCompleted = false;
+            const onOwnerChanged = () => {
+              if (countedCompleted) {
+                countedCompleted = false;
+                completedCount -= 1;
+                failedCount += 1;
+              }
+              options?.onChildSuperseded?.(childId);
+            };
+            let childObservation: TransferOwnerObservation | undefined = sftpTransferCenterStore.observeTaskSettlement(
+              childBase, resetPersistedCheckpoint ? completedAtRestart.get(childId) : undefined, onOwnerChanged,
+            );
+            const publishChild = (child: TransferTask) => {
+              if (childObservation?.hasIdentityConflict()) throw new TransferOwnerChangedError("Transfer identity changed before child update");
+              if (options?.onChildUpdate?.(child, childObservation) === true) childObservation = undefined;
+            };
             try {
               if (options?.shouldAbort?.()) throw new Error("Transfer cancelled");
+              if (childObservation.hasIdentityConflict()) throw new TransferOwnerChangedError("Transfer identity changed before source validation");
 
               const sourceType = endpoints.isUpload ? "local" as const : "sftp" as const;
               const targetType = endpoints.isDownload ? "local" as const : "sftp" as const;
@@ -1217,8 +1243,7 @@ async function resumeDirectoryWithDedicatedSession(
                   sourceLastModified: sourceStat.lastModified,
                 };
               } else if (classified.kind === "modified") {
-                attentionCount += 1;
-                options?.onChildUpdate?.({
+                publishChild({
                   ...childBase,
                   status: "attention",
                   error: classified.message || validationError || "Source was modified",
@@ -1227,6 +1252,7 @@ async function resumeDirectoryWithDedicatedSession(
                   phase: undefined,
                   retryable: true,
                 });
+                attentionCount += 1;
                 return;
               } else if (classified.kind === "fatal") {
                 throw new Error(classified.message || validationError || "Resume validation failed");
@@ -1251,41 +1277,49 @@ async function resumeDirectoryWithDedicatedSession(
 
               // Re-check abort after async stat before inserting a transferring child.
               if (options?.shouldAbort?.()) throw new Error("Transfer cancelled");
-              options?.onChildUpdate?.(childBase);
+              const streamResult = await runTransferAndWaitForOwner(childBase, () => {
+                // Publish only after admission, while identity changes are observed.
+                options?.onChildUpdate?.(childBase);
+                return bridge.startStreamTransfer!({
+                  transferId: childId,
+                  // Lifecycle events must carry the current identity even while
+                  // large-history renderer child updates remain batched.
+                  parentTaskId: childBase.parentTaskId,
+                  directoryEntryIndex: childBase.directoryEntryIndex,
+                  directoryEntryIdentity: childBase.directoryEntryIdentity,
+                  sourcePath: file.sourcePath,
+                  targetPath: file.targetPath,
+                  sourceType,
+                  targetType,
+                  sourceSftpId,
+                  targetSftpId,
+                  sourceHostId: endpoints.sourceHost?.id,
+                  targetHostId: endpoints.targetHost?.id,
+                  totalBytes: Number.isFinite(childBase.totalBytes)
+                    ? childBase.totalBytes
+                    : (file.size || undefined),
+                  resumable: parent.resumable !== false,
+                  checkpointBytes: childBase.checkpointBytes ?? 0,
+                  resumeStage: childBase.resumeStage,
+                  downloadCheckpointBytes: childBase.downloadCheckpointBytes,
+                  uploadCheckpointBytes: childBase.uploadCheckpointBytes,
+                  sourceFingerprint: childBase.sourceFingerprint,
+                  skipAdmission: true,
+                });
+              }, () => options?.shouldAbort?.() === true, pausedAtResume.get(childId),
+                resetPersistedCheckpoint ? completedAtRestart.get(childId) : undefined,
+                // Drop queued UI updates at the ownership change itself: waiting
+                // for this invocation's reply may allow an intervening batch flush.
+                onOwnerChanged,
+                (observation) => { childObservation = observation; return true; }, childObservation);
 
-              const streamResult = await runTransferAndWaitForOwner(childBase, () => bridge.startStreamTransfer!({
-                transferId: childId,
-                // Lifecycle events must carry the current identity even while
-                // large-history renderer child updates remain batched.
-                parentTaskId: childBase.parentTaskId,
-                directoryEntryIndex: childBase.directoryEntryIndex,
-                directoryEntryIdentity: childBase.directoryEntryIdentity,
-                sourcePath: file.sourcePath,
-                targetPath: file.targetPath,
-                sourceType,
-                targetType,
-                sourceSftpId,
-                targetSftpId,
-                sourceHostId: endpoints.sourceHost?.id,
-                targetHostId: endpoints.targetHost?.id,
-                totalBytes: Number.isFinite(childBase.totalBytes)
-                  ? childBase.totalBytes
-                  : (file.size || undefined),
-                resumable: parent.resumable !== false,
-                checkpointBytes: childBase.checkpointBytes ?? 0,
-                resumeStage: childBase.resumeStage,
-                downloadCheckpointBytes: childBase.downloadCheckpointBytes,
-                uploadCheckpointBytes: childBase.uploadCheckpointBytes,
-                sourceFingerprint: childBase.sourceFingerprint,
-                skipAdmission: true,
-              }), () => options?.shouldAbort?.() === true, pausedAtResume.get(childId));
+              if (childObservation?.hasIdentityConflict()) throw new TransferOwnerChangedError("Transfer identity changed before child update");
 
               if (streamResult?.error || streamResult?.cancelled) {
                 throw new Error(streamResult.error || "Transfer cancelled");
               }
 
-              completedCount += 1;
-              options?.onChildUpdate?.({
+              publishChild({
                 ...childBase,
                 status: "completed",
                 transferredBytes: Number.isFinite(childBase.totalBytes)
@@ -1297,13 +1331,21 @@ async function resumeDirectoryWithDedicatedSession(
                 reconnectRequired: false,
                 phase: undefined,
               });
+              countedCompleted = true;
+              completedCount += 1;
               bumpParentProgress(0);
             } catch (error) {
               if (options?.shouldAbort?.() || /cancelled|canceled/i.test(error instanceof Error ? error.message : String(error))) {
                 throw error instanceof Error ? error : new Error(String(error));
               }
               failedCount += 1;
-              options?.onChildUpdate?.({
+              // Another invocation owns this ID now. Report this walk's failure
+              // without replacing the winner or recreating its compacted row.
+              if (error instanceof TransferOwnerChangedError || childObservation?.hasIdentityConflict()) {
+                options?.onChildSuperseded?.(childId);
+                return;
+              }
+              publishChild({
                 ...childBase,
                 status: "failed",
                 error: error instanceof Error ? error.message : String(error),
@@ -1312,6 +1354,8 @@ async function resumeDirectoryWithDedicatedSession(
                 reconnectRequired: false,
                 phase: undefined,
               });
+            } finally {
+              childObservation?.dispose();
             }
           },
         );
@@ -1321,6 +1365,10 @@ async function resumeDirectoryWithDedicatedSession(
     );
 
     if (result?.error) throw new Error(result.error);
+
+    // Commit deferred child outcomes before deciding success or promoting a stage.
+    // Async connection cleanup must not outlive provisional completion evidence.
+    options?.flushChildUpdates?.();
 
     if (attentionCount > 0 && failedCount === 0 && completedCount + attentionCount >= totalFiles) {
       return {
