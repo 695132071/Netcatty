@@ -697,12 +697,15 @@ const VaultViewInner: React.FC<VaultViewProps> = ({
       keyPassphrases,
       unreadablePassphraseCount,
     } = await buildVaultCsvCredentialOptions(hosts, keys);
-    const { csv, exportedCount, skippedCount } = exportHostsToCsvWithStats(
+    const { csv, exportedCount, skippedCount, unreadableProxyCredentialCount } = exportHostsToCsvWithStats(
       hosts,
       {
         keyPassphrases,
         keyPassphrasesById,
         keyPathsById,
+        proxyProfiles,
+        identities,
+        groupConfigs,
       },
     );
 
@@ -728,6 +731,13 @@ const VaultViewInner: React.FC<VaultViewProps> = ({
         }),
       );
     }
+    if (unreadableProxyCredentialCount > 0) {
+      toast.warning(
+        t("vault.hosts.export.toast.proxyCredentialsSkipped", {
+          count: unreadableProxyCredentialCount,
+        }),
+      );
+    }
     if (skippedCount > 0) {
       toast.warning(
         t("vault.hosts.export.toast.successWithSkipped", {
@@ -740,7 +750,7 @@ const VaultViewInner: React.FC<VaultViewProps> = ({
         t("vault.hosts.export.toast.success", { count: exportedCount }),
       );
     }
-  }, [hosts, keys, t]);
+  }, [hosts, keys, proxyProfiles, identities, groupConfigs, t]);
 
   // Copy hostname/IP for cross-host paste without opening the editor
   const handleCopyHostname = useCallback(
