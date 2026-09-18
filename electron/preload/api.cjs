@@ -1802,6 +1802,9 @@ function createPreloadApi(ctx) {
   externalMcpSetConfig: async (config) => {
     return ipcRenderer.invoke("netcatty:external-mcp:set-config", config || {});
   },
+  externalMcpGetUniversalSetupPrompt: async () => {
+    return ipcRenderer.invoke("netcatty:external-mcp:get-universal-setup-prompt");
+  },
   externalMcpCodexGetStatus: async () => {
     return ipcRenderer.invoke("netcatty:external-mcp:codex:get-status");
   },
