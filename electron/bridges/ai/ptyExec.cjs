@@ -59,6 +59,7 @@ function startPtyJob(ptyStream, command, options) {
     probeLiveShell = false,
     bastionKeystrokes = false,
     onProbeAborted,
+    onInterrupt,
     chatSessionId,
     abortSignal,
     expectedPrompt,
@@ -238,6 +239,17 @@ function startPtyJob(ptyStream, command, options) {
     } catch {
       // Ignore PTY write failures during cancellation.
     }
+    // Cancellation replies use the same readable stream as terminal output.
+    // Recover session-owned flow control after sending ETX, otherwise a paused
+    // renderer can hide the returned prompt/end marker and trigger retries.
+    queueMicrotask(() => {
+      if (finished) return;
+      try {
+        onInterrupt?.();
+      } catch {
+        // Best-effort recovery must not break cancellation or its deadline.
+      }
+    });
   }
 
   function requestCancel() {

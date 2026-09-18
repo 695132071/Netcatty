@@ -1,6 +1,7 @@
 "use strict";
 
 const crypto = require("node:crypto");
+const { clearSessionFlowState } = require("../bridges/terminalFlowAck.cjs");
 const {
   execViaPty,
   startPtyJob,
@@ -285,6 +286,7 @@ function createWorkerAiExecHandler({
         return { ok: false, error: `Command blocked by safety policy. Pattern: ${safety.matchedPattern}` };
       }
       return execViaPty(ptyStream, command, {
+        onInterrupt: () => clearSessionFlowState(session),
         stripMarkers: true,
         trackForCancellation: activePtyExecs,
         timeoutMs,
@@ -497,6 +499,7 @@ function createWorkerAiJobStartHandler({
     let handle;
     try {
       handle = startPtyJob(ptyStream, command, {
+        onInterrupt: () => clearSessionFlowState(session),
         timeoutMs,
         shellKind: session.shellKind,
         loginShellHint: session._loginShellKind,
