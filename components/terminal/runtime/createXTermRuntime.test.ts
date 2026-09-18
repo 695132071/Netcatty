@@ -996,9 +996,9 @@ test("multi-character plain text goes out as per-character writes (#3077)", asyn
   // Every chunk carries the same write options as the original single write.
   const writeLoopIdx = source.indexOf("for (const chunk of getTextInputWireChunks(outData");
   assert.ok(writeLoopIdx >= 0);
-  const writeLoop = source.slice(writeLoopIdx, writeLoopIdx + 320);
+  const writeLoop = source.slice(writeLoopIdx, source.indexOf("});", writeLoopIdx) + 3);
   assert.match(writeLoop, /for \(const chunk of/);
-  assert.match(writeLoop, /writeToSession\(id, chunk, \{ sensitive, serialEraseChar \}\)/);
+  assert.match(writeLoop, /writeToSession\(id, chunk, \{\s*sensitive,\s*serialEraseChar,[\s\S]*?\}\)/);
 
   // IME commits split the committed glyph, not the Kitty CSI-u encoding.
   assert.match(

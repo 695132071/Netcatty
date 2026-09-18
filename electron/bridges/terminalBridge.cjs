@@ -1112,6 +1112,7 @@ function startLocalSession(event, payload) {
       sessionLogStreamManager.stopStream(sessionId, logStreamToken);
       if (sessions.get(sessionId) !== session) return;
       ptyProcessTree.unregisterPid(sessionId);
+      clearPendingAutomatedWrites(session);
       sessions.delete(sessionId);
       if (session.closed) return;
       // Signal present = killed externally (show disconnected UI).
@@ -1450,6 +1451,7 @@ async function startSerialSession(event, options) {
           sessionLogStreamManager.stopStream(sessionId, logStreamToken);
           const primaryId = session.webContentsId;
           ptyProcessTree.unregisterPid(sessionId);
+          clearPendingAutomatedWrites(session);
           sessions.delete(sessionId);
           if (session.closed) return;
           fanoutSessionLifecycleEvent(
@@ -1522,10 +1524,49 @@ function pauseSshOutputForInterrupt(session, trace) {
 }
 
 function clearPendingAutomatedWrites(session) {
+  for (const paste of session?.pendingPasteWrites || []) paste.finish();
   const timers = session?.pendingAutomatedWriteTimers;
   if (!Array.isArray(timers) || timers.length === 0) return;
   for (const timer of timers) clearTimeout(timer);
   session.pendingAutomatedWriteTimers = [];
+}
+
+// Receipts confirm a transport write returned, not remote execution. Plugin
+// stream facades confirm handoff to main, not completion of main's input chain.
+// Receipts contain identity only; command text stays in the renderer.
+function createPasteWriteReceipt(session, payload, count) {
+  const hasReceipt = typeof payload.pasteRequestId === "string" && payload.pasteRequestId.length > 0;
+  // Broadcast peers may omit receipts but still need a cancellable batch.
+  if (!hasReceipt && getTerminalLineDelayMs(payload) === 0) return null;
+  const pending = session.pendingPasteWrites ||= new Set();
+  let remaining = count;
+  const paste = {
+    active: true,
+    finish(index, skipped = false) {
+      if (!paste.active) return;
+      const done = index === undefined || --remaining === 0;
+      if (done) {
+        paste.active = false;
+        pending.delete(paste);
+      }
+      if (!hasReceipt || (skipped && !done)) return;
+      try {
+        const owner = electronModule.webContents?.fromId(session.webContentsId);
+        if (owner && !owner.isDestroyed?.()) {
+          owner.send("netcatty:paste-write", {
+            sessionId: payload.sessionId,
+            requestId: payload.pasteRequestId,
+            ...(index === undefined || skipped ? {} : { index }),
+            ...(done ? { done: true } : {}),
+          });
+        }
+      } catch {
+        // A closed renderer must not affect transport writes.
+      }
+    },
+  };
+  pending.add(paste);
+  return paste;
 }
 
 function splitTerminalInputIntoLineWrites(data) {
@@ -1548,9 +1589,10 @@ function splitTerminalInputIntoLineWrites(data) {
   return chunks.length > 0 ? chunks : [data];
 }
 
-function getAutomatedLineDelayMs(payload) {
-  if (!payload?.automated) return 0;
-  const lineDelayMs = Number(payload.lineDelayMs);
+// Pacing is independent of input origin: a confirmed paste is still user
+// input, so protocol features such as Telnet auto-login must yield to it.
+function getTerminalLineDelayMs(payload) {
+  const lineDelayMs = Number(payload?.lineDelayMs);
   return Number.isFinite(lineDelayMs) && lineDelayMs > 0 ? Math.min(lineDelayMs, 2000) : 0;
 }
 
@@ -1667,7 +1709,10 @@ function writeToSessionNow(payload, data, logRewrite = payload.logRewrite) {
         expandSerialBackspace(inputData, payload.serialEraseChar, session.encoding),
         session.encoding,
       ));
+    } else {
+      return false;
     }
+    return true;
   } catch (err) {
     logTerminalInterruptDebug("write-session-error", {
       sessionId: payload.sessionId,
@@ -1686,7 +1731,24 @@ function writeToSessionWithInterception(
   data,
   logRewrite = payload.logRewrite,
   expectedSession = sessions.get(payload.sessionId),
+  paste = null,
+  index = 0,
 ) {
+  const writeWithReceipt = (nextData) => {
+    if (paste && !paste.active) return;
+    const current = sessions.get(payload.sessionId);
+    if (paste && (current !== expectedSession || current?.closed)) {
+      paste.finish();
+      return;
+    }
+    if (paste && nextData === "") {
+      // An interceptor can drop one chunk without canceling the remaining paste.
+      paste.finish(index, true);
+      return;
+    }
+    const written = writeToSessionNow(payload, nextData, logRewrite);
+    if (paste) paste.finish(written ? index : undefined);
+  };
   const bypass = payload?.sensitive === true || isTerminalReportSequence(data);
   const hasInterceptor = Boolean(
     terminalDataPipeline?.interceptInput
@@ -1694,7 +1756,7 @@ function writeToSessionWithInterception(
   );
   const previous = terminalInputPipelineBarriers.get(payload.sessionId);
   if (!hasInterceptor && !previous) {
-    writeToSessionNow(payload, data, logRewrite);
+    writeWithReceipt(data);
     return;
   }
   // Cancel the auto-login detector at input ingress, before the asynchronous
@@ -1714,10 +1776,14 @@ function writeToSessionWithInterception(
   }
   const writeIfCurrent = (nextData) => {
     const current = sessions.get(payload.sessionId);
-    if (!current || current !== expectedSession || current.closed) return;
-    writeToSessionNow(payload, nextData, logRewrite);
+    if (!current || current !== expectedSession || current.closed) {
+      paste?.finish();
+      return;
+    }
+    writeWithReceipt(nextData);
   };
   const write = async () => {
+    if (paste && !paste.active) return;
     if (!hasInterceptor) {
       writeIfCurrent(data);
       return;
@@ -1764,27 +1830,36 @@ function writeToSession(event, payload) {
     // Activity tracking must not interfere with terminal input.
   }
 
-  if (!payload.automated && !isTerminalReportSequence(payload.data)) {
+  const lineDelayMs = getTerminalLineDelayMs(payload);
+  const isPasteRequest = typeof payload.pasteRequestId === "string" && payload.pasteRequestId.length > 0;
+  // A replacement supersedes pending paste work even with one line, and even
+  // when the transfer gate below blocks the replacement itself.
+  if (isPasteRequest || lineDelayMs > 0 || (!payload.automated && !isTerminalReportSequence(payload.data))) {
     clearPendingAutomatedWrites(session);
   }
   if (shouldBlockSessionInput(session, payload.data)) {
+    createPasteWriteReceipt(session, payload, 1)?.finish();
     return;
   }
-
-  const lineDelayMs = getAutomatedLineDelayMs(payload);
   const lineChunks = lineDelayMs > 0 ? splitTerminalInputIntoLineWrites(payload.data) : [payload.data];
+  const paste = createPasteWriteReceipt(session, payload, lineChunks.length);
   if (lineDelayMs > 0 && lineChunks.length > 1) {
-    clearPendingAutomatedWrites(session);
     session.pendingAutomatedWriteTimers = [];
     lineChunks.forEach((chunk, index) => {
       const sendChunk = () => {
         const current = sessions.get(payload.sessionId);
-        if (!current) return;
+        if (paste && !paste.active) return;
+        if (!current || (paste && current !== session)) {
+          paste?.finish();
+          return;
+        }
         writeToSessionWithInterception(
           { ...payload, lineDelayMs: undefined },
           chunk,
           index === 0 ? payload.logRewrite : undefined,
           current,
+          paste,
+          index,
         );
       };
       if (index === 0) {
@@ -1797,7 +1872,7 @@ function writeToSession(event, payload) {
     return;
   }
 
-  writeToSessionWithInterception(payload, payload.data, payload.logRewrite, session);
+  writeToSessionWithInterception(payload, payload.data, payload.logRewrite, session, paste);
 }
 
 function drainPendingOutputForInterrupt(sessionId, session, trace) {
@@ -1831,6 +1906,10 @@ function drainPendingOutputForInterrupt(sessionId, session, trace) {
 
 function interruptSession(event, payload) {
   const session = sessions.get(payload.sessionId);
+  if (payload.cancelPendingWritesOnly === true) {
+    clearPendingAutomatedWrites(session);
+    return;
+  }
   const trace = normalizeTrace(payload);
   if (!session) {
     logTerminalInterruptDebug("interrupt-session-missing", {

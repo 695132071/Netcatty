@@ -1,4 +1,6 @@
+import { clearTerminalBroadcastUserInput, captureTerminalBroadcastInput, isTerminalBroadcastInputCurrent, markTerminalBroadcastUserInput, type TerminalPacedBroadcast } from "./terminalPacedBroadcast";
 import { stringCellWidth } from "../autocomplete/terminalStringCellWidth";
+import type { TerminalBroadcastInputOptions } from "../terminalHelpers";
 import { FitAddon } from "@xterm/addon-fit";
 import { ImageAddon } from "@xterm/addon-image";
 import { SearchAddon } from "@xterm/addon-search";
@@ -181,15 +183,18 @@ import {
 } from "./terminalOutputPipeline";
 import {
   markExpectedTerminalCursorPositionReport,
-  pasteTextIntoTerminal,
+  registerTerminalLinePasteHandler,
   shouldBroadcastTerminalUserInput,
+  shouldOverrideTerminalUserPasteSensitivity,
   shouldSuppressTerminalInputScrollForUserPaste,
 } from "./terminalUserPaste";
+import { pasteTextWithMultilineConfirm } from "../terminalClipboardPaste";
+import { requestMultilinePasteConfirm } from "../../../application/state/multilinePasteConfirmStore";
 import {
   consumeOsc133CommandCompletion,
   type PromptLineBreakState,
 } from "./promptLineBreak";
-import { recordTerminalCommandExecution } from "./terminalCommandExecution";
+import { isSensitiveTerminalCommandInput, recordTerminalCommandExecution } from "./terminalCommandExecution";
 import {
   getSingleBracketedPasteLine,
   getSinglePastedCommand,
@@ -212,9 +217,9 @@ import {
 type TerminalBackendApi = {
   openExternalAvailable: () => boolean;
   openExternal: (url: string) => Promise<void>;
-  writeToSession: (sessionId: string, data: string) => void;
+  writeToSession: NetcattyBridge["writeToSession"];
   notifyUserInput?: (sessionId: string) => void;
-  interruptSession?: (sessionId: string, trace?: NetcattyTerminalInterruptTrace) => void;
+  interruptSession?: NetcattyBridge["interruptSession"];
   signalPluginConnection?: (
     sessionId: string,
     signal?: "interrupt" | "terminate" | "kill" | "eof" | "break",
@@ -248,6 +253,7 @@ export type XTermRuntime = {
   dispose: () => void;
   /** Track the pending final line of a serial snippet left for editing. */
   recordSerialSnippetInput: (data: string) => void;
+  invalidatePendingPasteDraft: () => void;
   /** Current working directory detected via OSC 7 */
   currentCwd: string | undefined;
   keywordHighlighter: KeywordHighlighter;
@@ -319,7 +325,7 @@ export type CreateXTermRuntimeContext = {
     ((
       data: string,
       sourceSessionId: string,
-      options?: { kittyKeyboardInput?: KittyKeyboardBroadcastInput },
+      options?: TerminalBroadcastInputOptions,
     ) => void) | undefined
   >;
 
@@ -361,6 +367,7 @@ export type CreateXTermRuntimeContext = {
     recordBackspace: () => void;
     recordClearLine: () => void;
     recordEnter: (options?: { sensitive?: boolean }) => Promise<void>;
+    captureSubmittedLineRecorder?: () => ((line: string, options?: { sensitive?: boolean; includePendingInput?: boolean; consumePendingInput?: boolean }) => Promise<void>) | undefined;
   } | undefined>;
   passwordPromptActiveRef?: RefObject<boolean>;
   allowHostStyleGreaterThanPrompt?: boolean;
@@ -931,13 +938,16 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
 
   const appLevelActions = getAppLevelActions();
   const terminalActions = getTerminalPassthroughActions();
-  const broadcastUserPasteData = (data: string) => {
+  const broadcastUserPasteData = (
+    data: string,
+    options?: TerminalBroadcastInputOptions,
+  ) => {
     if (
       ctx.passwordPromptActiveRef?.current !== true
       && ctx.isBroadcastEnabledRef.current
       && ctx.onBroadcastInputRef.current
     ) {
-      ctx.onBroadcastInputRef.current(data, ctx.sessionId);
+      ctx.onBroadcastInputRef.current(data, ctx.sessionId, options);
       return true;
     }
     return false;
@@ -1161,6 +1171,11 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
   // nonempty (hibernation wake: the pre-hibernation cursor may have been
   // moved away from the tail, so we conservatively assume it is not).
   let lastInputWasPrintable = !ctx.commandBufferRef?.current;
+  let commandBufferRevision = 0;
+  const invalidatePendingPasteDraft = () => {
+    commandBufferRevision += 1;
+    markTerminalBroadcastUserInput(ctx.sessionId);
+  };
 
   const restoreSerialTailForEmptyInput = (data: string) => {
     // Apply the same rule to typed text, pasted text, and editable snippets.
@@ -1177,6 +1192,7 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
       : data;
     const lastLineBreak = Math.max(text.lastIndexOf("\r"), text.lastIndexOf("\n"));
     if (lastLineBreak >= 0) {
+      commandBufferRevision += 1;
       ctx.commandBufferRef.current = "";
       lastInputWasPrintable = true;
     }
@@ -1203,6 +1219,10 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
       logicalData?: string | null;
       /** Skip string broadcast when peers will re-resolve from a key chord. */
       skipBroadcast?: boolean;
+      /** Confirmed paste: preserve classification and backend pacing. */
+      sensitive?: boolean;
+      lineDelayMs?: number;
+      pasteRequestId?: string;
       /**
        * Send plain text as one write per character. Strict bastion prompts
        * (QAX) treat one channel write as a keystroke and drop multi-character
@@ -1235,7 +1255,21 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
     const inputSource = options?.source ?? "terminal";
     const id = ctx.sessionRef.current;
     const dataToWrite = data;
-    const sensitive = ctx.passwordPromptActiveRef?.current === true;
+    // A programmatic paste can carry a sensitivity snapshot taken before a
+    // confirm-dialog await (terminalUserPaste.ts): remote output or a
+    // reconnect may have cleared passwordPromptActiveRef while the dialog was
+    // open, so the live ref alone would downgrade the secret to nonsensitive.
+    // The override is consumed only for the flagged paste data.
+    const sensitive = ctx.passwordPromptActiveRef?.current === true
+      || options?.sensitive === true
+      || shouldOverrideTerminalUserPasteSensitivity(term, logicalData ?? data);
+    if (!options?.lineDelayMs && logicalData !== null
+      && !isPrintableInput(logicalData) && !isTerminalReportSequence(logicalData)) {
+      commandBufferRevision += 1;
+    }
+    if (!options?.lineDelayMs && logicalData !== null && !isTerminalReportSequence(logicalData)) {
+      markTerminalBroadcastUserInput(ctx.sessionId);
+    }
     let handledSubmittedInput = false;
     const submittedInput: { text: string; lineEnding: "\r\n" | "\r" | "\n" } | null =
       logicalData === null
@@ -1263,7 +1297,12 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
       hasBroadcastInputHandler: !!onBroadcastInput,
     });
     const willBroadcastInput = canBroadcastInput && options?.skipBroadcast !== true;
-    if (ctx.statusRef.current === "connected" && submittedInput) {
+    if (ctx.statusRef.current === "connected" && options?.lineDelayMs && logicalData) {
+      // Keep the draft until the backend confirms a write. A rejected or
+      // canceled batch must not discard input already present at the prompt.
+      if (ctx.passwordPromptActiveRef) ctx.passwordPromptActiveRef.current = false;
+      handledSubmittedInput = true;
+    } else if (ctx.statusRef.current === "connected" && submittedInput) {
       if (submittedInput.text) {
         ctx.commandBufferRef.current += submittedInput.text;
         ctx.scriptRecorderRef?.current?.recordInput(submittedInput.text);
@@ -1334,6 +1373,14 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
         ctx.serialLineMode &&
         ctx.serialLineBufferRef
       ) {
+        // Local line editing sends no transport write, so cancel queued paste
+        // work explicitly. Only actual protocol replies are exempt; keyboard
+        // escape sequences also edit the local buffer.
+        if (!options?.lineDelayMs && !isTerminalReportSequence(dataToWrite)
+          && (dataToWrite === "\b" || dataToWrite === "\x15"
+            || dataToWrite.charCodeAt(0) >= 32 || dataToWrite.length > 1)) {
+          ctx.terminalBackend.interruptSession?.(id, undefined, { cancelPendingWritesOnly: true });
+        }
         // Line mode never reaches writeToSession until Enter, so buffered
         // keystrokes are invisible to the main-process auto-login detector.
         // The first buffered keystroke means the user is taking control:
@@ -1348,16 +1395,28 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
         if (!isSessionWrite && !isTerminalReportSequence(dataToWrite)) {
           ctx.terminalBackend.notifyUserInput?.(id);
         }
+        const pacedWrites: string[] = [];
         handleSerialLineModeInput(dataToWrite, {
           bufferRef: ctx.serialLineBufferRef,
           localEcho: ctx.serialLocalEcho,
           writeToSession: (nextData) => {
             ctx.onOutputTriggerUserInputRef?.current?.(nextData);
-            ctx.terminalBackend.writeToSession(id, nextData, { sensitive });
+            if (options?.lineDelayMs) pacedWrites.push(nextData);
+            else ctx.terminalBackend.writeToSession(id, nextData, { sensitive });
           },
           writeToTerminal: writeLocalTerminalData,
           term,
         });
+        // Submit one batch so the backend spaces the lines apart. Separate
+        // calls would each start at delay zero and lose the paste pacing.
+        if (pacedWrites.length > 0) {
+          ctx.terminalBackend.writeToSession(id, pacedWrites.join(""), {
+            automated: false,
+            sensitive,
+            lineDelayMs: options?.lineDelayMs,
+            pasteRequestId: options?.pasteRequestId,
+          });
+        }
       } else {
         // Character mode sends input immediately. Byte-oriented devices opt in
         // to expansion in the backend, using the session's actual wire encoder.
@@ -1387,7 +1446,15 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
 
         ctx.onOutputTriggerUserInputRef?.current?.(outData);
         for (const chunk of getTextInputWireChunks(outData, options?.perCharacterWrites === true)) {
-          ctx.terminalBackend.writeToSession(id, chunk, { sensitive, serialEraseChar });
+          ctx.terminalBackend.writeToSession(id, chunk, {
+            sensitive,
+            serialEraseChar,
+            ...(options?.lineDelayMs ? {
+              automated: false,
+              lineDelayMs: options.lineDelayMs,
+              pasteRequestId: options.pasteRequestId,
+            } : {}),
+          });
         }
 
         // Local echo for serial connections only when explicitly enabled
@@ -2103,10 +2170,13 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
           onAutocompleteInput: ctx.onAutocompleteInput,
         });
         lastInputWasPrintable = true;
+        invalidatePendingPasteDraft();
+        ctx.scriptRecorderRef?.current?.recordClearLine();
         if (ctx.passwordPromptActiveRef) {
           ctx.passwordPromptActiveRef.current = false;
         }
         if (isPluginHostProtocol(ctx.host.protocol) && ctx.terminalBackend.signalPluginConnection) {
+          ctx.terminalBackend.interruptSession?.(id, interruptTrace, { cancelPendingWritesOnly: true });
           void ctx.terminalBackend.signalPluginConnection(id, "interrupt").catch(() => {
             if (ctx.terminalBackend.interruptSession) {
               ctx.terminalBackend.interruptSession(id, interruptTrace);
@@ -2279,9 +2349,24 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
               const id = ctx.sessionRef.current;
               if (selection && id) {
                 hideHistoryPreview();
-                pasteTextIntoTerminal(term, selection, {
-                  scrollOnPaste: shouldScrollOnTerminalPaste(ctx.terminalSettingsRef.current),
+                // Route through the multi-line paste confirmation gate
+                // (#3398) so a selected multi-line region cannot be sent to
+                // the session (and broadcast peers) without review, just
+                // like the clipboard paste path.
+                void pasteTextWithMultilineConfirm(selection, {
+                  confirmMultilinePaste: {
+                    enabled: ctx.terminalSettingsRef.current?.confirmBeforeMultilinePaste === true,
+                    minLines: ctx.terminalSettingsRef.current?.multilinePasteConfirmMinLines,
+                    requestConfirm: requestMultilinePasteConfirm,
+                  },
+                  getCurrentSessionId: () => ctx.sessionRef.current,
+                  isSensitiveInput: () => ctx.passwordPromptActiveRef?.current === true,
                   onPasteData: broadcastUserPasteData,
+                  scrollOnPaste: shouldScrollOnTerminalPaste(ctx.terminalSettingsRef.current),
+                  scrollToBottomAfterProgrammaticInput: scrollToBottomAfterInput,
+                  sessionId: id,
+                  terminalBackend: ctx.terminalBackend,
+                  term,
                 });
               }
               break;
@@ -2696,6 +2781,93 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
   // can synchronously emit standalone emoji, speech, or mobile insertText data.
   ctx.container.addEventListener("input", markKittyTextInput, true);
   textarea?.addEventListener("blur", clearKittyTransientInputState);
+
+  const pendingLinePastes = new Map<string, {
+    sessionId: string;
+    commands: string[];
+    firstPastedLine: string;
+    pendingInput: string;
+    serialPendingInput?: string;
+    sourceInput: ReturnType<typeof captureTerminalBroadcastInput>;
+    broadcast?: TerminalPacedBroadcast;
+    inputRevision: number;
+    sensitive: boolean;
+    recorded: Set<number>;
+    recordLine?: (line: string, options?: { sensitive?: boolean; includePendingInput?: boolean; consumePendingInput?: boolean }) => Promise<void>;
+  }>();
+  const disposePasteWriteReceipts = netcattyBridge.get()?.onTerminalPasteWrite?.((receipt) => {
+    const pending = pendingLinePastes.get(receipt.requestId);
+    if (!pending || pending.sessionId !== receipt.sessionId) return;
+    if (ctx.sessionRef.current !== pending.sessionId) {
+      pendingLinePastes.delete(receipt.requestId);
+      return;
+    }
+    const index = receipt.index;
+    if (index !== undefined && Number.isInteger(index) && index >= 0
+      && index < pending.commands.length && !pending.recorded.has(index)) {
+      if (index === 0 && pending.inputRevision === commandBufferRevision
+        && ctx.commandBufferRef.current.startsWith(pending.pendingInput)) {
+        ctx.commandBufferRef.current = ctx.commandBufferRef.current.slice(pending.pendingInput.length);
+        if (pending.serialPendingInput !== undefined && ctx.serialLineBufferRef?.current.startsWith(pending.serialPendingInput)) {
+          ctx.serialLineBufferRef.current = ctx.serialLineBufferRef.current.slice(pending.serialPendingInput.length);
+        }
+        commandBufferRevision += 1;
+      }
+      pending.recorded.add(index);
+      const command = pending.commands[index];
+      const sensitive = isSensitiveTerminalCommandInput(
+        term, pending.sensitive || ctx.passwordPromptActiveRef?.current === true,
+      );
+      // Receipts can arrive after the user starts typing another command.
+      // Never consume that live input buffer or reconcile with a newer screen.
+      recordTerminalCommandExecution(command, { ...ctx, commandBufferRef: { current: "" } }, term, {
+        sensitive,
+        allowHostStyleGreaterThanPrompt: ctx.allowHostStyleGreaterThanPrompt,
+        useProvidedCommand: true,
+        acknowledgedWrite: true,
+      });
+      if (pending.broadcast && isTerminalBroadcastInputCurrent(pending.sourceInput)
+        && ctx.isBroadcastEnabledRef.current && !sensitive) {
+        ctx.onBroadcastInputRef.current?.(`${index === 0 ? pending.firstPastedLine : command}\r`, ctx.sessionId, {
+          pacedBroadcast: pending.broadcast,
+        });
+      }
+      void pending.recordLine?.(index === 0 ? pending.firstPastedLine : command, {
+        sensitive, includePendingInput: index === 0, consumePendingInput: index === 0,
+      }).catch((error) => {
+        logger.warn("Failed to record confirmed paste write", error);
+      });
+    }
+    if (receipt.done) pendingLinePastes.delete(receipt.requestId);
+  });
+  const disposeLinePasteHandler = registerTerminalLinePasteHandler(term, (data, options) => {
+    const sessionId = ctx.sessionRef.current;
+    if (!sessionId) return;
+    markTerminalBroadcastUserInput(ctx.sessionId);
+    const sourceInput = captureTerminalBroadcastInput(ctx.sessionId);
+    const broadcast: TerminalPacedBroadcast | undefined = options.broadcast && !options.sensitive
+      && ctx.isBroadcastEnabledRef.current ? {} : undefined;
+    if (broadcast) ctx.onBroadcastInputRef.current?.("", ctx.sessionId, { pacedBroadcast: broadcast, preparePacedBroadcast: true });
+    const requestId = crypto.randomUUID();
+    const commands = data.replace(/\r\n/g, "\n").replace(/\r/g, "\n").split("\n");
+    if (commands.at(-1) === "") commands.pop();
+    const firstPastedLine = commands[0] ?? "";
+    if (commands.length) {
+      commands[0] = `${ctx.commandBufferRef.current}${commands[0]}`;
+    }
+    const serialPendingInput = ctx.host.protocol === "serial" && ctx.serialLineMode
+      ? ctx.serialLineBufferRef?.current : undefined;
+    const recorded = new Set<number>();
+    pendingLinePastes.set(requestId, {
+      sessionId, sourceInput, broadcast, commands, firstPastedLine, sensitive: options.sensitive, recorded, serialPendingInput,
+      pendingInput: ctx.commandBufferRef.current, inputRevision: commandBufferRevision,
+      recordLine: ctx.scriptRecorderRef?.current?.captureSubmittedLineRecorder?.(),
+    });
+    handleTerminalInputData(data, { ...options, pasteRequestId: requestId, skipBroadcast: true });
+    if (recorded.size === 0 && serialPendingInput !== undefined && ctx.serialLineBufferRef) {
+      ctx.serialLineBufferRef.current = serialPendingInput;
+    }
+  });
 
   term.onData((data) => {
     const win32Input = win32InputModePendingEvent;
@@ -3140,8 +3312,13 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
     getKittyKeyboardProtocolEnabled: () => kittyKeyboardProtocolEnabled,
     setKittyKeyboardProtocolEnabled,
     recordSerialSnippetInput,
+    invalidatePendingPasteDraft,
     dispose: () => {
       runtimeDisposed = true;
+      disposeLinePasteHandler?.();
+      disposePasteWriteReceipts?.();
+      pendingLinePastes.clear();
+      clearTerminalBroadcastUserInput(ctx.sessionId);
       resizeScheduler.dispose();
       webglController.dispose();
       term.element?.removeEventListener("copy", handleNativeCopy, true);

@@ -159,7 +159,7 @@ test('trusted command delivery reaches plugin providers without duplicating the 
 test('password-prompt input is consumed before every semantic command callback', () => {
   assert.match(
     xtermRuntimeSource,
-    /const sensitive = ctx\.passwordPromptActiveRef\?\.current === true;[\s\S]*?recordTerminalCommandExecution\([\s\S]*?\{ sensitive, allowHostStyleGreaterThanPrompt: ctx\.allowHostStyleGreaterThanPrompt \},\s*\);/,
+    /const sensitive = ctx\.passwordPromptActiveRef\?\.current === true[\s\S]*?recordTerminalCommandExecution\([\s\S]*?\{ sensitive, allowHostStyleGreaterThanPrompt: ctx\.allowHostStyleGreaterThanPrompt \},\s*\);/,
   );
   assert.match(
     terminalSource,

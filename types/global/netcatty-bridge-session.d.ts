@@ -334,6 +334,7 @@ declare global {
       data: string,
       options?: {
         automated?: boolean;
+        pasteRequestId?: string;
         /** Host-classified secret/no-echo input; always bypasses plugin observers and interceptors. */
         sensitive?: boolean;
         /** Whole character to erase on an explicitly byte-oriented serial device. */
@@ -342,13 +343,20 @@ declare global {
         logRewrite?: { sentCommand: string; displayCommand: string };
       },
     ): void;
-    /**
-     * Report interactive user input for sessions where keystrokes are buffered
-     * in the renderer (serial line mode), so main-process login-assist
-     * detectors see the user taking control.
-     */
+    /** Notify login-assist detectors about locally buffered user input. */
     notifySessionUserInput?(sessionId: string): void;
-    interruptSession?(sessionId: string, trace?: NetcattyTerminalInterruptTrace): void;
+    /** Opt-in transport handoff receipts; cancellation ends with done and no index. */
+    onTerminalPasteWrite?(cb: (event: {
+      sessionId: string;
+      requestId: string;
+      index?: number;
+      done?: boolean;
+    }) => void): () => void;
+    interruptSession?(
+      sessionId: string,
+      trace?: NetcattyTerminalInterruptTrace,
+      options?: { cancelPendingWritesOnly?: boolean },
+    ): void;
     resizeSession(sessionId: string, cols: number, rows: number): void;
     /**
      * Sync Windows ConPTY after the renderer clears the xterm viewport.
