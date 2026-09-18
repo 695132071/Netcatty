@@ -78,6 +78,8 @@ import {
   STORAGE_KEY_TERM_SETTINGS,
   STORAGE_KEY_TERMINAL_SIDE_PANEL_AUTO_OPEN,
   STORAGE_KEY_TERMINAL_SIDE_PANEL_AUTO_OPEN_TAB,
+  STORAGE_KEY_LOCAL_SHELL_SIDE_PANEL_AUTO_OPEN,
+  STORAGE_KEY_LOCAL_SHELL_SIDE_PANEL_AUTO_OPEN_TAB,
   STORAGE_KEY_CUSTOM_KEY_BINDINGS,
   STORAGE_KEY_EDITOR_WORD_WRAP,
   STORAGE_KEY_SFTP_DOUBLE_CLICK_BEHAVIOR,
@@ -302,6 +304,8 @@ export const SYNCABLE_SETTING_STORAGE_KEYS = [
   STORAGE_KEY_TERM_SETTINGS,
   STORAGE_KEY_TERMINAL_SIDE_PANEL_AUTO_OPEN,
   STORAGE_KEY_TERMINAL_SIDE_PANEL_AUTO_OPEN_TAB,
+  STORAGE_KEY_LOCAL_SHELL_SIDE_PANEL_AUTO_OPEN,
+  STORAGE_KEY_LOCAL_SHELL_SIDE_PANEL_AUTO_OPEN_TAB,
   STORAGE_KEY_CUSTOM_THEMES,
   STORAGE_KEY_CUSTOM_KEY_BINDINGS,
   STORAGE_KEY_EDITOR_WORD_WRAP,
@@ -480,6 +484,12 @@ export function collectSyncableSettings(): SyncPayload['settings'] {
   const terminalSidePanelAutoOpenTab = localStorageAdapter.readString(STORAGE_KEY_TERMINAL_SIDE_PANEL_AUTO_OPEN_TAB);
   if (isTerminalSidePanelAutoOpenTab(terminalSidePanelAutoOpenTab)) {
     settings.terminalSidePanelAutoOpenTab = terminalSidePanelAutoOpenTab;
+  }
+  const localShellSidePanelAutoOpen = localStorageAdapter.readBoolean(STORAGE_KEY_LOCAL_SHELL_SIDE_PANEL_AUTO_OPEN);
+  if (localShellSidePanelAutoOpen != null) settings.localShellSidePanelAutoOpen = localShellSidePanelAutoOpen;
+  const localShellSidePanelAutoOpenTab = localStorageAdapter.readString(STORAGE_KEY_LOCAL_SHELL_SIDE_PANEL_AUTO_OPEN_TAB);
+  if (isTerminalSidePanelAutoOpenTab(localShellSidePanelAutoOpenTab)) {
+    settings.localShellSidePanelAutoOpenTab = localShellSidePanelAutoOpenTab;
   }
 
   // Terminal settings (syncable subset only)
@@ -731,6 +741,12 @@ async function applySyncableSettings(
   }
   if (isTerminalSidePanelAutoOpenTab(settings.terminalSidePanelAutoOpenTab)) {
     localStorageAdapter.writeString(STORAGE_KEY_TERMINAL_SIDE_PANEL_AUTO_OPEN_TAB, settings.terminalSidePanelAutoOpenTab);
+  }
+  if (settings.localShellSidePanelAutoOpen != null) {
+    localStorageAdapter.writeBoolean(STORAGE_KEY_LOCAL_SHELL_SIDE_PANEL_AUTO_OPEN, settings.localShellSidePanelAutoOpen);
+  }
+  if (isTerminalSidePanelAutoOpenTab(settings.localShellSidePanelAutoOpenTab)) {
+    localStorageAdapter.writeString(STORAGE_KEY_LOCAL_SHELL_SIDE_PANEL_AUTO_OPEN_TAB, settings.localShellSidePanelAutoOpenTab);
   }
 
   // Terminal settings - merge with existing to preserve platform-specific keys
