@@ -851,6 +851,52 @@ function getLocalShellArgs(shellPath) {
   return [];
 }
 
+function isWslExecutable(shellPath) {
+  if (process.platform !== "win32" || typeof shellPath !== "string") return false;
+  return /(?:^|[\\/])wsl(?:\.exe)?$/i.test(shellPath.trim());
+}
+
+function getWslLaunchArgs(shellPath, shellArgs, hasExplicitCwd) {
+  const args = Array.isArray(shellArgs) ? [...shellArgs] : [];
+  // Without --cd, wsl.exe translates the parent Windows cwd. That can fail
+  // before the Linux shell starts (for example, when the Windows home is not
+  // mounted or accessible to the selected distro). Start at Linux $HOME unless
+  // the caller deliberately supplied a working directory or --cd option.
+  if (!isWslExecutable(shellPath) || hasExplicitCwd) {
+    return args;
+  }
+
+  // WSL consumes an optional legacy distro GUID, then a home-directory ~,
+  // before parsing normal options. Keep both in their original positions.
+  const firstOptionIndex = /^\{?[\da-f]{8}-[\da-f]{4}-[\da-f]{4}-[\da-f]{4}-[\da-f]{12}\}?$/i.test(args[0] || "") ? 1 : 0;
+  if (args[firstOptionIndex] === "~") return args;
+
+  // The tokens following --/--exec/-e, or the first bare command, are passed to
+  // Linux verbatim. Account for WSL options with a separate value before
+  // locating that boundary, then insert --cd before it rather than accidentally
+  // passing --cd to the shell or command.
+  let commandIndex = -1;
+  for (let index = firstOptionIndex; index < args.length; index += 1) {
+    const arg = args[index];
+    if (arg === "--" || arg === "--exec" || arg === "-e" || !arg.startsWith("-")) {
+      commandIndex = index;
+      break;
+    }
+    // Only WSL's directory option is explicit; a Linux command may itself
+    // accept --cd without changing the directory WSL starts in.
+    if (arg === "--cd" || arg.startsWith("--cd=")) return args;
+    if (
+      arg === "--distribution" || arg === "-d" || arg === "--distribution-id" ||
+      arg === "--user" || arg === "-u" || arg === "--shell-type"
+    ) {
+      index += 1;
+    }
+  }
+  const insertAt = commandIndex === -1 ? args.length : commandIndex;
+  args.splice(insertAt, 0, "--cd", "~");
+  return args;
+}
+
 const isUtf8Locale = (value) => typeof value === "string" && /utf-?8/i.test(value);
 
 const isEmptyLocale = (value) => {
@@ -896,7 +942,12 @@ function startLocalSession(event, payload) {
     }
   }
   const shell = normalizeExecutablePath(resolvedShell) || defaultShell;
-  const shellArgs = resolvedArgs ?? getLocalShellArgs(shell);
+  const requestedCwd = typeof payload?.cwd === "string" && payload.cwd.trim().length > 0;
+  const shellArgs = getWslLaunchArgs(
+    shell,
+    resolvedArgs ?? getLocalShellArgs(shell),
+    requestedCwd,
+  );
   const shellKind = detectShellKind(shell);
   const { buildTerminalProcessEnv } = require("./httpNetworkProxyBridge.cjs");
   const env = applyLocaleDefaults({
@@ -2536,6 +2587,7 @@ module.exports = {
   registerHandlers,
   findExecutable,
   getDefaultLocalShell,
+  getWslLaunchArgs,
   startLocalSession,
   startTelnetSession,
   startMoshSession,
