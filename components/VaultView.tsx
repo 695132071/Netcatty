@@ -1299,6 +1299,21 @@ const VaultViewInner: React.FC<VaultViewProps> = ({
     t,
   });
 
+  const managedFilesByGroupPath = useMemo(() => {
+    const map = new Map<string, string[]>();
+    for (const source of managedSources) {
+      if (source.filePath) {
+        const files = map.get(source.groupName);
+        if (files) {
+          files.push(source.filePath);
+        } else {
+          map.set(source.groupName, [source.filePath]);
+        }
+      }
+    }
+    return map;
+  }, [managedSources]);
+
   const {
     startInlineNewGroup,
     startInlineRenameGroup,
@@ -1390,6 +1405,7 @@ const VaultViewInner: React.FC<VaultViewProps> = ({
     <>
       <HostTreeGroupDeleteDialog
         managedGroupPaths={managedGroupPaths}
+        managedFilesByGroupPath={managedFilesByGroupPath}
         onConfirmDelete={deleteGroupPath}
       />
       <VaultViewLayout
