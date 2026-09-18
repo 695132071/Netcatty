@@ -103,6 +103,7 @@ import {
   resolveMiddleClickBehavior,
 } from "./middleClickBehavior";
 import { handleSerialLineModeInput } from "./serialLineInput";
+import { isTerminalReportSequence } from "./terminalReportSequence";
 import {
   doesKittyEncodingPreserveShiftEnter,
   getShiftEnterSubmittedInput,
@@ -209,6 +210,7 @@ type TerminalBackendApi = {
   openExternalAvailable: () => boolean;
   openExternal: (url: string) => Promise<void>;
   writeToSession: (sessionId: string, data: string) => void;
+  notifyUserInput?: (sessionId: string) => void;
   interruptSession?: (sessionId: string, trace?: NetcattyTerminalInterruptTrace) => void;
   signalPluginConnection?: (
     sessionId: string,
@@ -1329,6 +1331,20 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
         ctx.serialLineMode &&
         ctx.serialLineBufferRef
       ) {
+        // Line mode never reaches writeToSession until Enter, so buffered
+        // keystrokes are invisible to the main-process auto-login detector.
+        // The first buffered keystroke means the user is taking control:
+        // cancel the detector exactly like character-mode input would.
+        // Submit (\r/\n) and Ctrl+C already write to the session, which
+        // cancels it on that path. Automatic terminal-report replies (DA1,
+        // CPR, ...) also surface through onData, but they originate from the
+        // device negotiating with xterm, not from the user — the main process
+        // excludes them from its write-path cancellation via
+        // isTerminalReportSequence, so apply the same classification here.
+        const isSessionWrite = dataToWrite === "\r" || dataToWrite === "\n" || dataToWrite === "\x03";
+        if (!isSessionWrite && !isTerminalReportSequence(dataToWrite)) {
+          ctx.terminalBackend.notifyUserInput?.(id);
+        }
         handleSerialLineModeInput(dataToWrite, {
           bufferRef: ctx.serialLineBufferRef,
           localEcho: ctx.serialLocalEcho,

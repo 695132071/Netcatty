@@ -144,6 +144,9 @@ declare global {
       stopBits?: 1 | 1.5 | 2;
       parity?: 'none' | 'even' | 'odd' | 'mark' | 'space';
       flowControl?: 'none' | 'xon/xoff' | 'rts/cts';
+      // Optional auto-login credentials saved on the host (#3417)
+      username?: string;
+      password?: string;
       charset?: string;
       sessionLog?: { enabled: boolean; directory: string; format: string; timestampsEnabled?: boolean };
     }): Promise<string>;
@@ -339,6 +342,12 @@ declare global {
         logRewrite?: { sentCommand: string; displayCommand: string };
       },
     ): void;
+    /**
+     * Report interactive user input for sessions where keystrokes are buffered
+     * in the renderer (serial line mode), so main-process login-assist
+     * detectors see the user taking control.
+     */
+    notifySessionUserInput?(sessionId: string): void;
     interruptSession?(sessionId: string, trace?: NetcattyTerminalInterruptTrace): void;
     resizeSession(sessionId: string, cols: number, rows: number): void;
     /**

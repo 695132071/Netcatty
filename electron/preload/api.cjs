@@ -356,6 +356,9 @@ function createPreloadApi(ctx) {
         : undefined,
     });
   },
+  notifySessionUserInput: (sessionId) => {
+    ipcRenderer.send("netcatty:terminal:user-input", { sessionId });
+  },
   interruptSession: (sessionId, trace) => {
     const sanitizedTrace = sanitizeInterruptTrace(trace);
     if (ctx.terminalUrgentInputPorts?.postInterrupt?.(sessionId, sanitizedTrace)) {

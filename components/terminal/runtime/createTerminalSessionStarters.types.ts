@@ -101,6 +101,8 @@ export type TerminalBackendApi = {
     cb: (sessionId: string, sourceSessionId?: string) => void,
   ) => (() => void) | undefined;
   writeToSession: (sessionId: string, data: string, options?: { automated?: boolean; sensitive?: boolean; lineDelayMs?: number; logRewrite?: ProgrammaticCommandLogRewrite }) => void;
+  /** Signal user input for buffered-input modes (serial line mode) so main-process auto-login cancels. */
+  notifyUserInput?: (sessionId: string) => void;
   interruptSession?: (sessionId: string, trace?: NetcattyTerminalInterruptTrace) => void;
   resizeSession: (sessionId: string, cols: number, rows: number) => void;
   closeSession: (sessionId: string, options?: { bootEpoch?: number }) => void | Promise<void>;

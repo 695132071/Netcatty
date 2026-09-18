@@ -202,6 +202,11 @@ export const useTerminalBackend = () => {
     bridge?.writeToSession?.(sessionId, data, options);
   }, []);
 
+  const notifyUserInput = useCallback((sessionId: string) => {
+    const bridge = netcattyBridge.get();
+    bridge?.notifySessionUserInput?.(sessionId);
+  }, []);
+
   const interruptSession = useCallback((sessionId: string, trace?: NetcattyTerminalInterruptTrace) => {
     const bridge = netcattyBridge.get();
     if (bridge?.interruptSession) {
@@ -593,6 +598,7 @@ export const useTerminalBackend = () => {
         getSessionDistroInfo,
         getServerStats,
         writeToSession,
+        notifyUserInput,
         interruptSession,
         resizeSession,
         clearSessionPtyBuffer,
@@ -675,6 +681,7 @@ export const useTerminalBackend = () => {
       getSessionDistroInfo,
       getServerStats,
       writeToSession,
+      notifyUserInput,
       interruptSession,
       resizeSession,
       clearSessionPtyBuffer,
