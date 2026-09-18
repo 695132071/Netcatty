@@ -93,6 +93,7 @@ export const enTerminalMessages: Messages = {
   'terminal.statusbar.reconnect.tooltip': 'Reconnect this session',
   'terminal.serverStats.cpu': 'CPU Usage',
   'terminal.serverStats.cpuCores': 'CPU Core Usage',
+  'terminal.serverStats.gpu': 'GPU Usage',
   'terminal.serverStats.memory': 'Memory Usage',
   'terminal.serverStats.memoryDetails': 'Memory Details',
   'terminal.serverStats.memUsed': 'Used',
