@@ -16,7 +16,7 @@ import {
   withSyncReliabilityMeta,
 } from '../../../domain/syncReliability';
 import { detectSuspiciousShrink, type ShrinkFinding } from '../../../domain/syncGuards';
-import { resolveCloudSyncConflictAction, type CloudSyncConflictAction, type CloudSyncStrategy } from '../../../domain/syncStrategy';
+import { isPreserveDeletionsStrategy, resolveCloudSyncConflictAction, type CloudSyncConflictAction, type CloudSyncStrategy } from '../../../domain/syncStrategy';
 import { assertConvergentSyncWriteCompatible } from '../../../domain/convergentSync';
 import { getConvergentSyncLocalConfig } from '../convergentSyncConfig';
 import { syncAllProvidersConvergentlyImpl } from './convergentSyncRuntimeMethods';
@@ -598,7 +598,9 @@ export async function syncAllProvidersImpl(this: any,
               providerBase,
             );
             assertSyncSecurityGeneration(this, syncSecurityGeneration);
-            const result = mergeSyncPayloads(providerBase, localHealed, remotePayload);
+            const result = mergeSyncPayloads(providerBase, localHealed, remotePayload, {
+              preserveDeletions: isPreserveDeletionsStrategy(this.state.syncStrategy),
+            });
             merged = result.payload;
           }
           const mergeResult = {

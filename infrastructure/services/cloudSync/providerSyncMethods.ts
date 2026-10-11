@@ -7,7 +7,7 @@ import { mergeSyncPayloads } from '../../../domain/syncMerge';
 import { stripSyncPayloadEncryptedCredentials, healPoisonedSecretsForMerge } from '../../../domain/credentials';
 import { summarizeSyncChanges, withSyncReliabilityMeta } from '../../../domain/syncReliability';
 import { detectSuspiciousShrink, type ShrinkFinding } from '../../../domain/syncGuards';
-import { resolveCloudSyncConflictAction } from '../../../domain/syncStrategy';
+import { isPreserveDeletionsStrategy, resolveCloudSyncConflictAction } from '../../../domain/syncStrategy';
 import { assertConvergentSyncWriteCompatible } from '../../../domain/convergentSync';
 import { getConvergentSyncLocalConfig } from '../convergentSyncConfig';
 import { syncAllProvidersConvergentlyImpl } from './convergentSyncRuntimeMethods';
@@ -489,7 +489,9 @@ export async function syncToProviderImpl(this: any,
           const localHealed = healPoisonedSecretsForMerge(payload, remotePayload, base);
           remotePayload = healPoisonedSecretsForMerge(remotePayload, payload, base);
           remotePayloadForConflict = remotePayload;
-          const mergeResult = mergeSyncPayloads(base, localHealed, remotePayload);
+          const mergeResult = mergeSyncPayloads(base, localHealed, remotePayload, {
+            preserveDeletions: isPreserveDeletionsStrategy(this.state.syncStrategy),
+          });
           const mergedPayload = withSyncReliabilityMeta(
             stripSyncPayloadEncryptedCredentials(mergeResult.payload),
             base,

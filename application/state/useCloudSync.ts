@@ -7,7 +7,7 @@
  */
 
 import { useCloudSyncAutoUnlock } from './useCloudSyncAutoUnlock';
-import { useCallback, useEffect, useMemo, useRef, useSyncExternalStore } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useSyncExternalStore, useState } from 'react';
 import {
   type CloudProvider,
   type SecurityState,
@@ -28,6 +28,8 @@ import {
   isProviderReadyForSync,
 } from '../../domain/sync';
 import type { CloudSyncStrategy } from '../../domain/syncStrategy';
+import { localStorageAdapter } from '../../infrastructure/persistence/localStorageAdapter';
+import { STORAGE_KEY_CLOUD_SYNC_AI_SESSIONS } from '../../infrastructure/config/storageKeys';
 import type { CloudSyncConflictAction } from '../../domain/syncStrategy';
 import {
   getCloudSyncManager,
@@ -173,6 +175,9 @@ export interface CloudSyncHook {
   setAutoSync: (enabled: boolean, intervalMinutes?: number) => void;
   setDeviceName: (name: string) => void;
   setSyncStrategy: (strategy: CloudSyncStrategy) => void;
+  /** Whether AI chat sessions are included in cloud sync payloads (opt-in). */
+  aiSessionsSyncEnabled: boolean;
+  setAiSessionsSyncEnabled: (enabled: boolean) => void;
   setConvergentSyncEnabled: (enabled: boolean) => ConvergentSyncLocalConfig;
   refreshConvergentSyncConfig: () => ConvergentSyncLocalConfig;
 
@@ -724,6 +729,22 @@ export const useCloudSync = (): CloudSyncHook => {
     manager.setDeviceName(name);
   }, []);
 
+  const [aiSessionsSyncEnabled, setAiSessionsSyncEnabledState] = useState<boolean>(() => {
+    try {
+      return localStorageAdapter.read<{ enabled?: boolean }>(STORAGE_KEY_CLOUD_SYNC_AI_SESSIONS)?.enabled === true;
+    } catch {
+      return false;
+    }
+  });
+  const setAiSessionsSyncEnabled = useCallback((enabled: boolean) => {
+    setAiSessionsSyncEnabledState(enabled);
+    try {
+      localStorageAdapter.write(STORAGE_KEY_CLOUD_SYNC_AI_SESSIONS, { enabled });
+    } catch {
+      // Preference storage unavailable — keep the in-memory value only.
+    }
+  }, []);
+
   const setSyncStrategy = useCallback((strategy: CloudSyncStrategy) => {
     manager.setSyncStrategy(strategy);
   }, []);
@@ -956,6 +977,8 @@ export const useCloudSync = (): CloudSyncHook => {
     setAutoSync,
     setDeviceName,
     setSyncStrategy,
+    aiSessionsSyncEnabled,
+    setAiSessionsSyncEnabled,
     setConvergentSyncEnabled,
     refreshConvergentSyncConfig,
 

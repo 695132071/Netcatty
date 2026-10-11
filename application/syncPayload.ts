@@ -123,7 +123,10 @@ import {
   STORAGE_KEY_VAULT_NOTES_FONT_FAMILY,
   STORAGE_KEY_VAULT_NOTES_FONT_SIZE,
   STORAGE_KEY_VAULT_NOTES_CODE_FONT_SIZE,
+  STORAGE_KEY_AI_SESSIONS,
+  STORAGE_KEY_CLOUD_SYNC_AI_SESSIONS,
 } from '../infrastructure/config/storageKeys';
+import { mergeAiSessionLists, stripAiSessionPayloadForSync } from '../domain/syncMerge';
 import { isTerminalSidePanelAutoOpenTab } from '../domain/terminalSidePanelAutoOpen';
 import { prepareRestoredPayloadConvergentWrites } from './convergentSyncReplica';
 
@@ -1013,10 +1016,22 @@ function pruneOrphanPerAgentBindings(): void {
  * state hook (`usePortForwardingState`).  Callers should strip transient
  * runtime fields (status, error, lastUsedAt) before passing them in.
  */
+/**
+ * AI chat sessions only leave the device when the user opted in.
+ * Attachments are stripped — see {@link stripAiSessionPayloadForSync}.
+ */
+function collectAiSessionsForSync(): SyncPayload['aiSessions'] {
+  const enabled = localStorageAdapter.read<{ enabled?: boolean }>(STORAGE_KEY_CLOUD_SYNC_AI_SESSIONS);
+  if (enabled?.enabled !== true) return undefined;
+  const sessions = localStorageAdapter.read<SyncPayload['aiSessions']>(STORAGE_KEY_AI_SESSIONS) ?? [];
+  return stripAiSessionPayloadForSync(sessions);
+}
+
 export function buildSyncPayload(
   vault: SyncableVaultData,
   portForwardingRules?: PortForwardingRule[],
 ): SyncPayload {
+  const aiSessions = collectAiSessionsForSync();
   return {
     hosts: sanitizeHostsForSync(vault.hosts),
     keys: vault.keys,
@@ -1029,6 +1044,7 @@ export function buildSyncPayload(
     noteGroups: vault.noteGroups,
     groupConfigs: vault.groupConfigs,
     portForwardingRules: sanitizePortForwardingRulesForSync(portForwardingRules),
+    ...(aiSessions && aiSessions.length > 0 ? { aiSessions } : {}),
     settings: collectSyncableSettings(),
     syncedAt: Date.now(),
   };
@@ -1251,6 +1267,16 @@ async function preparePayloadApply(
     // rules, clear local state".
     if (sanitizedPayload.portForwardingRules !== undefined && importers.importPortForwardingRules) {
       importers.importPortForwardingRules(sanitizedPayload.portForwardingRules);
+    }
+
+    // AI chat sessions merge append-only: a cloud snapshot may be missing
+    // turns that only exist on this device, so union instead of replace.
+    if (Array.isArray(sanitizedPayload.aiSessions)) {
+      const localSessions = localStorageAdapter.read<SyncPayload['aiSessions']>(STORAGE_KEY_AI_SESSIONS) ?? [];
+      const mergedSessions = mergeAiSessionLists(localSessions, sanitizedPayload.aiSessions);
+      if (localStorageAdapter.write(STORAGE_KEY_AI_SESSIONS, mergedSessions)) {
+        emitAIStateChanged(STORAGE_KEY_AI_SESSIONS);
+      }
     }
 
     // Apply synced settings

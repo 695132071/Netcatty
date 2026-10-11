@@ -17,6 +17,14 @@
  *
  * When no base is available (first sync), falls back to a set-union
  * merge by entity ID, preferring local for duplicates.
+ *
+ * With `preserveDeletions` the merge becomes non-destructive: a deletion
+ * observed on a single side is never propagated to the other side, because
+ * a missing entity is ambiguous — it may mean "deleted", or it may mean the
+ * device simply has not loaded / holds a partial vault (for example right
+ * after restoring an older local backup, or when the keychain failed).
+ * Entities are only removed when *both* sides dropped them. This is the
+ * "smart merge (keep all)" strategy; see `domain/syncStrategy.ts`.
  */
 
 import { carryForwardSyncDeletions, getDeletedEntityIds } from './syncReliability';
@@ -42,6 +50,25 @@ interface MergeResult {
   /** True when both sides modified the same entity (resolved by preferring local) */
   hadConflicts: boolean;
   summary: MergeSummary;
+}
+
+/** Options controlling how a payload merge treats one-sided deletions. */
+export interface MergeSyncPayloadsOptions {
+  /**
+   * When true, a deletion seen on a single side is not propagated: the entity
+   * is carried forward from whichever side still has it. Only entities that
+   * are absent from base, local *and* remote are removed.
+   *
+   * Rationale: absence is not proof of intent. A restored-from-backup vault,
+   * a partially loaded vault, or a failed keychain read all look like "the
+   * user deleted everything". Propagating that to the cloud is how a small
+   * local mistake used to wipe every other device.
+   */
+  preserveDeletions?: boolean;
+}
+
+interface EntityMergeOptions {
+  preserveDeletions?: boolean;
 }
 
 const OPTIONAL_ENTITY_KEYS = new Set<CloudSyncPayloadEntityKey>([
@@ -106,6 +133,7 @@ function mergeEntityArrays<T extends { id: string }>(
   local: T[],
   remote: T[],
   tombstones?: { local: Set<string>; remote: Set<string> },
+  options?: EntityMergeOptions,
 ): EntityMergeResult<T> {
   const baseMap = new Map(base.map((e) => [e.id, e]));
   const localMap = new Map(local.map((e) => [e.id, e]));
@@ -182,6 +210,12 @@ function mergeEntityArrays<T extends { id: string }>(
         // Remote modified + local deleted → keep modification (safer)
         merged.push(remoteItem);
         conflicts++;
+      } else if (options?.preserveDeletions) {
+        // Non-destructive mode: the other side still has it and did not touch
+        // it, so the absence is not trustworthy enough to delete it for
+        // everyone. Carry it forward and still record the local deletion.
+        merged.push(remoteItem);
+        deleted.local++;
       } else {
         deleted.local++;
       }
@@ -192,14 +226,169 @@ function mergeEntityArrays<T extends { id: string }>(
         // Local modified + remote deleted → keep modification (safer)
         merged.push(localItem);
         conflicts++;
+      } else if (options?.preserveDeletions) {
+        merged.push(localItem);
+        deleted.remote++;
       } else {
         deleted.remote++;
       }
     }
-    // inBase && !inLocal && !inRemote → both deleted → gone
+    // inBase && !inLocal && !inRemote → both deleted → gone (in every mode)
   }
 
   return { merged, conflicts, added, deleted, modified };
+}
+
+// ---------------------------------------------------------------------------
+// AI session merge (messages are append-only)
+// ---------------------------------------------------------------------------
+
+/**
+ * Strip inline attachment payloads before they enter a sync payload.
+ * Base64 image/PDF blobs would multiply the encrypted vault size and can
+ * carry data the user never intended to leave the device; only the metadata
+ * (filename, media type, line count) is worth keeping for context.
+ */
+export function stripAiSessionPayloadForSync<T extends { messages?: unknown[] }>(
+  sessions: T[] | undefined,
+): T[] {
+  if (!Array.isArray(sessions)) return [];
+  return sessions.map((session) => {
+    const messages = Array.isArray((session as { messages?: unknown[] }).messages)
+      ? (session as { messages: Array<Record<string, unknown>> }).messages.map((message) => {
+        if (!message || typeof message !== 'object') return message;
+        const { attachments, images, ...rest } = message as Record<string, unknown> & {
+          attachments?: unknown[];
+          images?: unknown[];
+        };
+        if (attachments === undefined && images === undefined) return rest;
+        return {
+          ...rest,
+          ...(attachments ? { attachments: stripAttachmentBlobs(attachments) } : {}),
+          ...(images ? { images: stripAttachmentBlobs(images) } : {}),
+        };
+      })
+      : [];
+    return { ...session, messages } as T;
+  });
+}
+
+function stripAttachmentBlobs(attachments: unknown[]): unknown[] {
+  if (!Array.isArray(attachments)) return attachments;
+  return attachments.map((attachment) => {
+    if (!attachment || typeof attachment !== 'object') return attachment;
+    const { base64Data: _base64Data, ...meta } = attachment as Record<string, unknown> & { base64Data?: string };
+    return meta;
+  });
+}
+
+/**
+ * Three-way merge for AI sessions.
+ *
+ * Sessions are unioned by id. Inside a session the message list is
+ * append-only: a message is identified by its id, and the merged transcript is
+ * the union of all three sides sorted by timestamp. Two devices that appended
+ * different turns to the same conversation therefore keep both — which is what
+ * a plain last-writer-wins merge would silently throw away.
+ */
+function mergeAiSessionArrays<T extends { id: string; updatedAt?: number; messages?: Array<{ id?: string; timestamp?: number }> }>(
+  base: T[],
+  local: T[],
+  remote: T[],
+  options?: EntityMergeOptions,
+): EntityMergeResult<T> {
+  const baseMap = new Map(base.map((e) => [e.id, e]));
+  const localMap = new Map(local.map((e) => [e.id, e]));
+  const remoteMap = new Map(remote.map((e) => [e.id, e]));
+  const allIds = new Set([...baseMap.keys(), ...localMap.keys(), ...remoteMap.keys()]);
+
+  const merged: T[] = [];
+  let conflicts = 0;
+  const added = { local: 0, remote: 0 };
+  const deleted = { local: 0, remote: 0 };
+  const modified = { local: 0, remote: 0 };
+
+  for (const id of allIds) {
+    const baseItem = baseMap.get(id);
+    const localItem = localMap.get(id);
+    const remoteItem = remoteMap.get(id);
+    const inBase = baseItem !== undefined;
+    const inLocal = localItem !== undefined;
+    const inRemote = remoteItem !== undefined;
+
+    if (!inBase && inLocal && !inRemote) {
+      merged.push(localItem as T);
+      added.local++;
+      continue;
+    }
+    if (!inBase && !inLocal && inRemote) {
+      merged.push(remoteItem as T);
+      added.remote++;
+      continue;
+    }
+    if (!inBase && inLocal && inRemote) {
+      merged.push(mergeAiSessionPair(localItem as T, remoteItem as T));
+      conflicts++;
+      continue;
+    }
+    if (inBase && inLocal && inRemote) {
+      merged.push(mergeAiSessionPair(localItem as T, remoteItem as T));
+      if (fingerprint(localItem) !== fingerprint(remoteItem)) {
+        modified.local++;
+        modified.remote++;
+        conflicts++;
+      }
+      continue;
+    }
+    if (inBase && inLocal && !inRemote) {
+      if (options?.preserveDeletions) {
+        merged.push(localItem as T);
+        deleted.remote++;
+      } else {
+        deleted.remote++;
+      }
+      continue;
+    }
+    if (inBase && !inLocal && inRemote) {
+      if (options?.preserveDeletions) {
+        merged.push(remoteItem as T);
+        deleted.local++;
+      } else {
+        deleted.local++;
+      }
+      continue;
+    }
+    // absent everywhere → gone
+  }
+
+  return { merged, conflicts, added, deleted, modified };
+}
+
+/**
+ * Merge an incoming session list into the local one (union by session id,
+ * append-only messages). Used when applying a downloaded payload so a
+ * cloud snapshot can never drop turns that only exist locally.
+ */
+export function mergeAiSessionLists<
+  T extends { id: string; updatedAt?: number; messages?: Array<{ id?: string; timestamp?: number }> },
+>(local: T[] | undefined, incoming: T[] | undefined): T[] {
+  return mergeAiSessionArrays<T>([], local ?? [], incoming ?? []).merged;
+}
+
+function mergeAiSessionPair<T extends { id: string; updatedAt?: number; messages?: Array<{ id?: string; timestamp?: number }> }>(
+  a: T,
+  b: T,
+): T {
+  const newer = (b.updatedAt ?? 0) > (a.updatedAt ?? 0) ? b : a;
+  const seen = new Map<string, (typeof a.messages extends Array<infer M> ? M : never)>();
+  for (const session of [a, b, newer]) {
+    for (const message of (session.messages ?? []) as Array<{ id?: string; timestamp?: number }>) {
+      const key = message.id ?? `${message.timestamp ?? 0}:${fingerprint(message)}`;
+      if (!seen.has(key)) seen.set(key, message);
+    }
+  }
+  const messages = [...seen.values()].sort((x, y) => (x.timestamp ?? 0) - (y.timestamp ?? 0));
+  return { ...newer, messages, updatedAt: Math.max(a.updatedAt ?? 0, b.updatedAt ?? 0) } as T;
 }
 
 // ---------------------------------------------------------------------------
@@ -211,6 +400,7 @@ function mergeStringArrays(
   local: string[],
   remote: string[],
   tombstones?: { local: Set<string>; remote: Set<string> },
+  options?: EntityMergeOptions,
 ): string[] {
   const baseSet = new Set(base);
   const localSet = new Set(local);
@@ -240,8 +430,13 @@ function mergeStringArrays(
       if (localDeleted && remoteDeleted) {
         // Both deleted — gone
       } else if (localDeleted || remoteDeleted) {
-        // Only one side deleted — honour the deletion
-        // (If the other side didn't touch it, it's still in their set from base)
+        // Only one side dropped it. In non-destructive mode the surviving side
+        // wins so a stale/partial vault cannot delete a group for everyone.
+        if (!options?.preserveDeletions) {
+          // Honour the deletion (existing behaviour)
+        } else {
+          result.add(value);
+        }
       } else {
         result.add(value);
       }
@@ -416,12 +611,16 @@ function mergeSettings(
  * @param base  - The last successfully synced payload (null if unavailable)
  * @param local - The current device's data
  * @param remote - The other device's data (downloaded from cloud)
+ * @param options - see {@link MergeSyncPayloadsOptions}
  */
 export function mergeSyncPayloads(
   base: SyncPayload | null,
   local: SyncPayload,
   remote: SyncPayload,
+  options?: MergeSyncPayloadsOptions,
 ): MergeResult {
+  const preserveDeletions = options?.preserveDeletions === true;
+  const mergeOptions: EntityMergeOptions = { preserveDeletions };
   const emptyBase: SyncPayload = {
     hosts: [],
     keys: [],
@@ -433,6 +632,7 @@ export function mergeSyncPayloads(
     notes: [],
     noteGroups: [],
     portForwardingRules: [],
+    aiSessions: [],
     settings: undefined,
     syncedAt: 0,
   };
@@ -459,14 +659,16 @@ export function mergeSyncPayloads(
     sanitizeHostsForSync(local.hosts) ?? [],
     sanitizeHostsForSync(remote.hosts) ?? [],
     tombstones('hosts'),
+    mergeOptions,
   );
-  const keys = mergeEntityArrays(b.keys ?? [], local.keys ?? [], remote.keys ?? [], tombstones('keys'));
+  const keys = mergeEntityArrays(b.keys ?? [], local.keys ?? [], remote.keys ?? [], tombstones('keys'), mergeOptions);
   const baseIdentities = b.identities ?? [];
   const identities = mergeEntityArrays(
     baseIdentities,
     entityArray(local, 'identities', baseIdentities),
     entityArray(remote, 'identities', baseIdentities),
     tombstones('identities'),
+    mergeOptions,
   );
   const baseProxyProfiles = b.proxyProfiles ?? [];
   const proxyProfiles = mergeEntityArrays(
@@ -474,14 +676,16 @@ export function mergeSyncPayloads(
     entityArray(local, 'proxyProfiles', baseProxyProfiles),
     entityArray(remote, 'proxyProfiles', baseProxyProfiles),
     tombstones('proxyProfiles'),
+    mergeOptions,
   );
-  const snippets = mergeEntityArrays(b.snippets ?? [], local.snippets ?? [], remote.snippets ?? [], tombstones('snippets'));
+  const snippets = mergeEntityArrays(b.snippets ?? [], local.snippets ?? [], remote.snippets ?? [], tombstones('snippets'), mergeOptions);
   const baseNotes = b.notes ?? [];
   const notes = mergeEntityArrays(
     baseNotes,
     entityArray(local, 'notes', baseNotes),
     entityArray(remote, 'notes', baseNotes),
     tombstones('notes'),
+    mergeOptions,
   );
   const basePortForwardingRules = b.portForwardingRules ?? [];
   const portForwardingRules = mergeEntityArrays(
@@ -489,6 +693,7 @@ export function mergeSyncPayloads(
     entityArray(local, 'portForwardingRules', basePortForwardingRules),
     entityArray(remote, 'portForwardingRules', basePortForwardingRules),
     tombstones('portForwardingRules'),
+    mergeOptions,
   );
 
   // Merge group configs (keyed by path — wrap with virtual id for entity merge)
@@ -503,11 +708,20 @@ export function mergeSyncPayloads(
     wrapGC(entityArray(local, 'groupConfigs', baseGroupConfigs)),
     wrapGC(entityArray(remote, 'groupConfigs', baseGroupConfigs)),
     tombstones('groupConfigs'),
+    mergeOptions,
+  );
+
+  const baseAiSessions = b.aiSessions ?? [];
+  const aiSessions = mergeAiSessionArrays(
+    baseAiSessions,
+    entityArray(local, 'aiSessions', baseAiSessions),
+    entityArray(remote, 'aiSessions', baseAiSessions),
+    mergeOptions,
   );
 
   // Aggregate stats
   const entityResults: Pick<EntityMergeResult<unknown>, 'added' | 'deleted' | 'modified' | 'conflicts'>[] =
-    [hosts, keys, identities, proxyProfiles, snippets, notes, portForwardingRules, groupConfigsResult];
+    [hosts, keys, identities, proxyProfiles, snippets, notes, portForwardingRules, groupConfigsResult, aiSessions];
   for (const r of entityResults) {
     summary.added.local += r.added.local;
     summary.added.remote += r.added.remote;
@@ -524,6 +738,7 @@ export function mergeSyncPayloads(
     local.customGroups ?? [],
     remote.customGroups ?? [],
     tombstones('customGroups'),
+    mergeOptions,
   );
   const baseSnippetPackages = b.snippetPackages ?? [];
   const snippetPackages = mergeStringArrays(
@@ -531,6 +746,7 @@ export function mergeSyncPayloads(
     entityArray<string>(local, 'snippetPackages', baseSnippetPackages),
     entityArray<string>(remote, 'snippetPackages', baseSnippetPackages),
     tombstones('snippetPackages'),
+    mergeOptions,
   );
   const baseNoteGroups = b.noteGroups ?? [];
   const noteGroups = mergeStringArrays(
@@ -538,6 +754,7 @@ export function mergeSyncPayloads(
     entityArray<string>(local, 'noteGroups', baseNoteGroups),
     entityArray<string>(remote, 'noteGroups', baseNoteGroups),
     tombstones('noteGroups'),
+    mergeOptions,
   );
 
   // Merge settings
@@ -601,6 +818,7 @@ export function mergeSyncPayloads(
     noteGroups,
     portForwardingRules: portForwardingRules.merged,
     groupConfigs,
+    aiSessions: aiSessions.merged,
     settings,
     ...(mergedSidecarEntries.length > 0 || anySideHadPluginSidecars
       ? { pluginSidecars: { version: 1 as const, entries: mergedSidecarEntries } }

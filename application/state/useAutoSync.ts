@@ -21,6 +21,7 @@ import { isProviderReadyForSync, SYNC_STORAGE_KEYS, type CloudProvider, type Syn
 import { mergeSyncPayloads } from '../../domain/syncMerge';
 import { materializeSyncPayloadFromConvergentState } from '../../domain/convergentSync';
 import {
+  isPreserveDeletionsStrategy,
   resolveCloudSyncConflictAction,
   type CloudSyncConflictAction,
 } from '../../domain/syncStrategy';
@@ -850,7 +851,9 @@ export const useAutoSync = (config: AutoSyncConfig) => {
       // upload and wipe usable cloud passwords. Same for remote-side poison.
       const localHealed = healPoisonedSecretsForMerge(localPayload, remoteRaw, base);
       const remoteHealed = healPoisonedSecretsForMerge(remoteRaw, localPayload, base);
-      const mergeResult = mergeSyncPayloads(base, localHealed, remoteHealed);
+      const mergeResult = mergeSyncPayloads(base, localHealed, remoteHealed, {
+        preserveDeletions: isPreserveDeletionsStrategy(state.syncStrategy),
+      });
 
       // Apply merged payload to local state BEFORE committing. If the apply
       // throws, the next startup will re-run the merge with fresh data.
