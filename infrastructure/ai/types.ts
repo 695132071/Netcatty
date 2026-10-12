@@ -565,7 +565,8 @@ const CLAUDE_REASONING_LEVELS = ['low', 'medium', 'high', 'max'] as const;
 // verified against the binary's model-id strings and alias table
 // (opus/sonnet/haiku → claude-*-5-5, fable → claude-fable-5-1). Live
 // discovery supersedes this list whenever it succeeds. `default` has no
-// fixed alias target and keeps the CLI's own neutral label.
+// fixed alias target and keeps the CLI's own neutral label. Explicit IDs
+// preserve a saved bare selection so CLI/settings effort remains in control.
 export const CLAUDE_MODEL_PRESETS: AgentModelPreset[] = [
   {
     id: 'default',
@@ -580,6 +581,7 @@ export const CLAUDE_MODEL_PRESETS: AgentModelPreset[] = [
     description: 'Flagship',
     thinkingLevels: [...CLAUDE_REASONING_LEVELS],
     defaultThinkingLevel: 'medium',
+    encodeDefaultThinking: false,
   },
   {
     id: 'claude-fable-5-1',
@@ -592,6 +594,7 @@ export const CLAUDE_MODEL_PRESETS: AgentModelPreset[] = [
     description: 'Everyday tasks',
     thinkingLevels: [...CLAUDE_REASONING_LEVELS],
     defaultThinkingLevel: 'medium',
+    encodeDefaultThinking: false,
   },
   {
     id: 'claude-haiku-5-5',
@@ -599,12 +602,14 @@ export const CLAUDE_MODEL_PRESETS: AgentModelPreset[] = [
     description: 'Fastest current',
     thinkingLevels: [...CLAUDE_REASONING_LEVELS],
     defaultThinkingLevel: 'low',
+    encodeDefaultThinking: false,
   },
   {
     id: 'claude-haiku-4-5',
     name: 'Haiku 4.5',
     thinkingLevels: [...CLAUDE_REASONING_LEVELS],
     defaultThinkingLevel: 'low',
+    encodeDefaultThinking: false,
   },
   { id: 'claude-sonnet-5', name: 'Sonnet 5' },
   { id: 'claude-opus-5', name: 'Opus 5' },

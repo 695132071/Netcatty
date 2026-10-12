@@ -302,3 +302,17 @@ test('Claude fallback preserves saved family aliases and effort', () => {
   assert.equal(CLAUDE_MODEL_PRESETS.find((preset) => preset.id === 'sonnet')?.name, 'Sonnet');
   assert.equal(CLAUDE_MODEL_PRESETS.find((preset) => preset.id === 'haiku')?.name, 'Haiku');
 });
+
+
+test('explicit Claude fallback IDs preserve unspecified effort and explicit effort choices', () => {
+  for (const preset of CLAUDE_MODEL_PRESETS.filter((model) => model.id.startsWith('claude-'))) {
+    assert.equal(normalizeStoredAgentModelSelection(preset.id, CLAUDE_MODEL_PRESETS), preset.id);
+    assert.equal(resolveAgentModelSelection(preset), preset.id);
+    for (const level of preset.thinkingLevels ?? []) {
+      const explicit = `${preset.id}/${level}`;
+      assert.equal(normalizeStoredAgentModelSelection(explicit, CLAUDE_MODEL_PRESETS), explicit);
+    }
+  }
+  assert.equal(normalizeStoredAgentModelSelection('sonnet/medium', CLAUDE_MODEL_PRESETS), 'sonnet/medium');
+  assert.equal(normalizeStoredAgentModelSelection('haiku/low', CLAUDE_MODEL_PRESETS), 'haiku/low');
+});
