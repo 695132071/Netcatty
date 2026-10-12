@@ -41,28 +41,21 @@ const {
  * CLI process, but the 1.0.59-era native CLI can hang during that handshake,
  * leaving its conhost child alive after an app-side timeout/abort (the
  * "console window stays open" amplifier). Race a short grace period and fall
- * back to forceStop() when graceful stop does not settle.
+ * back to forceStop() when graceful stop fails or exceeds the grace period.
  */
 async function stopCopilotClient(client, graceMs = 3000) {
   if (!client || typeof client.stop !== "function") return;
-  let settled = false;
-  let graceTimer;
+  let stopped = false;
+  let timer;
   try {
     await Promise.race([
-      // A stop() rejection means the graceful path failed, so leave settled
-      // false and let the forceStop() fallback below still run.
-      Promise.resolve(client.stop()).then(
-        () => { settled = true; },
-        () => {},
-      ),
-      new Promise((resolve) => { graceTimer = setTimeout(resolve, graceMs); }),
+      Promise.resolve(client.stop()).then(() => { stopped = true; }),
+      new Promise((resolve) => { timer = setTimeout(resolve, graceMs); }),
     ]);
   } catch { /* best effort */ } finally {
-    // The race winner does not cancel the loser: without this, every
-    // turn/catalog load that stops a client leaves a 3s timer handle alive.
-    clearTimeout(graceTimer);
+    clearTimeout(timer);
   }
-  if (!settled && typeof client.forceStop === "function") {
+  if (!stopped && typeof client.forceStop === "function") {
     try { await client.forceStop(); } catch { /* best effort */ }
   }
 }
@@ -685,5 +678,4 @@ module.exports = {
   runCopilotTurn,
   listCopilotModels,
   mapCopilotModels,
-  stopCopilotClient,
 };

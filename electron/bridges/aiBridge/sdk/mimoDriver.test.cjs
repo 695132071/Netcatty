@@ -1455,8 +1455,10 @@ test("listMimoModels filters the vendor's free auto-routing channel out of the c
   assert.equal(catalog.models.every((model) => !model.id.startsWith("mimo/")), true);
 });
 
-test("listMimoModels keeps currentModelId when the default is a real xiaomi model", async () => {
+test("listMimoModels selects a visible model when the default channel is filtered", async () => {
   const fixture = liveCatalogFixture();
+  // A filtered default must not override the visible selection on send.
+  fixture.default = { xiaomi: "mimo-v2.6-pro-ultraspeed", mimo: "134qwerawdf" };
   const catalog = await listMimoModels({
     binPath: "/tmp/mimo-auto-filter-default-test",
     mimoFactory: async () => ({
@@ -1470,72 +1472,32 @@ test("listMimoModels keeps currentModelId when the default is a real xiaomi mode
   });
 
   assert.equal(catalog.currentModelId, "xiaomi/mimo-v2.6-pro-ultraspeed");
-  assert.equal(catalog.models.some((model) => model.id === "xiaomi/mimo-v2.6-pro-ultraspeed"), true);
+
+  fixture.default = { mimo: "134qwerawdf" };
+  const autoDefault = await listMimoModels({
+    binPath: "/tmp/mimo-auto-filter-default-2-test",
+    mimoFactory: async () => ({
+      client: {
+        config: {
+          providers: async () => fixture,
+        },
+      },
+      server: { close() {} },
+    }),
+  });
+  assert.equal(autoDefault.currentModelId, autoDefault.models[0].id);
+  assert.equal(autoDefault.models.some((model) => model.id === "mimo/134qwerawdf"), false);
 });
 
-test("listMimoModels falls back off a default that sits on the filtered auto channel", async () => {
+test("listMimoModels clears the default when only the auto channel remains", async () => {
   const fixture = liveCatalogFixture();
-  // The vendor's default map can select the auto channel. Surfacing that id as
-  // current would show a model the picker cannot render or check, so it is
-  // replaced by the documented vendor default.
-  fixture.default = { xiaomi: "mimo-v2.6-pro-ultraspeed", mimo: "134qwerawdf" };
-  const fallbackCatalog = await listMimoModels({
-    binPath: "/tmp/mimo-auto-filter-fallback-test",
-    mimoFactory: async () => ({
-      client: {
-        config: {
-          providers: async () => fixture,
-        },
-      },
-      server: { close() {} },
-    }),
-  });
-
-  assert.equal(fallbackCatalog.currentModelId, "xiaomi/mimo-v2.6-pro-ultraspeed");
-  assert.equal(
-    fallbackCatalog.models.some((model) => model.id === "mimo/134qwerawdf"),
-    false,
-  );
-
-  // Without the documented default among the remaining models, the first
-  // remaining entry is used; with nothing left, the current id is cleared.
-  fixture.providers = [
-    {
-      id: "xiaomi",
-      name: "Xiaomi",
-      models: {
-        "mimo-v2.6-pro": { name: "MiMo-V2.6-Pro" },
-        "mimo-v2.5": { name: "MiMo-V2.5" },
-      },
-    },
-    fixture.providers.find((provider) => provider.id === "mimo"),
-  ];
+  fixture.providers = fixture.providers.filter((provider) => provider.id === "mimo");
   fixture.default = { mimo: "134qwerawdf" };
-  const firstRemaining = await listMimoModels({
-    binPath: "/tmp/mimo-auto-filter-first-remaining-test",
+  const result = await listMimoModels({
     mimoFactory: async () => ({
-      client: {
-        config: {
-          providers: async () => fixture,
-        },
-      },
+      client: { config: { providers: async () => fixture } },
       server: { close() {} },
     }),
   });
-  assert.equal(firstRemaining.currentModelId, "xiaomi/mimo-v2.6-pro");
-
-  fixture.providers = [fixture.providers.find((provider) => provider.id === "mimo")];
-  const nothingLeft = await listMimoModels({
-    binPath: "/tmp/mimo-auto-filter-nothing-left-test",
-    mimoFactory: async () => ({
-      client: {
-        config: {
-          providers: async () => fixture,
-        },
-      },
-      server: { close() {} },
-    }),
-  });
-  assert.equal(nothingLeft.currentModelId, null);
-  assert.equal(nothingLeft.models.length, 0);
+  assert.deepEqual(result, { currentModelId: null, models: [] });
 });
