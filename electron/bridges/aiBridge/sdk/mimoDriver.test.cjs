@@ -1455,10 +1455,9 @@ test("listMimoModels filters the vendor's free auto-routing channel out of the c
   assert.equal(catalog.models.every((model) => !model.id.startsWith("mimo/")), true);
 });
 
-test("listMimoModels keeps currentModelId pointing at a filtered auto-channel model", async () => {
+test("listMimoModels selects a visible model when the default channel is filtered", async () => {
   const fixture = liveCatalogFixture();
-  // The vendor's default map can select the auto channel; currentModelId must
-  // still round-trip even though no picker row exists for it.
+  // A filtered default must not override the visible selection on send.
   fixture.default = { xiaomi: "mimo-v2.6-pro-ultraspeed", mimo: "134qwerawdf" };
   const catalog = await listMimoModels({
     binPath: "/tmp/mimo-auto-filter-default-test",
@@ -1486,6 +1485,19 @@ test("listMimoModels keeps currentModelId pointing at a filtered auto-channel mo
       server: { close() {} },
     }),
   });
-  assert.equal(autoDefault.currentModelId, "mimo/134qwerawdf");
+  assert.equal(autoDefault.currentModelId, autoDefault.models[0].id);
   assert.equal(autoDefault.models.some((model) => model.id === "mimo/134qwerawdf"), false);
+});
+
+test("listMimoModels clears the default when only the auto channel remains", async () => {
+  const fixture = liveCatalogFixture();
+  fixture.providers = fixture.providers.filter((provider) => provider.id === "mimo");
+  fixture.default = { mimo: "134qwerawdf" };
+  const result = await listMimoModels({
+    mimoFactory: async () => ({
+      client: { config: { providers: async () => fixture } },
+      server: { close() {} },
+    }),
+  });
+  assert.deepEqual(result, { currentModelId: null, models: [] });
 });

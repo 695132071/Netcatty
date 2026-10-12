@@ -772,9 +772,8 @@ function emptyMimoModelCatalog() {
 // whole channel from the picker. The vendor keeps renaming its entries, so
 // the filter matches the stable provider id, not a model id or label. This is
 // a mimo-specific quirk and deliberately stays out of the shared OpenCode
-// pipeline. currentModelId is still computed from the raw catalog, so a
-// current model on the filtered channel keeps round-tripping (the picker
-// simply shows no checkmark row for it).
+// pipeline. The catalog default must also remain selectable, so the picker
+// and the send-time model adoption agree.
 const MIMO_AUTO_CHANNEL_PROVIDER_ID = "mimo";
 
 function filterMimoAutoChannel(response) {
@@ -821,9 +820,13 @@ async function listMimoModels({ env, binPath, cwd, mimoFactory, abortController,
       throw new Error(extractMimoErrorMessage(response.error) || "MiMo Code providers unavailable");
     }
     const data = response?.data || response;
+    const models = mapOpenCodeModels(filterMimoAutoChannel(data));
+    const defaultModelId = getOpenCodeDefaultModelId(data);
     return {
-      currentModelId: getOpenCodeDefaultModelId(data),
-      models: mapOpenCodeModels(filterMimoAutoChannel(data)),
+      currentModelId: models.some((model) => model.id === defaultModelId)
+        ? defaultModelId
+        : models[0]?.id ?? null,
+      models,
     };
   } catch {
     return emptyMimoModelCatalog();
