@@ -1236,6 +1236,41 @@ test("list-models persists a successful live catalog and serves it as last-known
   }
 });
 
+test("list-models normalizes a pre-filter current id when serving a mimo last-known-good catalog", async (t) => {
+  const { getDriver } = require("./index.cjs");
+  const { handlers, ctx, cleanup } = makeLastKnownCtx();
+  try {
+    const driver = getDriver("mimo");
+    const listModels = handlers.get("netcatty:ai:sdk-agent:list-models");
+    // 1. Seed a success captured before the auto-channel normalization: the
+    // persisted current id sits on the filtered `mimo` provider while the
+    // model list does not.
+    const preFilterCatalog = {
+      currentModelId: "mimo/134qwerawdf",
+      models: [
+        { id: "xiaomi/mimo-v2.6-pro-ultraspeed", name: "MiMo-V2.6-Pro-UltraSpeed" },
+        { id: "xiaomi/mimo-v2.6-flash", name: "MiMo-V2.6-Flash" },
+      ],
+    };
+    t.mock.method(driver, "listModels", async () => preFilterCatalog);
+    const seeded = await listModels({ sender: {} }, { sdkBackend: "mimo", agentCommand: "/test/lkg-mimo" });
+    assert.equal(seeded.ok, true);
+    assert.equal(seeded.currentModelId, "mimo/134qwerawdf");
+
+    // 2. Live failure → the persisted catalog is served with the current id
+    // normalized off the filtered channel.
+    ctx.sdkModelCache.clear();
+    driver.listModels.mock.mockImplementation(async () => []);
+    const failed = await listModels({ sender: {} }, { sdkBackend: "mimo", agentCommand: "/test/lkg-mimo" });
+    assert.equal(failed.ok, true);
+    assert.equal(failed.source, "last-known-good");
+    assert.equal(failed.currentModelId, "xiaomi/mimo-v2.6-pro-ultraspeed");
+    assert.equal(failed.models.some((model) => model.id === "mimo/134qwerawdf"), false);
+  } finally {
+    cleanup();
+  }
+});
+
 test("list-models without a prior success keeps presets and never persists empty or corrupt stores", async (t) => {
   const { getDriver } = require("./index.cjs");
   const { handlers, catalogFile, cleanup } = makeLastKnownCtx();

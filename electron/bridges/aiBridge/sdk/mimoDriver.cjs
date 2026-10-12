@@ -772,10 +772,12 @@ function emptyMimoModelCatalog() {
 // whole channel from the picker. The vendor keeps renaming its entries, so
 // the filter matches the stable provider id, not a model id or label. This is
 // a mimo-specific quirk and deliberately stays out of the shared OpenCode
-// pipeline. currentModelId is still computed from the raw catalog, so a
-// current model on the filtered channel keeps round-tripping (the picker
-// simply shows no checkmark row for it).
+// pipeline.
 const MIMO_AUTO_CHANNEL_PROVIDER_ID = "mimo";
+// Xiaomi's documented default. When the live catalog's own default lands on
+// the filtered auto channel, this is the preferred replacement so the picker
+// shows a real, sendable model instead of an unrenderable id.
+const MIMO_FALLBACK_MODEL_ID = "xiaomi/mimo-v2.6-pro-ultraspeed";
 
 function filterMimoAutoChannel(response) {
   if (!response || !Array.isArray(response.providers)) return response;
@@ -785,6 +787,29 @@ function filterMimoAutoChannel(response) {
       (provider) => (provider?.id || provider?.providerID) !== MIMO_AUTO_CHANNEL_PROVIDER_ID,
     ),
   };
+}
+
+/**
+ * Keep the surfaced currentModelId consistent with the filtered picker list.
+ *
+ * A default on the auto channel (provider id "mimo") cannot be rendered or
+ * checked by the picker, and silently sending through that channel while the
+ * UI displays another model is worse, so such a current id is replaced: the
+ * vendor's documented default if the remaining models still offer it, else
+ * the first remaining model, else null. Any current id outside the filtered
+ * channel - including null and full xiaomi ids - passes through untouched, so
+ * the unfiltered behavior is unchanged.
+ */
+function resolveMimoCatalogCurrentId(currentModelId, models) {
+  if (!currentModelId) return null;
+  if (String(currentModelId).split("/")[0] !== MIMO_AUTO_CHANNEL_PROVIDER_ID) return currentModelId;
+  const ids = new Set(
+    (Array.isArray(models) ? models : [])
+      .map((model) => model?.id)
+      .filter(Boolean),
+  );
+  if (ids.has(MIMO_FALLBACK_MODEL_ID)) return MIMO_FALLBACK_MODEL_ID;
+  return ids.values().next().value ?? null;
 }
 
 /**
@@ -821,9 +846,10 @@ async function listMimoModels({ env, binPath, cwd, mimoFactory, abortController,
       throw new Error(extractMimoErrorMessage(response.error) || "MiMo Code providers unavailable");
     }
     const data = response?.data || response;
+    const models = mapOpenCodeModels(filterMimoAutoChannel(data));
     return {
-      currentModelId: getOpenCodeDefaultModelId(data),
-      models: mapOpenCodeModels(filterMimoAutoChannel(data)),
+      currentModelId: resolveMimoCatalogCurrentId(getOpenCodeDefaultModelId(data), models),
+      models,
     };
   } catch {
     return emptyMimoModelCatalog();
@@ -835,6 +861,7 @@ async function listMimoModels({ env, binPath, cwd, mimoFactory, abortController,
 module.exports = {
   listMimoModels,
   readMimoSkillPaths,
+  resolveMimoCatalogCurrentId,
   resolveUsableMimoBinPath,
   runMimoTurn,
   spawnMimoServer,

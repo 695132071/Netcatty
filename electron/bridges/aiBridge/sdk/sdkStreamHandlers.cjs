@@ -14,6 +14,7 @@ const { probeCodexAppServer } = require("../codexAppServer/probe.cjs");
 const { codebuddySessionManager } = require("./codebuddySessionManager.cjs");
 const codebuddyDriver = require("./codebuddyDriver.cjs");
 const { OPENCODE_SERVER_START_TIMEOUT_MS } = require("./opencodeDriver.cjs");
+const { resolveMimoCatalogCurrentId } = require("./mimoDriver.cjs");
 const {
   buildLastKnownCatalogPath,
   readLastKnownCatalogEntry,
@@ -1040,12 +1041,18 @@ function registerSdkStreamHandlers(ctx) {
             // say the list is the previous success.
             const lastKnown = readLastKnownCatalogEntry(lastKnownPath, cacheKey);
             if (lastKnown) {
+              // Entries written before the mimo auto-channel filter existed can
+              // carry a current id on the filtered channel; normalize so the
+              // served catalog cannot point at a model the picker lacks.
+              const lastKnownCurrentModelId = backendKey === "mimo"
+                ? resolveMimoCatalogCurrentId(lastKnown.currentModelId, lastKnown.models)
+                : lastKnown.currentModelId || null;
               console.debug(
                 `[sdk] list-models(${backendKey}) unavailable, serving last-known-good catalog from ${lastKnown.fetchedAt}`,
               );
               return {
                 ok: true,
-                currentModelId: lastKnown.currentModelId || null,
+                currentModelId: lastKnownCurrentModelId,
                 models: lastKnown.models,
                 warning: `${err?.message || String(err)} — serving the last-known-good catalog fetched at ${lastKnown.fetchedAt}`,
                 source: "last-known-good",
