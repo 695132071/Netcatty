@@ -54,10 +54,21 @@ function readLastKnownCatalogEntry(filePath, cacheKey) {
  */
 function writeLastKnownCatalogEntry(filePath, cacheKey, { backend, models, currentModelId } = {}, { now = Date.now() } = {}) {
   if (!filePath || !cacheKey) return false;
-  const trimmedModels = Array.isArray(models)
-    ? models.filter((model) => model && model.id).slice(0, LAST_KNOWN_MAX_MODELS)
+  const validModels = Array.isArray(models)
+    ? models.filter((model) => model && model.id)
     : [];
-  if (trimmedModels.length === 0) return false;
+  if (validModels.length === 0) return false;
+  // The persisted current id must survive the cap: a capped set that omits it
+  // would serve a last-known-good catalog whose current id has no picker row,
+  // and the send preflight and the picker would disagree again.
+  let trimmedModels = validModels.slice(0, LAST_KNOWN_MAX_MODELS);
+  if (currentModelId && !trimmedModels.some((model) => model.id === currentModelId)) {
+    const current = validModels.find((model) => model.id === currentModelId);
+    if (current) {
+      if (trimmedModels.length >= LAST_KNOWN_MAX_MODELS) trimmedModels.pop();
+      trimmedModels.push(current);
+    }
+  }
   try {
     const entries = readLastKnownCatalogStore(filePath);
     entries[cacheKey] = {

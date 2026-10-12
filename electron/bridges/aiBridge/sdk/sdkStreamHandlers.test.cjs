@@ -1127,6 +1127,24 @@ test("modelCatalogLastKnown caps models, never stores empty catalogs, and keeps 
     assert.equal(stored.backend, "claude");
     assert.match(stored.fetchedAt, /^\d{4}-\d{2}-\d{2}T/);
 
+    // A current model beyond the cap is retained in the capped set, so the
+    // persisted current id always has a picker row.
+    const currentBeyondCap = Array.from(
+      { length: LAST_KNOWN_MAX_MODELS + 5 },
+      (_, index) => ({ id: `beyond-${index}` }),
+    );
+    assert.equal(writeLastKnownCatalogEntry(file, "k-cap", {
+      backend: "claude",
+      models: currentBeyondCap,
+      currentModelId: `beyond-${LAST_KNOWN_MAX_MODELS + 4}`,
+    }), true);
+    const capped = readLastKnownCatalogEntry(file, "k-cap");
+    assert.equal(capped.models.length, LAST_KNOWN_MAX_MODELS);
+    assert.equal(
+      capped.models.some((model) => model.id === `beyond-${LAST_KNOWN_MAX_MODELS + 4}`),
+      true,
+    );
+
     assert.equal(writeLastKnownCatalogEntry(file, "k2", { backend: "claude", models: [] }), false);
     assert.equal(writeLastKnownCatalogEntry(file, "k3", { backend: "claude", models: [{ name: "no id" }] }), false);
     assert.equal(readLastKnownCatalogEntry(file, "k2"), null);
