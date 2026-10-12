@@ -60,7 +60,24 @@ function refreshLastKnownCatalogCurrentId(filePath, cacheKey, currentModelId) {
     const entry = entries[cacheKey];
     if (!entry || !Array.isArray(entry.models) || entry.models.length === 0) return false;
     if (entry.currentModelId === currentModelId) return false;
-    entries[cacheKey] = { ...entry, currentModelId };
+    // The refreshed id may be absent from the persisted list: it arrived on a
+    // current-only catalog whose models were not admitted, so only the id
+    // was adopted. Store a synthesized minimal row for it (label = the id)
+    // instead of leaving the persisted current id dangling — a dangling id
+    // makes the read-back serve a non-empty list missing the current row, so
+    // the picker shows the old row while the send preflight adopts the new
+    // id. Clearing the id would discard the user's selection entirely, and
+    // the send path already accepts id-only rows, so synthesizing keeps
+    // picker and send in agreement at the cost of one coarse entry.
+    let models = entry.models;
+    if (!models.some((model) => model && model.id === currentModelId)) {
+      models = [...models];
+      // Mirror writeLastKnownCatalogEntry: keep the store within the same
+      // per-entry cap by evicting the oldest row for the synthesized one.
+      if (models.length >= LAST_KNOWN_MAX_MODELS) models.pop();
+      models.push({ id: currentModelId, name: currentModelId });
+    }
+    entries[cacheKey] = { ...entry, models, currentModelId };
     writeFileSync(filePath, `${JSON.stringify({ version: LAST_KNOWN_STORE_VERSION, entries }, null, 2)}\n`);
     return true;
   } catch {

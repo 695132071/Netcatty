@@ -116,8 +116,21 @@ const SDK_MODEL_CACHE_ENV_KEYS = [
   "CODEBUDDY_API_KEY",
   "CODEBUDDY_AUTH_TOKEN",
   "CODEBUDDY_INTERNET_ENVIRONMENT",
+  // Grok auth switches between env credentials and the cached `grok login`
+  // token without changing the binary, so two accounts sharing one binary
+  // must not share a catalog either.
+  "XAI_API_KEY",
   "CURSOR_API_KEY",
 ];
+
+// Margin subtracted from the outer catalog budget before handing the driver
+// an absolute deadline. Small on purpose: the reviewer's cold-boot scenario
+// (~20s `mimo serve` readiness + ~9s providers()) already needs ~29s of the
+// 30s outer budget, so a larger headroom would re-cap the pair below what
+// actually fits. The 1s keeps the inner deadline ahead of the outer
+// withTimeout, so an over-budget run fails inside the driver (clean empty
+// catalog + server teardown) instead of aborting mid-IPC.
+const MODEL_LIST_DEADLINE_HEADROOM_MS = 1_000;
 
 function buildSdkModelCacheKey(backendKey, binPath, env, runtime = "sdk") {
   const envFingerprint = SDK_MODEL_CACHE_ENV_KEYS
@@ -196,6 +209,7 @@ async function fetchSdkModelCatalog({
   cursorAuthMode,
   cursorCliBinPath,
   codexAppServerRuntime: appServerRuntime,
+  catalogDeadlineTs,
 }) {
   let raw;
   if (codexRuntime === "app-server") {
@@ -205,6 +219,10 @@ async function fetchSdkModelCatalog({
       binPath,
       env,
       abortController,
+      // Absolute deadline for drivers with multi-phase inner setups (mimo:
+      // server readiness + providers query) to share, so the pair can never
+      // outrun the outer catalog budget. Drivers without such phases ignore it.
+      catalogDeadlineTs,
       cursorAuthMode: backendKey === "cursor" ? cursorAuthMode : undefined,
       cursorCliBinPath: backendKey === "cursor" ? cursorCliBinPath : undefined,
     });
@@ -998,6 +1016,14 @@ function registerSdkStreamHandlers(ctx) {
         const loadPromise = (async () => {
           const abortController = new AbortController();
           try {
+            // Include OpenCode cold startup in this single cancellable
+            // catalog budget, then allow the normal provider-query budget.
+            // Per-backend overrides (see MODEL_LIST_TIMEOUT_OVERRIDES_MS)
+            // win over both the shared default and OpenCode's budget.
+            const catalogBudgetMs = MODEL_LIST_TIMEOUT_OVERRIDES_MS[backendKey]
+              ?? (backendKey === "opencode"
+                ? OPENCODE_SERVER_START_TIMEOUT_MS + MODEL_LIST_TIMEOUT_MS
+                : MODEL_LIST_TIMEOUT_MS);
             const raw = await withTimeout(
               fetchSdkModelCatalog({
                 backendKey,
@@ -1006,18 +1032,12 @@ function registerSdkStreamHandlers(ctx) {
                 binPath,
                 env,
                 abortController,
+                catalogDeadlineTs: Date.now() + catalogBudgetMs - MODEL_LIST_DEADLINE_HEADROOM_MS,
                 cursorAuthMode: backendKey === "cursor" ? cursorAuthMode : undefined,
                 cursorCliBinPath: backendKey === "cursor" ? cursorCliBinPath : undefined,
                 codexAppServerRuntime,
               }),
-              // Include OpenCode cold startup in this single cancellable
-              // catalog budget, then allow the normal provider-query budget.
-              // Per-backend overrides (see MODEL_LIST_TIMEOUT_OVERRIDES_MS)
-              // win over both the shared default and OpenCode's budget.
-              MODEL_LIST_TIMEOUT_OVERRIDES_MS[backendKey]
-                ?? (backendKey === "opencode"
-                  ? OPENCODE_SERVER_START_TIMEOUT_MS + MODEL_LIST_TIMEOUT_MS
-                  : MODEL_LIST_TIMEOUT_MS),
+              catalogBudgetMs,
               abortController,
             );
             const { currentModelId, models } = normalizeSdkListModelsResult(raw);

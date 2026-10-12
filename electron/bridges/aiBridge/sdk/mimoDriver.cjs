@@ -765,6 +765,23 @@ function emptyMimoModelCatalog() {
   return { currentModelId: null, models: [] };
 }
 
+/**
+ * Per-phase budget under a shared outer deadline.
+ *
+ * Cold boot can push `mimo serve` readiness close to its inner cap while the
+ * providers() query still needs real time; each phase fits MIMO_CATALOG_SETUP_
+ * TIMEOUT_MS individually, but the OUTER model-list IPC budget (30s, see
+ * MODEL_LIST_TIMEOUT_OVERRIDES_MS) covers both. So sdkStreamHandlers hands an
+ * absolute deadline down and the two phases draw from one pool: readiness
+ * gets min(25s, remaining), and providers gets only whatever readiness left.
+ * Without a deadline (turn path / direct callers) each phase keeps its full
+ * independent 25s cap.
+ */
+function mimoPhaseTimeoutMs(deadlineTs) {
+  if (!Number.isFinite(deadlineTs)) return MIMO_CATALOG_SETUP_TIMEOUT_MS;
+  return Math.max(0, Math.min(MIMO_CATALOG_SETUP_TIMEOUT_MS, deadlineTs - Date.now()));
+}
+
 // Xiaomi's free auto-routing channel arrives as its own provider (id "mimo",
 // captured live 2026-10-10 with zero-cost pseudo-model entries "/models" and
 // "134qwerawdf"; earlier the same channel surfaced "MiMo Auto (free)"). It
@@ -792,7 +809,7 @@ function filterMimoAutoChannel(response) {
  * The OpenCode driver keeps a pooled server because catalog loads are frequent;
  * MiMo Code has no such traffic yet, so spawning per call keeps this simple.
  */
-async function listMimoModels({ env, binPath, cwd, mimoFactory, abortController, signal } = {}) {
+async function listMimoModels({ env, binPath, cwd, mimoFactory, abortController, signal, deadlineTs } = {}) {
   const effectiveSignal = signal || abortController?.signal;
   if (effectiveSignal?.aborted) return emptyMimoModelCatalog();
   let instance = null;
@@ -807,13 +824,15 @@ async function listMimoModels({ env, binPath, cwd, mimoFactory, abortController,
       config: { autoupdate: false },
       port,
       signal: effectiveSignal,
-      timeout: MIMO_CATALOG_SETUP_TIMEOUT_MS,
+      timeout: mimoPhaseTimeoutMs(deadlineTs),
     });
     const response = await awaitMimoSetup(
       instance.client.config.providers(),
       effectiveSignal,
       instance.server,
-      MIMO_CATALOG_SETUP_TIMEOUT_MS,
+      // Computed after readiness so providers only draws the shared budget
+      // the readiness phase left behind.
+      mimoPhaseTimeoutMs(deadlineTs),
     );
     if (effectiveSignal?.aborted) return emptyMimoModelCatalog();
     if (response?.error) {

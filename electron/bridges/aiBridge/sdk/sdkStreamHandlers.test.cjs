@@ -123,6 +123,20 @@ test("CodeBuddy model catalog cache changes with its auth and network env", () =
   assert.equal(base, buildSdkModelCacheKey("codebuddy", "/usr/bin/codebuddy", { CODEBUDDY_API_KEY: "key-a" }));
 });
 
+test("Grok model catalog cache changes with XAI_API_KEY", () => {
+  // Two Grok profiles sharing one binary but not credentials must not share
+  // one cache key: `grok login` tokens and env XAI_API_KEY coexist on the
+  // same machine, so the catalog (and current id) of one account must never
+  // be served to the other.
+  const base = buildSdkModelCacheKey("grok", "/usr/bin/grok", { XAI_API_KEY: "key-a" });
+  assert.notEqual(base, buildSdkModelCacheKey("grok", "/usr/bin/grok", { XAI_API_KEY: "key-b" }));
+  assert.notEqual(base, buildSdkModelCacheKey("grok", "/usr/bin/grok", {}));
+  // Same env fingerprint still yields the same key (no false isolation), and
+  // the key never leaks the credential value.
+  assert.equal(base, buildSdkModelCacheKey("grok", "/usr/bin/grok", { XAI_API_KEY: "key-a" }));
+  assert.doesNotMatch(base, /key-a/);
+});
+
 test("Cursor session keys isolate CLI login from API key auth modes", () => {
   assert.notEqual(
     buildSdkSessionKey("chat-1", "cursor", "/usr/bin/agent", "sdk", "cli-login"),
@@ -1254,6 +1268,35 @@ test("modelCatalogLastKnown refreshes the current id without clobbering the mode
     assert.equal(refreshLastKnownCatalogCurrentId(file, "k1", null), false);
     assert.equal(refreshLastKnownCatalogCurrentId(null, "k1", "m-1"), false);
     assert.equal(readLastKnownCatalogEntry(file, "k1").currentModelId, "m-2");
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("current-only refresh to an unpersisted id keeps read-back row and current id consistent", () => {
+  const dir = fs.mkdtempSync(nodePath.join(os.tmpdir(), "netcatty-lkg-current-only-"));
+  const file = buildLastKnownCatalogPath(dir);
+  try {
+    // 1. A prior full catalog persisted {m-1} with current m-1.
+    assert.equal(writeLastKnownCatalogEntry(file, "k1", {
+      backend: "mimo",
+      models: [{ id: "m-1", name: "M1" }],
+      currentModelId: "m-1",
+    }), true);
+
+    // 2. A later current-only catalog (zero visible models, e.g. mimo's
+    // filtered auto channel) adopts a new id the persisted list lacks.
+    assert.equal(refreshLastKnownCatalogCurrentId(file, "k1", "m-new"), true);
+
+    // 3. The next live failure reads the store back: the persisted list must
+    // contain the current row, so the picker and the send preflight agree.
+    const readBack = readLastKnownCatalogEntry(file, "k1");
+    assert.equal(readBack.currentModelId, "m-new");
+    const synthesized = readBack.models.find((model) => model.id === "m-new");
+    assert.ok(synthesized, "read-back models must contain the refreshed current id");
+    assert.deepEqual(synthesized, { id: "m-new", name: "m-new" });
+    // The previous selection survives alongside the synthesized row.
+    assert.ok(readBack.models.some((model) => model.id === "m-1"));
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }
