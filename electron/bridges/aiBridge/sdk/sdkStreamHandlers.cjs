@@ -1006,7 +1006,14 @@ function registerSdkStreamHandlers(ctx) {
         const shouldCacheModels = shouldCacheSdkRuntimeModels(backendKey);
         const cached = shouldCacheModels ? getSdkModelCacheEntry(sdkModelCache, cacheKey) : null;
         if (cached) {
-          return { ok: true, currentModelId: cached.currentModelId || null, models: cached.models };
+          // A cache hit replays the live fetch that populated the entry, so it
+          // keeps the live provenance (and the original fetchedAt).
+          return {
+            ok: true,
+            currentModelId: cached.currentModelId || null,
+            models: cached.models,
+            ...(cached.fetchedAt ? { source: "live", fetchedAt: cached.fetchedAt } : {}),
+          };
         }
 
         const existing = sdkModelInFlight.get(cacheKey);
@@ -1041,12 +1048,13 @@ function registerSdkStreamHandlers(ctx) {
               abortController,
             );
             const { currentModelId, models } = normalizeSdkListModelsResult(raw);
+            const fetchedAt = new Date().toISOString();
             // Do not cache degraded empty catalogs: listOpenCodeModels and
             // other drivers often return [] on timeout/startup failure, and
             // pinning that for TTL would block recovery (matches renderer
             // sdkRuntimeModelCache behavior).
             if (shouldCacheModels && (models.length > 0 || currentModelId)) {
-              setSdkModelCacheEntry(sdkModelCache, cacheKey, { at: Date.now(), currentModelId, models });
+              setSdkModelCacheEntry(sdkModelCache, cacheKey, { at: Date.now(), currentModelId, models, fetchedAt });
             }
             // Persist the good catalog so a later live failure (CLI update,
             // cold-boot race, dead binary) can serve it instead of presets.
@@ -1066,7 +1074,13 @@ function registerSdkStreamHandlers(ctx) {
               // unservable anyway).
               refreshLastKnownCatalogCurrentId(lastKnownPath, cacheKey, currentModelId);
             }
-            return { ok: true, currentModelId, models };
+            return {
+              ok: true,
+              currentModelId,
+              models,
+              source: "live",
+              fetchedAt,
+            };
           } catch (err) {
             // Degrade to curated presets, but first offer the last-known-good
             // catalog persisted from a prior successful fetch (preferred over

@@ -19,6 +19,8 @@ export {
   modelPresetsContainId,
 };
 
+export type SdkRuntimeModelCatalogSource = 'live' | 'last-known-good' | 'presets';
+
 export type SdkRuntimeModelCatalog = {
   currentModelId: string | null;
   models: AgentModelPreset[];
@@ -26,6 +28,13 @@ export type SdkRuntimeModelCatalog = {
   // cached hit in another panel or after a remount still shows the retry
   // banner instead of presenting stale models as live.
   warning?: string | null;
+  // Provenance of the models list: 'live' when the SDK fetch succeeded,
+  // 'last-known-good' when main served the persisted previous success.
+  // Absent (older main) behaves like a live fetch for display purposes.
+  source?: Exclude<SdkRuntimeModelCatalogSource, 'presets'>;
+  // ISO timestamp of the successful fetch backing this catalog (live fetch
+  // time, or the persisted last-known-good fetchedAt).
+  fetchedAt?: string;
 };
 
 export type SdkRuntimeModelCacheEntry = SdkRuntimeModelCatalog & {
@@ -74,11 +83,27 @@ const MODEL_CACHE_ENV_HINTS = [
   'NETCATTY_CURSOR_CLI_BIN',
 ] as const;
 
+const SDK_RUNTIME_MODEL_CATALOG_SOURCES = new Set(['live', 'last-known-good']);
+
+function normalizeCatalogSource(
+  source: unknown,
+): SdkRuntimeModelCatalog['source'] {
+  return typeof source === 'string' && SDK_RUNTIME_MODEL_CATALOG_SOURCES.has(source)
+    ? source as SdkRuntimeModelCatalog['source']
+    : undefined;
+}
+
+function normalizeCatalogFetchedAt(fetchedAt: unknown): string | undefined {
+  return typeof fetchedAt === 'string' && fetchedAt ? fetchedAt : undefined;
+}
+
 function cloneCatalog(catalog: SdkRuntimeModelCatalog): SdkRuntimeModelCatalog {
   return {
     currentModelId: catalog.currentModelId ?? null,
     models: [...catalog.models],
     ...(catalog.warning ? { warning: catalog.warning } : {}),
+    ...(catalog.source ? { source: catalog.source } : {}),
+    ...(catalog.fetchedAt ? { fetchedAt: catalog.fetchedAt } : {}),
   };
 }
 
@@ -89,6 +114,8 @@ function normalizeSdkRuntimeModelCatalog(catalog: SdkRuntimeModelCatalog): SdkRu
       ? catalog.models.filter((model): model is AgentModelPreset => Boolean(model?.id))
       : [],
     ...(catalog.warning ? { warning: catalog.warning } : {}),
+    ...(normalizeCatalogSource(catalog.source) ? { source: normalizeCatalogSource(catalog.source) } : {}),
+    ...(normalizeCatalogFetchedAt(catalog.fetchedAt) ? { fetchedAt: normalizeCatalogFetchedAt(catalog.fetchedAt) } : {}),
   };
 }
 

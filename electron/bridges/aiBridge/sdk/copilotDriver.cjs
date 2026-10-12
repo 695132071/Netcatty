@@ -26,6 +26,7 @@
  */
 const { mcpEnvPairsToObject } = require("./injectMcp.cjs");
 const { resolveCopilotExecutableForSdk } = require("../../ai/shellUtils.cjs");
+const { buildCopilotHeadlessWrapperPath } = require("./copilotHeadlessLoader.cjs");
 const { isRemovedChatSessionFlag } = require("../../../cli/cliChatSession.cjs");
 const {
   TOOL_CLI_CHAT_SESSION_ENV_VAR,
@@ -68,6 +69,19 @@ function buildCopilotClientOptions({ cliPath, gitHubToken }) {
   if (cliPath) options.cliPath = cliPath;
   if (gitHubToken) options.gitHubToken = gitHubToken;
   return options;
+}
+
+/**
+ * Resolve the CLI path handed to RuntimeConnection.forStdio. The headless
+ * wrapper (see copilotHeadlessLoader.cjs) spawns the same platform exe the
+ * npm loader would, with windowsHide:true, so no console window flashes when
+ * the SDK starts the runtime from Electron's console-less main process.
+ * When no wrapper can be generated, the resolved path passes through as
+ * before.
+ */
+function connectCopilotStdioPath(cliPath) {
+  const resolved = resolveCopilotExecutableForSdk(cliPath);
+  return buildCopilotHeadlessWrapperPath(resolved) ?? resolved;
 }
 
 function toCopilotMcpServers(injectedMcpServers) {
@@ -482,9 +496,10 @@ async function runCopilotTurn({
   if (clientOptions?.cliPath && RuntimeConnection?.forStdio) {
     // The SDK spawns `path` via node without shell:true; a Windows .cmd shim
     // would fail with spawn EINVAL (Node >= 18.20), so hand over the real JS
-    // entry instead.
+    // entry instead — wrapped in the generated headless wrapper so the CLI's
+    // console window stays hidden (copilotHeadlessLoader.cjs).
     realClientOptions.connection = RuntimeConnection.forStdio({
-      path: resolveCopilotExecutableForSdk(clientOptions.cliPath),
+      path: connectCopilotStdioPath(clientOptions.cliPath),
     });
   }
   if (clientOptions?.gitHubToken) realClientOptions.gitHubToken = clientOptions.gitHubToken;
@@ -619,9 +634,10 @@ async function listCopilotModels({ cliPath, sdkModule, abortController, signal }
   const { CopilotClient, RuntimeConnection } = sdk;
   const clientOptions = { useLoggedInUser: true };
   if (cliPath && RuntimeConnection?.forStdio) {
-    // Same EINVAL hazard as runCopilotTurn: resolve .cmd/.bat shims first.
+    // Same EINVAL hazard as runCopilotTurn: resolve .cmd/.bat shims first,
+    // then wrap for headless spawn (no console flash on Windows).
     clientOptions.connection = RuntimeConnection.forStdio({
-      path: resolveCopilotExecutableForSdk(cliPath),
+      path: connectCopilotStdioPath(cliPath),
     });
   }
   const client = new CopilotClient(clientOptions);
@@ -664,6 +680,7 @@ module.exports = {
   buildCopilotPermissionHandler,
   approveNetcattyMcpOnly,
   approveNetcattyCliShellOnly,
+  connectCopilotStdioPath,
   isLikelyNetcattyCliShellCommand,
   getLocalNetcattyCliPrefix,
   findExecPayloadSeparatorIndex,

@@ -89,6 +89,7 @@ import {
   shouldLoadSdkRuntimeModels,
   shouldUseStoredAgentModel,
   type SdkRuntimeModelCatalog,
+  type SdkRuntimeModelCatalogSource,
 } from './AIChatSidePanelHelpers';
 import { AIChatPanelContent } from './AIChatPanelContent';
 import { TERMINAL_SIDE_PANEL_INNER_HEADER_CLASS } from './terminalLayer/terminalSidePanelChrome';
@@ -326,6 +327,14 @@ const AIChatSidePanelActive: React.FC<AIChatSidePanelProps> = ({
   // while an OpenCode catalog is pending we must not flash the built-in
   // OPENCODE_MODEL_PRESETS for providers the user never configured (#3584).
   const [runtimeModelLoading, setRuntimeModelLoading] = useState<Record<string, { cacheKey: string }>>({});
+  // Provenance of the last applied SDK runtime catalog, per agent scope. The
+  // picker renders a uniform status chip from it; when no runtime catalog is
+  // active the composer falls back to build-time presets ('presets').
+  const [runtimeModelCatalogMeta, setRuntimeModelCatalogMeta] = useState<Record<string, {
+    cacheKey: string;
+    source: SdkRuntimeModelCatalogSource;
+    fetchedAt?: string;
+  }>>({});
   const [steerWarnings, setSteerWarnings] = useState<Record<string, SteerWarning>>({});
   const [steeringSessionId, setSteeringSessionId] = useState<string | null>(null);
   const [userSkillOptions, setUserSkillOptions] = useState<UserSkillOption[]>([]);
@@ -915,6 +924,16 @@ const AIChatSidePanelActive: React.FC<AIChatSidePanelProps> = ({
     const agent = externalAgentsRef.current.find((item) => item.id === target.agentId);
     if (buildExternalAgentRuntimeModelTarget(agent)?.cacheKey !== target.cacheKey) return;
     const agentId = target.agentId;
+    // Record the catalog provenance for the picker's status chip. An absent
+    // source (older main without the marker) displays as a live catalog.
+    setRuntimeModelCatalogMeta((prev) => ({
+      ...prev,
+      [agentId]: {
+        cacheKey: target.cacheKey,
+        source: catalog.source ?? 'live',
+        ...(catalog.fetchedAt ? { fetchedAt: catalog.fetchedAt } : {}),
+      },
+    }));
     const catalogPresets = mergeFallbackThinkingLevels(
       normalizeSdkRuntimeModelPresets(catalog.models, catalog.currentModelId),
       getAgentModelPresets(agent?.command, getExternalAgentSdkBackend(agent)),
@@ -1110,6 +1129,27 @@ const AIChatSidePanelActive: React.FC<AIChatSidePanelProps> = ({
     applySdkRuntimeModelCatalog,
     t,
   ]);
+
+  // Uniform status chip inputs: when a runtime catalog is active for the
+  // current agent its recorded provenance wins; otherwise the composer is
+  // showing build-time presets (the renderer-side preset fallback derives
+  // 'presets' here). While a load is pending the picker replaces the chip
+  // with the spinner row.
+  const modelCatalogSource = useMemo((): SdkRuntimeModelCatalogSource => {
+    const target = buildExternalAgentRuntimeModelTarget(currentAgentConfig);
+    const meta = runtimeModelCatalogMeta[currentAgentId];
+    if (meta && target && meta.cacheKey === target.cacheKey
+      && runtimeAgentModelPresets[currentAgentId]?.cacheKey === target.cacheKey) {
+      return meta.source;
+    }
+    return 'presets';
+  }, [currentAgentConfig, currentAgentId, runtimeModelCatalogMeta, runtimeAgentModelPresets, buildExternalAgentRuntimeModelTarget]);
+  const modelCatalogFetchedAt = useMemo((): string | undefined => {
+    const target = buildExternalAgentRuntimeModelTarget(currentAgentConfig);
+    const meta = runtimeModelCatalogMeta[currentAgentId];
+    if (meta && target && meta.cacheKey === target.cacheKey) return meta.fetchedAt;
+    return undefined;
+  }, [currentAgentConfig, currentAgentId, runtimeModelCatalogMeta, buildExternalAgentRuntimeModelTarget]);
 
   const isCodexAppServer = isCodexManagedAgent && currentAgentConfig?.codexRuntime === 'app-server';
   const canSteerCurrentTurn = Boolean(activeSessionId && isStreaming && isCodexAppServer);
@@ -1906,9 +1946,10 @@ const AIChatSidePanelActive: React.FC<AIChatSidePanelProps> = ({
           ? runtimeModelWarnings[currentAgentId].message
           : undefined}
         modelCatalogLoading={
-          getExternalAgentSdkBackend(currentAgentConfig) === 'opencode'
-          && runtimeModelLoading[currentAgentId]?.cacheKey === buildExternalAgentRuntimeModelTarget(currentAgentConfig)?.cacheKey
+          runtimeModelLoading[currentAgentId]?.cacheKey === buildExternalAgentRuntimeModelTarget(currentAgentConfig)?.cacheKey
         }
+        modelCatalogSource={modelCatalogSource}
+        modelCatalogFetchedAt={modelCatalogFetchedAt}
         handleModelCatalogRetry={handleRetrySdkModelCatalog}
         agentModelPresets={agentModelPresets}
         // A managed Codex config's `model` field overrides every selection on
