@@ -958,7 +958,7 @@ const AIChatSidePanelActive: React.FC<AIChatSidePanelProps> = ({
     if (
       options.adoptCurrentModel
       && catalog.currentModelId
-      && shouldAdoptSdkCurrentModel(catalog.currentModelId, storedModelId, runtimePresets)
+      && shouldAdoptSdkCurrentModel(catalog.currentModelId, storedModelId, runtimePresets, agent)
     ) {
       setAgentModel(agentId, catalog.currentModelId);
     }
@@ -1377,10 +1377,10 @@ const AIChatSidePanelActive: React.FC<AIChatSidePanelProps> = ({
             const storedModelId = agentModelMapRef.current[sendAgentId];
             if (
               catalog.currentModelId
-              && shouldAdoptSdkCurrentModel(catalog.currentModelId, storedModelId, runtimePresets)
+              && shouldAdoptSdkCurrentModel(catalog.currentModelId, storedModelId, runtimePresets, currentAgentConfig)
             ) {
               sendSelectedAgentModel = catalog.currentModelId;
-            } else if (shouldUseStoredAgentModel(storedModelId, runtimePresets)) {
+            } else if (shouldUseStoredAgentModel(storedModelId, runtimePresets, currentAgentConfig)) {
               sendSelectedAgentModel = normalizeStoredAgentModelSelection(
                 storedModelId,
                 runtimePresets,

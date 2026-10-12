@@ -298,6 +298,43 @@ test('shouldUseStoredAgentModel trusts SDK defaults when no runtime list is retu
   );
 });
 
+test('stored claude alias selections keep resolving against a full-id catalog', () => {
+  const claudeAgent: ExternalAgentConfig = {
+    id: 'managed_claude',
+    name: 'Claude Code',
+    command: 'claude',
+    enabled: true,
+    sdkBackend: 'claude',
+  };
+  const fullIdPresets: AgentModelPreset[] = [
+    { id: 'claude-sonnet-5-5', name: 'Sonnet 5.5' },
+    { id: 'claude-haiku-5-5', name: 'Haiku 5.5' },
+  ];
+
+  // Legacy persisted alias ids (pre-2026-10 preset refresh) still resolve for
+  // the claude backend, with or without an effort suffix.
+  assert.equal(shouldUseStoredAgentModel('sonnet', fullIdPresets, claudeAgent), true);
+  assert.equal(shouldUseStoredAgentModel('sonnet/high', fullIdPresets, claudeAgent), true);
+  // ...and are never silently replaced by the catalog's current model.
+  assert.equal(shouldAdoptSdkCurrentModel('claude-sonnet-5-5', 'sonnet', fullIdPresets, claudeAgent), false);
+  assert.equal(shouldAdoptSdkCurrentModel('claude-sonnet-5-5', 'sonnet/high', fullIdPresets, claudeAgent), false);
+
+  // Without agent context the previous behavior is unchanged.
+  assert.equal(shouldUseStoredAgentModel('sonnet', fullIdPresets), false);
+  assert.equal(shouldAdoptSdkCurrentModel('claude-sonnet-5-5', 'sonnet', fullIdPresets), true);
+
+  // Non-claude backends and non-alias stored ids are untouched.
+  const opencodeAgent: ExternalAgentConfig = {
+    id: 'managed_opencode',
+    name: 'OpenCode',
+    command: 'opencode',
+    enabled: true,
+    sdkBackend: 'opencode',
+  };
+  assert.equal(shouldUseStoredAgentModel('sonnet', fullIdPresets, opencodeAgent), false);
+  assert.equal(shouldAdoptSdkCurrentModel('claude-sonnet-5-5', 'gpt-5.5', fullIdPresets, claudeAgent), true);
+});
+
 test('SDK runtime model cache coalesces concurrent refreshes', async () => {
   const cache = createSdkRuntimeModelCache();
   let calls = 0;

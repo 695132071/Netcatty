@@ -278,12 +278,48 @@ export function shouldLoadSdkRuntimeModels(agent?: ExternalAgentConfig): boolean
     || sdkBackend === 'mimo';
 }
 
+// Alias ids the claude CLI itself still resolves: its alias table maps
+// opus/sonnet/haiku -> claude-*-5-5 and fable -> claude-fable-5-1. Preset
+// lists before the 2026-10 catalog refresh persisted `sonnet`/`haiku` as
+// preset ids, so a stored alias must keep resolving instead of being
+// silently replaced by the live catalog's full id.
+const CLAUDE_CLI_MODEL_ALIASES = new Set(['opus', 'sonnet', 'haiku', 'fable']);
+
+function isStillValidClaudeAlias(
+  storedModelId: string | null | undefined,
+  agent?: ExternalAgentConfig,
+): boolean {
+  if (!storedModelId) return false;
+  if (getExternalAgentSdkBackend(agent) !== 'claude') return false;
+  const baseId = canonicalizeEffortEncodedModelId(storedModelId).split('/')[0];
+  return CLAUDE_CLI_MODEL_ALIASES.has(baseId);
+}
+
+/**
+ * True when a stored selection still resolves even though it is absent from
+ * the given presets: either the presets list it under an effort-suffixed
+ * spelling, or it is a claude CLI alias the backend accepts verbatim.
+ */
+export function storedModelStillResolvesForAgent(
+  storedModelId: string | null | undefined,
+  presets: AgentModelPreset[],
+  agent?: ExternalAgentConfig,
+): boolean {
+  if (!storedModelId) return false;
+  return modelPresetsContainId(presets, storedModelId)
+    || isStillValidClaudeAlias(storedModelId, agent);
+}
+
 export function shouldAdoptSdkCurrentModel(
   currentModelId: string | null | undefined,
   storedModelId: string | null | undefined,
   runtimePresets: AgentModelPreset[],
+  agent?: ExternalAgentConfig,
 ): boolean {
   if (!currentModelId) return false;
+  // A stored claude alias the CLI still resolves is a user choice: never
+  // overwrite it with the catalog's current model.
+  if (isStillValidClaudeAlias(storedModelId, agent)) return false;
   return !storedModelId
     || runtimePresets.length === 0
     || !modelPresetsContainId(runtimePresets, storedModelId);
@@ -304,7 +340,7 @@ export function shouldUseStoredAgentModel(
   agent?: ExternalAgentConfig,
 ): boolean {
   if (!storedModelId) return false;
-  return modelPresetsContainId(presets, storedModelId)
+  return storedModelStillResolvesForAgent(storedModelId, presets, agent)
     || (presets.length === 0 && shouldLoadSdkRuntimeModels(agent));
 }
 
