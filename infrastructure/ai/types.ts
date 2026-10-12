@@ -613,6 +613,20 @@ export const CLAUDE_MODEL_PRESETS: AgentModelPreset[] = [
   { id: 'claude-opus-4-7', name: 'Opus 4.7' },
   { id: 'claude-opus-4-6', name: 'Opus 4.6' },
   { id: 'claude-sonnet-4-6', name: 'Sonnet 4.6' },
+  // Keep persisted pre-expansion selections valid. The installed CLI resolves
+  // these aliases, so their labels must not claim a particular generation.
+  {
+    id: 'sonnet',
+    name: 'Sonnet',
+    thinkingLevels: [...CLAUDE_REASONING_LEVELS],
+    defaultThinkingLevel: 'medium',
+  },
+  {
+    id: 'haiku',
+    name: 'Haiku',
+    thinkingLevels: [...CLAUDE_REASONING_LEVELS],
+    defaultThinkingLevel: 'low',
+  },
 ];
 
 // Curated codex model list (codex-sdk has no enumeration API). IDs/efforts
