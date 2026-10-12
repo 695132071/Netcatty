@@ -748,13 +748,13 @@ function getOpenCodeDefaultModelIds(response) {
   if (!value) return [];
   if (typeof value === "string") return [value];
   if (typeof value !== "object") return [];
-  if (typeof value.model === "string") return [value.model];
   if (typeof value.providerID === "string" && typeof value.modelID === "string") {
     return [`${value.providerID}/${value.modelID}`];
   }
   if (typeof value.provider === "string" && typeof value.model === "string") {
     return [`${value.provider}/${value.model}`];
   }
+  if (typeof value.model === "string") return [value.model];
   const ids = [];
   for (const [providerId, modelId] of Object.entries(value)) {
     if (typeof modelId === "string" && providerId && modelId) {
