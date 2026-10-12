@@ -132,6 +132,68 @@ test("parseGrokAcpModelCatalog exposes only each model's advertised reasoning ef
   });
 });
 
+// Regression fixture captured 2026-10-12 from a live `grok agent stdio`
+// initialize (grok 1.0.50): four models, per-model reasoningEfforts options
+// with a `default: true` entry, and currentModelId grok-4.7. The ACP path is
+// the registry's primary catalog source, so every availableModels entry must
+// survive the parse.
+test("parseGrokAcpModelCatalog captures every entry in the live initialize shape", () => {
+  const catalog = parseGrokAcpModelCatalog({
+    _meta: {
+      modelState: {
+        currentModelId: "grok-4.7",
+        availableModels: [
+          {
+            modelId: "grok-4.7",
+            name: "Grok 4.7",
+            description: "SpaceXAI's latest frontier model",
+            _meta: {
+              totalContextTokens: 256000,
+              agentType: "grok-build-plan",
+              supportsReasoningEffort: true,
+              reasoningEffort: "high",
+              reasoningEfforts: [
+                { id: "xhigh", value: "xhigh", label: "Extra High", default: false },
+                { id: "high", value: "high", label: "High", default: true },
+                { id: "medium", value: "medium", label: "Medium", default: false },
+                { id: "low", value: "low", label: "Low", default: false },
+              ],
+              contextWindows: [256000, 500000],
+            },
+          },
+          {
+            modelId: "grok-4.7-build-fast",
+            name: "Grok 4.7 Fast",
+            description: "Fast variant. 2x the price.",
+            _meta: {
+              totalContextTokens: 256000,
+              agentType: "grok-build-plan",
+              supportsReasoningEffort: true,
+              reasoningEffort: "high",
+              reasoningEfforts: [
+                { id: "xhigh", value: "xhigh", label: "Extra High", default: false },
+                { id: "high", value: "high", label: "High", default: true },
+                { id: "medium", value: "medium", label: "Medium", default: false },
+                { id: "low", value: "low", label: "Low", default: false },
+              ],
+            },
+          },
+          { modelId: "grok-4.6", name: "Grok 4.6", _meta: { supportsReasoningEffort: false } },
+          { modelId: "grok-4.5", name: "Grok 4.5", _meta: { supportsReasoningEffort: false } },
+        ],
+      },
+    },
+  });
+
+  assert.equal(catalog.currentModelId, "grok-4.7/high");
+  assert.deepEqual(
+    catalog.models.map((model) => model.id),
+    ["grok-4.7", "grok-4.7-build-fast", "grok-4.6", "grok-4.5"],
+  );
+  assert.deepEqual(catalog.models[0].thinkingLevels, ["xhigh", "high", "medium", "low"]);
+  assert.equal(catalog.models[0].defaultThinkingLevel, "high");
+});
+
 test("parseGrokAcpModelCatalog fills known legacy models without overriding explicit no-reasoning metadata", () => {
   const catalog = parseGrokAcpModelCatalog({
     _meta: {

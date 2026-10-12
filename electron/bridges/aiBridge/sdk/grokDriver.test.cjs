@@ -477,6 +477,54 @@ test("parseGrokModelsOutput reads default and bullet list", () => {
   ]);
 });
 
+// Ground truth captured 2026-10-12 from `grok --no-auto-update models`
+// (grok 1.0.50): non-default entries use "-" bullets, and the previous
+// "*"-only regex silently dropped them so the live catalog shrank to a
+// single model. Every bullet line must be extracted; the "(default)"
+// marker only appears on the "*" line.
+test("parseGrokModelsOutput captures dash-bullet entries (grok 1.0.50 fixture)", () => {
+  const parsed = parseGrokModelsOutput([
+    "You are logged in with grok.com.",
+    "",
+    "Default model: grok-4.7",
+    "",
+    "Available models:",
+    "  * grok-4.7 (default)",
+    "  - grok-4.7-build-fast",
+    "  - grok-4.6",
+    "  - grok-4.5",
+  ].join("\n"));
+  assert.equal(parsed.currentModelId, "grok-4.7");
+  assert.deepEqual(
+    parsed.models.map((model) => model.id),
+    ["grok-4.7", "grok-4.7-build-fast", "grok-4.6", "grok-4.5"],
+  );
+  // Default effort fallback still applies per model id.
+  assert.deepEqual(
+    parsed.models.map((model) => model.thinkingLevels),
+    [
+      ["xhigh", "high", "medium", "low"],
+      ["xhigh", "high", "medium", "low"],
+      ["xhigh", "high", "medium", "low"],
+      ["high", "medium", "low"],
+    ],
+  );
+});
+
+test("parseGrokModelsOutput ignores separator dashes and keeps default detection", () => {
+  const parsed = parseGrokModelsOutput([
+    "Available models:",
+    "-----",
+    "  - grok-4.6",
+    "  * grok-4.7 (default)",
+  ].join("\n"));
+  assert.equal(parsed.currentModelId, "grok-4.7");
+  assert.deepEqual(
+    parsed.models.map((model) => model.id),
+    ["grok-4.6", "grok-4.7"],
+  );
+});
+
 test("runGrokTurn streams fixture lines and emits done", async () => {
   const emitter = makeEmitter();
   const child = new EventEmitter();

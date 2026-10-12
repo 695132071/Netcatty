@@ -936,8 +936,10 @@ function parseGrokModelsOutput(stdout) {
       continue;
     }
 
-    // "* grok-4.5 (default)" or "  * model-id"
-    const bullet = trimmed.match(/^\*+\s*([a-zA-Z0-9][a-zA-Z0-9._-]*)\s*(.*)$/);
+    // "  * grok-4.7 (default)" — the CLI marks the default with "*"; other
+    // entries use "-" (grok 1.0.50: "* grok-4.7 (default)", "- grok-4.6").
+    // Accept any bullet marker so live catalogs never silently shrink.
+    const bullet = trimmed.match(/^[*•‣-]+\s*([a-zA-Z0-9][a-zA-Z0-9._-]*)\s*(.*)$/);
     if (!bullet) continue;
     const id = bullet[1];
     if (seen.has(id)) continue;
