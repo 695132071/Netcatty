@@ -1006,8 +1006,9 @@ const ChatInput: React.FC<ChatInputProps> = ({
     ? providerSwitcherChipLabel
     : (selectedPreset?.name || modelName || providerName || t('ai.chat.noModel'));
   const modelChipMaxWidth = hasProviderSwitcher ? 'max-w-[168px]' : 'max-w-[96px]';
-  // Keep the picker open-able while an OpenCode catalog load is pending so
-  // the user sees the loading row instead of stale built-in presets (#3584).
+  // Keep the picker open-able while an SDK catalog load is pending: the host
+  // now shows build-time presets during loading, with the loading row when
+  // presets are still empty (#3584).
   const hasModelPicker = hasProviderSwitcher
     || ((modelPresets.length > 0 || modelCatalogLoading) && !!onModelSelect);
   const thinkingLevels = useMemo(

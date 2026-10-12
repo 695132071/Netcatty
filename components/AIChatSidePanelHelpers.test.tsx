@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 
 import {
   appendRetainedStoredModelPreset,
@@ -599,4 +600,17 @@ test('SDK runtime model cache preserves degraded warnings until a successful ret
     models: [{ id: 'auto', name: 'Auto' }],
   }), { force: true });
   assert.equal(cache.read('copilot')?.warning, undefined);
+});
+
+// #3584 alignment: OpenCode must render build-time presets while its live
+// catalog load is pending, exactly like every other backend. The old host
+// code suppressed presets for opencode while `runtimeModelLoading` was set,
+// leaving the picker empty until the pull resolved. Guard against it coming
+// back: the preset fallback in the panel must not gate on opencode loading.
+test('host preset fallback does not suppress presets for a loading opencode catalog', () => {
+  const source = readFileSync(new URL('./AIChatSidePanel.tsx', import.meta.url), 'utf8');
+  assert.doesNotMatch(source, /getExternalAgentSdkBackend\(currentAgentConfig\) === 'opencode'[\s\S]*?runtimeModelLoading/);
+  // Build-time presets remain the fallback whenever no runtime catalog is
+  // active for the agent (loading included).
+  assert.match(source, /const presets = getAgentModelPresets\(/);
 });

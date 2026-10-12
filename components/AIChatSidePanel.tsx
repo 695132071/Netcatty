@@ -323,9 +323,9 @@ const AIChatSidePanelActive: React.FC<AIChatSidePanelProps> = ({
   const [isSending, setIsSending] = useState(false);
   const [runtimeAgentModelPresets, setRuntimeAgentModelPresets] = useState<Record<string, { cacheKey: string; models: AgentModelPreset[] }>>({});
   const [runtimeModelWarnings, setRuntimeModelWarnings] = useState<Record<string, { cacheKey: string; message: string }>>({});
-  // Tracks SDK runtime model catalogs currently loading (per agent scope):
-  // while an OpenCode catalog is pending we must not flash the built-in
-  // OPENCODE_MODEL_PRESETS for providers the user never configured (#3584).
+  // Tracks SDK runtime model catalogs currently loading (per agent scope);
+  // the composer shows the loading row alongside the build-time presets and
+  // the live catalog replaces them when it arrives.
   const [runtimeModelLoading, setRuntimeModelLoading] = useState<Record<string, { cacheKey: string }>>({});
   // Provenance of the last applied SDK runtime catalog, per agent scope. The
   // picker renders a uniform status chip from it; when no runtime catalog is
@@ -1088,10 +1088,10 @@ const AIChatSidePanelActive: React.FC<AIChatSidePanelProps> = ({
     };
     let cancelled = false;
     let idleFired = false;
-    // Mark the catalog pending as soon as the refresh is scheduled: otherwise
-    // `runtimeModelLoading` stays false for the whole idle delay (and longer
-    // while the composer stays focused), so the built-in OPENCODE_MODEL_PRESETS
-    // remain selectable the entire time (#3584). Only do this on a cache miss:
+    // Mark the catalog pending as soon as the refresh is scheduled so the
+    // composer can show its loading affordance for the whole idle delay (and
+    // longer while the composer stays focused) instead of silently keeping
+    // only the build-time presets (#3584). Only do this on a cache miss:
     // when a cached catalog was already applied above, the runtime presets are
     // available, so a pending flag would keep the composer banner/picker in the
     // "loading" state indefinitely while the idle callback is deferred.
@@ -1176,22 +1176,6 @@ const AIChatSidePanelActive: React.FC<AIChatSidePanelProps> = ({
         collectCustomModelIds(currentAgentId, runtimePresets),
       );
     }
-    // While an OpenCode catalog load is pending, do not flash the built-in
-    // OPENCODE_MODEL_PRESETS: they enumerate well-known gateway providers the
-    // user may never have configured, so for a few seconds every switch looks
-    // like a broken default model (#3584). Show only the user's own custom
-    // model ids until the live catalog resolves (or a retryable warning
-    // appears in the composer banner).
-    if (
-      target
-      && getExternalAgentSdkBackend(currentAgentConfig) === 'opencode'
-      && runtimeModelLoading[currentAgentId]?.cacheKey === target.cacheKey
-    ) {
-      return appendComposerCustomModelPresets(
-        [],
-        collectCustomModelIds(currentAgentId, []),
-      );
-    }
     const presets = getAgentModelPresets(
       currentAgentConfig?.command,
       getExternalAgentSdkBackend(currentAgentConfig),
@@ -1213,7 +1197,6 @@ const AIChatSidePanelActive: React.FC<AIChatSidePanelProps> = ({
     currentAgentConfig,
     currentAgentId,
     runtimeAgentModelPresets,
-    runtimeModelLoading,
     buildExternalAgentRuntimeModelTarget,
     hasCodexCustomConfig,
     codexConfigModel,

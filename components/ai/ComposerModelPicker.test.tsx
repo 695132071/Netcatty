@@ -123,6 +123,7 @@ test('external agent picker shows the loading row while the live catalog is pend
   );
 
   assert.match(html, /ai\.chat\.loadingModels/);
-  // The host no longer renders built-in presets while loading (#3584).
+  // With no presets the picker renders only the loading row; the host now
+  // keeps built-in presets visible during loading and passes them through.
   assert.doesNotMatch(html, /gpt-5\.1/);
 });
