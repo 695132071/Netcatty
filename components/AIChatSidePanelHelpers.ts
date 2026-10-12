@@ -380,11 +380,14 @@ export function appendRetainedStoredModelPreset(
     && !isCopilotAutoOnlyFallback(presets, agent)) {
     return presets;
   }
-  const baseId = canonicalizeEffortEncodedModelId(storedModelId).split('/')[0];
+  const canonical = canonicalizeEffortEncodedModelId(storedModelId);
+  const baseId = canonical.split('/')[0];
   if (presets.some((preset) => preset.id === baseId)) return presets;
   const fallback = getAgentModelPresets(agent?.command, getExternalAgentSdkBackend(agent))
     .find((preset) => preset.id === baseId);
-  return [...presets, fallback ?? { id: baseId, name: baseId }];
+  // Keep the exact stored id (including any effort suffix) so the appended
+  // row still matches the selection the send preflight passes.
+  return [...presets, fallback ?? { id: canonical, name: canonical }];
 }
 
 export function generateId(): string {

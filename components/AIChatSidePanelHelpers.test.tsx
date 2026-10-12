@@ -402,6 +402,16 @@ test('appendRetainedStoredModelPreset makes preserved saved models visible', () 
   );
   assert.deepEqual(withCopilot[1], { id: 'claude-sonnet-4.5', name: 'claude-sonnet-4.5' });
 
+  // An effort-suffixed saved id keeps its full spelling so the appended row
+  // matches the selection the send preflight passes.
+  const withCopilotSuffix = appendRetainedStoredModelPreset(
+    [{ id: 'auto', name: 'Auto' }],
+    'claude-sonnet-4.5/high',
+    copilotAgent,
+  );
+  assert.deepEqual(withCopilotSuffix[1], { id: 'claude-sonnet-4.5/high', name: 'claude-sonnet-4.5/high' });
+  assert.equal(modelPresetsContainId(withCopilotSuffix, 'claude-sonnet-4.5/high'), true);
+
   // Listed or non-retained selections are untouched.
   assert.equal(appendRetainedStoredModelPreset(fullIdPresets, 'claude-sonnet-5-5', claudeAgent), fullIdPresets);
   assert.equal(appendRetainedStoredModelPreset(fullIdPresets, 'gpt-5.5', claudeAgent), fullIdPresets);
