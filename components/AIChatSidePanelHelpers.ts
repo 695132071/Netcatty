@@ -78,6 +78,7 @@ function cloneCatalog(catalog: SdkRuntimeModelCatalog): SdkRuntimeModelCatalog {
   return {
     currentModelId: catalog.currentModelId ?? null,
     models: [...catalog.models],
+    ...(catalog.warning ? { warning: catalog.warning } : {}),
   };
 }
 
@@ -87,6 +88,7 @@ function normalizeSdkRuntimeModelCatalog(catalog: SdkRuntimeModelCatalog): SdkRu
     models: Array.isArray(catalog.models)
       ? catalog.models.filter((model): model is AgentModelPreset => Boolean(model?.id))
       : [],
+    ...(catalog.warning ? { warning: catalog.warning } : {}),
   };
 }
 

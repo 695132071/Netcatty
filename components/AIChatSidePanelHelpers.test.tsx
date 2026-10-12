@@ -550,3 +550,23 @@ test('SDK runtime model cache stays bounded under agent configuration churn', as
   assert.equal(cache.read('agent:0'), null);
   assert.equal(cache.read('agent:19')?.currentModelId, 'model-19');
 });
+
+test('SDK runtime model cache preserves degraded warnings until a successful retry', async () => {
+  const cache = createSdkRuntimeModelCache();
+  const degraded = {
+    currentModelId: 'auto',
+    models: [{ id: 'auto', name: 'Auto' }],
+    warning: 'Live discovery failed; serving last-known-good models',
+  };
+  assert.equal((await cache.refresh('copilot', async () => degraded)).warning, degraded.warning);
+  assert.equal(cache.read('copilot')?.warning, degraded.warning);
+  assert.equal((await cache.refresh('copilot', async () => {
+    assert.fail('A second panel should use the cached catalog within the TTL');
+  })).warning, degraded.warning);
+
+  await cache.refresh('copilot', async () => ({
+    currentModelId: 'auto',
+    models: [{ id: 'auto', name: 'Auto' }],
+  }), { force: true });
+  assert.equal(cache.read('copilot')?.warning, undefined);
+});
