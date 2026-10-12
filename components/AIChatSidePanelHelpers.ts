@@ -1,4 +1,5 @@
 import {
+  getAgentModelPresets,
   resolveAgentModelSelection,
   type AgentModelPreset,
   type ExternalAgentConfig,
@@ -21,6 +22,10 @@ export {
 export type SdkRuntimeModelCatalog = {
   currentModelId: string | null;
   models: AgentModelPreset[];
+  // Degraded loads (e.g. last-known-good serve) carry their warning so a
+  // cached hit in another panel or after a remount still shows the retry
+  // banner instead of presenting stale models as live.
+  warning?: string | null;
 };
 
 export type SdkRuntimeModelCacheEntry = SdkRuntimeModelCatalog & {
@@ -355,6 +360,29 @@ export function shouldUseStoredAgentModel(
   return storedModelStillResolvesForAgent(storedModelId, presets, agent)
     || (presets.length === 0 && shouldLoadSdkRuntimeModels(agent))
     || isCopilotAutoOnlyFallback(presets, agent);
+}
+
+/**
+ * A stored selection preserved through the claude-alias or copilot auto-only
+ * degraded fallback has no preset row of its own; append one (reusing the
+ * build-time preset when it defines the id) so the picker can render and
+ * check the selection while the send preflight passes the same value.
+ */
+export function appendRetainedStoredModelPreset(
+  presets: AgentModelPreset[],
+  storedModelId: string | null | undefined,
+  agent?: ExternalAgentConfig,
+): AgentModelPreset[] {
+  if (!storedModelId || modelPresetsContainId(presets, storedModelId)) return presets;
+  if (!isStillValidClaudeAlias(storedModelId, agent)
+    && !isCopilotAutoOnlyFallback(presets, agent)) {
+    return presets;
+  }
+  const baseId = canonicalizeEffortEncodedModelId(storedModelId).split('/')[0];
+  if (presets.some((preset) => preset.id === baseId)) return presets;
+  const fallback = getAgentModelPresets(agent?.command, getExternalAgentSdkBackend(agent))
+    .find((preset) => preset.id === baseId);
+  return [...presets, fallback ?? { id: baseId, name: baseId }];
 }
 
 export function generateId(): string {

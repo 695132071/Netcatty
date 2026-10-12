@@ -85,6 +85,7 @@ import {
   normalizeStoredAgentModelSelection,
   normalizeSdkRuntimeModelPresets,
   shouldAdoptSdkCurrentModel,
+  appendRetainedStoredModelPreset,
   shouldLoadSdkRuntimeModels,
   shouldUseStoredAgentModel,
   type SdkRuntimeModelCatalog,
@@ -918,11 +919,14 @@ const AIChatSidePanelActive: React.FC<AIChatSidePanelProps> = ({
       normalizeSdkRuntimeModelPresets(catalog.models, catalog.currentModelId),
       getAgentModelPresets(agent?.command, getExternalAgentSdkBackend(agent)),
     );
-    const runtimePresets = appendComposerCustomModelPresets(
-      catalogPresets,
-      collectCustomModelIds(agentId, catalogPresets),
+    const runtimePresets = appendRetainedStoredModelPreset(
+      appendComposerCustomModelPresets(
+        catalogPresets,
+        collectCustomModelIds(agentId, catalogPresets),
+      ),
+      agentModelMapRef.current[agentId],
+      agent,
     );
-    const storedModelId = agentModelMapRef.current[agentId];
     if (runtimePresets.length === 0) {
       setRuntimeAgentModelPresets((prev) => {
         if (!(agentId in prev)) return prev;
@@ -947,10 +951,10 @@ const AIChatSidePanelActive: React.FC<AIChatSidePanelProps> = ({
     });
 
     const normalizedStoredModelId = normalizeStoredAgentModelSelection(
-      storedModelId,
+      agentModelMapRef.current[agentId],
       runtimePresets,
     );
-    if (normalizedStoredModelId && normalizedStoredModelId !== storedModelId) {
+    if (normalizedStoredModelId && normalizedStoredModelId !== agentModelMapRef.current[agentId]) {
       setAgentModel(agentId, normalizedStoredModelId);
       return;
     }
@@ -958,7 +962,7 @@ const AIChatSidePanelActive: React.FC<AIChatSidePanelProps> = ({
     if (
       options.adoptCurrentModel
       && catalog.currentModelId
-      && shouldAdoptSdkCurrentModel(catalog.currentModelId, storedModelId, runtimePresets, agent)
+      && shouldAdoptSdkCurrentModel(catalog.currentModelId, agentModelMapRef.current[agentId], runtimePresets, agent)
     ) {
       setAgentModel(agentId, catalog.currentModelId);
     }
@@ -1004,6 +1008,7 @@ const AIChatSidePanelActive: React.FC<AIChatSidePanelProps> = ({
         return {
           currentModelId: result.currentModelId ?? null,
           models: result.models,
+          warning: result.warning ?? null,
         };
       },
       { force: options.force },
@@ -1034,6 +1039,20 @@ const AIChatSidePanelActive: React.FC<AIChatSidePanelProps> = ({
     const cached = sdkRuntimeModelCache.read(target.cacheKey);
     if (cached) {
       applySdkRuntimeModelCatalog(target, cached);
+      // The cache stores warned (last-known-good) responses too: sync the
+      // banner so another panel or a remount within the TTL does not present
+      // degraded models as live.
+      setRuntimeModelWarnings((current) => {
+        const existing = current[target.agentId];
+        if (cached.warning) {
+          return existing?.cacheKey === target.cacheKey
+            ? current
+            : { ...current, [target.agentId]: { cacheKey: target.cacheKey, message: t('ai.chat.modelCatalogWarning') } };
+        }
+        if (existing?.cacheKey !== target.cacheKey) return current;
+        const { [target.agentId]: _removed, ...rest } = current;
+        return rest;
+      });
     }
 
     // Respect renderer TTL / in-flight coalescing for all SDK agents including
@@ -1089,6 +1108,7 @@ const AIChatSidePanelActive: React.FC<AIChatSidePanelProps> = ({
     buildExternalAgentRuntimeModelTarget,
     loadSdkRuntimeModelCatalog,
     applySdkRuntimeModelCatalog,
+    t,
   ]);
 
   const isCodexAppServer = isCodexManagedAgent && currentAgentConfig?.codexRuntime === 'app-server';
@@ -1141,9 +1161,13 @@ const AIChatSidePanelActive: React.FC<AIChatSidePanelProps> = ({
     const filteredPresets = filterAgentModelPresetsForCliVersion(presets, cliVersion);
     // Manual model ids typed in the composer (#3534) stay selectable even when
     // the CLI catalog does not list them yet.
-    return appendComposerCustomModelPresets(
-      filteredPresets,
-      collectCustomModelIds(currentAgentId, filteredPresets),
+    return appendRetainedStoredModelPreset(
+      appendComposerCustomModelPresets(
+        filteredPresets,
+        collectCustomModelIds(currentAgentId, filteredPresets),
+      ),
+      agentModelMapRef.current[currentAgentId],
+      currentAgentConfig,
     );
   }, [
     currentAgentConfig,
@@ -1370,9 +1394,13 @@ const AIChatSidePanelActive: React.FC<AIChatSidePanelProps> = ({
                 getExternalAgentSdkBackend(currentAgentConfig),
               ),
             );
-            const runtimePresets = appendComposerCustomModelPresets(
-              catalogPresets,
-              collectCustomModelIds(sendAgentId, catalogPresets),
+            const runtimePresets = appendRetainedStoredModelPreset(
+              appendComposerCustomModelPresets(
+                catalogPresets,
+                collectCustomModelIds(sendAgentId, catalogPresets),
+              ),
+              agentModelMapRef.current[sendAgentId],
+              currentAgentConfig,
             );
             const storedModelId = agentModelMapRef.current[sendAgentId];
             if (

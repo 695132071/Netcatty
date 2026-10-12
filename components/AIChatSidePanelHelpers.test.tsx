@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
+  appendRetainedStoredModelPreset,
   buildCursorListModelsAgentEnv,
   buildSdkRuntimeModelCacheKey,
   canonicalizeEffortEncodedModelId,
@@ -366,6 +367,45 @@ test('a saved Copilot model survives the auto-only degraded fallback', () => {
     ], copilotAgent),
     false,
   );
+});
+
+test('appendRetainedStoredModelPreset makes preserved saved models visible', () => {
+  const claudeAgent: ExternalAgentConfig = {
+    id: 'managed_claude',
+    name: 'Claude Code',
+    command: 'claude',
+    enabled: true,
+    sdkBackend: 'claude',
+  };
+  const fullIdPresets: AgentModelPreset[] = [{ id: 'claude-sonnet-5-5', name: 'Sonnet 5.5' }];
+
+  // A stored claude alias absent from a full-id catalog gains a preset row
+  // (reusing the build-time preset so thinking levels come along).
+  const withAlias = appendRetainedStoredModelPreset(fullIdPresets, 'sonnet/high', claudeAgent);
+  assert.equal(withAlias.length, 2);
+  assert.equal(withAlias[1].id, 'sonnet');
+  assert.equal(modelPresetsContainId(withAlias, 'sonnet/high'), true);
+
+  // The copilot auto-only degraded fallback keeps a saved explicit model
+  // selectable as its own row.
+  const copilotAgent: ExternalAgentConfig = {
+    id: 'managed_copilot',
+    name: 'GitHub Copilot',
+    command: 'copilot',
+    enabled: true,
+    sdkBackend: 'copilot',
+  };
+  const withCopilot = appendRetainedStoredModelPreset(
+    [{ id: 'auto', name: 'Auto' }],
+    'claude-sonnet-4.5',
+    copilotAgent,
+  );
+  assert.deepEqual(withCopilot[1], { id: 'claude-sonnet-4.5', name: 'claude-sonnet-4.5' });
+
+  // Listed or non-retained selections are untouched.
+  assert.equal(appendRetainedStoredModelPreset(fullIdPresets, 'claude-sonnet-5-5', claudeAgent), fullIdPresets);
+  assert.equal(appendRetainedStoredModelPreset(fullIdPresets, 'gpt-5.5', claudeAgent), fullIdPresets);
+  assert.equal(appendRetainedStoredModelPreset(fullIdPresets, undefined, claudeAgent), fullIdPresets);
 });
 
 test('SDK runtime model cache coalesces concurrent refreshes', async () => {
