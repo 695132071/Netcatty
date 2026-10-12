@@ -513,3 +513,39 @@ test("listCopilotModels passes a real .js entry and a native .exe through to the
     assert.equal(captured.forStdio.path, cliPath, cliPath);
   }
 });
+
+for (const outcome of ['success', 'reject', 'throw', 'hang']) {
+  test(`listCopilotModels cleans up shutdown after ${outcome}`, async (t) => {
+    t.mock.timers.enable({ apis: ['setTimeout'] });
+    const clearTimer = t.mock.method(global, 'clearTimeout');
+    let forced = 0;
+    let rejectStop;
+    const sdkModule = {
+      CopilotClient: class {
+        async start() {}
+        async listModels() { return [{ id: 'auto', name: 'Auto' }]; }
+        stop() {
+          if (outcome === 'throw') throw new Error('stop failed');
+          if (outcome === 'reject') return Promise.reject(new Error('stop failed'));
+          if (outcome === 'hang') return new Promise((_, reject) => { rejectStop = reject; });
+          return Promise.resolve();
+        }
+        async forceStop() { forced++; }
+      },
+    };
+    assert.deepEqual(await listCopilotModels({ sdkModule }), [{ id: 'auto', name: 'Auto' }]);
+    await new Promise(setImmediate);
+    if (outcome === 'hang') {
+      assert.equal(forced, 0);
+      t.mock.timers.tick(3000);
+      await new Promise(setImmediate);
+      rejectStop(new Error('late stop rejection'));
+      await new Promise(setImmediate);
+    }
+    assert.equal(forced, outcome === 'success' ? 0 : 1);
+    if (outcome !== 'throw') assert.equal(clearTimer.mock.callCount(), 1);
+    t.mock.timers.tick(3000);
+    await new Promise(setImmediate);
+    assert.equal(forced, outcome === 'success' ? 0 : 1);
+  });
+}

@@ -41,18 +41,21 @@ const {
  * CLI process, but the 1.0.59-era native CLI can hang during that handshake,
  * leaving its conhost child alive after an app-side timeout/abort (the
  * "console window stays open" amplifier). Race a short grace period and fall
- * back to forceStop() when graceful stop does not settle.
+ * back to forceStop() when graceful stop fails or exceeds the grace period.
  */
 async function stopCopilotClient(client, graceMs = 3000) {
   if (!client || typeof client.stop !== "function") return;
-  let settled = false;
+  let stopped = false;
+  let timer;
   try {
     await Promise.race([
-      Promise.resolve(client.stop()).catch(() => {}).then(() => { settled = true; }),
-      new Promise((resolve) => setTimeout(resolve, graceMs)),
+      Promise.resolve(client.stop()).then(() => { stopped = true; }),
+      new Promise((resolve) => { timer = setTimeout(resolve, graceMs); }),
     ]);
-  } catch { /* best effort */ }
-  if (!settled && typeof client.forceStop === "function") {
+  } catch { /* best effort */ } finally {
+    clearTimeout(timer);
+  }
+  if (!stopped && typeof client.forceStop === "function") {
     try { await client.forceStop(); } catch { /* best effort */ }
   }
 }
