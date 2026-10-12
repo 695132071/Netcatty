@@ -335,6 +335,39 @@ test('stored claude alias selections keep resolving against a full-id catalog', 
   assert.equal(shouldAdoptSdkCurrentModel('claude-sonnet-5-5', 'gpt-5.5', fullIdPresets, claudeAgent), true);
 });
 
+test('a saved Copilot model survives the auto-only degraded fallback', () => {
+  const copilotAgent: ExternalAgentConfig = {
+    id: 'managed_copilot',
+    name: 'GitHub Copilot',
+    command: 'copilot',
+    enabled: true,
+    sdkBackend: 'copilot',
+  };
+  const autoOnlyFallback: AgentModelPreset[] = [{ id: 'auto', name: 'Auto' }];
+
+  // Live discovery failed (no last-known store yet): the saved explicit model
+  // must keep resolving instead of silently switching to `auto`.
+  assert.equal(shouldUseStoredAgentModel('claude-sonnet-4.5', autoOnlyFallback, copilotAgent), true);
+  assert.equal(shouldUseStoredAgentModel('claude-sonnet-4.5/high', autoOnlyFallback, copilotAgent), true);
+  // Other backends with the same shape are unaffected.
+  const opencodeAgent: ExternalAgentConfig = {
+    id: 'managed_opencode',
+    name: 'OpenCode',
+    command: 'opencode',
+    enabled: true,
+    sdkBackend: 'opencode',
+  };
+  assert.equal(shouldUseStoredAgentModel('claude-sonnet-4.5', autoOnlyFallback, opencodeAgent), false);
+  // A real Copilot catalog (multiple entries) does not trigger the fallback.
+  assert.equal(
+    shouldUseStoredAgentModel('claude-sonnet-4.5', [
+      { id: 'auto', name: 'Auto' },
+      { id: 'gpt-5', name: 'GPT-5' },
+    ], copilotAgent),
+    false,
+  );
+});
+
 test('SDK runtime model cache coalesces concurrent refreshes', async () => {
   const cache = createSdkRuntimeModelCache();
   let calls = 0;

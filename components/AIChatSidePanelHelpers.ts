@@ -295,6 +295,18 @@ function isStillValidClaudeAlias(
   return CLAUDE_CLI_MODEL_ALIASES.has(baseId);
 }
 
+// Copilot's build-time fallback is a single `auto` entry. When live discovery
+// fails before any last-known-good store exists, that lone entry must not
+// invalidate a saved explicit model selection: the id was real when picked.
+function isCopilotAutoOnlyFallback(
+  presets: AgentModelPreset[],
+  agent?: ExternalAgentConfig,
+): boolean {
+  return getExternalAgentSdkBackend(agent) === 'copilot'
+    && presets.length === 1
+    && presets[0]?.id === 'auto';
+}
+
 /**
  * True when a stored selection still resolves even though it is absent from
  * the given presets: either the presets list it under an effort-suffixed
@@ -341,7 +353,8 @@ export function shouldUseStoredAgentModel(
 ): boolean {
   if (!storedModelId) return false;
   return storedModelStillResolvesForAgent(storedModelId, presets, agent)
-    || (presets.length === 0 && shouldLoadSdkRuntimeModels(agent));
+    || (presets.length === 0 && shouldLoadSdkRuntimeModels(agent))
+    || isCopilotAutoOnlyFallback(presets, agent);
 }
 
 export function generateId(): string {
