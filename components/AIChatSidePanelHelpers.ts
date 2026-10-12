@@ -302,16 +302,20 @@ function isStillValidClaudeAlias(
   return CLAUDE_CLI_MODEL_ALIASES.has(baseId);
 }
 
-// Copilot's build-time fallback is a single `auto` entry. When live discovery
-// fails before any last-known-good store exists, that lone entry must not
-// invalidate a saved explicit model selection: the id was real when picked.
+// Copilot's build-time fallback is a single `auto` entry, and the picker list
+// mixes renderer-appended rows into it: composer custom ids and retained
+// stored selections, both minimal `{id, name: id}` shapes. Detect the
+// degraded fallback by the auto row among those appended rows instead of
+// exact list equality; a real live catalog carries at least one row whose
+// display name differs from its id (e.g. {id: 'gpt-5', name: 'GPT-5'}).
 function isCopilotAutoOnlyFallback(
   presets: AgentModelPreset[],
   agent?: ExternalAgentConfig,
 ): boolean {
-  return getExternalAgentSdkBackend(agent) === 'copilot'
-    && presets.length === 1
-    && presets[0]?.id === 'auto';
+  if (getExternalAgentSdkBackend(agent) !== 'copilot') return false;
+  if (!presets.some((preset) => preset?.id === 'auto')) return false;
+  return presets.every((preset) => preset?.id === 'auto'
+    || (preset != null && preset.name === preset.id));
 }
 
 /**

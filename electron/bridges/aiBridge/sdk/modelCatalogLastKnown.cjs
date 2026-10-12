@@ -46,6 +46,29 @@ function readLastKnownCatalogEntry(filePath, cacheKey) {
 }
 
 /**
+ * Refresh the persisted current id for one cache key without replacing the
+ * persisted models list. Current-only catalogs (models: [] with a valid
+ * currentModelId) still carry the user's selection, but a models-less entry
+ * is unservable, so with no persisted entry there is nothing to admit.
+ * fetchedAt keeps its original meaning (when the models were fetched).
+ * Returns true when the persisted entry was updated.
+ */
+function refreshLastKnownCatalogCurrentId(filePath, cacheKey, currentModelId) {
+  if (!filePath || !cacheKey || !currentModelId) return false;
+  try {
+    const entries = readLastKnownCatalogStore(filePath);
+    const entry = entries[cacheKey];
+    if (!entry || !Array.isArray(entry.models) || entry.models.length === 0) return false;
+    if (entry.currentModelId === currentModelId) return false;
+    entries[cacheKey] = { ...entry, currentModelId };
+    writeFileSync(filePath, `${JSON.stringify({ version: LAST_KNOWN_STORE_VERSION, entries }, null, 2)}\n`);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Persist one successful catalog. Keys are the same \0-joined
  * backend+binPath+runtime+envHash strings the in-memory TTL cache uses, so a
  * different CLI path or agent environment never clobbers another entry.
@@ -100,5 +123,6 @@ module.exports = {
   buildLastKnownCatalogPath,
   readLastKnownCatalogEntry,
   readLastKnownCatalogStore,
+  refreshLastKnownCatalogCurrentId,
   writeLastKnownCatalogEntry,
 };

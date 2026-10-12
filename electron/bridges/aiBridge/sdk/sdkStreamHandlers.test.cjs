@@ -112,6 +112,17 @@ test("MiMo model catalog cache changes with its config roots", () => {
   assert.notEqual(base, buildSdkModelCacheKey("mimo", "/usr/bin/mimo", { MIMOCODE_HOME: "/one", MIMOCODE_CONFIG: "/another/config.json" }));
 });
 
+test("CodeBuddy model catalog cache changes with its auth and network env", () => {
+  // Two profiles sharing the binary but not credentials must not share one
+  // cache key: that served user A's catalog (and current id) to user B.
+  const base = buildSdkModelCacheKey("codebuddy", "/usr/bin/codebuddy", { CODEBUDDY_API_KEY: "key-a" });
+  assert.notEqual(base, buildSdkModelCacheKey("codebuddy", "/usr/bin/codebuddy", { CODEBUDDY_API_KEY: "key-b" }));
+  assert.notEqual(base, buildSdkModelCacheKey("codebuddy", "/usr/bin/codebuddy", { CODEBUDDY_API_KEY: "key-a", CODEBUDDY_AUTH_TOKEN: "tok-b" }));
+  assert.notEqual(base, buildSdkModelCacheKey("codebuddy", "/usr/bin/codebuddy", { CODEBUDDY_API_KEY: "key-a", CODEBUDDY_INTERNET_ENVIRONMENT: "ioa" }));
+  // Same env fingerprint still yields the same key (no false isolation).
+  assert.equal(base, buildSdkModelCacheKey("codebuddy", "/usr/bin/codebuddy", { CODEBUDDY_API_KEY: "key-a" }));
+});
+
 test("Cursor session keys isolate CLI login from API key auth modes", () => {
   assert.notEqual(
     buildSdkSessionKey("chat-1", "cursor", "/usr/bin/agent", "sdk", "cli-login"),
@@ -1084,6 +1095,7 @@ const {
   buildLastKnownCatalogPath,
   readLastKnownCatalogEntry,
   readLastKnownCatalogStore,
+  refreshLastKnownCatalogCurrentId,
   writeLastKnownCatalogEntry,
 } = require("./modelCatalogLastKnown.cjs");
 
@@ -1216,6 +1228,37 @@ test("modelCatalogLastKnown degrades gracefully on corrupt stores", () => {
   }
 });
 
+test("modelCatalogLastKnown refreshes the current id without clobbering the models list", () => {
+  const dir = fs.mkdtempSync(nodePath.join(os.tmpdir(), "netcatty-lkg-refresh-"));
+  const file = buildLastKnownCatalogPath(dir);
+  try {
+    // No persisted entry: a current-only catalog has nothing to refresh.
+    assert.equal(refreshLastKnownCatalogCurrentId(file, "k1", "m-2"), false);
+    assert.equal(fs.existsSync(file), false);
+
+    assert.equal(writeLastKnownCatalogEntry(file, "k1", {
+      backend: "claude",
+      models: [{ id: "m-1" }, { id: "m-2" }],
+      currentModelId: "m-1",
+    }), true);
+
+    // Current-only catalog: the selection is updated, the models list and the
+    // fetch timestamp (when the models were fetched) stay untouched.
+    assert.equal(refreshLastKnownCatalogCurrentId(file, "k1", "m-2"), true);
+    const refreshed = readLastKnownCatalogEntry(file, "k1");
+    assert.equal(refreshed.currentModelId, "m-2");
+    assert.deepEqual(refreshed.models, [{ id: "m-1" }, { id: "m-2" }]);
+
+    // Same id and missing inputs are no-ops; other keys are untouched.
+    assert.equal(refreshLastKnownCatalogCurrentId(file, "k1", "m-2"), false);
+    assert.equal(refreshLastKnownCatalogCurrentId(file, "k1", null), false);
+    assert.equal(refreshLastKnownCatalogCurrentId(null, "k1", "m-1"), false);
+    assert.equal(readLastKnownCatalogEntry(file, "k1").currentModelId, "m-2");
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test("list-models persists a successful live catalog and serves it as last-known-good after failures", async (t) => {
   const { getDriver } = require("./index.cjs");
   const { handlers, ctx, catalogFile, cleanup } = makeLastKnownCtx();
@@ -1249,6 +1292,44 @@ test("list-models persists a successful live catalog and serves it as last-known
     assert.equal(failed.fetchedAt, entries[0].fetchedAt);
     assert.match(failed.warning, /returned no models/);
     assert.match(failed.warning, /last-known-good/);
+  } finally {
+    cleanup();
+  }
+});
+
+test("list-models admits a current-only catalog by refreshing the persisted current id", async (t) => {
+  const { getDriver } = require("./index.cjs");
+  const { handlers, ctx, catalogFile, cleanup } = makeLastKnownCtx();
+  try {
+    const driver = getDriver("claude");
+    const liveCatalog = [{ id: "claude-opus-5-5", name: "Opus 5.5" }];
+    t.mock.method(driver, "listModels", async () => liveCatalog);
+    const listModels = handlers.get("netcatty:ai:sdk-agent:list-models");
+
+    // 1. Live success with models seeds the store (no current id yet).
+    await listModels({ sender: {} }, { sdkBackend: "claude", agentCommand: "/test/lkg-current-only" });
+
+    // 2. A current-only success (zero visible models, valid selection) must
+    // refresh the persisted current id without losing the models list.
+    ctx.sdkModelCache.clear();
+    driver.listModels.mock.mockImplementation(async () => ({
+      currentModelId: "claude-opus-5-5",
+      models: [],
+    }));
+    const currentOnly = await listModels({ sender: {} }, { sdkBackend: "claude", agentCommand: "/test/lkg-current-only" });
+    assert.deepEqual(currentOnly, { ok: true, currentModelId: "claude-opus-5-5", models: [] });
+    const persisted = readLastKnownCatalogEntry(catalogFile, Object.keys(readLastKnownCatalogStore(catalogFile))[0]);
+    assert.deepEqual(persisted.models, liveCatalog);
+    assert.equal(persisted.currentModelId, "claude-opus-5-5");
+
+    // 3. A later live failure serves the persisted selection and models.
+    ctx.sdkModelCache.clear();
+    driver.listModels.mock.mockImplementation(async () => []);
+    const failed = await listModels({ sender: {} }, { sdkBackend: "claude", agentCommand: "/test/lkg-current-only" });
+    assert.equal(failed.ok, true);
+    assert.equal(failed.source, "last-known-good");
+    assert.equal(failed.currentModelId, "claude-opus-5-5");
+    assert.deepEqual(failed.models, liveCatalog);
   } finally {
     cleanup();
   }

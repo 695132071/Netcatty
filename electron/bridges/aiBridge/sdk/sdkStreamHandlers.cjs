@@ -17,6 +17,7 @@ const { OPENCODE_SERVER_START_TIMEOUT_MS } = require("./opencodeDriver.cjs");
 const {
   buildLastKnownCatalogPath,
   readLastKnownCatalogEntry,
+  refreshLastKnownCatalogCurrentId,
   writeLastKnownCatalogEntry,
 } = require("./modelCatalogLastKnown.cjs");
 
@@ -109,6 +110,12 @@ const SDK_MODEL_CACHE_ENV_KEYS = [
   "XDG_CACHE_HOME",
   "CLAUDE_CODE_EXECUTABLE",
   "CODEBUDDY_CODE_PATH",
+  // CodeBuddy auth and network environment change which models the CLI can
+  // list: two profiles sharing a binary but not credentials must never share
+  // a catalog (cross-profile contamination).
+  "CODEBUDDY_API_KEY",
+  "CODEBUDDY_AUTH_TOKEN",
+  "CODEBUDDY_INTERNET_ENVIRONMENT",
   "CURSOR_API_KEY",
 ];
 
@@ -1030,6 +1037,14 @@ function registerSdkStreamHandlers(ctx) {
                 models,
                 currentModelId,
               });
+            } else if (currentModelId) {
+              // A current-only catalog (zero visible models, valid current
+              // id - e.g. the mimo filtered auto channel) still carries the
+              // user's selection. Refresh the persisted current id without
+              // clobbering the persisted models list; with no persisted
+              // entry there is nothing to admit (a models-less entry is
+              // unservable anyway).
+              refreshLastKnownCatalogCurrentId(lastKnownPath, cacheKey, currentModelId);
             }
             return { ok: true, currentModelId, models };
           } catch (err) {

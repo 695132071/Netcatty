@@ -359,11 +359,31 @@ test('a saved Copilot model survives the auto-only degraded fallback', () => {
     sdkBackend: 'opencode',
   };
   assert.equal(shouldUseStoredAgentModel('claude-sonnet-4.5', autoOnlyFallback, opencodeAgent), false);
-  // A real Copilot catalog (multiple entries) does not trigger the fallback.
+  // Composer custom ids are mixed into the same picker list; the degraded
+  // fallback must still be detected with extra rows present.
+  const mixedFallback: AgentModelPreset[] = [
+    { id: 'auto', name: 'Auto', description: 'Automatic model selection' },
+    { id: 'gpt-custom', name: 'gpt-custom' },
+  ];
+  assert.equal(shouldUseStoredAgentModel('claude-sonnet-4.5', mixedFallback, copilotAgent), true);
+  assert.equal(modelPresetsContainId(
+    appendRetainedStoredModelPreset(mixedFallback, 'claude-sonnet-4.5', copilotAgent),
+    'claude-sonnet-4.5',
+  ), true);
+  // A real Copilot catalog (multiple entries with named rows) does not
+  // trigger the fallback, mixed or not.
   assert.equal(
     shouldUseStoredAgentModel('claude-sonnet-4.5', [
       { id: 'auto', name: 'Auto' },
       { id: 'gpt-5', name: 'GPT-5' },
+    ], copilotAgent),
+    false,
+  );
+  assert.equal(
+    shouldUseStoredAgentModel('claude-sonnet-4.5', [
+      { id: 'auto', name: 'Auto' },
+      { id: 'gpt-5', name: 'GPT-5' },
+      { id: 'gpt-custom', name: 'gpt-custom' },
     ], copilotAgent),
     false,
   );
