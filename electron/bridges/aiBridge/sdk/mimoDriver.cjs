@@ -30,7 +30,7 @@ const {
   buildOpenCodeConfig,
   buildOpenCodePromptParts,
   classifyOpenCodeSpawnError,
-  getOpenCodeDefaultModelId,
+  getOpenCodeDefaultModelIds,
   getOpenCodeSessionIdFromEvent,
   mapOpenCodeModels,
   parseOpenCodeModel,
@@ -821,11 +821,15 @@ async function listMimoModels({ env, binPath, cwd, mimoFactory, abortController,
     }
     const data = response?.data || response;
     const models = mapOpenCodeModels(filterMimoAutoChannel(data));
-    const defaultModelId = getOpenCodeDefaultModelId(data);
+    // A multi-key default map can list the hidden auto channel first; pick
+    // the first default id that survives filtering before falling back to
+    // the first model, so a later visible Xiaomi default is not shadowed.
+    const visibleIds = new Set(models.map((model) => model.id));
+    const currentModelId = getOpenCodeDefaultModelIds(data).find((id) => visibleIds.has(id))
+      ?? models[0]?.id
+      ?? null;
     return {
-      currentModelId: models.some((model) => model.id === defaultModelId)
-        ? defaultModelId
-        : models[0]?.id ?? null,
+      currentModelId,
       models,
     };
   } catch {

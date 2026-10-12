@@ -1489,6 +1489,26 @@ test("listMimoModels selects a visible model when the default channel is filtere
   assert.equal(autoDefault.models.some((model) => model.id === "mimo/134qwerawdf"), false);
 });
 
+test("listMimoModels picks a hidden-key default before falling back to the first model", async () => {
+  const fixture = liveCatalogFixture();
+  // Same map as above with the auto channel declared first: the visible
+  // Xiaomi default later in the map must still win over models[0].
+  fixture.default = { mimo: "134qwerawdf", xiaomi: "mimo-v2.6-pro-ultraspeed" };
+  const catalog = await listMimoModels({
+    binPath: "/tmp/mimo-auto-filter-default-order-test",
+    mimoFactory: async () => ({
+      client: {
+        config: {
+          providers: async () => fixture,
+        },
+      },
+      server: { close() {} },
+    }),
+  });
+
+  assert.equal(catalog.currentModelId, "xiaomi/mimo-v2.6-pro-ultraspeed");
+});
+
 test("listMimoModels clears the default when only the auto channel remains", async () => {
   const fixture = liveCatalogFixture();
   fixture.providers = fixture.providers.filter((provider) => provider.id === "mimo");
