@@ -46,12 +46,22 @@ const {
 async function stopCopilotClient(client, graceMs = 3000) {
   if (!client || typeof client.stop !== "function") return;
   let settled = false;
+  let graceTimer;
   try {
     await Promise.race([
-      Promise.resolve(client.stop()).catch(() => {}).then(() => { settled = true; }),
-      new Promise((resolve) => setTimeout(resolve, graceMs)),
+      // A stop() rejection means the graceful path failed, so leave settled
+      // false and let the forceStop() fallback below still run.
+      Promise.resolve(client.stop()).then(
+        () => { settled = true; },
+        () => {},
+      ),
+      new Promise((resolve) => { graceTimer = setTimeout(resolve, graceMs); }),
     ]);
-  } catch { /* best effort */ }
+  } catch { /* best effort */ } finally {
+    // The race winner does not cancel the loser: without this, every
+    // turn/catalog load that stops a client leaves a 3s timer handle alive.
+    clearTimeout(graceTimer);
+  }
   if (!settled && typeof client.forceStop === "function") {
     try { await client.forceStop(); } catch { /* best effort */ }
   }
@@ -675,4 +685,5 @@ module.exports = {
   runCopilotTurn,
   listCopilotModels,
   mapCopilotModels,
+  stopCopilotClient,
 };

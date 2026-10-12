@@ -3,7 +3,7 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
-const { approveNetcattyMcpOnly, approveNetcattyCliShellOnly, buildCopilotClientOptions, buildCopilotPermissionHandler, buildCopilotSessionOptions, buildCopilotMessageOptions, copilotBuiltinTools, extractCopilotContent, isLikelyNetcattyCliShellCommand, listCopilotModels, mapCopilotModels, runCopilotTurn, translateCopilotEvent } = require("./copilotDriver.cjs");
+const { approveNetcattyMcpOnly, approveNetcattyCliShellOnly, buildCopilotClientOptions, buildCopilotPermissionHandler, buildCopilotSessionOptions, buildCopilotMessageOptions, copilotBuiltinTools, extractCopilotContent, isLikelyNetcattyCliShellCommand, listCopilotModels, mapCopilotModels, runCopilotTurn, stopCopilotClient, translateCopilotEvent } = require("./copilotDriver.cjs");
 
 function collector() {
   const events = [];
@@ -512,4 +512,74 @@ test("listCopilotModels passes a real .js entry and a native .exe through to the
     await listCopilotModels({ cliPath, sdkModule });
     assert.equal(captured.forStdio.path, cliPath, cliPath);
   }
+});
+
+// stopCopilotClient references the global timer functions, so patching them
+// lets each test observe exactly which handle was created and cleared without
+// waiting on real 3s timers.
+function withPatchedTimers(run) {
+  const created = [];
+  const cleared = [];
+  const realSetTimeout = globalThis.setTimeout;
+  const realClearTimeout = globalThis.clearTimeout;
+  globalThis.setTimeout = (fn, ms) => {
+    const handle = { fn, ms };
+    created.push(handle);
+    return handle;
+  };
+  globalThis.clearTimeout = (handle) => {
+    cleared.push(handle);
+    realClearTimeout(handle);
+  };
+  return Promise.resolve(run({ created, cleared })).finally(() => {
+    globalThis.setTimeout = realSetTimeout;
+    globalThis.clearTimeout = realClearTimeout;
+  });
+}
+
+test("stopCopilotClient clears the losing grace timer when stop() settles first", async () => {
+  await withPatchedTimers(async ({ created, cleared }) => {
+    const client = { async stop() {} };
+    await stopCopilotClient(client, 3000);
+    assert.equal(created.length, 1);
+    assert.equal(created[0].ms, 3000);
+    assert.deepEqual(cleared, [created[0]]);
+  });
+});
+
+test("stopCopilotClient force-stops after the grace period and still clears the timer", async () => {
+  let forceStops = 0;
+  const client = {
+    stop() { return new Promise(() => {}); },
+    async forceStop() { forceStops += 1; },
+  };
+  // Real timers with a tiny grace: the race loser is the timeout, and
+  // forceStop must fire even though stop() never settles.
+  await stopCopilotClient(client, 10);
+  assert.equal(forceStops, 1);
+});
+
+test("stopCopilotClient force-stops when stop() rejects instead of settling", async () => {
+  let forceStops = 0;
+  await withPatchedTimers(async ({ created, cleared }) => {
+    const client = {
+      async stop() { throw new Error("graceful handshake failed"); },
+      async forceStop() { forceStops += 1; },
+    };
+    await stopCopilotClient(client, 3000);
+    assert.equal(forceStops, 1);
+    assert.deepEqual(cleared, [created[0]]);
+  });
+});
+
+test("stopCopilotClient never force-stops a client whose stop() resolved", async () => {
+  let forceStops = 0;
+  await withPatchedTimers(async () => {
+    const client = {
+      async stop() {},
+      async forceStop() { forceStops += 1; },
+    };
+    await stopCopilotClient(client, 3000);
+    assert.equal(forceStops, 0);
+  });
 });
