@@ -1861,6 +1861,27 @@ async function handleWorkerJobStart(params = {}) {
   }
 }
 
+// Every removal from the worker route map goes through here so a later
+// poll/stop miss can be explained by a matching route-removed event.
+function deleteWorkerRoute(jobId, job, via) {
+  emitJobDiag("route-removed", {
+    jobId,
+    sessionId: job?.sessionId ?? null,
+    chatSessionId: job?.chatSessionId || null,
+    via,
+  });
+  workerBackgroundJobs.delete(jobId);
+}
+
+// Why getWorkerJob/terminalWorkerManager could not serve a poll or stop:
+// the route is gone, the caller's chat scope does not own it, or the worker
+// manager is unavailable. These are different failures and must not share a label.
+function describeWorkerRouteMiss(jobId) {
+  if (!workerBackgroundJobs.has(jobId)) return "route-missing";
+  if (!terminalWorkerManager?.request) return "worker-unavailable";
+  return "scope-mismatch";
+}
+
 function getWorkerJob(jobId, chatSessionId) {
   const job = workerBackgroundJobs.get(jobId);
   if (!job) return null;
@@ -1875,7 +1896,7 @@ async function handleWorkerJobPoll(params = {}) {
   if (!jobId) throw new Error("jobId is required");
   const job = getWorkerJob(jobId, chatSessionId || null);
   if (!job || !terminalWorkerManager?.request) {
-    emitJobDiag("job-stop-miss", { jobId, chatSessionId: chatSessionId || null, op: "poll", reason: "route-missing" });
+    emitJobDiag("job-stop-miss", { jobId, chatSessionId: chatSessionId || null, op: "poll", reason: describeWorkerRouteMiss(jobId) });
     return { ok: false, error: "Background job not found" };
   }
   if (job.sessionId) {
@@ -1884,13 +1905,7 @@ async function handleWorkerJobPoll(params = {}) {
   }
   const result = await terminalWorkerManager.request("netcatty:ai:jobPoll", params, {});
   if (result?.completed) {
-    emitJobDiag("route-removed", {
-      jobId,
-      sessionId: job.sessionId ?? null,
-      chatSessionId: job.chatSessionId || null,
-      via: "poll-completed",
-    });
-    workerBackgroundJobs.delete(jobId);
+    deleteWorkerRoute(jobId, job, "poll-completed");
   }
   return result;
 }
@@ -1900,7 +1915,7 @@ async function handleWorkerJobStop(params = {}) {
   if (!jobId) throw new Error("jobId is required");
   const job = getWorkerJob(jobId, chatSessionId || null);
   if (!job || !terminalWorkerManager?.request) {
-    emitJobDiag("job-stop-miss", { jobId, chatSessionId: chatSessionId || null, op: "stop", reason: "route-missing" });
+    emitJobDiag("job-stop-miss", { jobId, chatSessionId: chatSessionId || null, op: "stop", reason: describeWorkerRouteMiss(jobId) });
     return { ok: false, error: "Background job not found" };
   }
   if (Array.isArray(scopedSessionIds) && job.sessionId && !scopedSessionIds.includes(job.sessionId)) {
@@ -1908,13 +1923,7 @@ async function handleWorkerJobStop(params = {}) {
   }
   const result = await terminalWorkerManager.request("netcatty:ai:jobStop", params, {});
   if (result?.completed) {
-    emitJobDiag("route-removed", {
-      jobId,
-      sessionId: job.sessionId ?? null,
-      chatSessionId: job.chatSessionId || null,
-      via: "stop-completed",
-    });
-    workerBackgroundJobs.delete(jobId);
+    deleteWorkerRoute(jobId, job, "stop-completed");
   }
   return result;
 }
@@ -1932,7 +1941,7 @@ async function hasActiveWorkerJobForTerminalSession(sessionId) {
         offset: 0,
       }, {});
       if (result?.completed || (result?.ok === false && /not found/i.test(result?.error || ""))) {
-        workerBackgroundJobs.delete(jobId);
+        deleteWorkerRoute(jobId, job, "stale-check");
         continue;
       }
       return true;
@@ -1953,7 +1962,7 @@ function cancelWorkerBackgroundJobsForSession(chatSessionId) {
   }
   for (const [jobId, job] of workerBackgroundJobs) {
     if (job.chatSessionId === chatSessionId) {
-      workerBackgroundJobs.delete(jobId);
+      deleteWorkerRoute(jobId, job, "chat-session-cancel");
     }
   }
   try {
@@ -1983,7 +1992,7 @@ async function cancelWorkerBackgroundJobsForTerminalSession(sessionId) {
   const pending = [];
   for (const [jobId, job] of workerBackgroundJobs) {
     if (job.sessionId !== sessionId) continue;
-    matchingJobs.push(jobId);
+    matchingJobs.push([jobId, job]);
     if (terminalWorkerManager?.request) {
       pending.push(waitForWorkerCleanup(terminalWorkerManager.request("netcatty:ai:jobStop", {
         jobId,
@@ -1993,7 +2002,7 @@ async function cancelWorkerBackgroundJobsForTerminalSession(sessionId) {
     }
   }
   if (pending.length) await Promise.allSettled(pending);
-  for (const jobId of matchingJobs) workerBackgroundJobs.delete(jobId);
+  for (const [jobId, job] of matchingJobs) deleteWorkerRoute(jobId, job, "terminal-session-cancel");
 }
 
 // Read via the existing renderer bridge and the sidebar's bounded reader.

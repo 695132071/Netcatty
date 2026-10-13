@@ -297,3 +297,38 @@ test("successful startup emits probe reply, parse, and start-marker checkpoints"
     pty.destroy();
   }
 });
+
+test("startup timeout reports the bytes of a partial probe reply", async (t) => {
+  withJobDiagEnv(t);
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const capture = captureJobDiagEvents();
+  const { pty, writes } = makeQuietPty();
+  try {
+    const job = startPtyJob(pty, "echo SHOULD_NOT_RUN", {
+      shellKind: "posix",
+      probeLiveShell: true,
+      timeoutMs: 3600000,
+      maxBufferedChars: 1024,
+      sessionId: "sess-partial",
+      jobId: "job-partial",
+    });
+    const probeLength = 2 + buildLiveShellProbe(job.marker).length;
+    for (let tick = 0; tick < 100 && writes.join("").length < probeLength; tick += 1) {
+      t.mock.timers.tick(30);
+      await nextTick();
+    }
+    const partialReply = "partial reply without the probe marker";
+    pty.push(partialReply);
+    await nextTick();
+    t.mock.timers.tick(30000);
+    await job.resultPromise;
+    await nextTick();
+    capture.restore();
+    const timeout = capture.events.find((event) => event.event === "startup-timeout-fired");
+    assert.equal(timeout.probeReplySeen, true);
+    assert.equal(timeout.probeBytes, partialReply.length);
+  } finally {
+    capture.restore();
+    pty.destroy();
+  }
+});

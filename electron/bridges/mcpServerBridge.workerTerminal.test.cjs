@@ -690,3 +690,43 @@ test("terminal close cancels a worker job start that finishes late", async () =>
     "netcatty:ai:jobStop",
   ]);
 });
+
+test("job diagnostics tell a scope mismatch from a lost route and log chat cancellation", async (t) => {
+  process.env.NETCATTY_JOB_DIAG = "1";
+  const lines = [];
+  t.mock.method(console, "info", (...args) => { lines.push(args.join(" ")); });
+  t.after(() => { delete process.env.NETCATTY_JOB_DIAG; });
+  const events = () => lines
+    .filter((line) => line.startsWith("[Netcatty JobDiag] "))
+    .map((line) => JSON.parse(line.slice("[Netcatty JobDiag] ".length)));
+
+  const bridge = loadFreshBridge();
+  bridge.init({
+    sessions: new Map(),
+    electronModule: null,
+    terminalWorkerManager: {
+      request(channel, payload) {
+        if (channel === "netcatty:ai:jobStart") {
+          return Promise.resolve({ ok: true, jobId: "worker-job-1", sessionId: payload.sessionId, status: "running" });
+        }
+        return Promise.resolve({ ok: true, jobId: payload.jobId, status: "running", completed: false });
+      },
+      send() {},
+    },
+  });
+  bridge.setPermissionMode("auto");
+  bridge.setCommandBlocklist([]);
+  bridge.updateSessionMetadata([
+    { sessionId: "ssh-1", hostname: "host.example", protocol: "ssh", shellType: "bash", connected: true },
+  ], "chat-1");
+  await bridge.dispatchBuiltinRpc("netcatty/jobStart", { sessionId: "ssh-1", command: "sleep 1", chatSessionId: "chat-1" });
+
+  // The route exists but belongs to another chat session: not a lost route.
+  await bridge.dispatchBuiltinRpc("netcatty/jobPoll", { jobId: "worker-job-1", chatSessionId: "chat-2" });
+  bridge.cancelWorkerBackgroundJobsForSession("chat-1");
+
+  const misses = events().filter((event) => event.event === "job-stop-miss");
+  assert.deepEqual(misses.map((event) => [event.op, event.reason]), [["poll", "scope-mismatch"]]);
+  const removed = events().filter((event) => event.event === "route-removed");
+  assert.deepEqual(removed.map((event) => [event.jobId, event.via]), [["worker-job-1", "chat-session-cancel"]]);
+});

@@ -599,6 +599,7 @@ function startPtyJob(ptyStream, command, options) {
 
     if (probingShell) {
       probeOutput = (probeOutput + text).slice(-16384);
+      jobDiag.stats.probeBytes = probeOutput.length;
       if (!jobDiag.stats.probeReplySeen) {
         jobDiag.stats.probeReplySeen = true;
         jobDiag.emit("probe-reply-arrived", {
