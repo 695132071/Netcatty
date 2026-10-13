@@ -131,6 +131,11 @@ function createZmodemSentry(opts) {
   const pendingEchoes = [];
   let pendingTerminalSuppression = null;
   let pendingTerminalSuppressionAt = 0;
+  let pendingHexHeaderFragment = null;
+  let pendingHexHeaderFragmentTimer = null;
+  // Set when a stripped hex header's trailing XON (0x11) may arrive in the
+  // next terminal-output chunk; at most one byte is then dropped.
+  let suppressNextTerminalXon = false;
 
   function setPendingTerminalSuppression(buf) {
     pendingTerminalSuppression = buf;
@@ -152,6 +157,16 @@ function createZmodemSentry(opts) {
   const COOLDOWN_MS = 2000;
   const ECHO_TTL_MS = 1500;
   const ECHO_MAX_BYTES = 256;
+  // "**" + ZDLE + 'B': the start of every ZMODEM hex header.
+  const ZMODEM_HEX_HEADER_PREFIX = Buffer.from([0x2a, 0x2a, 0x18, 0x42]);
+  // 4-byte pattern + 14 hex digits + CR is the most a still-incomplete
+  // header can look like before the final LF (plus optional XON) arrives.
+  const ZMODEM_HEX_HEADER_MAX_PARTIAL = 19;
+  // How long a withheld partial-header fragment may sit unresolved before
+  // it is flushed through to the terminal anyway.
+  const HEX_HEADER_FRAGMENT_TTL_MS = Number.isFinite(opts.hexHeaderFragmentTtlMs)
+    ? Math.max(1, opts.hexHeaderFragmentTtlMs)
+    : 1000;
   /**
    * Upper bound on how long a drag-drop echo suppression may stay armed.
    * The suppression hides the terminal echo of the upload command, whose echo
@@ -240,6 +255,14 @@ function createZmodemSentry(opts) {
     return buf;
   }
 
+  function isHexDigitByte(byte) {
+    return (
+      (byte >= 0x30 && byte <= 0x39)
+      || (byte >= 0x41 && byte <= 0x46)
+      || (byte >= 0x61 && byte <= 0x66)
+    );
+  }
+
   function stripVisibleZmodemHeaders(data) {
     let buf = Buffer.isBuffer(data) ? data : Buffer.from(data);
     let searchFrom = 0;
@@ -253,12 +276,7 @@ function createZmodemSentry(opts) {
 
       let isHexHeader = true;
       for (let i = 0; i < 14; i += 1) {
-        const byte = buf[prefixAt + 4 + i];
-        const isHexDigit =
-          (byte >= 0x30 && byte <= 0x39) ||
-          (byte >= 0x41 && byte <= 0x46) ||
-          (byte >= 0x61 && byte <= 0x66);
-        if (!isHexDigit) {
+        if (!isHexDigitByte(buf[prefixAt + 4 + i])) {
           isHexHeader = false;
           break;
         }
@@ -274,6 +292,10 @@ function createZmodemSentry(opts) {
         headerLength = 20;
         if (buf[prefixAt + 20] === 0x11) {
           headerLength = 21;
+        } else if (prefixAt + 20 === buf.length) {
+          // The optional XON that follows the CR/LF may arrive in the next
+          // chunk; strip at most one leading XON byte from it (#3651).
+          suppressNextTerminalXon = true;
         }
       }
 
@@ -285,6 +307,119 @@ function createZmodemSentry(opts) {
     }
 
     return buf;
+  }
+
+  function flushPendingHexHeaderFragment() {
+    pendingHexHeaderFragmentTimer = null;
+    const buf = pendingHexHeaderFragment;
+    pendingHexHeaderFragment = null;
+    if (buf?.length) onData(buf);
+  }
+
+  /**
+   * A ZMODEM hex header (the ZRQINIT/ZRINIT preamble of `sz`/`rz`) can be
+   * split across transport chunks. zmodem.js hands each original chunk to
+   * to_terminal verbatim and only complete headers can be stripped, so a
+   * chunk that ends in the middle of the preamble painted it as terminal
+   * garble (#3651). Detect the trailing bytes that may still form one and
+   * hold them back; the next chunk either completes the header (stripped
+   * above) or proves the buffer invalid. A TTL guard flushes held bytes so
+   * deferrals can never lose legitimate terminal output.
+   *
+   * Returns the index from which the buffer should be withheld, or -1.
+   */
+  function findTrailingHexHeaderFragment(buf) {
+    if (!buf.length) return -1;
+
+    // Longest still-incomplete header tail: the 4-byte pattern, 14 hex
+    // digits, and a CR — i.e. everything up to the final LF (+ optional XON).
+    const windowStart = Math.max(0, buf.length - ZMODEM_HEX_HEADER_MAX_PARTIAL);
+
+    for (let i = windowStart; i <= buf.length - 4; i += 1) {
+      let matched = true;
+      for (let j = 0; j < 4; j += 1) {
+        if (buf[i + j] !== ZMODEM_HEX_HEADER_PREFIX[j]) {
+          matched = false;
+          break;
+        }
+      }
+      if (!matched) continue;
+
+      let digits = 0;
+      while (i + 4 + digits < buf.length && isHexDigitByte(buf[i + 4 + digits])) {
+        digits += 1;
+      }
+
+      // Chunk ends inside the hex digits — the header may still complete.
+      if (i + 4 + digits === buf.length) return i;
+
+      // Digit run ended before the 14 required digits, or overshoots them:
+      // not a hex header.
+      if (digits !== 14) continue;
+
+      // A CR (but not yet the trailing LF) may still complete the header.
+      if (buf.length - i <= 19) return i;
+
+      break;
+    }
+
+    // The "**" + ZDLE + 'B' pattern itself may be split: withhold any
+    // trailing bytes that are a prefix of it until the next chunk resolves.
+    for (let k = Math.min(3, buf.length); k >= 1; k -= 1) {
+      let matches = true;
+      for (let j = 0; j < k; j += 1) {
+        if (buf[buf.length - k + j] !== ZMODEM_HEX_HEADER_PREFIX[j]) {
+          matches = false;
+          break;
+        }
+      }
+      if (matches) return buf.length - k;
+    }
+
+    return -1;
+  }
+
+  /**
+   * Join any previously withheld partial-header bytes onto the new chunk so
+   * the suppression/stripping stages can see a complete header again. This
+   * must run BEFORE the stripping stages, or a header split across two
+   * chunks would be judged complete too late and reach the terminal.
+   */
+  function assembleTerminalChunk(octets) {
+    const buf = Buffer.isBuffer(octets) ? octets : Buffer.from(octets);
+    if (!pendingHexHeaderFragment?.length) {
+      return buf;
+    }
+    if (pendingHexHeaderFragmentTimer) {
+      clearTimeout(pendingHexHeaderFragmentTimer);
+      pendingHexHeaderFragmentTimer = null;
+    }
+    const merged = Buffer.concat([pendingHexHeaderFragment, buf]);
+    pendingHexHeaderFragment = null;
+    return merged;
+  }
+
+  /**
+   * Withhold a trailing partial hex header (if any) and arm a timer that
+   * flushes it when no more bytes arrive to resolve it.
+   */
+  function deferIncompleteHexHeader(data) {
+    const buf = Buffer.isBuffer(data) ? data : Buffer.from(data);
+
+    const fragmentAt = findTrailingHexHeaderFragment(buf);
+    if (fragmentAt === -1) return buf;
+
+    if (fragmentAt < buf.length) {
+      pendingHexHeaderFragment = Buffer.from(buf.subarray(fragmentAt));
+      if (!pendingHexHeaderFragmentTimer) {
+        pendingHexHeaderFragmentTimer = setTimeout(
+          flushPendingHexHeaderFragment,
+          HEX_HEADER_FRAGMENT_TTL_MS,
+        );
+      }
+    }
+
+    return fragmentAt ? buf.subarray(0, fragmentAt) : Buffer.alloc(0);
   }
 
   function looksLikeResidualZmodemData(data) {
@@ -453,8 +588,19 @@ function createZmodemSentry(opts) {
   const sentry = new Zmodem.Sentry({
     to_terminal(octets) {
       // Normal data – pass raw bytes to the caller for charset-aware decoding.
-      let sanitizedOctets = stripPendingTerminalSuppression(Buffer.from(octets));
+      // Bytes that may be the start of a ZMODEM hex header split across
+      // chunks are withheld first (and later stripped or flushed) so the
+      // preamble of sz/rz never reaches the terminal as garble (#3651).
+      let sanitizedOctets = assembleTerminalChunk(octets);
+      if (suppressNextTerminalXon) {
+        suppressNextTerminalXon = false;
+        if (sanitizedOctets[0] === 0x11) {
+          sanitizedOctets = sanitizedOctets.subarray(1);
+        }
+      }
+      sanitizedOctets = stripPendingTerminalSuppression(sanitizedOctets);
       sanitizedOctets = stripVisibleZmodemHeaders(sanitizedOctets);
+      sanitizedOctets = deferIncompleteHexHeader(sanitizedOctets);
       if (!sanitizedOctets.length) return;
       onData(sanitizedOctets);
     },

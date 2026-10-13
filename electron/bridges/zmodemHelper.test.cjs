@@ -1489,3 +1489,132 @@ test("createZmodemUploadDrainWaiter falls back to a single yield without transpo
   await waitForDrain();
   assert.equal(needsDrain, false);
 });
+
+// ---------------------------------------------------------------------------
+// Split hex-header preamble (#3651): the ZRQINIT/ZRINIT hex header that opens
+// every sz/rz session can be fragmented across transport chunks; it must
+// never reach the terminal as garble, and withheld bytes must never be lost.
+// ---------------------------------------------------------------------------
+
+const ZmodemLib = require("zmodem.js");
+
+const DOWNLOAD_PREAMBLE_TEXT = "sz: Sending test.bin\r\nrz\r";
+
+function buildHexHeaderBytes(name, args) {
+  return Buffer.from(ZmodemLib.Header.build(name, ...(args || [])).to_hex());
+}
+
+function createProbeSentry(extra) {
+  const terminal = [];
+  const sentry = createZmodemSentry({
+    sessionId: "probe",
+    onData: (buf) => terminal.push(Buffer.from(buf)),
+    writeToRemote: () => true,
+    getWebContents: () => null,
+    selectDownloadDirectory: async () => ({ canceled: true }),
+    selectUploadFiles: async () => null,
+    hexHeaderFragmentTtlMs: 30,
+    ...extra,
+  });
+  return { sentry, terminal };
+}
+
+function joinedText(terminal) {
+  return Buffer.concat(terminal).toString("latin1");
+}
+
+function assertNoZmodemHeaderBytes(terminal, context) {
+  const joined = Buffer.concat(terminal);
+  assert.equal(
+    joined.indexOf(Buffer.from([0x2a, 0x2a, 0x18, 0x42])),
+    -1,
+    `${context}: ZRQINIT/ZRINIT preamble leaked to the terminal`,
+  );
+  assert.equal(
+    joined.includes(Buffer.from([0x18])),
+    false,
+    `${context}: ZDLE/CAN byte leaked to the terminal`,
+  );
+}
+
+test("fragmented sz ZRQINIT preamble never reaches the terminal", () => {
+  const { sentry, terminal } = createProbeSentry();
+  const stream = Buffer.concat([
+    Buffer.from(DOWNLOAD_PREAMBLE_TEXT),
+    buildHexHeaderBytes("ZRQINIT"),
+    Buffer.from("$ "),
+  ]);
+
+  for (const byte of stream) sentry.consume(Buffer.from([byte]));
+
+  assert.equal(
+    joinedText(terminal),
+    `${DOWNLOAD_PREAMBLE_TEXT}$ `,
+    "only the human-readable sz preamble text should be shown",
+  );
+  assertNoZmodemHeaderBytes(terminal, "byte-at-a-time");
+});
+
+test("split sz preamble leaks nothing at any chunk boundary", () => {
+  const header = buildHexHeaderBytes("ZRQINIT");
+  // Header.build().to_hex() already includes the trailing XON byte.
+  const stream = Buffer.concat([
+    Buffer.from(DOWNLOAD_PREAMBLE_TEXT),
+    header,
+    Buffer.from("$ "),
+  ]);
+
+  for (let chunkSize = 1; chunkSize <= 24; chunkSize += 1) {
+    const { sentry, terminal } = createProbeSentry();
+    for (let i = 0; i < stream.length; i += chunkSize) {
+      sentry.consume(stream.subarray(i, i + chunkSize));
+    }
+    assert.equal(joinedText(terminal), `${DOWNLOAD_PREAMBLE_TEXT}$ `);
+    assertNoZmodemHeaderBytes(terminal, `chunkSize=${chunkSize}`);
+  }
+});
+
+test("fragmented rz ZRINIT preamble never reaches the terminal", () => {
+  const header = buildHexHeaderBytes("ZRINIT", [["CANFDX", "CANOVIO", "CANFC32"]]);
+  const stream = Buffer.concat([Buffer.from("root@host:~$ "), header]);
+
+  for (let chunkSize = 1; chunkSize <= 24; chunkSize += 1) {
+    const { sentry, terminal } = createProbeSentry();
+    for (let i = 0; i < stream.length; i += chunkSize) {
+      sentry.consume(stream.subarray(i, i + chunkSize));
+    }
+    assert.equal(
+      joinedText(terminal),
+      "root@host:~$ ",
+      `split ZRINIT preamble leaked for chunkSize=${chunkSize}`,
+    );
+    assertNoZmodemHeaderBytes(terminal, `rz chunkSize=${chunkSize}`);
+  }
+});
+
+test("bytes withheld as a header fragment are flushed after the TTL", async () => {
+  const { sentry, terminal } = createProbeSentry();
+  const stream = Buffer.from("hello *");
+  for (const byte of stream) sentry.consume(Buffer.from([byte]));
+
+  // The trailing "*" may be the start of a hex header, so it is withheld.
+  assert.equal(joinedText(terminal), "hello ");
+
+  await new Promise((resolve) => setTimeout(resolve, 80));
+  assert.equal(joinedText(terminal), "hello *", "TTL flush must not lose terminal output");
+});
+
+test("output that disproves a header fragment is emitted without delay", () => {
+  const stream = Buffer.from("text **\x18Bxy more");
+  for (let chunkSize = 1; chunkSize <= 6; chunkSize += 1) {
+    const { sentry, terminal } = createProbeSentry();
+    for (let i = 0; i < stream.length; i += chunkSize) {
+      sentry.consume(stream.subarray(i, i + chunkSize));
+    }
+    assert.equal(
+      joinedText(terminal),
+      "text **\x18Bxy more",
+      "a non-hex byte after the pattern stops the deferral",
+    );
+  }
+});
