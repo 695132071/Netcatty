@@ -752,7 +752,8 @@ function getOpenCodeDefaultModelIds(response) {
     return [`${value.providerID}/${value.modelID}`];
   }
   if (typeof value.provider === "string" && typeof value.model === "string") {
-    return [`${value.provider}/${value.model}`];
+    // Same rule as getOpenCodeDefaultModelId: keep an already-qualified model.
+    return [value.model.includes("/") ? value.model : `${value.provider}/${value.model}`];
   }
   if (typeof value.model === "string") return [value.model];
   const ids = [];

@@ -628,8 +628,10 @@ function resolveCopilotExecutableForSdk(copilotExecutablePath, platform = proces
   const ext = path.extname(normalized).toLowerCase();
   // A native exe or an explicit .js entry can be launched by the SDK as-is.
   if (ext === ".exe" || ext === ".js") return normalized;
-  // Any other concrete, non-shim extension: leave it untouched.
-  if (ext && ext !== ".cmd" && ext !== ".bat") return normalized;
+  // Any other concrete, non-shim extension: leave it untouched. npm also
+  // writes a copilot.ps1 wrapper next to the .cmd one; it cannot be spawned
+  // without a shell either, so it resolves to the JS entry the same way.
+  if (ext && ext !== ".cmd" && ext !== ".bat" && ext !== ".ps1") return normalized;
 
   // Windows npm globals expose `copilot.cmd` shims that launch node with the
   // package's npm-loader.js. The Copilot SDK spawns `path` through node

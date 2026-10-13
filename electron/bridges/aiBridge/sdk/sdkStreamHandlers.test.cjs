@@ -1306,6 +1306,32 @@ test("current-only refresh to an unpersisted id keeps read-back row and current 
   }
 });
 
+test("list-models serves a visible current id from last-known-good when the persisted one has no row", async (t) => {
+  const { getDriver } = require("./index.cjs");
+  const { handlers, ctx, cleanup } = makeLastKnownCtx();
+  try {
+    const driver = getDriver("opencode");
+    const listModels = handlers.get("netcatty:ai:sdk-agent:list-models");
+    // listOpenCodeModels derives the current id and the rows independently, so
+    // a default from an unavailable provider can coexist with another provider's rows.
+    t.mock.method(driver, "listModels", async () => ({
+      currentModelId: "gone/m-9",
+      models: [{ id: "a/m-1", name: "M1" }],
+    }));
+    const seeded = await listModels({ sender: {} }, { sdkBackend: "opencode", agentCommand: "/test/lkg-dangling" });
+    assert.equal(seeded.ok, true);
+
+    ctx.sdkModelCache.clear();
+    driver.listModels.mock.mockImplementation(async () => []);
+    const failed = await listModels({ sender: {} }, { sdkBackend: "opencode", agentCommand: "/test/lkg-dangling" });
+    assert.equal(failed.source, "last-known-good");
+    assert.equal(failed.currentModelId, "a/m-1", "the served current id must be one the picker shows");
+    assert.equal(failed.models.some((model) => model.id === failed.currentModelId), true);
+  } finally {
+    cleanup();
+  }
+});
+
 test("list-models persists a successful live catalog and serves it as last-known-good after failures", async (t) => {
   const { getDriver } = require("./index.cjs");
   const { handlers, ctx, catalogFile, cleanup } = makeLastKnownCtx();

@@ -648,3 +648,20 @@ test("connectCopilotStdioPath returns null when nothing resolved (parity with th
   assert.equal(connectCopilotStdioPath(""), null);
   assert.equal(connectCopilotStdioPath(null), null);
 });
+
+test("resolveCopilotExecutableForSdk resolves npm's copilot.ps1 wrapper to the JS entry on Windows", () => {
+  const { resolveCopilotExecutableForSdk } = require("../../ai/shellUtils.cjs");
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "netcatty-copilot-ps1-"));
+  try {
+    const shim = path.join(dir, "copilot.ps1");
+    fs.writeFileSync(shim, '#!/usr/bin/env pwsh\r\n& "node$exe" "$basedir/node_modules/@github/copilot/npm-loader.js" $args');
+    const loaderJs = path.join(dir, "node_modules", "@github", "copilot", "npm-loader.js");
+    fs.mkdirSync(path.dirname(loaderJs), { recursive: true });
+    fs.writeFileSync(loaderJs, "");
+    assert.equal(resolveCopilotExecutableForSdk(shim, "win32"), loaderJs);
+    // Other platforms never rewrite the configured path.
+    assert.equal(resolveCopilotExecutableForSdk(shim, "linux"), shim);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});

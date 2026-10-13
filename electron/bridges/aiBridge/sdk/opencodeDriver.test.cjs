@@ -32,6 +32,10 @@ test("getOpenCodeDefaultModelIds enumerates defaults and qualifies provider/mode
   assert.deepEqual(getOpenCodeDefaultModelIds({ default: { provider: "xiaomi", model: "chosen" } }), [
     "xiaomi/chosen",
   ]);
+  // An already-qualified model must not be prefixed a second time.
+  assert.deepEqual(getOpenCodeDefaultModelIds({ default: { provider: "xiaomi", model: "xiaomi/chosen" } }), [
+    "xiaomi/chosen",
+  ]);
   assert.deepEqual(getOpenCodeDefaultModelIds({ default: { providerID: "xiaomi", modelID: "chosen" } }), [
     "xiaomi/chosen",
   ]);
