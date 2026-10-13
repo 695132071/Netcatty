@@ -420,6 +420,13 @@ test("listCopilotModels resolves a Windows .cmd shim to the copilot JS entry bef
     // resolved path (here the loader: no platform exe in this fixture) and
     // spawns with windowsHide so no console window flashes.
     const expectedBaked = process.platform === "win32" ? loaderJs : shim;
+    if (process.platform !== "win32") {
+      // The headless wrapper exists for Windows only (windowsHide); elsewhere
+      // the SDK gets the resolved CLI path directly.
+      assert.equal(captured.forStdio.path, shim);
+      assert.deepEqual(models, [{ id: "auto", name: "auto" }]);
+      return;
+    }
     wrapperPath = captured.forStdio.path;
     assert.ok(wrapperPath.startsWith(os.tmpdir()), `wrapper lives in tmpdir: ${wrapperPath}`);
     assert.ok(wrapperPath.endsWith(".js"), "wrapper is a .js file so the SDK spawns it via node");
@@ -536,6 +543,10 @@ test("listCopilotModels hands the headless wrapper (baking the resolved path) to
     };
     await listCopilotModels({ cliPath, sdkModule });
     const wrapperPath = captured.forStdio.path;
+    if (process.platform !== "win32") {
+      assert.equal(wrapperPath, cliPath, "POSIX hands the SDK the resolved CLI path directly");
+      continue;
+    }
     try {
       assert.notEqual(wrapperPath, cliPath, "the SDK receives the wrapper, not the CLI path");
       assert.ok(wrapperPath.startsWith(os.tmpdir()));
