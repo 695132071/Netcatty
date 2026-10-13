@@ -82,6 +82,7 @@ export const MODEL_CACHE_ENV_HINTS = [
   'CODEBUDDY_AUTH_TOKEN',
   'CODEBUDDY_INTERNET_ENVIRONMENT',
   'XAI_API_KEY',
+  'GROK_CONFIG_DIR',
   'CURSOR_API_KEY',
   'NETCATTY_CURSOR_AUTH_MODE',
   'NETCATTY_CURSOR_CLI_BIN',
@@ -480,10 +481,12 @@ export function appendRetainedStoredModelPreset(
 
 /**
  * Retain the saved selection on top of the presets built for a catalog, but
- * only when a catalog actually arrived. An empty catalog (the request failed
- * before any last-known-good entry existed) must stay empty so the agent keeps
- * its whole built-in fallback list; a lone retained row would be stored as the
- * authoritative runtime list and hide every other built-in preset.
+ * only when a catalog actually arrived. When none did (the request failed
+ * before any last-known-good entry existed) the result is empty so the agent
+ * keeps its whole built-in fallback list: a lone retained row, or only the
+ * user's custom composer models, would be stored as the authoritative runtime
+ * list and hide every built-in preset. The panel appends custom models on top
+ * of the fallback list itself.
  */
 export function retainStoredModelPresetForCatalog(
   catalogPresets: AgentModelPreset[],
@@ -491,7 +494,7 @@ export function retainStoredModelPresetForCatalog(
   storedModelId: string | null | undefined,
   agent?: ExternalAgentConfig,
 ): AgentModelPreset[] {
-  if (catalogPresets.length === 0) return presets;
+  if (catalogPresets.length === 0) return [];
   return appendRetainedStoredModelPreset(presets, storedModelId, agent);
 }
 

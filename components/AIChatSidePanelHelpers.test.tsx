@@ -695,6 +695,16 @@ test('retainStoredModelPresetForCatalog leaves the built-in fallback list alone 
   assert.deepEqual(retainStoredModelPresetForCatalog([], [], 'sonnet', claudeAgent), []);
 });
 
+test('retainStoredModelPresetForCatalog drops composer custom rows too when no catalog arrived', () => {
+  const claudeAgent = { id: 'claude', command: 'claude', sdkBackend: 'claude' } as unknown as ExternalAgentConfig;
+  // The callers wrap the empty catalog with the user's custom composer models, so
+  // the list is non-empty even though no catalog arrived. Stored as the runtime
+  // list it would still hide the built-in presets; the panel appends custom
+  // models on top of the fallback list itself.
+  const withCustom = [{ id: 'my-custom-model', name: 'my-custom-model' }];
+  assert.deepEqual(retainStoredModelPresetForCatalog([], withCustom, 'sonnet', claudeAgent), []);
+});
+
 test('retainStoredModelPresetForCatalog still retains a saved selection on top of a real catalog', () => {
   const claudeAgent = { id: 'claude', command: 'claude', sdkBackend: 'claude' } as unknown as ExternalAgentConfig;
   const catalog = [{ id: 'claude-opus-5-5', name: 'Opus 5.5' }];
