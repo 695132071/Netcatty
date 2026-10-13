@@ -137,6 +137,15 @@ test("Grok model catalog cache changes with XAI_API_KEY", () => {
   assert.doesNotMatch(base, /key-a/);
 });
 
+test("Grok model catalog cache changes with the CLI-login config directory", () => {
+  // `grok login` credentials live under GROK_CONFIG_DIR: two login profiles that
+  // share HOME and the binary must not share a catalog or a current id.
+  const base = buildSdkModelCacheKey("grok", "/usr/bin/grok", { GROK_CONFIG_DIR: "/profiles/a" });
+  assert.notEqual(base, buildSdkModelCacheKey("grok", "/usr/bin/grok", { GROK_CONFIG_DIR: "/profiles/b" }));
+  assert.notEqual(base, buildSdkModelCacheKey("grok", "/usr/bin/grok", {}));
+  assert.equal(base, buildSdkModelCacheKey("grok", "/usr/bin/grok", { GROK_CONFIG_DIR: "/profiles/a" }));
+});
+
 test("Cursor session keys isolate CLI login from API key auth modes", () => {
   assert.notEqual(
     buildSdkSessionKey("chat-1", "cursor", "/usr/bin/agent", "sdk", "cli-login"),

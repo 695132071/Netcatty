@@ -63,7 +63,7 @@ function refreshLastKnownCatalogCurrentId(filePath, cacheKey, currentModelId) {
     // The refreshed id may be absent from the persisted list: it arrived on a
     // current-only catalog whose models were not admitted, so only the id
     // was adopted. Store a synthesized minimal row for it (label = the id)
-    // instead of leaving the persisted current id dangling — a dangling id
+    // instead of leaving the persisted current id dangling - a dangling id
     // makes the read-back serve a non-empty list missing the current row, so
     // the picker shows the old row while the send preflight adopts the new
     // id. Clearing the id would discard the user's selection entirely, and

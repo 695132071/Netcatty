@@ -120,6 +120,9 @@ const SDK_MODEL_CACHE_ENV_KEYS = [
   // token without changing the binary, so two accounts sharing one binary
   // must not share a catalog either.
   "XAI_API_KEY",
+  // `grok login` credentials live under GROK_CONFIG_DIR (default ~/.grok), so
+  // two login profiles that share HOME and the binary need separate catalogs.
+  "GROK_CONFIG_DIR",
   "CURSOR_API_KEY",
 ];
 
