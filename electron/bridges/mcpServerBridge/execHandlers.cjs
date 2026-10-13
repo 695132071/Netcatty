@@ -319,6 +319,9 @@ function createExecHandlerApi(ctx) {
             // without aborting a long-running build/scan/log stream. The job is
             // managed via terminal_stop and the per-session execution lock.
             timeoutMs,
+            sessionId,
+            jobId,
+            diagnosticsSession: session,
             shellKind: session.shellKind,
             loginShellHint: session._loginShellKind,
             probeLiveShell: true,

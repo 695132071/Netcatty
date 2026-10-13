@@ -20,6 +20,7 @@ const {
   resolveSessionBlocklistShellKind,
 } = require("./ai/commandSafety.cjs");
 const { execViaPty, startPtyJob, execViaChannel, execViaRawPty } = require("./ai/ptyExec.cjs");
+const { emitJobDiag } = require("./ai/jobStartupDiagnostics.cjs");
 const { safeSend } = require("./ipcUtils.cjs");
 const { emitTerminalSessionData } = require("./emitTerminalSessionData.cjs");
 const { getCliDiscoveryFilePath } = require("../cli/discoveryPath.cjs");
@@ -1874,6 +1875,7 @@ async function handleWorkerJobPoll(params = {}) {
   if (!jobId) throw new Error("jobId is required");
   const job = getWorkerJob(jobId, chatSessionId || null);
   if (!job || !terminalWorkerManager?.request) {
+    emitJobDiag("job-stop-miss", { jobId, chatSessionId: chatSessionId || null, op: "poll", reason: "route-missing" });
     return { ok: false, error: "Background job not found" };
   }
   if (job.sessionId) {
@@ -1882,6 +1884,12 @@ async function handleWorkerJobPoll(params = {}) {
   }
   const result = await terminalWorkerManager.request("netcatty:ai:jobPoll", params, {});
   if (result?.completed) {
+    emitJobDiag("route-removed", {
+      jobId,
+      sessionId: job.sessionId ?? null,
+      chatSessionId: job.chatSessionId || null,
+      via: "poll-completed",
+    });
     workerBackgroundJobs.delete(jobId);
   }
   return result;
@@ -1892,6 +1900,7 @@ async function handleWorkerJobStop(params = {}) {
   if (!jobId) throw new Error("jobId is required");
   const job = getWorkerJob(jobId, chatSessionId || null);
   if (!job || !terminalWorkerManager?.request) {
+    emitJobDiag("job-stop-miss", { jobId, chatSessionId: chatSessionId || null, op: "stop", reason: "route-missing" });
     return { ok: false, error: "Background job not found" };
   }
   if (Array.isArray(scopedSessionIds) && job.sessionId && !scopedSessionIds.includes(job.sessionId)) {
@@ -1899,6 +1908,12 @@ async function handleWorkerJobStop(params = {}) {
   }
   const result = await terminalWorkerManager.request("netcatty:ai:jobStop", params, {});
   if (result?.completed) {
+    emitJobDiag("route-removed", {
+      jobId,
+      sessionId: job.sessionId ?? null,
+      chatSessionId: job.chatSessionId || null,
+      via: "stop-completed",
+    });
     workerBackgroundJobs.delete(jobId);
   }
   return result;
