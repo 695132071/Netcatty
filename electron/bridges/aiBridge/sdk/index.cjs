@@ -365,24 +365,33 @@ const DRIVER_REGISTRY = {
       });
     },
     async listModels(ctx) {
-      const acpCatalog = await grokAcp.listGrokAcpModels({
-        binPath: ctx.binPath,
-        env: ctx.env,
-        abortController: ctx.abortController,
-        signal: ctx.signal || ctx.abortController?.signal,
-      });
-      if (acpCatalog.models.length > 0) {
-        return acpCatalog;
-      }
-      const fallbackCatalog = await grok.listGrokModels({
-        binPath: ctx.binPath,
-        env: ctx.env,
-        abortController: ctx.abortController,
-        signal: ctx.signal || ctx.abortController?.signal,
-      });
+      // Run both probes together and union the results. ACP's
+      // `_meta.modelState` reflects the negotiated agent session and can
+      // advertise a subset of the account's models (observed: only
+      // grok-4.6/4.5, missing the 4.7 family), while `grok models` lists the
+      // full account set; treating a non-empty ACP catalog as complete made
+      // the picker silently drop models one source knows about. ACP entries
+      // win for shared ids because they carry live vendor `_meta` (reasoning
+      // efforts, description) — see mergeGrokCatalogModels.
+      const signal = ctx.signal || ctx.abortController?.signal;
+      const [acpCatalog, fallbackCatalog] = await Promise.all([
+        grokAcp.listGrokAcpModels({
+          binPath: ctx.binPath,
+          env: ctx.env,
+          abortController: ctx.abortController,
+          signal,
+        }),
+        grok.listGrokModels({
+          binPath: ctx.binPath,
+          env: ctx.env,
+          abortController: ctx.abortController,
+          signal,
+        }),
+      ]);
       const currentModelId = acpCatalog.currentModelId || fallbackCatalog.currentModelId;
-      const models = fallbackCatalog.models.length > 0
-        ? fallbackCatalog.models
+      const merged = grok.mergeGrokCatalogModels(acpCatalog.models, fallbackCatalog.models);
+      const models = merged.length > 0
+        ? merged
         : (currentModelId
           ? [grok.applyGrokReasoningFallback({ id: currentModelId, name: currentModelId })]
           : []);

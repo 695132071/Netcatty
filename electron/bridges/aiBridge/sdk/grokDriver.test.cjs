@@ -8,6 +8,7 @@ const {
   createLineBuffer,
   formatGrokErrorForUser,
   listGrokModels,
+  mergeGrokCatalogModels,
   mergeWorkspaceGrokMcpToml,
   parseGrokModelsOutput,
   resetGrokMcpMergeRefcountsForTests,
@@ -811,4 +812,71 @@ test("listGrokModels parses spawn stdout", async () => {
   });
   assert.equal(result.currentModelId, "grok-4.5");
   assert.equal(result.models[0].id, "grok-4.5");
+});
+
+test("mergeGrokCatalogModels unions an ACP subset with the full CLI catalog", () => {
+  const acpModels = [{
+    id: "grok-4.6",
+    name: "Grok 4.6",
+    description: "From ACP",
+    thinkingLevels: ["xhigh", "high", "medium", "low"],
+    defaultThinkingLevel: "high",
+  }];
+  const cliModels = [
+    { id: "grok-4.7", name: "Grok 4.7", thinkingLevels: ["xhigh", "high", "medium", "low"], defaultThinkingLevel: "high" },
+    { id: "grok-4.7-build-fast", name: "Grok 4.7 Fast", thinkingLevels: ["xhigh", "high", "medium", "low"], defaultThinkingLevel: "high" },
+    { id: "grok-4.6", name: "grok-4.6", thinkingLevels: ["xhigh", "high", "medium", "low"], defaultThinkingLevel: "high" },
+    { id: "grok-4.5", name: "grok-4.5", thinkingLevels: ["high", "medium", "low"], defaultThinkingLevel: "high" },
+  ];
+  const merged = mergeGrokCatalogModels(acpModels, cliModels);
+  assert.deepEqual(merged.map((m) => m.id), [
+    "grok-4.6",
+    "grok-4.7",
+    "grok-4.7-build-fast",
+    "grok-4.5",
+  ]);
+  // ACP wins for shared ids: vendor name/description survive the CLI row.
+  const shared = merged.find((m) => m.id === "grok-4.6");
+  assert.equal(shared.name, "Grok 4.6");
+  assert.equal(shared.description, "From ACP");
+});
+
+test("mergeGrokCatalogModels keeps ACP entries first and never duplicates shared ids", () => {
+  const acpModels = [
+    { id: "grok-4.7", name: "Grok 4.7", thinkingLevels: ["high"], defaultThinkingLevel: "high" },
+    { id: "grok-4.5", name: "Grok 4.5", thinkingLevels: ["high"], defaultThinkingLevel: "high" },
+  ];
+  const cliModels = [
+    { id: "grok-4.7", name: "grok-4.7", thinkingLevels: ["high"], defaultThinkingLevel: "high" },
+    { id: "grok-4.6", name: "grok-4.6", thinkingLevels: ["high"], defaultThinkingLevel: "high" },
+  ];
+  const merged = mergeGrokCatalogModels(acpModels, cliModels);
+  assert.deepEqual(merged.map((m) => m.id), ["grok-4.7", "grok-4.5", "grok-4.6"]);
+  // ACP entry wins outright; missing fields are not invented.
+  assert.equal(merged[0].name, "Grok 4.7");
+});
+
+test("mergeGrokCatalogModels fills fields an ACP entry lacks from the CLI row", () => {
+  const acpModels = [{ id: "grok-4.6", name: "Grok 4.6" }];
+  const cliModels = [{
+    id: "grok-4.6",
+    name: "grok-4.6",
+    thinkingLevels: ["xhigh", "high", "medium", "low"],
+    defaultThinkingLevel: "high",
+  }];
+  const merged = mergeGrokCatalogModels(acpModels, cliModels);
+  assert.equal(merged.length, 1);
+  assert.equal(merged[0].name, "Grok 4.6");
+  assert.deepEqual(merged[0].thinkingLevels, ["xhigh", "high", "medium", "low"]);
+  assert.equal(merged[0].defaultThinkingLevel, "high");
+});
+
+test("mergeGrokCatalogModels tolerates empty or malformed sides", () => {
+  assert.deepEqual(mergeGrokCatalogModels([], [{ id: "grok-4.5", name: "grok-4.5" }]), [
+    { id: "grok-4.5", name: "grok-4.5" },
+  ]);
+  assert.deepEqual(mergeGrokCatalogModels([{ id: "grok-4.5", name: "grok-4.5" }], null), [
+    { id: "grok-4.5", name: "grok-4.5" },
+  ]);
+  assert.deepEqual(mergeGrokCatalogModels(null, null), []);
 });

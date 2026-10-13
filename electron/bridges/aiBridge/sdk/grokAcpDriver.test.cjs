@@ -1957,3 +1957,93 @@ test("runGrokAcpTurn fails when process is signal-killed mid-turn (code=null)", 
   assert.match(String(err[1]), /SIGTERM|signal/i);
   assert.ok(!emitter.calls.some((c) => c[0] === "done"));
 });
+
+test("registry Grok model discovery unions an ACP subset with the CLI catalog", async () => {
+  const grokModule = require("./grokDriver.cjs");
+  const grokAcpModule = require("./grokAcpDriver.cjs");
+  const originalAcp = grokAcpModule.listGrokAcpModels;
+  const originalLegacy = grokModule.listGrokModels;
+  // Observed session-subset shape: ACP modelState knows only 4.6/4.5 while
+  // `grok models` lists the full account set including the 4.7 family.
+  grokAcpModule.listGrokAcpModels = async () => ({
+    currentModelId: "grok-4.6/high",
+    models: [
+      {
+        id: "grok-4.6",
+        name: "Grok 4.6",
+        description: "From ACP",
+        thinkingLevels: ["xhigh", "high", "medium", "low"],
+        defaultThinkingLevel: "high",
+      },
+      {
+        id: "grok-4.5",
+        name: "Grok 4.5",
+        thinkingLevels: ["high", "medium", "low"],
+        defaultThinkingLevel: "high",
+      },
+    ],
+  });
+  grokModule.listGrokModels = async () => ({
+    currentModelId: "grok-4.7",
+    models: grokModule.parseGrokModelsOutput(
+      "Default model: grok-4.7\n* grok-4.7 (default)\n- grok-4.7-build-fast\n- grok-4.6\n- grok-4.5",
+    ).models,
+  });
+  try {
+    const catalog = await getDriver("grok").listModels({});
+    assert.deepEqual(catalog.models.map((m) => m.id), [
+      "grok-4.6",
+      "grok-4.5",
+      "grok-4.7",
+      "grok-4.7-build-fast",
+    ]);
+    // ACP entry wins for the shared id (vendor name/description survive).
+    assert.equal(catalog.models.find((m) => m.id === "grok-4.6").name, "Grok 4.6");
+    assert.equal(catalog.models.find((m) => m.id === "grok-4.6").description, "From ACP");
+    // ACP's resolved current id survives the merge.
+    assert.equal(catalog.currentModelId, "grok-4.6/high");
+  } finally {
+    grokAcpModule.listGrokAcpModels = originalAcp;
+    grokModule.listGrokModels = originalLegacy;
+  }
+});
+
+test("registry Grok model discovery dedupes when both probes agree", async () => {
+  const grokModule = require("./grokDriver.cjs");
+  const grokAcpModule = require("./grokAcpDriver.cjs");
+  const originalAcp = grokAcpModule.listGrokAcpModels;
+  const originalLegacy = grokModule.listGrokModels;
+  const acpModels = [
+    {
+      id: "grok-4.7",
+      name: "Grok 4.7",
+      thinkingLevels: ["xhigh", "high", "medium", "low"],
+      defaultThinkingLevel: "high",
+    },
+    {
+      id: "grok-4.5",
+      name: "Grok 4.5",
+      thinkingLevels: ["high", "medium", "low"],
+      defaultThinkingLevel: "high",
+    },
+  ];
+  grokAcpModule.listGrokAcpModels = async () => ({
+    currentModelId: "grok-4.7/high",
+    models: acpModels,
+  });
+  grokModule.listGrokModels = async () => ({
+    currentModelId: "grok-4.7",
+    models: [
+      { id: "grok-4.7", name: "grok-4.7", thinkingLevels: ["xhigh", "high", "medium", "low"], defaultThinkingLevel: "high" },
+      { id: "grok-4.5", name: "grok-4.5", thinkingLevels: ["high", "medium", "low"], defaultThinkingLevel: "high" },
+    ],
+  });
+  try {
+    const catalog = await getDriver("grok").listModels({});
+    assert.deepEqual(catalog.models.map((m) => m.id), ["grok-4.7", "grok-4.5"]);
+    assert.equal(catalog.models[0].name, "Grok 4.7");
+  } finally {
+    grokAcpModule.listGrokAcpModels = originalAcp;
+    grokModule.listGrokModels = originalLegacy;
+  }
+});

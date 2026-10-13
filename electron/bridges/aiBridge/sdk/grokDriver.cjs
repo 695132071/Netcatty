@@ -964,6 +964,39 @@ function parseGrokModelsOutput(stdout) {
   return { currentModelId, models: models.map(applyGrokReasoningFallback) };
 }
 
+/**
+ * Union the ACP initialize catalog with the `grok models` CLI catalog.
+ *
+ * The two probes disagree by design: ACP's `_meta.modelState` reflects the
+ * negotiated agent session and has been observed to advertise only a subset
+ * of the account's models (e.g. grok-4.6/4.5 without the 4.7 family), while
+ * the CLI lists the full account set (grok 1.0.50: 4.7, 4.7-build-fast,
+ * 4.6, 4.5). The reverse is equally possible across CLI versions. Unioning
+ * keeps the picker from shrinking below either source; when an id appears
+ * in both, the ACP entry wins because it carries live vendor `_meta`
+ * (reasoning efforts, description), with any field the ACP entry lacks
+ * filled in from the CLI row so no information is dropped.
+ */
+function mergeGrokCatalogModels(acpModels, cliModels) {
+  const acpList = Array.isArray(acpModels) ? acpModels.filter((m) => m?.id) : [];
+  const cliList = Array.isArray(cliModels) ? cliModels.filter((m) => m?.id) : [];
+  const byId = new Map();
+  for (const model of acpList) {
+    byId.set(model.id, { ...model });
+  }
+  for (const model of cliList) {
+    const existing = byId.get(model.id);
+    if (!existing) {
+      byId.set(model.id, { ...model });
+      continue;
+    }
+    for (const key of Object.keys(model)) {
+      if (existing[key] === undefined) existing[key] = model[key];
+    }
+  }
+  return [...byId.values()];
+}
+
 function applyGrokReasoningFallback(model) {
   const id = String(model?.id || "").trim();
   const fallback = GROK_REASONING_FALLBACKS[id];
@@ -1085,6 +1118,7 @@ module.exports = {
   formatGrokErrorForUser,
   isGrokAuthFailureMessage,
   listGrokModels,
+  mergeGrokCatalogModels,
   mergeWorkspaceGrokMcpToml,
   parseGrokModelsOutput,
   resetGrokMcpMergeRefcountsForTests,
