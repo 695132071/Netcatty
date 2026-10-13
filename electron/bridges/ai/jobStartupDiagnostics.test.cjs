@@ -184,7 +184,7 @@ test("startup timeout emits the #3443 checkpoint timeline keyed by sessionId+job
     assert.equal(sendInterrupt.etxWritten, true);
 
     // The maintainer's key finding (#3443): recovery runs after the job has
-    // already finished — observable here as finishedAtCallback === true.
+    // already finished - observable here as finishedAtCallback === true.
     const invoked = events.find((event) => event.event === "interrupt-callback-invoked");
     assert.equal(invoked.trigger, "startup-timeout");
     assert.equal(invoked.finishedAtCallback, true);
@@ -326,7 +326,45 @@ test("startup timeout reports the bytes of a partial probe reply", async (t) => 
     capture.restore();
     const timeout = capture.events.find((event) => event.event === "startup-timeout-fired");
     assert.equal(timeout.probeReplySeen, true);
-    assert.equal(timeout.probeBytes, partialReply.length);
+    assert.equal(timeout.probeBytes, Buffer.byteLength(partialReply));
+  } finally {
+    capture.restore();
+    pty.destroy();
+  }
+});
+
+test("startup timeout counts raw probe bytes, including an incomplete UTF-8 prefix", async (t) => {
+  withJobDiagEnv(t);
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const capture = captureJobDiagEvents();
+  const { pty, writes } = makeQuietPty();
+  try {
+    const job = startPtyJob(pty, "echo SHOULD_NOT_RUN", {
+      shellKind: "posix",
+      probeLiveShell: true,
+      timeoutMs: 3600000,
+      maxBufferedChars: 1024,
+      sessionId: "sess-utf8",
+      jobId: "job-utf8",
+    });
+    const probeLength = 2 + buildLiveShellProbe(job.marker).length;
+    for (let tick = 0; tick < 100 && writes.join("").length < probeLength; tick += 1) {
+      t.mock.timers.tick(30);
+      await nextTick();
+    }
+    // Two bytes of a three-byte character: the decoder yields no text yet, but
+    // the bytes did arrive and belong in the timeout evidence.
+    pty.push(Buffer.from([0xe2, 0x82]));
+    await nextTick();
+    // A complete two-byte character is two bytes, not one UTF-16 unit.
+    pty.push(Buffer.from("\u00e9", "utf8"));
+    await nextTick();
+    t.mock.timers.tick(30000);
+    await job.resultPromise;
+    await nextTick();
+    capture.restore();
+    const timeout = capture.events.find((event) => event.event === "startup-timeout-fired");
+    assert.equal(timeout.probeBytes, 4);
   } finally {
     capture.restore();
     pty.destroy();

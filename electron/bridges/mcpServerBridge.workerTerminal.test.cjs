@@ -724,9 +724,17 @@ test("job diagnostics tell a scope mismatch from a lost route and log chat cance
   // The route exists but belongs to another chat session: not a lost route.
   await bridge.dispatchBuiltinRpc("netcatty/jobPoll", { jobId: "worker-job-1", chatSessionId: "chat-2" });
   bridge.cancelWorkerBackgroundJobsForSession("chat-1");
+  // The worker route is gone now, so these fall through to the main-process
+  // handlers; the miss must still be logged and explained.
+  await bridge.dispatchBuiltinRpc("netcatty/jobPoll", { jobId: "worker-job-1", chatSessionId: "chat-1" });
+  await bridge.dispatchBuiltinRpc("netcatty/jobStop", { jobId: "worker-job-1", chatSessionId: "chat-1" });
 
   const misses = events().filter((event) => event.event === "job-stop-miss");
-  assert.deepEqual(misses.map((event) => [event.op, event.reason]), [["poll", "scope-mismatch"]]);
+  assert.deepEqual(misses.map((event) => [event.op, event.reason]), [
+    ["poll", "scope-mismatch"],
+    ["poll", "route-missing"],
+    ["stop", "route-missing"],
+  ]);
   const removed = events().filter((event) => event.event === "route-removed");
   assert.deepEqual(removed.map((event) => [event.jobId, event.via]), [["worker-job-1", "chat-session-cancel"]]);
 });

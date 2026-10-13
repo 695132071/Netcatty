@@ -8,7 +8,7 @@
  *
  * Read-only by design: every emitter is gated behind an environment flag and
  * instrumentation calls never alter control flow, timeouts, or error paths.
- * Flow-control state (checkpoint ①) remains covered by the existing
+ * Flow-control state (checkpoint 1) remains covered by the existing
  * [Netcatty Ctrl+C] / [Netcatty Terminal Perf] emitters; the session snapshots
  * attached here reuse the same helpers so both timelines can be correlated.
  */

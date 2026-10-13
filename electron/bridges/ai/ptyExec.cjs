@@ -591,6 +591,9 @@ function startPtyJob(ptyStream, command, options) {
       : data instanceof Uint8Array
         ? Buffer.from(data)
         : Buffer.from(String(data ?? ""));
+    // Count what actually arrived before decoding: a chunk that is only an
+    // incomplete UTF-8 prefix yields no text yet but is still probe evidence.
+    if (probingShell) jobDiag.stats.probeBytes += bytes.length;
     const text = outputDecoder.write(bytes);
     if (!text) return;
     jobDiag.stats.outputChunks += 1;
@@ -599,7 +602,6 @@ function startPtyJob(ptyStream, command, options) {
 
     if (probingShell) {
       probeOutput = (probeOutput + text).slice(-16384);
-      jobDiag.stats.probeBytes = probeOutput.length;
       if (!jobDiag.stats.probeReplySeen) {
         jobDiag.stats.probeReplySeen = true;
         jobDiag.emit("probe-reply-arrived", {
