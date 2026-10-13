@@ -76,6 +76,9 @@ const DEFAULT_WINDOW_WIDTH = 1400;
 const DEFAULT_WINDOW_HEIGHT = 900;
 // Minimum window size: enough to render the expanded sidebar + a usable
 // host list + the 420px host details / new-host aside panel without overflow.
+// Small displays shrink this fit to their work area at window-creation time
+// (see resolveWindowMinimumSize in windowManager/mainWindow.cjs, #3647);
+// the minimum tracks the display the window currently occupies.
 const MIN_WINDOW_WIDTH = 1100;
 const MIN_WINDOW_HEIGHT = 640;
 
