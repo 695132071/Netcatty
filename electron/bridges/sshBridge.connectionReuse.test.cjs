@@ -2415,7 +2415,65 @@ test("an exit-signal with no code does not fabricate an exit code 0", async (t) 
 
   const exits = getExitPayloads(sender);
   assert.equal(exits.length, 1);
-  assert.equal(exits[0].reason, "closed");
+  assert.equal(exits[0].reason, "signaled");
+  assert.equal(exits[0].exitSignal, "SIGUSR2");
   assert.equal(exits[0].exitCode, undefined);
   assert.equal(exits[0].remoteClosedWithoutExitStatus, undefined, "the remote did report a signal");
+});
+
+test("a connection close after an exit-signal stays an administrative disconnect", async (t) => {
+  const { bridge } = loadBridgeWithMockedSsh2(t, { connectReady: true });
+  const sessions = new Map();
+  const start = registerStartHandler(bridge, sessions);
+  const sender = makeSender();
+  const options = {
+    hostname: "10.0.0.50",
+    username: "alice",
+    port: 22,
+    authMethod: "password",
+    password: "secret",
+    useSshAgent: false,
+    verifyHostKeys: false,
+  };
+
+  await start({ sender }, { ...options, sessionId: "signal-then-conn-close" });
+  const session = sessions.get("signal-then-conn-close");
+
+  // ssh2 can emit conn "close" before the channel's paced finalize. The
+  // signal recorded on "exit" must still win over a generic transport close.
+  session.stream.emit("exit", null, "SIGHUP");
+  session.conn.emit("close");
+  await waitForExitDeliveries();
+
+  const exits = getExitPayloads(sender);
+  assert.equal(exits.length, 1);
+  assert.equal(exits[0].reason, "signaled");
+  assert.equal(exits[0].exitSignal, "SIGHUP");
+  assert.equal(exits[0].exitCode, undefined);
+});
+
+test("a connection close without an exit-signal stays a transport close", async (t) => {
+  const { bridge } = loadBridgeWithMockedSsh2(t, { connectReady: true });
+  const sessions = new Map();
+  const start = registerStartHandler(bridge, sessions);
+  const sender = makeSender();
+  const options = {
+    hostname: "10.0.0.50",
+    username: "alice",
+    port: 22,
+    authMethod: "password",
+    password: "secret",
+    useSshAgent: false,
+    verifyHostKeys: false,
+  };
+
+  await start({ sender }, { ...options, sessionId: "transport-conn-close" });
+  sessions.get("transport-conn-close").conn.emit("close");
+  await waitForExitDeliveries();
+
+  const exits = getExitPayloads(sender);
+  assert.equal(exits.length, 1);
+  assert.equal(exits[0].reason, "closed");
+  assert.equal(exits[0].exitCode, 0);
+  assert.equal(exits[0].exitSignal, undefined);
 });

@@ -67,11 +67,19 @@ test("backend closed events keep the tab and mark it disconnected", () => {
   );
 });
 
+test("administrative exit-signal disconnects keep the tab", () => {
+  assert.deepEqual(
+    resolveTerminalSessionExitIntent({ reason: "signaled", exitSignal: "SIGHUP" }, true),
+    { kind: "markDisconnected" },
+  );
+});
+
 test("terminal popup only auto-closes after clean command exit", () => {
   assert.equal(shouldCloseTerminalPopupOnExit({ reason: "exited", exitCode: 0 }), true);
   assert.equal(shouldCloseTerminalPopupOnExit({ reason: "exited", exitCode: 1 }), false);
   assert.equal(shouldCloseTerminalPopupOnExit({ reason: "error", error: "connection reset" }), false);
   assert.equal(shouldCloseTerminalPopupOnExit({ reason: "closed", exitCode: 0 }), false);
+  assert.equal(shouldCloseTerminalPopupOnExit({ reason: "signaled", exitSignal: "SIGHUP" }), false);
 });
 
 test("disabled auto-close keeps command and attached terminal popups open", () => {
@@ -140,6 +148,17 @@ test("exit messages show the reported code for a real remote exit", () => {
   assert.equal(
     formatSessionClosedExitMessage({ reason: "exited", exitCode: 127 }),
     "\r\n[session closed (code 127)]",
+  );
+});
+
+test("an administrative exit-signal renders as a remote signal, not a clean code", () => {
+  assert.equal(
+    formatSessionClosedExitMessage({ reason: "signaled", exitSignal: "SIGHUP" }),
+    "\r\n[session closed by remote signal]",
+  );
+  assert.equal(
+    formatSessionClosedExitMessage({ reason: "closed", exitSignal: "SIGTERM" }),
+    "\r\n[session closed by remote signal]",
   );
 });
 

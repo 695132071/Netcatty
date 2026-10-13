@@ -4,7 +4,10 @@ export type TerminalSessionExitEvent = {
   exitCode?: number;
   signal?: number;
   error?: string;
-  reason?: "exited" | "error" | "timeout" | "closed";
+  reason?: "exited" | "error" | "timeout" | "closed" | "signaled";
+  // ssh2 exit-signal name ("SIGHUP", "SIGTERM", ...). Set when the server
+  // terminated the session process. Distinct from a transport "closed".
+  exitSignal?: string;
   // True when the remote closed the channel without sending exit-status or
   // exit-signal (#3591): no numeric exit code exists, and the renderer shows
   // a distinct message instead of a misleading "code 0".
@@ -15,6 +18,9 @@ export type TerminalSessionExitEvent = {
 export function formatSessionClosedExitMessage(evt: TerminalSessionExitEvent): string {
   if (evt?.remoteClosedWithoutExitStatus) {
     return "\r\n[session closed by remote (no exit status)]";
+  }
+  if (evt?.reason === "signaled" || (typeof evt?.exitSignal === "string" && evt.exitSignal.trim().length > 0)) {
+    return "\r\n[session closed by remote signal]";
   }
   return `\r\n[session closed${evt?.exitCode !== undefined ? ` (code ${evt.exitCode})` : ""}]`;
 }

@@ -531,7 +531,7 @@ declare global {
     ): () => void;
     onSessionExit(
       sessionId: string,
-      cb: (evt: { exitCode?: number; signal?: number; error?: string; reason?: "exited" | "error" | "timeout" | "closed" }) => void
+      cb: (evt: { exitCode?: number; signal?: number; exitSignal?: string; error?: string; reason?: "exited" | "error" | "timeout" | "closed" | "signaled"; remoteClosedWithoutExitStatus?: boolean }) => void
     ): () => void;
     onTelnetAutoLoginComplete?(
       sessionId: string,

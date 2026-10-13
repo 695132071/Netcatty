@@ -41,9 +41,15 @@ export function shouldAutoReconnectAfterExit({
   if (!isTerminalAutoReconnectEnabled(terminalSettings)) return false;
   if (!isAutoReconnectableSshHost(host)) return false;
   // "exited" is a shell exit. "timeout" is an administrative idle/TMOUT logout
-  // (or a connect timeout), not a transport drop — reconnecting would bypass
-  // the server's idle policy. Transport drops stay "error" / "closed".
-  return evt.reason !== "exited" && evt.reason !== "timeout";
+  // (or a connect timeout). "signaled" — or a plumbed exit-signal on an
+  // otherwise "closed" end — is a server kick (idle policy, SIGHUP, SIGTERM).
+  // Reconnecting would fight that policy. Transport "error" and bare "closed"
+  // still retry.
+  if (evt.reason === "error") return true;
+  if (evt.reason === "exited" || evt.reason === "timeout" || evt.reason === "signaled") {
+    return false;
+  }
+  return typeof evt.exitSignal !== "string" || evt.exitSignal.trim().length === 0;
 }
 
 export function shouldContinueAutoReconnectAfterFailure({
