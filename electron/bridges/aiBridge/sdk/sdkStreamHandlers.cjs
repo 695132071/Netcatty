@@ -1075,15 +1075,19 @@ function registerSdkStreamHandlers(ctx) {
             // say the list is the previous success.
             const lastKnown = readLastKnownCatalogEntry(lastKnownPath, cacheKey);
             if (lastKnown) {
-              // Mirror the live mimo semantics (visible default, else first
-              // remaining model): entries written before the auto-channel
-              // normalization can carry a current id on the filtered `mimo`
-              // provider that the persisted model list does not contain.
-              const lastKnownCurrentModelId = backendKey === "mimo"
-                ? (lastKnown.models.some((model) => model.id === lastKnown.currentModelId)
+              // Serve a current id the picker can show (visible default, else
+              // first remaining model). A persisted id can be absent from the
+              // persisted rows: mimo entries written before the auto-channel
+              // normalization carry one on the filtered `mimo` provider, and
+              // any backend can advertise a default whose provider returned
+              // no rows. The picker would show the first row while the send
+              // preflight adopted the hidden id, so remap it for every backend.
+              // No persisted current id means "use the backend default": keep null.
+              const lastKnownCurrentModelId = !lastKnown.currentModelId
+                ? null
+                : lastKnown.models.some((model) => model.id === lastKnown.currentModelId)
                   ? lastKnown.currentModelId
-                  : lastKnown.models[0]?.id ?? null)
-                : lastKnown.currentModelId || null;
+                  : lastKnown.models[0]?.id ?? null;
               console.debug(
                 `[sdk] list-models(${backendKey}) unavailable, serving last-known-good catalog from ${lastKnown.fetchedAt}`,
               );

@@ -214,6 +214,32 @@ export function createSdkRuntimeModelCache(options: SdkRuntimeModelCacheOptions 
 
 export const sdkRuntimeModelCache = createSdkRuntimeModelCache();
 
+export type RuntimeModelWarnings = Record<string, { cacheKey: string; message: string }>;
+
+/**
+ * Make the per-agent catalog warning banner match a catalog result. Used both
+ * for cache reads and after a refresh settles: a refresh that coalesced onto
+ * another panel's in-flight load never runs its own loader callback, so
+ * the caller must reconcile the banner from the shared result itself.
+ * Returns the same object when nothing changes (no extra render). A banner
+ * that belongs to a different cache key is never cleared.
+ */
+export function reconcileRuntimeModelWarning(
+  current: RuntimeModelWarnings,
+  agentId: string,
+  cacheKey: string,
+  hasWarning: boolean,
+  message: string,
+): RuntimeModelWarnings {
+  const existing = current[agentId];
+  if (hasWarning) {
+    return existing?.cacheKey === cacheKey ? current : { ...current, [agentId]: { cacheKey, message } };
+  }
+  if (existing?.cacheKey !== cacheKey) return current;
+  const { [agentId]: _removed, ...rest } = current;
+  return rest;
+}
+
 export function mergeFallbackThinkingLevels(
   runtime: AgentModelPreset[],
   fallbacks: AgentModelPreset[],

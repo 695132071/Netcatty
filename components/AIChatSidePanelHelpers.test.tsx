@@ -12,6 +12,7 @@ import {
   modelPresetsContainId,
   normalizeStoredAgentModelSelection,
   normalizeSdkRuntimeModelPresets,
+  reconcileRuntimeModelWarning,
   shouldAdoptSdkCurrentModel,
   shouldLoadSdkRuntimeModels,
   shouldUseStoredAgentModel,
@@ -599,4 +600,26 @@ test('SDK runtime model cache preserves degraded warnings until a successful ret
     models: [{ id: 'auto', name: 'Auto' }],
   }), { force: true });
   assert.equal(cache.read('copilot')?.warning, undefined);
+});
+
+test('reconcileRuntimeModelWarning adds the banner for a warned catalog and keeps unrelated agents', () => {
+  const current = { other: { cacheKey: 'k-other', message: 'x' } };
+  const next = reconcileRuntimeModelWarning(current, 'copilot', 'k1', true, 'warn');
+  assert.deepEqual(next, {
+    other: { cacheKey: 'k-other', message: 'x' },
+    copilot: { cacheKey: 'k1', message: 'warn' },
+  });
+});
+
+test('reconcileRuntimeModelWarning returns the same object when nothing changes', () => {
+  const current = { copilot: { cacheKey: 'k1', message: 'warn' } };
+  assert.equal(reconcileRuntimeModelWarning(current, 'copilot', 'k1', true, 'warn'), current);
+  assert.equal(reconcileRuntimeModelWarning({}, 'copilot', 'k1', false, 'warn').copilot, undefined);
+});
+
+test('reconcileRuntimeModelWarning clears only the banner that belongs to this cache key', () => {
+  const current = { copilot: { cacheKey: 'k1', message: 'warn' } };
+  assert.deepEqual(reconcileRuntimeModelWarning(current, 'copilot', 'k1', false, 'warn'), {});
+  // A banner that belongs to another cache key (another profile) is not ours to clear.
+  assert.equal(reconcileRuntimeModelWarning(current, 'copilot', 'k2', false, 'warn'), current);
 });

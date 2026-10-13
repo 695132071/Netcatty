@@ -79,6 +79,7 @@ import {
   buildCursorListModelsAgentEnv,
   buildSdkRuntimeModelCacheKey,
   sdkRuntimeModelCache,
+  reconcileRuntimeModelWarning,
   generateId,
   agentModelPresetsShallowEqual,
   mergeFallbackThinkingLevels,
@@ -1012,7 +1013,22 @@ const AIChatSidePanelActive: React.FC<AIChatSidePanelProps> = ({
         };
       },
       { force: options.force },
-    ).catch((err) => {
+    ).then((catalog) => {
+      // A refresh that joined another panel's in-flight load never ran the
+      // loader above, so sync this panel's banner from the shared result.
+      setRuntimeModelWarnings((current) => {
+        const agent = externalAgentsRef.current.find((item) => item.id === target.agentId);
+        if (buildExternalAgentRuntimeModelTarget(agent)?.cacheKey !== target.cacheKey) return current;
+        return reconcileRuntimeModelWarning(
+          current,
+          target.agentId,
+          target.cacheKey,
+          Boolean(catalog.warning),
+          t('ai.chat.modelCatalogWarning'),
+        );
+      });
+      return catalog;
+    }).catch((err) => {
       setRuntimeModelWarnings((current) => {
         const agent = externalAgentsRef.current.find((item) => item.id === target.agentId);
         if (buildExternalAgentRuntimeModelTarget(agent)?.cacheKey !== target.cacheKey) return current;
@@ -1042,17 +1058,13 @@ const AIChatSidePanelActive: React.FC<AIChatSidePanelProps> = ({
       // The cache stores warned (last-known-good) responses too: sync the
       // banner so another panel or a remount within the TTL does not present
       // degraded models as live.
-      setRuntimeModelWarnings((current) => {
-        const existing = current[target.agentId];
-        if (cached.warning) {
-          return existing?.cacheKey === target.cacheKey
-            ? current
-            : { ...current, [target.agentId]: { cacheKey: target.cacheKey, message: t('ai.chat.modelCatalogWarning') } };
-        }
-        if (existing?.cacheKey !== target.cacheKey) return current;
-        const { [target.agentId]: _removed, ...rest } = current;
-        return rest;
-      });
+      setRuntimeModelWarnings((current) => reconcileRuntimeModelWarning(
+        current,
+        target.agentId,
+        target.cacheKey,
+        Boolean(cached.warning),
+        t('ai.chat.modelCatalogWarning'),
+      ));
     }
 
     // Respect renderer TTL / in-flight coalescing for all SDK agents including
