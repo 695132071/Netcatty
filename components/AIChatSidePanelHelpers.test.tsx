@@ -4,20 +4,24 @@ import { readFileSync } from 'node:fs';
 
 import {
   appendRetainedStoredModelPreset,
+  retainStoredModelPresetForCatalog,
   buildCursorListModelsAgentEnv,
   buildSdkRuntimeModelCacheKey,
   canonicalizeEffortEncodedModelId,
   createSdkRuntimeModelCache,
   agentModelPresetsShallowEqual,
   mergeFallbackThinkingLevels,
+  MODEL_CACHE_ENV_HINTS,
   modelPresetsContainId,
   normalizeStoredAgentModelSelection,
   normalizeSdkRuntimeModelPresets,
   reconcileRuntimeModelWarning,
+  toSdkRuntimeModelCatalog,
   shouldAdoptSdkCurrentModel,
   shouldLoadSdkRuntimeModels,
   shouldUseStoredAgentModel,
 } from './AIChatSidePanelHelpers';
+import { createRequire } from 'node:module';
 import type { AgentModelPreset, ExternalAgentConfig } from '../infrastructure/ai/types';
 
 test('buildCursorListModelsAgentEnv injects cli-login auth mode for list-models', () => {
@@ -636,4 +640,64 @@ test('reconcileRuntimeModelWarning clears only the banner that belongs to this c
   assert.deepEqual(reconcileRuntimeModelWarning(current, 'copilot', 'k1', false, 'warn'), {});
   // A banner that belongs to another cache key (another profile) is not ours to clear.
   assert.equal(reconcileRuntimeModelWarning(current, 'copilot', 'k2', false, 'warn'), current);
+});
+
+test('renderer model cache env hints cover every key the main-process catalog cache fingerprints', () => {
+  // Both caches must split on the same profile-affecting environment: a key that
+  // only the main process knows lets the renderer serve one profile's catalog to another.
+  const require = createRequire(import.meta.url);
+  const { SDK_MODEL_CACHE_ENV_KEYS } = require('../electron/bridges/aiBridge/sdk/sdkStreamHandlers.cjs') as {
+    SDK_MODEL_CACHE_ENV_KEYS: string[];
+  };
+  const hints = new Set<string>(MODEL_CACHE_ENV_HINTS);
+  const missing = SDK_MODEL_CACHE_ENV_KEYS.filter((key) => !hints.has(key));
+  assert.deepEqual(missing, []);
+});
+
+test('toSdkRuntimeModelCatalog keeps the provenance main reported for a last-known-good serve', () => {
+  const catalog = toSdkRuntimeModelCatalog({
+    ok: true,
+    currentModelId: 'm-1',
+    models: [{ id: 'm-1', name: 'M1' }],
+    warning: 'live fetch failed',
+    source: 'last-known-good',
+    fetchedAt: '2026-10-10T08:00:00.000Z',
+  });
+  assert.deepEqual(catalog, {
+    currentModelId: 'm-1',
+    models: [{ id: 'm-1', name: 'M1' }],
+    warning: 'live fetch failed',
+    source: 'last-known-good',
+    fetchedAt: '2026-10-10T08:00:00.000Z',
+  });
+});
+
+test('toSdkRuntimeModelCatalog tolerates an older main without provenance or with unknown values', () => {
+  assert.deepEqual(
+    toSdkRuntimeModelCatalog({ ok: true, models: [{ id: 'a', name: 'A' }] }),
+    { currentModelId: null, models: [{ id: 'a', name: 'A' }], warning: null },
+  );
+  const odd = toSdkRuntimeModelCatalog({
+    ok: true,
+    models: [],
+    source: 'something-else' as never,
+    fetchedAt: 42 as never,
+  });
+  assert.equal(odd.source, undefined);
+  assert.equal(odd.fetchedAt, undefined);
+});
+
+test('retainStoredModelPresetForCatalog leaves the built-in fallback list alone when no catalog arrived', () => {
+  const claudeAgent = { id: 'claude', command: 'claude', sdkBackend: 'claude' } as unknown as ExternalAgentConfig;
+  // The first Claude catalog request failed: nothing to extend. Appending only
+  // the saved alias would make a one-row list authoritative and hide the
+  // built-in presets, so the empty list must stay empty.
+  assert.deepEqual(retainStoredModelPresetForCatalog([], [], 'sonnet', claudeAgent), []);
+});
+
+test('retainStoredModelPresetForCatalog still retains a saved selection on top of a real catalog', () => {
+  const claudeAgent = { id: 'claude', command: 'claude', sdkBackend: 'claude' } as unknown as ExternalAgentConfig;
+  const catalog = [{ id: 'claude-opus-5-5', name: 'Opus 5.5' }];
+  const retained = retainStoredModelPresetForCatalog(catalog, catalog, 'sonnet', claudeAgent);
+  assert.deepEqual(retained, appendRetainedStoredModelPreset(catalog, 'sonnet', claudeAgent));
 });

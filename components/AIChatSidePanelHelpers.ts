@@ -55,7 +55,7 @@ const SDK_RUNTIME_MODEL_CACHE_TTL_MS = 5 * 60 * 1000;
 const SDK_RUNTIME_MODEL_CACHE_MAX_ENTRIES = 64;
 // Keep in sync with main-process SDK_MODEL_CACHE_ENV_KEYS: profile-affecting
 // env must bust the renderer cache so we re-query after OpenCode config switches.
-const MODEL_CACHE_ENV_HINTS = [
+export const MODEL_CACHE_ENV_HINTS = [
   'HOME',
   'USERPROFILE',
   'XDG_CONFIG_HOME',
@@ -78,6 +78,10 @@ const MODEL_CACHE_ENV_HINTS = [
   'XDG_CACHE_HOME',
   'CLAUDE_CODE_EXECUTABLE',
   'CODEBUDDY_CODE_PATH',
+  'CODEBUDDY_API_KEY',
+  'CODEBUDDY_AUTH_TOKEN',
+  'CODEBUDDY_INTERNET_ENVIRONMENT',
+  'XAI_API_KEY',
   'CURSOR_API_KEY',
   'NETCATTY_CURSOR_AUTH_MODE',
   'NETCATTY_CURSOR_CLI_BIN',
@@ -116,6 +120,33 @@ function normalizeSdkRuntimeModelCatalog(catalog: SdkRuntimeModelCatalog): SdkRu
     ...(catalog.warning ? { warning: catalog.warning } : {}),
     ...(normalizeCatalogSource(catalog.source) ? { source: normalizeCatalogSource(catalog.source) } : {}),
     ...(normalizeCatalogFetchedAt(catalog.fetchedAt) ? { fetchedAt: normalizeCatalogFetchedAt(catalog.fetchedAt) } : {}),
+  };
+}
+
+/** The list-models IPC result as the renderer receives it. */
+export type SdkListModelsResult = {
+  ok: boolean;
+  models?: AgentModelPreset[];
+  currentModelId?: string | null;
+  warning?: string;
+  error?: string;
+  // Provenance reported by main (absent on an older main).
+  source?: Exclude<SdkRuntimeModelCatalogSource, 'presets'>;
+  fetchedAt?: string;
+};
+
+/**
+ * Adapt a successful list-models result to a catalog while keeping the
+ * provenance main reported. Dropping source/fetchedAt would make the picker
+ * label a persisted last-known-good list as a live catalog.
+ */
+export function toSdkRuntimeModelCatalog(result: SdkListModelsResult): SdkRuntimeModelCatalog {
+  return {
+    currentModelId: result.currentModelId ?? null,
+    models: result.models ?? [],
+    warning: result.warning ?? null,
+    ...(normalizeCatalogSource(result.source) ? { source: normalizeCatalogSource(result.source) } : {}),
+    ...(normalizeCatalogFetchedAt(result.fetchedAt) ? { fetchedAt: normalizeCatalogFetchedAt(result.fetchedAt) } : {}),
   };
 }
 
@@ -445,6 +476,23 @@ export function appendRetainedStoredModelPreset(
   // Keep the exact stored id (including any effort suffix) so the appended
   // row still matches the selection the send preflight passes.
   return [...presets, fallback ?? { id: canonical, name: canonical }];
+}
+
+/**
+ * Retain the saved selection on top of the presets built for a catalog, but
+ * only when a catalog actually arrived. An empty catalog (the request failed
+ * before any last-known-good entry existed) must stay empty so the agent keeps
+ * its whole built-in fallback list; a lone retained row would be stored as the
+ * authoritative runtime list and hide every other built-in preset.
+ */
+export function retainStoredModelPresetForCatalog(
+  catalogPresets: AgentModelPreset[],
+  presets: AgentModelPreset[],
+  storedModelId: string | null | undefined,
+  agent?: ExternalAgentConfig,
+): AgentModelPreset[] {
+  if (catalogPresets.length === 0) return presets;
+  return appendRetainedStoredModelPreset(presets, storedModelId, agent);
 }
 
 export function generateId(): string {

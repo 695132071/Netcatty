@@ -79,8 +79,11 @@ function buildCopilotClientOptions({ cliPath, gitHubToken }) {
  * When no wrapper can be generated, the resolved path passes through as
  * before.
  */
-function connectCopilotStdioPath(cliPath) {
+function connectCopilotStdioPath(cliPath, platform = process.platform) {
   const resolved = resolveCopilotExecutableForSdk(cliPath);
+  // windowsHide is Windows-only. On POSIX the wrapper would sit between the
+  // SDK's forceStop() SIGKILL and the real CLI, leaving the CLI orphaned.
+  if (platform !== "win32") return resolved;
   return buildCopilotHeadlessWrapperPath(resolved) ?? resolved;
 }
 

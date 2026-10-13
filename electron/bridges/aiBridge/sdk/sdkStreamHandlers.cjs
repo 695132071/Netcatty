@@ -1406,6 +1406,7 @@ module.exports = {
   resolveSdkBackendBinPath,
   buildSdkSessionKey,
   buildSdkModelCacheKey,
+  SDK_MODEL_CACHE_ENV_KEYS,
   getSdkModelCacheEntry,
   setSdkModelCacheEntry,
   normalizeSdkListModelsResult,

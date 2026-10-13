@@ -603,7 +603,10 @@ test("buildCopilotHeadlessWrapperPath returns null for an empty resolution and r
   assert.equal(buildCopilotHeadlessWrapperPath(""), null);
   const first = buildCopilotHeadlessWrapperPath("C:\\copilot\\copilot.exe");
   try {
-    assert.ok(first && first.startsWith(os.tmpdir()));
+    // The wrapper is executed as the Netcatty user, so it lives in the private
+    // managed temp directory rather than the shared os.tmpdir().
+    const managedDir = require("../../tempDirBridge.cjs").getTempDir();
+    assert.ok(first && path.dirname(first) === managedDir);
     assert.ok(first.endsWith(".js"), "wrapper must be a .js so the SDK spawns it via node");
     assert.equal(buildCopilotHeadlessWrapperPath("C:\\copilot\\copilot.exe"), first, "same content reuses the same wrapper");
   } finally {
@@ -663,5 +666,33 @@ test("resolveCopilotExecutableForSdk resolves npm's copilot.ps1 wrapper to the J
     assert.equal(resolveCopilotExecutableForSdk(shim, "linux"), shim);
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("buildCopilotHeadlessWrapperPath does not trust a pre-existing file with different content", () => {
+  const managedDir = require("../../tempDirBridge.cjs").getTempDir();
+  const resolved = "C:\copilot\planted\copilot.exe";
+  const created = buildCopilotHeadlessWrapperPath(resolved);
+  try {
+    assert.ok(created);
+    // Someone replaces the generated wrapper with their own script.
+    fs.writeFileSync(created, "require('fs').writeFileSync('pwned', '1');");
+    assert.equal(path.dirname(created), managedDir);
+    assert.equal(buildCopilotHeadlessWrapperPath(resolved), null, "a tampered wrapper must not be handed to the SDK");
+  } finally {
+    fs.rmSync(created, { force: true });
+  }
+});
+
+test("connectCopilotStdioPath hands the SDK the resolved CLI directly on POSIX", () => {
+  // windowsHide is Windows-only; on POSIX the wrapper would sit between the SDK's
+  // forceStop() SIGKILL and the real CLI and leave the CLI orphaned.
+  assert.equal(connectCopilotStdioPath("/usr/local/bin/copilot", "linux"), "/usr/local/bin/copilot");
+  assert.equal(connectCopilotStdioPath("/opt/homebrew/bin/copilot", "darwin"), "/opt/homebrew/bin/copilot");
+  const win = connectCopilotStdioPath("C:\copilot\copilot.exe", "win32");
+  try {
+    assert.ok(win && win.endsWith(".js"), "Windows still uses the headless wrapper");
+  } finally {
+    if (win) fs.rmSync(win, { force: true });
   }
 });
