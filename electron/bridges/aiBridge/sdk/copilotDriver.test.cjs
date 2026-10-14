@@ -456,7 +456,7 @@ test("listCopilotModels resolves a shim to npm-loader.js by default even when a 
     // must NOT prefer it by default (the 1.0.59-era native CLI bootstraps
     // %LOCALAPPDATA%\copilot\pkg\ and can leave a conhost child behind after
     // abort, the PR #3624 regression). The headless wrapper still BAKES the
-    // exe the loader would resolve — it is the same binary either way, so
+    // exe the loader would resolve -- it is the same binary either way, so
     // bypassing the loader only removes the visible console allocation.
     const nativeExe = path.join(
       dir, "node_modules", "@github", `copilot-${process.platform}-${process.arch}`, "copilot.exe",

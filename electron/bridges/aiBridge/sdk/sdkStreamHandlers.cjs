@@ -1102,7 +1102,10 @@ function registerSdkStreamHandlers(ctx) {
               // No persisted current id means "use the backend default": keep null.
               const lastKnownCurrentModelId = !lastKnown.currentModelId
                 ? null
-                : lastKnown.models.some((model) => model.id === lastKnown.currentModelId)
+                // An effort-decorated id (grok-4.6/high) is served as is when its
+                // base row (grok-4.6) is listed, so the effort is not lost.
+                : lastKnown.models.some((model) => model.id === lastKnown.currentModelId
+                  || lastKnown.currentModelId.startsWith(`${model.id}/`))
                   ? lastKnown.currentModelId
                   : lastKnown.models[0]?.id ?? null;
               console.debug(

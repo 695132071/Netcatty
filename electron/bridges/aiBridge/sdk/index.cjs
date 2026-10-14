@@ -372,7 +372,7 @@ const DRIVER_REGISTRY = {
       // full account set; treating a non-empty ACP catalog as complete made
       // the picker silently drop models one source knows about. ACP entries
       // win for shared ids because they carry live vendor `_meta` (reasoning
-      // efforts, description) — see mergeGrokCatalogModels.
+      // efforts, description) -- see mergeGrokCatalogModels.
       const signal = ctx.signal || ctx.abortController?.signal;
       const [acpCatalog, fallbackCatalog] = await Promise.all([
         grokAcp.listGrokAcpModels({

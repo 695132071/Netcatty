@@ -438,6 +438,16 @@ test('appendRetainedStoredModelPreset makes preserved saved models visible', () 
   assert.deepEqual(withCopilotSuffix[1], { id: 'claude-sonnet-4.5/high', name: 'claude-sonnet-4.5/high' });
   assert.equal(modelPresetsContainId(withCopilotSuffix, 'claude-sonnet-4.5/high'), true);
 
+  // A base-only custom row (no thinking levels) does not cover the stored
+  // suffixed id, so the exact retained id is appended beside it.
+  const baseOnly: AgentModelPreset[] = [
+    { id: 'auto', name: 'Auto' },
+    { id: 'claude-sonnet-4.5', name: 'claude-sonnet-4.5' },
+  ];
+  const besideBase = appendRetainedStoredModelPreset(baseOnly, 'claude-sonnet-4.5/high', copilotAgent);
+  assert.equal(besideBase.length, 3);
+  assert.equal(modelPresetsContainId(besideBase, 'claude-sonnet-4.5/high'), true);
+
   // Listed or non-retained selections are untouched.
   assert.equal(appendRetainedStoredModelPreset(fullIdPresets, 'claude-sonnet-5-5', claudeAgent), fullIdPresets);
   assert.equal(appendRetainedStoredModelPreset(fullIdPresets, 'gpt-5.5', claudeAgent), fullIdPresets);
@@ -710,4 +720,27 @@ test('retainStoredModelPresetForCatalog still retains a saved selection on top o
   const catalog = [{ id: 'claude-opus-5-5', name: 'Opus 5.5' }];
   const retained = retainStoredModelPresetForCatalog(catalog, catalog, 'sonnet', claudeAgent);
   assert.deepEqual(retained, appendRetainedStoredModelPreset(catalog, 'sonnet', claudeAgent));
+});
+
+test('SDK runtime model cache keeps the retry warning when a degraded refresh retains the cached catalog', async () => {
+  let now = 1_000;
+  const cache = createSdkRuntimeModelCache({ now: () => now });
+  const key = 'copilot:/opt/bin/copilot';
+
+  await cache.refresh(key, async () => ({
+    currentModelId: 'gpt-5',
+    models: [{ id: 'gpt-5', name: 'GPT-5' }],
+  }));
+
+  now = 2_000;
+  const retried = await cache.refresh(
+    key,
+    async () => ({ currentModelId: null, models: [], warning: 'catalog unavailable' }),
+    { force: true },
+  );
+
+  assert.deepEqual(retried.models, [{ id: 'gpt-5', name: 'GPT-5' }]);
+  assert.equal(retried.warning, 'catalog unavailable');
+  // The cached entry itself stays healthy and unwarned.
+  assert.equal(cache.read(key)?.warning, undefined);
 });
