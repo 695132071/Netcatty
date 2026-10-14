@@ -1864,6 +1864,9 @@ async function handleWorkerJobStart(params = {}) {
 // Every removal from the worker route map goes through here so a later
 // poll/stop miss can be explained by a matching route-removed event.
 function deleteWorkerRoute(jobId, job, via) {
+  // A concurrent path may already have removed (or replaced) this route; only
+  // the call that really deletes it reports the removal.
+  if (workerBackgroundJobs.get(jobId) !== job) return;
   emitJobDiag("route-removed", {
     jobId,
     sessionId: job?.sessionId ?? null,

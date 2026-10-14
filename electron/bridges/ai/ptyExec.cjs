@@ -890,7 +890,7 @@ function startPtyJob(ptyStream, command, options) {
 
   function writeWrappedCommand() {
     const wrapped = buildWrappedCommand(command, resolvedShellKind, marker, probeLiveShell);
-    jobDiag.emit("cmd-write", { bytes: wrapped.length, shellKind: resolvedShellKind });
+    jobDiag.emit("cmd-write", { bytes: Buffer.byteLength(wrapped, "utf8"), shellKind: resolvedShellKind });
     writeInput(`${(skipPendingInputClear ? "" : buildPendingInputClearPrefix(resolvedShellKind))}${wrapped}`);
   }
 

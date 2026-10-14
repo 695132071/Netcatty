@@ -738,3 +738,45 @@ test("job diagnostics tell a scope mismatch from a lost route and log chat cance
   const removed = events().filter((event) => event.event === "route-removed");
   assert.deepEqual(removed.map((event) => [event.jobId, event.via]), [["worker-job-1", "chat-session-cancel"]]);
 });
+
+test("route-removed is emitted once when a concurrent cancel removes the route during terminal cleanup", async (t) => {
+  process.env.NETCATTY_JOB_DIAG = "1";
+  const lines = [];
+  t.mock.method(console, "info", (...args) => { lines.push(args.join(" ")); });
+  t.after(() => { delete process.env.NETCATTY_JOB_DIAG; });
+  const removedEvents = () => lines
+    .filter((line) => line.startsWith("[Netcatty JobDiag] "))
+    .map((line) => JSON.parse(line.slice("[Netcatty JobDiag] ".length)))
+    .filter((event) => event.event === "route-removed");
+
+  let releaseStop;
+  const stopGate = new Promise((resolve) => { releaseStop = resolve; });
+  const bridge = loadFreshBridge();
+  bridge.init({
+    sessions: new Map(),
+    electronModule: null,
+    terminalWorkerManager: {
+      request(channel, payload) {
+        if (channel === "netcatty:ai:jobStart") {
+          return Promise.resolve({ ok: true, jobId: "worker-job-1", sessionId: payload.sessionId, status: "running" });
+        }
+        if (channel === "netcatty:ai:jobStop") return stopGate.then(() => ({ ok: true }));
+        return Promise.resolve({ ok: true });
+      },
+      send() {},
+    },
+  });
+  bridge.setPermissionMode("auto");
+  bridge.setCommandBlocklist([]);
+  bridge.updateSessionMetadata([
+    { sessionId: "ssh-1", hostname: "host.example", protocol: "ssh", shellType: "bash", connected: true },
+  ], "chat-1");
+  await bridge.dispatchBuiltinRpc("netcatty/jobStart", { sessionId: "ssh-1", command: "sleep 1", chatSessionId: "chat-1" });
+
+  const cleanup = bridge.cancelWorkerBackgroundJobsForTerminalSession("ssh-1");
+  bridge.cancelWorkerBackgroundJobsForSession("chat-1");
+  releaseStop();
+  await cleanup;
+
+  assert.deepEqual(removedEvents().map((event) => [event.jobId, event.via]), [["worker-job-1", "chat-session-cancel"]]);
+});
