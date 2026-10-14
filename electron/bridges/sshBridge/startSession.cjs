@@ -548,6 +548,15 @@ function createStartSessionApi(ctx) {
             ),
           });
         },
+        // Upload progress tracks bytes the transport actually accepted instead
+        // of bytes queued (issue #3663): ssh2 keeps writableLength unchanged
+        // until one queued write fully completes but shrinks _chunk as the
+        // channel window opens, so summing both approximates the outstanding
+        // backlog while it drains. Without this, an rz progress bar freezes
+        // mid-file for as long as the channel window takes to flush.
+        getTransportPendingBytes() {
+          return (Number(stream.writableLength) || 0) + (stream._chunk?.length || 0);
+        },
         interruptRemote() {
           try { stream.signal?.("INT"); } catch { /* ignore */ }
         },

@@ -107,6 +107,11 @@ function buildModeRestores(dir, names, removeIndices, modes) {
  *   Optional. When writeToRemote returns false, the upload loop awaits this
  *   before sending more file data (typically waitForWritableDrain(stream)).
  *   Callers should forward `opts.signal` so cancel can abort a blocked drain.
+ * @param {() => number} [opts.getTransportPendingBytes]
+ *   Optional. Return the bytes the transport has queued but not delivered yet
+ *   (e.g. the SSH channel backlog). Enables delivered-byte upload progress:
+ *   while parked on backpressure the loop reports queued-minus-outstanding
+ *   bytes so the progress indicator tracks actual delivery (issue #3663).
  * @param {() => import('electron').WebContents | null} opts.getWebContents
  *   Returns the Electron WebContents for sending progress IPC events.
  * @param {string} [opts.label]
@@ -912,6 +917,8 @@ const UPLOAD_DRAIN_TIMEOUT_MS = 60000;
 const UPLOAD_CHUNK_SIZE = 64 * 1024;
 /** Default interval between non-final upload progress IPC events. */
 const DEFAULT_UPLOAD_PROGRESS_THROTTLE_MS = 100;
+/** Interval between delivered-byte progress reports while parked on drain. */
+const UPLOAD_DRAIN_PROGRESS_INTERVAL_MS = 100;
 
 function resolveTimeoutMs(value, fallback) {
   return Number.isFinite(value) && value >= 0 ? value : fallback;
@@ -1128,6 +1135,76 @@ function createZmodemUploadDrainWaiter(opts) {
 }
 
 /**
+ * Park the upload loop on transport backpressure while keeping progress
+ * updates alive (issue #3663).
+ *
+ * Once a large write backlog fills the transport, the upload loop otherwise
+ * sits silent on the "drain" event while the transport keeps delivering the
+ * queued backlog at full link speed: on SSH the entire channel window drains
+ * between two upload-loop steps, so the progress indicator freezes mid-file
+ * and jumps when the loop resumes. While the drain wait stays pending, poll
+ * it and let the caller emit progress events showing bytes the transport has
+ * actually accepted instead.
+ *
+ * Falls back to a plain drain wait when the transport cannot report its
+ * outstanding byte count. Rejections (timeout, cancellation) propagate.
+ *
+ * @param {{
+ *   waitForDrain?: () => Promise<void>,
+ *   getTransportPendingBytes?: () => unknown,
+ *   progressThrottleMs?: number,
+ * }} opts
+ * @param {() => void} emitProgress Called at most once per throttle interval
+ *   while the drain wait stays pending.
+ * @returns {Promise<void>}
+ */
+async function awaitUploadDrainWithProgress(opts, emitProgress) {
+  if (!opts.waitForDrain) return;
+  if (typeof opts.getTransportPendingBytes !== "function") {
+    await opts.waitForDrain();
+    return;
+  }
+
+  let settled = false;
+  const drain = opts.waitForDrain().finally(() => {
+    settled = true;
+  });
+  drain.catch(() => {}); // observed at the final await; never surface early
+  // A drain wait without pending backpressure resolves after one event-loop
+  // turn; yield once so backpressure-free uploads do not gain polling delay.
+  await new Promise((resolve) => setImmediate(resolve));
+  if (settled) {
+    await drain;
+    return;
+  }
+
+  const intervalMs = Math.max(
+    UPLOAD_DRAIN_PROGRESS_INTERVAL_MS,
+    resolveProgressThrottleMs(opts.progressThrottleMs),
+  );
+  // Parked: report accepted bytes right away, then once per interval while
+  // the transport drains its backlog. Progress emissions must never break
+  // (or slow) the transfer itself.
+  try { emitProgress(); } catch { /* ignore */ }
+  // Race each poll delay against drain. A wait that settles mid-interval
+  // must resume the upload immediately; sleeping out the rest of the
+  // interval throttles every backpressure cycle by up to ~100ms.
+  while (!settled) {
+    let timer;
+    await Promise.race([
+      drain.then(() => {}, () => {}),
+      new Promise((resolve) => {
+        timer = setTimeout(resolve, intervalMs);
+      }),
+    ]);
+    clearTimeout(timer);
+    if (settled) break;
+    try { emitProgress(); } catch { /* ignore */ }
+  }
+  await drain;
+}
+
+/**
  * Resolve when `promise` settles, or reject with NETCATTY_ZMODEM_CANCELLED
  * if `signal` aborts first. Used so cancel unblocks upload drain waits even
  * when a transport helper ignores the AbortSignal.
@@ -1329,18 +1406,41 @@ async function handleUpload(zsession, opts) {
     const { originalIndex, filePath, stat, name } = offers[i];
     opts.resetUploadBackpressure?.();
 
-    safeSend(getWebContents(), "netcatty:zmodem:progress", {
-      sessionId,
-      filename: name,
-      transferred: 0,
-      total: stat.size,
-      fileIndex: i,
-      fileCount: offers.length,
-      transferType: "upload",
-    });
-
     let bytesRemaining = 0;
     for (let j = i; j < offers.length; j++) bytesRemaining += offers[j].stat.size;
+
+    // Progress should track bytes the transport accepted, not just bytes
+    // queued (#3663): on SSH the channel can buffer its whole window before
+    // write() returns false, so queued-only reporting freezes the progress
+    // bar while the backlog drains at link speed. When the transport can
+    // report outstanding bytes, show `sent - outstanding` and never move
+    // the bar backwards.
+    const getOutstandingBytes = typeof opts.getTransportPendingBytes === "function"
+      ? opts.getTransportPendingBytes
+      : null;
+    let sent = 0;
+    let displayedTransferred = 0;
+    const emitFileProgress = () => {
+      const outstanding = getOutstandingBytes ? Number(getOutstandingBytes()) : NaN;
+      const delivered = Number.isFinite(outstanding)
+        ? sent - Math.max(outstanding, 0)
+        : sent;
+      displayedTransferred = Math.min(
+        Math.max(delivered, displayedTransferred),
+        stat.size,
+      );
+      safeSend(getWebContents(), "netcatty:zmodem:progress", {
+        sessionId,
+        filename: name,
+        transferred: displayedTransferred,
+        total: stat.size,
+        fileIndex: i,
+        fileCount: offers.length,
+        transferType: "upload",
+      });
+    };
+
+    emitFileProgress();
 
     // The offer handshake is the only upload step without a built-in
     // deadline: if rz dies before answering ZFILE (crash, YMODEM fallback),
@@ -1369,7 +1469,6 @@ async function handleUpload(zsession, opts) {
     // Read and send in chunks
     const fd = fs.openSync(filePath, "r");
     const buf = Buffer.alloc(UPLOAD_CHUNK_SIZE);
-    let sent = 0;
     // Progress IPC is throttled by default for every transport. Pass 0 only
     // when a caller explicitly needs one event per chunk.
     const progressThrottleMs = resolveProgressThrottleMs(opts.progressThrottleMs);
@@ -1389,21 +1488,16 @@ async function handleUpload(zsession, opts) {
 
         const now = Date.now();
         if (progressThrottleMs === 0 || now - lastProgressEmitAt >= progressThrottleMs) {
-          safeSend(getWebContents(), "netcatty:zmodem:progress", {
-            sessionId,
-            filename: name,
-            transferred: sent,
-            total: stat.size,
-            fileIndex: i,
-            fileCount: offers.length,
-            transferType: "upload",
-          });
+          emitFileProgress();
           lastProgressEmitAt = now;
         }
 
-        // Wait for transport to drain if its buffer is full, then yield
-        // so inbound ZMODEM control frames can be processed.
-        if (opts.waitForDrain) await opts.waitForDrain();
+        // Wait for transport to drain if its buffer is full (emitting
+        // delivered-byte progress while parked, #3663), then yield so
+        // inbound ZMODEM control frames can be processed.
+        if (opts.waitForDrain) {
+          await awaitUploadDrainWithProgress(opts, emitFileProgress);
+        }
         await yieldToIO();
       }
       // All data written to Node.js buffer — but TCP may still be
@@ -1688,6 +1782,8 @@ module.exports = {
   handleDownload,
   waitForWritableDrain,
   createZmodemUploadDrainWaiter,
+  awaitUploadDrainWithProgress,
   UPLOAD_CHUNK_SIZE,
   UPLOAD_DRAIN_TIMEOUT_MS,
+  UPLOAD_DRAIN_PROGRESS_INTERVAL_MS,
 };
