@@ -58,11 +58,25 @@ function subscribeToPtyData(ptyStream, onData) {
   throw new Error("PTY stream does not support data subscriptions");
 }
 
+// Only the end of the output can hold the idle prompt, and this check runs for
+// every PTY chunk while the retained output may be hundreds of thousands of
+// characters long. Normalising the whole text (ANSI and carriage returns) on
+// each chunk stalls the worker during a flood, so look at a tail window that is
+// comfortably larger than the prompt including the escape codes it may carry.
+const PROMPT_SUFFIX_MIN_WINDOW_CHARS = 2048;
+const PROMPT_SUFFIX_WINDOW_PER_PROMPT_CHAR = 8;
+
 function hasExpectedPromptSuffix(text, expectedPrompt) {
   if (!expectedPrompt) return false;
-  const normalizedText = stripAnsi(String(text || "")).replace(/\r/g, "");
   const normalizedPrompt = stripAnsi(String(expectedPrompt || "")).replace(/\r/g, "");
-  return !!normalizedPrompt && normalizedText.endsWith(normalizedPrompt);
+  if (!normalizedPrompt) return false;
+  const fullText = String(text || "");
+  const windowChars = Math.max(
+    PROMPT_SUFFIX_MIN_WINDOW_CHARS,
+    String(expectedPrompt).length * PROMPT_SUFFIX_WINDOW_PER_PROMPT_CHAR,
+  );
+  const tail = fullText.length > windowChars ? fullText.slice(-windowChars) : fullText;
+  return stripAnsi(tail).replace(/\r/g, "").endsWith(normalizedPrompt);
 }
 
 function escapePosixSingleQuoted(text) {
