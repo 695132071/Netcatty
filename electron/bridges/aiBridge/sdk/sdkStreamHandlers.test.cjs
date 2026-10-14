@@ -1337,6 +1337,29 @@ test("list-models serves a visible current id from last-known-good when the pers
   }
 });
 
+test("list-models keeps an effort-decorated current id from last-known-good when its base row exists", async (t) => {
+  const { getDriver } = require("./index.cjs");
+  const { handlers, ctx, cleanup } = makeLastKnownCtx();
+  try {
+    const driver = getDriver("grok");
+    const listModels = handlers.get("netcatty:ai:sdk-agent:list-models");
+    t.mock.method(driver, "listModels", async () => ({
+      currentModelId: "grok-4.6/high",
+      models: [{ id: "grok-4.5", name: "G45" }, { id: "grok-4.6", name: "G46" }],
+    }));
+    const seeded = await listModels({ sender: {} }, { sdkBackend: "grok", agentCommand: "/test/lkg-grok-effort" });
+    assert.equal(seeded.ok, true);
+
+    ctx.sdkModelCache.clear();
+    driver.listModels.mock.mockImplementation(async () => []);
+    const failed = await listModels({ sender: {} }, { sdkBackend: "grok", agentCommand: "/test/lkg-grok-effort" });
+    assert.equal(failed.source, "last-known-good");
+    assert.equal(failed.currentModelId, "grok-4.6/high", "the effort must survive when the base row is listed");
+  } finally {
+    cleanup();
+  }
+});
+
 test("list-models persists a successful live catalog and serves it as last-known-good after failures", async (t) => {
   const { getDriver } = require("./index.cjs");
   const { handlers, ctx, catalogFile, cleanup } = makeLastKnownCtx();
