@@ -194,7 +194,11 @@ export function createSdkRuntimeModelCache(options: SdkRuntimeModelCacheOptions 
         .then((catalog) => {
           const normalized = normalizeSdkRuntimeModelCatalog(catalog);
           if (normalized.models.length === 0 && !normalized.currentModelId) {
-            return cached ? cloneCatalog(cached) : cloneCatalog(normalized);
+            // A degraded retry keeps the older catalog usable but must still
+            // report its own warning, or the banner and Retry would vanish.
+            if (!cached) return cloneCatalog(normalized);
+            const retained = cloneCatalog(cached);
+            return normalized.warning ? { ...retained, warning: normalized.warning } : retained;
           }
           touchEntry(key, { ...cloneCatalog(normalized), updatedAt: now() });
           pruneEntries();
@@ -412,7 +416,11 @@ export function appendRetainedStoredModelPreset(
   }
   const canonical = canonicalizeEffortEncodedModelId(storedModelId);
   const baseId = canonical.split('/')[0];
-  if (presets.some((preset) => preset.id === baseId)) return presets;
+  if (presets.some((preset) => preset.id === baseId)) {
+    // The base row did not cover the stored id (checked above), so a suffixed
+    // selection needs its own exact row; a bare id is already present.
+    return canonical === baseId ? presets : [...presets, { id: canonical, name: canonical }];
+  }
   const fallback = getAgentModelPresets(agent?.command, getExternalAgentSdkBackend(agent))
     .find((preset) => preset.id === baseId);
   // Keep the exact stored id (including any effort suffix) so the appended
