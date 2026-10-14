@@ -164,7 +164,7 @@ test("startup timeout emits the #3443 checkpoint timeline keyed by sessionId+job
     assert.ok(names.includes("startup-timeout-fired"));
     assert.ok(names.includes("send-interrupt"));
     assert.ok(names.includes("interrupt-callback-invoked"));
-    assert.equal(names.includes("probe-reply-arrived"), false, "the paused stream never delivered the reply");
+    assert.equal(names.includes("probe-output-arrived"), false, "the paused stream never delivered the reply");
     assert.equal(names.includes("probe-reply-parsed"), false);
     assert.equal(names.includes("cmd-write"), false, "the timed-out command must not be typed");
 
@@ -173,7 +173,7 @@ test("startup timeout emits the #3443 checkpoint timeline keyed by sessionId+job
 
     const timeout = events.find((event) => event.event === "startup-timeout-fired");
     assert.equal(timeout.elapsedMs, 30000);
-    assert.equal(timeout.probeReplySeen, false);
+    assert.equal(timeout.probeOutputSeen, false);
     assert.equal(timeout.outputChunks, 0);
     assert.equal(timeout.session.flowState.rendererPaused, true);
     assert.equal(timeout.session.flowState.appliedPause, true);
@@ -283,7 +283,7 @@ test("successful startup emits probe reply, parse, and start-marker checkpoints"
     assert.equal(result.ok, true);
     const names = capture.events.map((event) => event.event);
     assert.ok(names.includes("probe-write"));
-    assert.ok(names.includes("probe-reply-arrived"));
+    assert.ok(names.includes("probe-output-arrived"));
     assert.ok(names.includes("probe-reply-parsed"));
     assert.ok(names.includes("cmd-write"));
     assert.ok(names.includes("start-marker-matched"));
@@ -325,7 +325,7 @@ test("startup timeout reports the bytes of a partial probe reply", async (t) => 
     await nextTick();
     capture.restore();
     const timeout = capture.events.find((event) => event.event === "startup-timeout-fired");
-    assert.equal(timeout.probeReplySeen, true);
+    assert.equal(timeout.probeOutputSeen, true);
     assert.equal(timeout.probeBytes, Buffer.byteLength(partialReply));
   } finally {
     capture.restore();

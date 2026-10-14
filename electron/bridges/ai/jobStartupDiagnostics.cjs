@@ -66,7 +66,7 @@ function emitJobDiag(event, payload = {}) {
 function createJobStartupDiag(context = {}) {
   const startedAt = Date.now();
   const stats = {
-    probeReplySeen: false,
+    probeOutputSeen: false,
     probeBytes: 0,
     outputChunks: 0,
     outputChars: 0,

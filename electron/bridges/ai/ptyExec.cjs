@@ -221,7 +221,7 @@ function startPtyJob(ptyStream, command, options) {
       jobDiag.emit("startup-timeout-fired", {
         elapsedMs: startupMs,
         foundStart,
-        probeReplySeen: jobDiag.stats.probeReplySeen,
+        probeOutputSeen: jobDiag.stats.probeOutputSeen,
         probeBytes: jobDiag.stats.probeBytes,
         outputChunks: jobDiag.stats.outputChunks,
         outputChars: jobDiag.stats.outputChars,
@@ -602,9 +602,12 @@ function startPtyJob(ptyStream, command, options) {
 
     if (probingShell) {
       probeOutput = (probeOutput + text).slice(-16384);
-      if (!jobDiag.stats.probeReplySeen) {
-        jobDiag.stats.probeReplySeen = true;
-        jobDiag.emit("probe-reply-arrived", {
+      // First decoded output while probing. It may be only the echoed probe
+      // command or unrelated output, so this does not prove the shell replied;
+      // probe-reply-parsed is the checkpoint that does.
+      if (!jobDiag.stats.probeOutputSeen) {
+        jobDiag.stats.probeOutputSeen = true;
+        jobDiag.emit("probe-output-arrived", {
           probeBytes: probeOutput.length,
           session: diagSnapshot(),
         });
