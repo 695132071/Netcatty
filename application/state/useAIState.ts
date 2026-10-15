@@ -718,7 +718,7 @@ export function useAIState() {
     const branched = result.session;
     setSessionsRaw(prev => {
       // Keep both recently used chats within the existing history limit.
-      const next = [branched, source, ...prev.filter(session => session.id !== source.id)];
+      const next = [branched, { ...source, updatedAt: branched.updatedAt }, ...prev.filter(session => session.id !== source.id)];
       setLatestAISessionsSnapshot(next);
       persistSessions(next);
       return next;

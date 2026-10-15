@@ -155,7 +155,7 @@ test('undo copies chat only, preserving original outputs and job ownership', asy
   assert.equal(outputStore.read({ handleId: handle.id }, source.id), 'original saved output');
   assert.deepEqual(stateStore.get(result!.sessionId).activeJobs, {});
   assert.ok(stateStore.get(source.id).activeJobs['original-job']);
-  assert.equal(JSON.stringify(capture.sessions.find(item => item.id === source.id)), original);
+  assert.equal(JSON.stringify({ ...capture.sessions.find(item => item.id === source.id), updatedAt: source.updatedAt }), original);
   assert.ok(capture.sessions.find(item => item.id === result!.sessionId)!.messages[1].content.includes('Preview'));
   stateStore.clear(source.id);
   outputStore.prune(source.id);
@@ -163,17 +163,32 @@ test('undo copies chat only, preserving original outputs and job ownership', asy
   container.remove(); dom.window.close();
 });
 
-test('undo keeps an old source beside its copy within ordinary history retention', async () => {
-  const sources = Array.from({ length: 50 }, (_, index) => ({
-    ...structuredClone(SOURCE_SESSION), id: `history-${index}`,
-  }));
-  const { dom, container, root, capture } = await setupAiState(sources);
-  await act(async () => { await capture.ai!.undoLastTurnInSession('history-49'); });
-  assert.equal(capture.sessions[1].id, 'history-49');
-  await new Promise(resolve => setTimeout(resolve, 350));
-  const saved = JSON.parse(dom.window.localStorage.getItem('netcatty_ai_sessions_v1')!);
-  assert.ok(saved.some((item: AISession) => item.id === 'history-49'));
-  assert.deepEqual(saved.find((item: AISession) => item.id === 'history-49').messages, sources[49].messages);
-  await act(async () => root.unmount());
-  container.remove(); dom.window.close();
-});
+for (const newerCount of [49, 50]) {
+  test(`undo retains an old source and its branch after reload with ${newerCount} newer chats`, async () => {
+    const newer = Array.from({ length: newerCount }, (_, index) => ({
+      ...structuredClone(SOURCE_SESSION), id: `history-${index}`, updatedAt: 100 + index,
+    }));
+    const { dom, container, root, capture } = await setupAiState([...newer, SOURCE_SESSION]);
+    let branchId: string | undefined;
+    await act(async () => {
+      branchId = (await capture.ai!.undoLastTurnInSession(SOURCE_SESSION.id))?.sessionId;
+    });
+    assert.ok(branchId);
+    const saved: AISession[] = JSON.parse(dom.window.localStorage.getItem('netcatty_ai_sessions_v1')!);
+    assert.equal(saved.length, 50);
+    const original = saved.find(item => item.id === SOURCE_SESSION.id);
+    assert.ok(original, 'the original must survive updatedAt-based history pruning');
+    assert.deepEqual({ ...original, updatedAt: SOURCE_SESSION.updatedAt }, SOURCE_SESSION);
+    assert.deepEqual(saved.find(item => item.id === branchId)?.messages, SOURCE_SESSION.messages.slice(0, 2));
+    assert.ok(original.updatedAt >= newer.at(-1)!.updatedAt);
+    await act(async () => root.unmount());
+    container.remove(); dom.window.close();
+
+    // Remount the actual hook from the persisted records, as on app reload.
+    const reloaded = await setupAiState(saved);
+    assert.deepEqual(reloaded.capture.sessions.find(item => item.id === SOURCE_SESSION.id)?.messages, SOURCE_SESSION.messages);
+    assert.deepEqual(reloaded.capture.sessions.find(item => item.id === branchId)?.messages, SOURCE_SESSION.messages.slice(0, 2));
+    await act(async () => reloaded.root.unmount());
+    reloaded.container.remove(); reloaded.dom.window.close();
+  });
+}
