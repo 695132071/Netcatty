@@ -75,3 +75,39 @@ test("opacity applies and synchronizes to detached content windows without broad
   broadcast({ sender: main.webContents }, { key: "netcatty_show_tray_icon_v1", value: true });
   assert.equal(detachedMessages.length, 1);
 });
+
+test("a closing settings recipient does not interrupt delivery to later windows", (context) => {
+  delete require.cache[require.resolve("../windowManager.cjs")];
+  const windowManager = require("../windowManager.cjs");
+  const closing = windowStub(301);
+  const main = windowStub(302);
+  const detached = windowStub(303);
+  const mainMessages = [];
+  const detachedMessages = [];
+  closing.webContents.send = () => { throw new Error("renderer closed during send"); };
+  main.webContents.send = (...args) => mainMessages.push(args);
+  detached.webContents.send = (...args) => detachedMessages.push(args);
+  windowManager.registerMainWindow(closing);
+  windowManager.registerMainWindow(main);
+  windowManager.registerAppContentWindow(detached);
+  context.after(() => {
+    windowManager.unregisterMainWindow(closing);
+    windowManager.unregisterMainWindow(main);
+    windowManager.unregisterAppContentWindow(detached);
+  });
+  const handlers = new Map();
+  windowManager.registerWindowHandlers({
+    handle: (channel, handler) => handlers.set(channel, handler),
+    on: (channel, handler) => handlers.set(channel, handler),
+  }, {});
+  const broadcast = handlers.get("netcatty:settings:changed");
+  const opacity = { key: "netcatty_window_opacity_v1", value: { opacity: 0.6, version: 1 } };
+  const recording = { key: "netcatty_hotkey_recording_v1", value: true };
+  broadcast({ sender: { id: 0 } }, opacity);
+  broadcast({ sender: { id: 0 } }, recording);
+  assert.deepEqual(mainMessages, [
+    ["netcatty:settings:changed", opacity],
+    ["netcatty:settings:changed", recording],
+  ]);
+  assert.deepEqual(detachedMessages, [["netcatty:settings:changed", opacity]]);
+});

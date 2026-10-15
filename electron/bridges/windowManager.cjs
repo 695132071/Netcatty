@@ -1286,8 +1286,12 @@ function registerWindowHandlers(ipcMain, nativeTheme) {
         ? getAppContentWindowList()
         : getMainWindowList();
       for (const win of windows) {
-        if (!win.webContents.isDestroyed() && win.webContents.id !== senderId) {
-          win.webContents.send("netcatty:settings:changed", payload);
+        try {
+          if (!win.webContents.isDestroyed() && win.webContents.id !== senderId) {
+            win.webContents.send("netcatty:settings:changed", payload);
+          }
+        } catch {
+          // A closing/reloading recipient must not block the remaining windows.
         }
       }
       if (settingsWindow && !settingsWindow.isDestroyed() && !settingsWindow.webContents.isDestroyed() && settingsWindow.webContents.id !== senderId) {
