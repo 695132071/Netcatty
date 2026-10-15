@@ -461,6 +461,7 @@ export function TerminalLayerTabBridge({ stableRef }: { stableRef: StableRef }) 
     followAppTerminalTheme: s.followAppTerminalTheme,
     handleHistoryPaste: s.handleHistoryPaste,
     handleHistoryDelete: s.handleHistoryDelete,
+    handleHistoryClear: s.handleHistoryClear,
     handleHistoryRun: s.handleHistoryRun,
     handleFocusSidePanelPane: s.handleFocusSidePanelPane,
     handleMagnifySidePanelPane: s.handleMagnifySidePanelPane,

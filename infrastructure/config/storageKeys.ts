@@ -38,6 +38,10 @@ export const STORAGE_KEY_PF_PREFER_FORM_MODE = 'netcatty_pf_prefer_form_mode_v1'
 export const STORAGE_KEY_PF_VIEW_MODE = 'netcatty_pf_view_mode_v1';
 export const STORAGE_KEY_KNOWN_HOSTS = 'netcatty_known_hosts_v1';
 export const STORAGE_KEY_SHELL_HISTORY = 'netcatty_shell_history_v1';
+/** Autocomplete command history. Keeps its legacy colon-style key for compatibility. */
+export const STORAGE_KEY_COMMAND_HISTORY = 'netcatty:commandHistory';
+/** Set once the user clears all command history; histfile seeding honors it. */
+export const STORAGE_KEY_COMMAND_HISTORY_CLEARED = 'netcatty:commandHistoryCleared';
 export const STORAGE_KEY_CONNECTION_LOGS = 'netcatty_connection_logs_v1';
 /** Side store for unsaved connection-log terminal replay buffers (main blob omits them for perf). */
 export const STORAGE_KEY_CONNECTION_LOG_TERMINAL_DATA = 'netcatty_connection_log_terminal_data_v1';
