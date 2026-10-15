@@ -757,7 +757,10 @@ export function useAIState() {
   // Non-destructive "undo last turn": branch the session at the boundary
   // before the latest user message and keep the original in history intact.
   // Returns the new branch id plus the undone user message for the composer.
-  const undoLastTurnInSession = useCallback(async (sessionId: string): Promise<{
+  const undoLastTurnInSession = useCallback(async (
+    sessionId: string,
+    viewingScope?: Pick<AISessionScope, 'type' | 'targetId'>,
+  ): Promise<{
     sessionId: string;
     restored: UndoLastTurnRestoredDraft;
   } | null> => {
@@ -768,6 +771,11 @@ export function useAIState() {
     if (!result) return null;
 
     const branched = result.session;
+    // Like Fork, Undo belongs to the panel viewing the source, which may have
+    // resumed a chat from a closed terminal or inherited it after a merge.
+    if (viewingScope) {
+      branched.scope = { ...branched.scope, ...viewingScope };
+    }
     setSessionsRaw(prev => {
       // Keep both recently used chats within the existing history limit.
       const next = [branched, { ...source, updatedAt: branched.updatedAt }, ...prev.filter(session => session.id !== source.id)];

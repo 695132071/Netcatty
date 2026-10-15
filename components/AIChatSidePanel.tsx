@@ -852,7 +852,10 @@ const AIChatSidePanelActive: React.FC<AIChatSidePanelProps> = ({
     undoInFlightRef.current = true;
     setIsUndoingLastTurn(true);
     try {
-      const result = await undoLastTurnInSession(sessionId);
+      const result = await undoLastTurnInSession(sessionId, {
+        type: scopeType,
+        targetId: scopeTargetId,
+      });
       if (!result) return;
 
       ensureScopeDraft(currentAgentId);
@@ -899,6 +902,8 @@ const AIChatSidePanelActive: React.FC<AIChatSidePanelProps> = ({
     undoLastTurnInSession,
     updateScopeDraft,
     currentAgentId,
+    scopeType,
+    scopeTargetId,
   ]);
 
   const providersRef = useRef(providers);
