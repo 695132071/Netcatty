@@ -813,7 +813,12 @@ async function connectThroughChain(event, options, jumpHosts, targetHost, target
           }
           resolve();
         });
-        conn.once('error', (err) => {
+        conn.on('error', (err) => {
+          // ssh2 continues to the next auth method after agent errors.
+          if (err.level === 'agent') {
+            console.log(`[Chain] Hop ${i + 1} non-fatal agent auth error (will try next method):`, err.message);
+            return;
+          }
           if (settled) return;
           settled = true;
           clearAuthReadyTimer();

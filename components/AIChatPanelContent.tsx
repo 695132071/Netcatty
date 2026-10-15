@@ -1,5 +1,5 @@
 import React, { type Dispatch, type SetStateAction } from 'react';
-import { History, Plus } from 'lucide-react';
+import { History, Plus, Undo2 } from 'lucide-react';
 import type { AIPermissionMode, AISession, ChatMessage, DiscoveredAgent, ExternalAgentConfig, AgentModelPreset, ProviderConfig, UploadedFile } from '../infrastructure/ai/types';
 import type { Host, VaultNote } from '../types';
 import type { UserSkillOption } from './ai/userSkillsState';
@@ -47,6 +47,8 @@ interface AIChatPanelContentProps {
   activeSessionId: string | null;
   handleSelectSession: (sessionId: string) => void;
   handleDeleteSession: (event: React.MouseEvent, sessionId: string) => void;
+  /** Fork the conversation up to a completed assistant response into a new session. */
+  onForkFromMessage?: (messageId: string) => void;
   messages: ChatMessage[];
   isStreaming: boolean;
   activeCompaction?: import('../application/state/useAgentCompactionUi').ActiveCompactionUi | null;
@@ -55,6 +57,9 @@ interface AIChatPanelContentProps {
   setInputValue: (value: string) => void;
   handleSend: () => void;
   handleCompact: () => void;
+  /** Undo last turn is offered at a safe boundary (never mid-tool / mid-compaction). */
+  canUndoLastTurn?: boolean;
+  handleUndoLastTurn?: () => void;
   canCompact?: boolean;
   handleSteer: () => void;
   handleStop: () => void;
@@ -124,6 +129,7 @@ export const AIChatPanelContent: React.FC<AIChatPanelContentProps> = ({
   activeSessionId,
   handleSelectSession,
   handleDeleteSession,
+  onForkFromMessage,
   messages,
   isStreaming,
   activeCompaction = null,
@@ -132,6 +138,8 @@ export const AIChatPanelContent: React.FC<AIChatPanelContentProps> = ({
   setInputValue,
   handleSend,
   handleCompact,
+  canUndoLastTurn = false,
+  handleUndoLastTurn,
   canCompact = false,
   handleSteer,
   handleStop,
@@ -232,6 +240,23 @@ export const AIChatPanelContent: React.FC<AIChatPanelContentProps> = ({
               onManageAgents={handleOpenSettings}
             />
             <div className="flex items-center gap-0.5">
+              {handleUndoLastTurn && (
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="h-6 w-6 rounded-md text-muted-foreground/62 hover:bg-white/[0.05] hover:text-foreground"
+                      aria-label={t('ai.chat.undoLastTurn')}
+                      disabled={sending || isStreaming || !canUndoLastTurn}
+                      onClick={handleUndoLastTurn}
+                    >
+                      <Undo2 size={12} />
+                    </Button>
+                  </TooltipTrigger>
+                  <TooltipContent>{t('ai.chat.undoLastTurn')}</TooltipContent>
+                </Tooltip>
+              )}
               <ConversationExport
                 session={activeSession}
                 onExport={handleExport}
@@ -291,6 +316,8 @@ export const AIChatPanelContent: React.FC<AIChatPanelContentProps> = ({
                 isStreaming={isStreaming}
                 activeSessionId={activeSessionId}
                 activeCompaction={activeCompaction}
+                contextCompaction={activeSession?.contextCompaction}
+                onForkFromMessage={onForkFromMessage}
                 notes={notes}
                 hosts={hosts}
                 onOpenVaultNote={onOpenVaultNote}

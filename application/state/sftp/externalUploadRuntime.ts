@@ -5,11 +5,13 @@ import type { UploadController } from "../../../lib/uploadService";
 // terminal only removes the view; the global transfer runtime can still cancel
 // the upload, and the upload's own finally block releases these entries.
 const controllersByTaskId = new Map<string, UploadController>();
+const scopesByTaskId = new Map<string, "file" | "batch">();
 const taskIdsByController = new Map<UploadController, Set<string>>();
 
 export function registerExternalUploadController(
   taskId: string,
   controller: UploadController,
+  scope: "file" | "batch" = "batch",
 ): void {
   if (!taskId) return;
   const previous = controllersByTaskId.get(taskId);
@@ -19,6 +21,7 @@ export function registerExternalUploadController(
     if (previousIds?.size === 0) taskIdsByController.delete(previous);
   }
   controllersByTaskId.set(taskId, controller);
+  scopesByTaskId.set(taskId, scope);
   const taskIds = taskIdsByController.get(controller) ?? new Set<string>();
   taskIds.add(taskId);
   taskIdsByController.set(controller, taskIds);
@@ -30,6 +33,7 @@ export function unregisterExternalUploadController(controller: UploadController)
   for (const taskId of taskIds) {
     if (controllersByTaskId.get(taskId) === controller) {
       controllersByTaskId.delete(taskId);
+      scopesByTaskId.delete(taskId);
     }
   }
   taskIdsByController.delete(controller);
@@ -40,6 +44,10 @@ export function getExternalUploadController(taskId: string): UploadController | 
 }
 
 export async function cancelExternalUploadRuntime(taskId?: string): Promise<boolean> {
+  if (taskId && scopesByTaskId.get(taskId) === "file") {
+    await controllersByTaskId.get(taskId)?.cancelFile(taskId);
+    return true;
+  }
   const controllers = taskId
     ? [controllersByTaskId.get(taskId)].filter((value): value is UploadController => !!value)
     : [...taskIdsByController.keys()];
@@ -50,5 +58,6 @@ export async function cancelExternalUploadRuntime(taskId?: string): Promise<bool
 
 export function resetExternalUploadRuntimeForTests(): void {
   controllersByTaskId.clear();
+  scopesByTaskId.clear();
   taskIdsByController.clear();
 }

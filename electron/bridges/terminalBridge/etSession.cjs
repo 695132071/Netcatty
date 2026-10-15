@@ -832,13 +832,19 @@ main();
         try {
           // Resolve the real OpenSSH binary to an absolute path BEFORE we
           // prepend the wrapper directory to PATH. Embedding a bare `ssh`
-          // name would recurse into the wrapper forever.
-          let realSsh = process.platform === "win32"
-            ? (findExecutable("ssh") || "")
-            : "";
+          // name would recurse into the wrapper forever. findExecutable
+          // returns that bare name off Windows, so only an absolute result
+          // is usable; otherwise fall back to command -v and well-known paths.
+          let realSsh = "";
+          try {
+            const found = typeof findExecutable === "function" ? findExecutable("ssh") : "";
+            if (found && path.isAbsolute(String(found))) realSsh = String(found);
+          } catch {
+            // Fall through to command -v / well-known paths.
+          }
           if (!realSsh || !path.isAbsolute(realSsh)) {
             try {
-              const resolved = execFileSync(
+              const lookup = execFileSync(
                 process.platform === "win32" ? "where" : "sh",
                 process.platform === "win32" ? ["ssh"] : ["-c", "command -v ssh"],
                 {
@@ -847,8 +853,9 @@ main();
                   windowsHide: true,
                   env: process.env,
                 },
-              ).trim().split(/\r?\n/)[0];
-              if (resolved) realSsh = resolved;
+              );
+              const resolved = String(lookup ?? "").trim().split(/\r?\n/).find(Boolean) || "";
+              if (resolved && path.isAbsolute(resolved)) realSsh = resolved;
             } catch {
               // Fall through to common absolute locations.
             }

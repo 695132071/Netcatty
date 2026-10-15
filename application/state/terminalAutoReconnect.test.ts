@@ -58,6 +58,52 @@ test("normal shell exits do not auto reconnect", () => {
   );
 });
 
+test("administrative idle, timeout, and exit-signal disconnects do not auto reconnect", () => {
+  for (const evt of [
+    { reason: "timeout" as const },
+    { reason: "timeout" as const, exitCode: 0 },
+    { reason: "timeout" as const, error: "Connection timeout to example.com" },
+    { reason: "signaled" as const, exitSignal: "SIGHUP" },
+    { reason: "signaled" as const, exitSignal: "SIGTERM" },
+    { reason: "signaled" as const },
+    // A path that still says "closed" but plumbed the exit-signal is the same kick.
+    { reason: "closed" as const, exitSignal: "SIGUSR2" },
+    { reason: "closed" as const, exitSignal: "  SIGHUP  " },
+  ]) {
+    assert.equal(
+      shouldAutoReconnectAfterExit({
+        evt,
+        host: sshHost,
+        terminalSettings: { sshAutoReconnectEnabled: true },
+        hasEverConnected: true,
+      }),
+      false,
+    );
+  }
+});
+
+test("transport drops still auto reconnect", () => {
+  for (const evt of [
+    { reason: "closed" as const },
+    { reason: "error" as const, error: "connection reset" },
+    { reason: "closed" as const, remoteClosedWithoutExitStatus: true },
+    { reason: "closed" as const, exitSignal: "" },
+    { reason: "closed" as const, exitSignal: "   " },
+    { reason: "error" as const, error: "read ECONNRESET", exitSignal: "" },
+    { reason: "error" as const, error: "read ECONNRESET", exitSignal: "SIGHUP" },
+  ]) {
+    assert.equal(
+      shouldAutoReconnectAfterExit({
+        evt,
+        host: sshHost,
+        terminalSettings: { sshAutoReconnectEnabled: true },
+        hasEverConnected: true,
+      }),
+      true,
+    );
+  }
+});
+
 test("auto reconnect ignores protocols that already have different lifecycle semantics", () => {
   const variants = [
     { protocol: "local" as const, hostname: "localhost" },

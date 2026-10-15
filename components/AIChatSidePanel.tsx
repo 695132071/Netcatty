@@ -65,6 +65,7 @@ import {
 } from '../application/state/useAIChatStreaming';
 import { getScopedHistorySessions } from './ai/scopedHistorySessions';
 import { resolveInheritedAIActiveSessionId } from '../domain/aiWorkspaceScopeInherit';
+import { resolveUndoLastTurnBoundary } from '../domain/aiUndoLastTurn';
 import { aiSessionIdSetEqual, exactScopeAISessionsEqual } from '../domain/aiSessionsForScope';
 import { buildExternalAgentHistoryMessagesForBridge } from './ai/externalAgentHistory';
 import { canSendWithAgent, findEnabledExternalAgent } from './ai/agentSendEligibility';
@@ -269,6 +270,7 @@ const AIChatSidePanelActive: React.FC<AIChatSidePanelProps> = ({
   addDraftFiles,
   removeDraftFile,
   createSession,
+  undoLastTurnInSession,
   deleteSession,
   updateSessionTitle,
   updateSessionExternalSessionId,
@@ -276,6 +278,7 @@ const AIChatSidePanelActive: React.FC<AIChatSidePanelProps> = ({
   updateLastMessage,
   updateMessageById,
   persistContextCompaction,
+  forkSessionFromMessage,
   providers,
   activeProviderId,
   activeModelId,
@@ -319,6 +322,11 @@ const AIChatSidePanelActive: React.FC<AIChatSidePanelProps> = ({
 
   const [showHistory, setShowHistory] = useState(false);
   const [isSending, setIsSending] = useState(false);
+  // Undo-last-turn is still
+  // running. Unlike the send flow this is not reflected in `isSending`, so it
+  // is tracked separately to block sends until the branch settles: a turn
+  // submitted meanwhile would run against the (soon hidden) source session.
+  const [isUndoingLastTurn, setIsUndoingLastTurn] = useState(false);
   const [runtimeAgentModelPresets, setRuntimeAgentModelPresets] = useState<Record<string, { cacheKey: string; models: AgentModelPreset[] }>>({});
   const [runtimeModelWarnings, setRuntimeModelWarnings] = useState<Record<string, { cacheKey: string; message: string }>>({});
   // Tracks SDK runtime model catalogs currently loading (per agent scope):
@@ -821,6 +829,83 @@ const AIChatSidePanelActive: React.FC<AIChatSidePanelProps> = ({
     && Boolean(effectiveActiveProvider)
     && Boolean(effectiveActiveModelId.trim());
 
+  // Undo last turn: offered only at a safe boundary (never inside a compacted
+  // prefix, never between an assistant tool call and its result).
+  const canUndoLastTurn = useMemo(() => Boolean(
+    activeSession
+    && !isStreaming
+    && resolveUndoLastTurnBoundary(
+      activeSession.messages,
+      activeSession.contextCompaction?.compactedMessageCount ?? 0,
+    ) != null,
+  ), [activeSession, isStreaming]);
+
+  const undoInFlightRef = useRef(false);
+  const handleUndoLastTurn = useCallback(async () => {
+    const sessionId = activeSessionRef.current?.id;
+    if (!sessionId || !undoLastTurnInSession) return;
+    if (isStreaming || isAIChatSessionStreaming(sessionId)) return;
+    // Serialize: while a branch is still being created, `canUndoLastTurn` stays stale, so a quick second
+    // click must not start a parallel undo of the same session — that would
+    // publish duplicate branches and restore the same prompt twice.
+    if (undoInFlightRef.current) return;
+    undoInFlightRef.current = true;
+    setIsUndoingLastTurn(true);
+    try {
+      const result = await undoLastTurnInSession(sessionId, {
+        type: scopeType,
+        targetId: scopeTargetId,
+      });
+      if (!result) return;
+
+      ensureScopeDraft(currentAgentId);
+      // Text typed since the last flush lives only in the live composer buffer
+      // (pendingComposerTextRef/currentDraftRef), not in the persisted draft;
+      // merge from the live buffer so it is not lost, then drop the pending
+      // buffer so the later flushDraftText() cannot overwrite the merged text.
+      const liveDraft = currentDraftRef.current;
+      updateScopeDraft(currentAgentId, (draft) => {
+        const liveText = liveDraft?.text ?? draft.text;
+        const liveSkillSlugs = liveDraft?.selectedUserSkillSlugs ?? draft.selectedUserSkillSlugs;
+        return {
+          ...draft,
+          // Keep anything the user is still typing; the undone prompt goes first.
+          text: liveText.trim()
+            ? `${result.restored.text}\n\n${liveText}`
+            : result.restored.text,
+          attachments: [
+            ...result.restored.attachments,
+            ...(liveDraft?.attachments ?? draft.attachments),
+          ],
+          // The undone turn was selected with these pills; keep any pills the
+          // user picked since the send on top of them.
+          selectedUserSkillSlugs: [
+            ...result.restored.selectedUserSkillSlugs,
+            ...liveSkillSlugs.filter((slug) => !result.restored.selectedUserSkillSlugs.includes(slug)),
+          ],
+        };
+      });
+      discardPendingComposerText();
+      showScopeSessionView(result.sessionId);
+      // Tool side effects live outside the conversation and cannot be rolled back.
+      toast.info(t('ai.chat.undoLastTurnNotice'));
+    } finally {
+      undoInFlightRef.current = false;
+      setIsUndoingLastTurn(false);
+    }
+  }, [
+    discardPendingComposerText,
+    ensureScopeDraft,
+    isStreaming,
+    showScopeSessionView,
+    t,
+    undoLastTurnInSession,
+    updateScopeDraft,
+    currentAgentId,
+    scopeType,
+    scopeTargetId,
+  ]);
+
   const providersRef = useRef(providers);
   providersRef.current = providers;
 
@@ -1177,8 +1262,8 @@ const AIChatSidePanelActive: React.FC<AIChatSidePanelProps> = ({
 
   const inputAgentId = activeSession?.agentId ?? currentDraft?.agentId ?? currentAgentId;
   const canSendCurrentAgent = useMemo(
-    () => !isSending && canSendWithAgent(inputAgentId, externalAgents),
-    [inputAgentId, externalAgents, isSending],
+    () => !isSending && !isUndoingLastTurn && canSendWithAgent(inputAgentId, externalAgents),
+    [inputAgentId, externalAgents, isSending, isUndoingLastTurn],
   );
 
   const handleAgentModelSelect = useCallback((modelId: string) => {
@@ -1314,6 +1399,10 @@ const AIChatSidePanelActive: React.FC<AIChatSidePanelProps> = ({
     }));
     const hasInlineTextAttachments = attachments.some(isInlineTextAttachment);
     if ((!trimmed && !hasInlineTextAttachments) || isStreaming) return;
+    // While undo-last-turn is creating the branch, the target is still the source; a
+    // turn submitted now would run in the soon-hidden source session, so
+    // block it until the branch settles.
+    if (isUndoingLastTurn) return;
     // Note-only sends (empty text + a mentioned note) still need a usable
     // session title: fall back to the first mentioned note's title so these
     // conversations don't all show up as "Untitled" in history.
@@ -1438,6 +1527,7 @@ const AIChatSidePanelActive: React.FC<AIChatSidePanelProps> = ({
         addMessageToSession(sessionId, {
           id: generateId(), role: 'user', content: trimmed,
           ...(attachments.length > 0 ? { attachments } : {}),
+          ...(selectedSkillSlugs.length > 0 ? { selectedUserSkillSlugs: selectedSkillSlugs } : {}),
           timestamp: Date.now(),
         });
         addMessageToSession(sessionId, { id: generateId(), role: 'assistant', content: t('ai.chat.noProvider'), timestamp: Date.now() });
@@ -1452,6 +1542,7 @@ const AIChatSidePanelActive: React.FC<AIChatSidePanelProps> = ({
         addMessageToSession(sessionId, {
           id: generateId(), role: 'user', content: trimmed,
           ...(attachments.length > 0 ? { attachments } : {}),
+          ...(selectedSkillSlugs.length > 0 ? { selectedUserSkillSlugs: selectedSkillSlugs } : {}),
           timestamp: Date.now(),
         });
         addMessageToSession(sessionId, { id: generateId(), role: 'assistant', content: t('ai.chat.noProviderModel'), timestamp: Date.now() });
@@ -1465,6 +1556,8 @@ const AIChatSidePanelActive: React.FC<AIChatSidePanelProps> = ({
       addMessageToSession(sessionId, {
         id: generateId(), role: 'user', content: trimmed,
         ...(attachments.length > 0 ? { attachments } : {}),
+        // Kept on the user message so undo last turn can restore the pills.
+        ...(selectedSkillSlugs.length > 0 ? { selectedUserSkillSlugs: selectedSkillSlugs } : {}),
         timestamp: Date.now(),
       });
       clearScopeDraft({ keepPendingText: keepPendingAfterSend() });
@@ -1546,7 +1639,7 @@ const AIChatSidePanelActive: React.FC<AIChatSidePanelProps> = ({
     }
   }, [
     validateNoteMentions, loadCodexConfigModel,
-    isStreaming, activeProvider, effectiveActiveProvider, effectiveActiveModelId, selectedCattyThinking, scopeKey, currentAgentId,
+    isStreaming, isUndoingLastTurn, activeProvider, effectiveActiveProvider, effectiveActiveModelId, selectedCattyThinking, scopeKey, currentAgentId,
     activeModelId, externalAgents,
     createSession, addMessageToSession, updateMessageById, updateLastMessage,
     setStreamingForScope,
@@ -1767,6 +1860,36 @@ const AIChatSidePanelActive: React.FC<AIChatSidePanelProps> = ({
     [setActiveSessionId, showScopeSessionView],
   );
 
+  // "Fork from here": copy the viewed conversation up to a completed assistant
+  // response into a new session, switch to it, and confirm via toast. The
+  // original stays in history. Boundary validation is re-run by the state
+  // hook; a null result means the fork was refused (already hidden in the UI).
+  // This panel's scope is passed so the branch is created in the scope viewing
+  // it, even when the source session's own scope went stale (e.g. a terminal
+  // chat resumed after reconnecting under a new terminal id).
+  const handleForkFromMessage = useCallback(async (messageId: string) => {
+    const sourceSessionId = activeSessionRef.current?.id ?? activeSessionId;
+    if (!sourceSessionId) return;
+    // Reject a double-click while the new session is being selected so one
+    // interaction cannot create two forks.
+    if (!tryBeginSendForKey(`fork:${sourceSessionId}`)) return;
+    try {
+      const fork = await forkSessionFromMessage?.(sourceSessionId, messageId, {
+        type: scopeType,
+        targetId: scopeTargetId,
+      });
+      if (!fork) return;
+      applyHistorySessionSelection(fork.id, {
+        showSessionView: showScopeSessionView,
+        setActiveSessionId,
+        closeHistory: () => setShowHistory(false),
+      });
+      toast.success(t('ai.chat.forkCreated'));
+    } finally {
+      endSendForKey(`fork:${sourceSessionId}`);
+    }
+  }, [activeSessionId, forkSessionFromMessage, scopeTargetId, scopeType, setActiveSessionId, showScopeSessionView, t]);
+
   const handleDeleteSession = useCallback(
     async (e: React.MouseEvent, sessionId: string) => {
       e.stopPropagation();
@@ -1834,7 +1957,7 @@ const AIChatSidePanelActive: React.FC<AIChatSidePanelProps> = ({
       >
       <AIChatPanelContent
         parked={!isVisible}
-        sending={isSending}
+        sending={isSending || isUndoingLastTurn}
         t={t}
         currentAgentId={currentAgentId}
         externalAgents={externalAgents}
@@ -1853,6 +1976,7 @@ const AIChatSidePanelActive: React.FC<AIChatSidePanelProps> = ({
         activeSessionId={activeSessionId}
         handleSelectSession={handleSelectSession}
         handleDeleteSession={handleDeleteSession}
+        onForkFromMessage={handleForkFromMessage}
         messages={messages}
         isStreaming={isStreaming}
         activeCompaction={
@@ -1864,6 +1988,8 @@ const AIChatSidePanelActive: React.FC<AIChatSidePanelProps> = ({
         setInputValue={setInputValue}
         handleSend={handleSend}
         handleCompact={handleCompact}
+        canUndoLastTurn={canUndoLastTurn}
+        handleUndoLastTurn={undoLastTurnInSession ? handleUndoLastTurn : undefined}
         handleSteer={handleSteer}
         handleStop={handleStop}
         canSteer={canSteerCurrentTurn}
@@ -1941,6 +2067,7 @@ const AI_CHAT_SIDE_PANEL_AI_STATE_KEYS = [
   'updateLastMessage',
   'updateMessageById',
   'persistContextCompaction',
+  'forkSessionFromMessage',
   'providers',
   'activeProviderId',
   'activeModelId',

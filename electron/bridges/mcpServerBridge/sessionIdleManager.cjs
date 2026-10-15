@@ -1,6 +1,10 @@
 "use strict";
 
-const DEFAULT_SESSION_IDLE_TIMEOUT_MINUTES = 30;
+// 8h. AI/agent-opened sessions are long-lived, stateful surfaces (prod DB
+// operations, deployments); a 30-minute silent close destroyed more in-flight
+// work than it saved. 8h covers a workday without sitting on the 24h clamp
+// maximum. Users can still set a shorter window in Settings -> AI.
+const DEFAULT_SESSION_IDLE_TIMEOUT_MINUTES = 480;
 const MIN_SESSION_IDLE_TIMEOUT_MINUTES = 1;
 const MAX_SESSION_IDLE_TIMEOUT_MINUTES = 24 * 60;
 

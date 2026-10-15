@@ -585,3 +585,20 @@ test("Codex approval render plan preserves every approval for the same item", ()
     ["approval-3"],
   );
 });
+
+test('fork is offered only for safe completed replies and hidden while streaming', () => {
+  const messages: ChatMessage[] = [
+    { id: 'u', role: 'user', content: 'hello', timestamp: 1 },
+    { id: 'done', role: 'assistant', content: 'completed', timestamp: 2, executionStatus: 'completed' },
+    { id: 'failed', role: 'assistant', content: 'failed', timestamp: 3, executionStatus: 'failed' },
+  ];
+  const render = (isStreaming: boolean) => renderToStaticMarkup(
+    <I18nProvider locale="en">
+      <TooltipProvider>
+        <ChatMessageList messages={messages} isStreaming={isStreaming} onForkFromMessage={() => {}} />
+      </TooltipProvider>
+    </I18nProvider>,
+  );
+  assert.equal((render(false).match(/Fork from here/g) ?? []).length, 1);
+  assert.equal((render(true).match(/Fork from here/g) ?? []).length, 0);
+});
