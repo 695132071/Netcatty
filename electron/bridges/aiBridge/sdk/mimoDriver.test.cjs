@@ -105,7 +105,7 @@ test("listMimoModels tolerates a providers() call that needs most of the inner b
         client: {
           config: {
             providers: () => {
-              // Resolve only after 24s of the mocked clock have passed —
+              // Resolve only after 24s of the mocked clock have passed --
               // a coldest-boot providers() query that used to lose the old
               // 10s inner race.
               return new Promise((resolve) => {
@@ -173,7 +173,7 @@ test("listMimoModels shares the outer catalog deadline across readiness and prov
   };
   // The caller (sdkStreamHandlers) passes its remaining outer budget minus
   // headroom: 30s - 1s here. A cold readiness (~20s) plus a slow providers()
-  // (~9s) totals ~29s and must complete inside the 30s outer IPC budget —
+  // (~9s) totals ~29s and must complete inside the 30s outer IPC budget --
   // under the old independent inner caps the same pair ran on borrowed time
   // (readiness 25s + providers 25s = 50s possible) and the outer abort
   // degraded the whole call.
@@ -248,7 +248,7 @@ test("listMimoModels bounds providers() to the shared deadline remainder after a
   resolveReady();
   await started;
   // The old behavior re-armed a fresh 25s for providers() (total 45s), far
-  // past the 30s outer budget — the outer withTimeout aborted mid-IPC and
+  // past the 30s outer budget -- the outer withTimeout aborted mid-IPC and
   // degraded to stale models. The shared deadline cuts providers() off at
   // the 29s mark, returning an empty catalog with the server torn down
   // cleanly inside the outer budget.
@@ -1491,7 +1491,7 @@ test("listMimoModels does not probe skill paths (no `mimo debug config` spawn) b
     });
     // The provider catalog never reads skill paths, so the driver must not
     // pay the `mimo debug config` spawn (it alone can exceed the catalog
-    // timeout). No child-process spawn may happen at all — the factory above
+    // timeout). No child-process spawn may happen at all -- the factory above
     // stands in for the server.
     assert.deepEqual(spawns, []);
     assert.deepEqual(models, {

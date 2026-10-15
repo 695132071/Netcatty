@@ -1,23 +1,28 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 
 import {
   appendRetainedStoredModelPreset,
+  retainStoredModelPresetForCatalog,
   buildCursorListModelsAgentEnv,
   buildSdkRuntimeModelCacheKey,
   canonicalizeEffortEncodedModelId,
   createSdkRuntimeModelCache,
   agentModelPresetsShallowEqual,
   mergeFallbackThinkingLevels,
+  MODEL_CACHE_ENV_HINTS,
   modelPresetsContainId,
   normalizeStoredAgentModelSelection,
   normalizeSdkRuntimeModelPresets,
   resolveSdkRuntimeCatalogDefaultModelId,
   reconcileRuntimeModelWarning,
+  toSdkRuntimeModelCatalog,
   shouldAdoptSdkCurrentModel,
   shouldLoadSdkRuntimeModels,
   shouldUseStoredAgentModel,
 } from './AIChatSidePanelHelpers';
+import { createRequire } from 'node:module';
 import type { AgentModelPreset, ExternalAgentConfig } from '../infrastructure/ai/types';
 
 test('buildCursorListModelsAgentEnv injects cli-login auth mode for list-models', () => {
@@ -615,6 +620,19 @@ test('SDK runtime model cache preserves degraded warnings until a successful ret
   assert.equal(cache.read('copilot')?.warning, undefined);
 });
 
+// #3584 alignment: OpenCode must render build-time presets while its live
+// catalog load is pending, exactly like every other backend. The old host
+// code suppressed presets for opencode while `runtimeModelLoading` was set,
+// leaving the picker empty until the pull resolved. Guard against it coming
+// back: the preset fallback in the panel must not gate on opencode loading.
+test('host preset fallback does not suppress presets for a loading opencode catalog', () => {
+  const source = readFileSync(new URL('./AIChatSidePanel.tsx', import.meta.url), 'utf8');
+  assert.doesNotMatch(source, /getExternalAgentSdkBackend\(currentAgentConfig\) === 'opencode'[\s\S]*?runtimeModelLoading/);
+  // Build-time presets remain the fallback whenever no runtime catalog is
+  // active for the agent (loading included).
+  assert.match(source, /const presets = getAgentModelPresets\(/);
+});
+
 test('reconcileRuntimeModelWarning adds the banner for a warned catalog and keeps unrelated agents', () => {
   const current = { other: { cacheKey: 'k-other', message: 'x' } };
   const next = reconcileRuntimeModelWarning(current, 'copilot', 'k1', true, 'warn');
@@ -637,6 +655,94 @@ test('reconcileRuntimeModelWarning clears only the banner that belongs to this c
   assert.equal(reconcileRuntimeModelWarning(current, 'copilot', 'k2', false, 'warn'), current);
 });
 
+test('renderer model cache env hints cover every key the main-process catalog cache fingerprints', () => {
+  // Both caches must split on the same profile-affecting environment: a key that
+  // only the main process knows lets the renderer serve one profile's catalog to another.
+  const require = createRequire(import.meta.url);
+  const { SDK_MODEL_CACHE_ENV_KEYS } = require('../electron/bridges/aiBridge/sdk/sdkStreamHandlers.cjs') as {
+    SDK_MODEL_CACHE_ENV_KEYS: string[];
+  };
+  const hints = new Set<string>(MODEL_CACHE_ENV_HINTS);
+  const missing = SDK_MODEL_CACHE_ENV_KEYS.filter((key) => !hints.has(key));
+  assert.deepEqual(missing, []);
+});
+
+test('toSdkRuntimeModelCatalog keeps the provenance main reported for a last-known-good serve', () => {
+  const catalog = toSdkRuntimeModelCatalog({
+    ok: true,
+    currentModelId: 'm-1',
+    models: [{ id: 'm-1', name: 'M1' }],
+    warning: 'live fetch failed',
+    source: 'last-known-good',
+    fetchedAt: '2026-10-10T08:00:00.000Z',
+  });
+  assert.deepEqual(catalog, {
+    currentModelId: 'm-1',
+    models: [{ id: 'm-1', name: 'M1' }],
+    warning: 'live fetch failed',
+    source: 'last-known-good',
+    fetchedAt: '2026-10-10T08:00:00.000Z',
+  });
+});
+
+test('toSdkRuntimeModelCatalog tolerates an older main without provenance or with unknown values', () => {
+  assert.deepEqual(
+    toSdkRuntimeModelCatalog({ ok: true, models: [{ id: 'a', name: 'A' }] }),
+    { currentModelId: null, models: [{ id: 'a', name: 'A' }], warning: null },
+  );
+  const odd = toSdkRuntimeModelCatalog({
+    ok: true,
+    models: [],
+    source: 'something-else' as never,
+    fetchedAt: 42 as never,
+  });
+  assert.equal(odd.source, undefined);
+  assert.equal(odd.fetchedAt, undefined);
+});
+
+test('retainStoredModelPresetForCatalog leaves the built-in fallback list alone when no catalog arrived', () => {
+  const claudeAgent = { id: 'claude', command: 'claude', sdkBackend: 'claude' } as unknown as ExternalAgentConfig;
+  // The first Claude catalog request failed: nothing to extend. Appending only
+  // the saved alias would make a one-row list authoritative and hide the
+  // built-in presets, so the empty list must stay empty.
+  assert.deepEqual(retainStoredModelPresetForCatalog([], [], 'sonnet', claudeAgent), []);
+});
+
+test('retainStoredModelPresetForCatalog drops composer custom rows too when no catalog arrived', () => {
+  const claudeAgent = { id: 'claude', command: 'claude', sdkBackend: 'claude' } as unknown as ExternalAgentConfig;
+  // The callers wrap the empty catalog with the user's custom composer models, so
+  // the list is non-empty even though no catalog arrived. Stored as the runtime
+  // list it would still hide the built-in presets; the panel appends custom
+  // models on top of the fallback list itself.
+  const withCustom = [{ id: 'my-custom-model', name: 'my-custom-model' }];
+  assert.deepEqual(retainStoredModelPresetForCatalog([], withCustom, 'sonnet', claudeAgent), []);
+});
+
+test('retainStoredModelPresetForCatalog still retains a saved selection on top of a real catalog', () => {
+  const claudeAgent = { id: 'claude', command: 'claude', sdkBackend: 'claude' } as unknown as ExternalAgentConfig;
+  const catalog = [{ id: 'claude-opus-5-5', name: 'Opus 5.5' }];
+  const retained = retainStoredModelPresetForCatalog(catalog, catalog, 'sonnet', claudeAgent);
+  assert.deepEqual(retained, appendRetainedStoredModelPreset(catalog, 'sonnet', claudeAgent));
+});
+
+test('catalog source adaptation preserves explicit Copilot failure retention', () => {
+  const agent = { id: 'copilot', command: 'copilot', sdkBackend: 'copilot' } as ExternalAgentConfig;
+  const catalog = toSdkRuntimeModelCatalog({
+    ok: true,
+    models: [{ id: 'auto', name: 'Auto' }],
+    warning: 'live discovery unavailable',
+    source: 'last-known-good',
+    fetchedAt: '2026-10-15T09:00:00.000Z',
+  });
+  const presets = retainStoredModelPresetForCatalog(
+    catalog.models, catalog.models, 'saved-model', agent, Boolean(catalog.warning),
+  );
+  assert.deepEqual(presets.map(model => model.id), ['auto', 'saved-model']);
+  assert.deepEqual(retainStoredModelPresetForCatalog(
+    catalog.models, catalog.models, 'saved-model', agent, false,
+  ).map(model => model.id), ['auto']);
+});
+
 test('SDK runtime model cache keeps the retry warning when a degraded refresh retains the cached catalog', async () => {
   let now = 1_000;
   const cache = createSdkRuntimeModelCache({ now: () => now });
@@ -645,6 +751,8 @@ test('SDK runtime model cache keeps the retry warning when a degraded refresh re
   await cache.refresh(key, async () => ({
     currentModelId: 'gpt-5',
     models: [{ id: 'gpt-5', name: 'GPT-5' }],
+    source: 'live',
+    fetchedAt: '2026-10-15T09:00:00.000Z',
   }));
 
   now = 2_000;
@@ -656,11 +764,14 @@ test('SDK runtime model cache keeps the retry warning when a degraded refresh re
 
   assert.deepEqual(retried.models, [{ id: 'gpt-5', name: 'GPT-5' }]);
   assert.equal(retried.warning, 'catalog unavailable');
+  assert.equal(retried.source, 'last-known-good');
+  assert.equal(retried.fetchedAt, '2026-10-15T09:00:00.000Z');
   // Later reads retain the warning without extending the good catalog's age.
   assert.equal(cache.read(key)?.warning, 'catalog unavailable');
   assert.equal(cache.read(key)?.updatedAt, 1_000);
   const nextRead = await cache.refresh(key, async () => { throw new Error('fresh cache should be reused'); });
   assert.equal(nextRead.warning, 'catalog unavailable');
+  assert.equal(nextRead.source, 'last-known-good');
 });
 
 

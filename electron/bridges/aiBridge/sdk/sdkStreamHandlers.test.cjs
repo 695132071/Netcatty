@@ -1094,7 +1094,10 @@ test("OpenCode catalog IPC allows cold startup past 10s and still aborts a stall
   t.mock.timers.tick(10001);
   assert.equal(signal.aborted, false, "the old outer 10s deadline must not cancel OpenCode startup");
   complete(catalog);
-  assert.deepEqual(await slow, { ok: true, ...catalog });
+  const coldResult = await slow;
+  // Live successes carry the source provenance + fetch timestamp (R1).
+  assert.deepEqual(coldResult, { ok: true, source: "live", fetchedAt: coldResult.fetchedAt, ...catalog });
+  assert.match(coldResult.fetchedAt, /^\d{4}-\d{2}-\d{2}T/);
 
   entered = new Promise((resolve) => { started = resolve; });
   const stalled = listModels({ sender: {} }, { sdkBackend: "opencode", agentCommand: "/test/stalled-start" });
@@ -1109,7 +1112,8 @@ test("OpenCode catalog IPC allows cold startup past 10s and still aborts a stall
   const retried = listModels({ sender: {} }, { sdkBackend: "opencode", agentCommand: "/test/stalled-start" });
   await entered;
   complete(catalog);
-  assert.deepEqual(await retried, { ok: true, ...catalog });
+  const retriedResult = await retried;
+  assert.deepEqual(retriedResult, { ok: true, source: "live", fetchedAt: retriedResult.fetchedAt, ...catalog });
 });
 
 test("model catalog timeout override widens the budget only for mimo", () => {
@@ -1402,13 +1406,17 @@ test("list-models persists a successful live catalog and serves it as last-known
     t.mock.method(driver, "listModels", async () => liveCatalog);
     const listModels = handlers.get("netcatty:ai:sdk-agent:list-models");
 
-    // 1. Live success → written to the store, response untouched.
+    // 1. Live success → written to the store, response extended with the
+    // live provenance marker (R1).
     const success = await listModels({ sender: {} }, { sdkBackend: "claude", agentCommand: "/test/lkg-success" });
     assert.deepEqual(success, {
       ok: true,
       currentModelId: null,
       models: liveCatalog,
+      source: "live",
+      fetchedAt: success.fetchedAt,
     });
+    assert.match(success.fetchedAt, /^\d{4}-\d{2}-\d{2}T/);
     const entries = Object.values(readLastKnownCatalogStore(catalogFile));
     assert.equal(entries.length, 1);
     assert.equal(entries[0].backend, "claude");
@@ -1426,6 +1434,30 @@ test("list-models persists a successful live catalog and serves it as last-known
     assert.equal(failed.fetchedAt, entries[0].fetchedAt);
     assert.match(failed.warning, /returned no models/);
     assert.match(failed.warning, /last-known-good/);
+  } finally {
+    cleanup();
+  }
+});
+
+test("list-models cache hit replays the live provenance (source + fetchedAt)", async (t) => {
+  const { getDriver } = require("./index.cjs");
+  const { handlers, cleanup } = makeLastKnownCtx();
+  try {
+    const driver = getDriver("claude");
+    let calls = 0;
+    t.mock.method(driver, "listModels", async () => {
+      calls += 1;
+      return [{ id: "claude-opus-5-5", name: "Opus 5.5" }];
+    });
+    const listModels = handlers.get("netcatty:ai:sdk-agent:list-models");
+    const first = await listModels({ sender: {} }, { sdkBackend: "claude", agentCommand: "/test/cache-hit" });
+    assert.equal(first.source, "live");
+    assert.match(first.fetchedAt, /^\d{4}-\d{2}-\d{2}T/);
+    // Second call is a pre-flight cache hit: same provenance, no re-fetch.
+    const second = await listModels({ sender: {} }, { sdkBackend: "claude", agentCommand: "/test/cache-hit" });
+    assert.equal(calls, 1);
+    assert.equal(second.source, "live");
+    assert.equal(second.fetchedAt, first.fetchedAt);
   } finally {
     cleanup();
   }
@@ -1451,7 +1483,13 @@ test("list-models admits a current-only catalog by refreshing the persisted curr
       models: [],
     }));
     const currentOnly = await listModels({ sender: {} }, { sdkBackend: "claude", agentCommand: "/test/lkg-current-only" });
-    assert.deepEqual(currentOnly, { ok: true, currentModelId: "claude-opus-5-5", models: [] });
+    assert.deepEqual(currentOnly, {
+      ok: true,
+      currentModelId: "claude-opus-5-5",
+      models: [],
+      source: "live",
+      fetchedAt: currentOnly.fetchedAt,
+    });
     const persisted = readLastKnownCatalogEntry(catalogFile, Object.keys(readLastKnownCatalogStore(catalogFile))[0]);
     assert.deepEqual(persisted.models, liveCatalog);
     assert.equal(persisted.currentModelId, "claude-opus-5-5");
@@ -1554,7 +1592,11 @@ test("list-models persists a first current-only success for later failures", asy
     t.mock.method(driver, "listModels", async () => ({ currentModelId: "custom/configured", models: [] }));
     const listModels = handlers.get("netcatty:ai:sdk-agent:list-models");
     const request = { sdkBackend: "opencode", agentCommand: "/test/first-current-only" };
-    assert.deepEqual(await listModels({ sender: {} }, request), { ok: true, currentModelId: "custom/configured", models: [] });
+    const live = await listModels({ sender: {} }, request);
+    assert.deepEqual(live, {
+      ok: true, currentModelId: "custom/configured", models: [], source: "live", fetchedAt: live.fetchedAt,
+    });
+    assert.ok(Number.isFinite(Date.parse(live.fetchedAt)));
     ctx.sdkModelCache.clear();
     driver.listModels.mock.mockImplementation(async () => []);
     const failed = await listModels({ sender: {} }, request);

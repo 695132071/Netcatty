@@ -648,15 +648,12 @@ function resolveCopilotExecutableForSdk(copilotExecutablePath, platform = proces
     path.join(shimDir, "node_modules", "@github", "copilot"),
     path.join(shimDir, "..", "@github", "copilot"),
   ];
-  // Loader-first is the DEFAULT. The 1.0.59-era native CLI bootstraps versioned
-  // runtimes into %LOCALAPPDATA%\copilot\pkg\ on first start (slow start, and
-  // its conhost child can outlive app-side timeout/abort — the PR #3624
-  // "console window stays open / CLI server exited unexpectedly with code 0"
-  // regression), so preferring it over npm-loader.js is OPT-IN for users on
-  // newer CLIs where that bootstrap is fixed. npm-loader.js re-spawns the same
-  // binary via spawnSync WITHOUT windowsHide, which flashes a console window
-  // when the SDK runs inside a GUI (Electron main) process on Windows —
-  // cosmetic only.
+  // Loader-first is the default for npm shim resolution. The official 1.0.59
+  // loader forwards unchanged arguments to the same platform executable via
+  // spawnSync without windowsHide; it does not add runtime initialization.
+  // The Copilot SDK driver resolves that installed executable after this step
+  // so the SDK can hide and own it directly, retaining the loader as fallback.
+  // This opt-in still selects the native entry at the resolver boundary.
   const preferNative = process.env.NETCATTY_COPILOT_PREFER_NATIVE === "1";
   for (const root of packageRoots) {
     if (preferNative) {

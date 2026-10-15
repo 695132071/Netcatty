@@ -73,6 +73,10 @@ interface AIChatPanelContentProps {
   modelCatalogWarning?: string;
   /** Live SDK model catalog is loading (no built-in presets to show yet). */
   modelCatalogLoading?: boolean;
+  /** Provenance of the active model list, rendered as the picker status chip. */
+  modelCatalogSource?: 'live' | 'last-known-good' | 'presets';
+  /** ISO timestamp of the successful fetch backing `modelCatalogSource`. */
+  modelCatalogFetchedAt?: string;
   /** Retry a failed SDK model catalog load from the warning banner. */
   handleModelCatalogRetry?: () => void;
   agentModelPresets: AgentModelPreset[];
@@ -153,6 +157,8 @@ export const AIChatPanelContent: React.FC<AIChatPanelContentProps> = ({
   modelDisplayName,
   modelCatalogWarning,
   modelCatalogLoading = false,
+  modelCatalogSource,
+  modelCatalogFetchedAt,
   agentModelPresets,
   allowCustomModelEntry = true,
   selectedAgentModel,
@@ -403,6 +409,8 @@ export const AIChatPanelContent: React.FC<AIChatPanelContentProps> = ({
                   agentName={currentAgentId === 'catty' ? 'Catty Agent' : externalAgents.find(a => a.id === currentAgentId)?.name}
                   modelPresets={agentModelPresets}
                   modelCatalogLoading={modelCatalogLoading}
+                  modelCatalogSource={modelCatalogSource}
+                  modelCatalogFetchedAt={modelCatalogFetchedAt}
                   allowCustomModelEntry={allowCustomModelEntry}
                   selectedModelId={selectedAgentModel}
                   onModelSelect={handleAgentModelSelect}
