@@ -1,6 +1,7 @@
 import type { Messages } from '../types';
 
 export const zhTWAiMessages: Messages = {
+  'ai.chat.attachmentContentUnavailable': '附件內容未保留在此裝置',
   // AI Settings
   'ai.agentSettings': 'Agent 設定',
   'ai.chat.preparing': '準備中…',

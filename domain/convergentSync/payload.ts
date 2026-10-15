@@ -206,6 +206,8 @@ export function materializeSyncPayloadFromConvergentState(
     syncMeta?: SyncReliabilityMeta;
     /** Opaque plugin sidecars travel with the encrypted blob outside CRDT fields. */
     pluginSidecars?: SyncPayload['pluginSidecars'];
+    /** Chat transcripts travel outside the vault's fixed CRDT collections. */
+    aiSessions?: SyncPayload['aiSessions'];
   },
 ): SyncPayload {
   requireKnownCollections(state);
@@ -232,6 +234,7 @@ export function materializeSyncPayloadFromConvergentState(
     settings,
     syncedAt: options.syncedAt,
     ...(options.syncMeta ? { syncMeta: options.syncMeta } : {}),
+    ...(options.aiSessions !== undefined ? { aiSessions: options.aiSessions } : {}),
     // Preserve explicit empty bundles so lifecycle materializations (conflict
     // resolve / downgrade) can clear or re-upload sidecars rather than omit
     // the field and look like a legacy payload.
@@ -532,6 +535,7 @@ export function withConvergentSyncEnvelope(
     syncedAt: number;
     syncMeta?: SyncReliabilityMeta;
     pluginSidecars?: SyncPayload['pluginSidecars'];
+    aiSessions?: SyncPayload['aiSessions'];
   },
 ): SyncPayload {
   const payload = materializeSyncPayloadFromConvergentState(state, options);

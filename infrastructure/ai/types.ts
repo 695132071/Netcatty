@@ -103,6 +103,8 @@ export interface ModelInfo {
 // Chat types
 export interface ChatMessageAttachment {
   base64Data: string;
+  /** Synced attachment metadata whose content is only available on the source device. */
+  contentUnavailable?: boolean;
   mediaType: string;
   filename?: string;
   filePath?: string;    // original filesystem path, when available

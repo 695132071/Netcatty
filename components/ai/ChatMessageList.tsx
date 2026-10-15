@@ -710,7 +710,19 @@ const ChatMessageList: React.FC<ChatMessageListProps> = ({
                 {isUser && !hideAttachments && (message.attachments ?? message.images)?.length && (
                   <div className="flex gap-1.5 flex-wrap mb-1">
                     {(message.attachments ?? message.images)!.map((att, i) => (
-                      att.terminalSelection ? (
+                      !att.vaultNoteId && (att.contentUnavailable || !att.base64Data) ? (
+                        <div
+                          key={att.filename ? `${att.filename}-${i}` : `att-${message.id}-${i}`}
+                          className="inline-flex items-center gap-1.5 min-h-7 px-2 py-1 rounded-md bg-muted/20 border border-border/20 text-[11px] text-foreground/70"
+                          title={t('ai.chat.attachmentContentUnavailable')}
+                        >
+                          {att.terminalSelection
+                            ? <SquareTerminal size={12} className="text-muted-foreground/60 shrink-0" />
+                            : <FileText size={12} className="text-muted-foreground/60 shrink-0" />}
+                          <span className="truncate max-w-[150px]">{att.filename || (att.terminalSelection ? 'terminal selection' : 'file')}</span>
+                          <span className="text-muted-foreground">{t('ai.chat.attachmentContentUnavailable')}</span>
+                        </div>
+                      ) : att.terminalSelection ? (
                         <div
                           key={att.filename ? `${att.filename}-${i}` : `att-${message.id}-${i}`}
                           className="inline-flex items-center gap-1.5 h-7 px-2 rounded-md bg-muted/20 border border-border/20 text-[11px] text-foreground/70"

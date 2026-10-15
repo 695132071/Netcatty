@@ -1,6 +1,7 @@
 import type { Messages } from '../types';
 
 export const ruAiMessages: Messages = {
+  'ai.chat.attachmentContentUnavailable': 'Содержимое недоступно на этом устройстве',
   'ai.chat.contextUsage': 'Контекст: {used} / {max} токенов',
   // AI Settings
   'ai.agentSettings': 'Настройки агента',

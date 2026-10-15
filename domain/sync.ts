@@ -287,6 +287,15 @@ export interface SyncPayload {
 
   // Port forwarding rules
   portForwardingRules?: import('./models').PortForwardingRule[];
+
+  /**
+   * AI chat sessions (optional).
+   *
+   * Opt-in: only present when the user enabled `cloudSync.aiSessions`.
+   * Messages are merged append-only (never dropped), and attachment payloads
+   * are stripped — only their metadata travels.
+   */
+  aiSessions?: import('../infrastructure/ai/types').AISession[];
   
   // Known hosts
   knownHosts?: import('./models').KnownHost[];
@@ -486,6 +495,7 @@ export const CLOUD_SYNC_PAYLOAD_ENTITY_KEYS = [
   'noteGroups',
   'portForwardingRules',
   'groupConfigs',
+  'aiSessions',
 ] as const;
 
 export type SyncPayloadEntityKey = typeof SYNC_PAYLOAD_ENTITY_KEYS[number];
@@ -580,7 +590,7 @@ export interface ConvergentProviderBaselineV2 {
 
 export function hasSyncPayloadEntityData(
   payload: SyncPayload,
-  keys: readonly SyncPayloadEntityKey[] = SYNC_PAYLOAD_ENTITY_KEYS,
+  keys: readonly (SyncPayloadEntityKey | CloudSyncPayloadEntityKey)[] = SYNC_PAYLOAD_ENTITY_KEYS,
 ): boolean {
   return keys.some((key) => {
     const value = payload[key];
