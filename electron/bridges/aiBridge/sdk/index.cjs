@@ -373,21 +373,42 @@ const DRIVER_REGISTRY = {
       // the picker silently drop models one source knows about. ACP entries
       // win for shared ids because they carry live vendor `_meta` (reasoning
       // efforts, description) -- see mergeGrokCatalogModels.
-      const signal = ctx.signal || ctx.abortController?.signal;
-      const [acpCatalog, fallbackCatalog] = await Promise.all([
-        grokAcp.listGrokAcpModels({
-          binPath: ctx.binPath,
-          env: ctx.env,
-          abortController: ctx.abortController,
-          signal,
-        }),
-        grok.listGrokModels({
-          binPath: ctx.binPath,
-          env: ctx.env,
-          abortController: ctx.abortController,
-          signal,
-        }),
-      ]);
+      const parentSignal = ctx.signal || ctx.abortController?.signal;
+      const probeController = new AbortController();
+      const signal = parentSignal
+        ? AbortSignal.any([parentSignal, probeController.signal])
+        : probeController.signal;
+      let acpCatalog = { currentModelId: null, models: [] };
+      let fallbackCatalog = { currentModelId: null, models: [] };
+      let timer;
+      try {
+        await Promise.race([
+          Promise.all([
+            grokAcp.listGrokAcpModels({
+              binPath: ctx.binPath,
+              env: ctx.env,
+              signal,
+            }).then((catalog) => { acpCatalog = catalog; }),
+            grok.listGrokModels({
+              binPath: ctx.binPath,
+              env: ctx.env,
+              signal,
+            }).then((catalog) => { fallbackCatalog = catalog; }),
+          ]),
+          new Promise((resolve) => {
+            // Settle before the outer IPC timeout so one stalled probe cannot
+            // discard the other catalog. Existing driver abort paths reap
+            // unfinished children independently of returning these results.
+            const deadlineTs = ctx.catalogDeadlineTs ?? Date.now() + 9_000;
+            timer = setTimeout(() => {
+              probeController.abort();
+              resolve();
+            }, Math.max(0, deadlineTs - Date.now()));
+          }),
+        ]);
+      } finally {
+        clearTimeout(timer);
+      }
       const currentModelId = acpCatalog.currentModelId || fallbackCatalog.currentModelId;
       const merged = grok.mergeGrokCatalogModels(acpCatalog.models, fallbackCatalog.models);
       const models = merged.length > 0

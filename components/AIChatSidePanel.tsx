@@ -1230,8 +1230,9 @@ const AIChatSidePanelActive: React.FC<AIChatSidePanelProps> = ({
   const modelCatalogSource = useMemo((): SdkRuntimeModelCatalogSource => {
     const target = buildExternalAgentRuntimeModelTarget(currentAgentConfig);
     const meta = runtimeModelCatalogMeta[currentAgentId];
+    const runtimeEntry = runtimeAgentModelPresets[currentAgentId];
     if (meta && target && meta.cacheKey === target.cacheKey
-      && runtimeAgentModelPresets[currentAgentId]?.cacheKey === target.cacheKey) {
+      && runtimeEntry?.cacheKey === target.cacheKey && runtimeEntry.models.length > 0) {
       return meta.source;
     }
     return 'presets';

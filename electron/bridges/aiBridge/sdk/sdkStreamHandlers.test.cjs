@@ -1592,7 +1592,11 @@ test("list-models persists a first current-only success for later failures", asy
     t.mock.method(driver, "listModels", async () => ({ currentModelId: "custom/configured", models: [] }));
     const listModels = handlers.get("netcatty:ai:sdk-agent:list-models");
     const request = { sdkBackend: "opencode", agentCommand: "/test/first-current-only" };
-    assert.deepEqual(await listModels({ sender: {} }, request), { ok: true, currentModelId: "custom/configured", models: [] });
+    const live = await listModels({ sender: {} }, request);
+    assert.deepEqual(live, {
+      ok: true, currentModelId: "custom/configured", models: [], source: "live", fetchedAt: live.fetchedAt,
+    });
+    assert.ok(Number.isFinite(Date.parse(live.fetchedAt)));
     ctx.sdkModelCache.clear();
     driver.listModels.mock.mockImplementation(async () => []);
     const failed = await listModels({ sender: {} }, request);

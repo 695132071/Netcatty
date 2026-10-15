@@ -2047,3 +2047,43 @@ test("registry Grok model discovery dedupes when both probes agree", async () =>
     grokModule.listGrokModels = originalLegacy;
   }
 });
+
+for (const successfulSide of ["acp", "cli"]) {
+  test(`registry Grok discovery retains ${successfulSide} results when the other probe stalls`, async (t) => {
+    t.mock.timers.enable({ apis: ["setTimeout", "Date"] });
+    const grokModule = require("./grokDriver.cjs");
+    const grokAcpModule = require("./grokAcpDriver.cjs");
+    const originalAcp = grokAcpModule.listGrokAcpModels;
+    const originalCli = grokModule.listGrokModels;
+    const parentController = new AbortController();
+    const successfulCatalog = {
+      currentModelId: "grok-4.6/high",
+      models: [{ id: "grok-4.6", name: "Live model", thinkingLevels: ["high"] }],
+    };
+    let stalledSignal;
+    const stall = ({ signal }) => new Promise((resolve) => {
+      stalledSignal = signal;
+      signal.addEventListener("abort", () => resolve({ currentModelId: null, models: [] }), { once: true });
+    });
+    grokAcpModule.listGrokAcpModels = successfulSide === "acp" ? async () => successfulCatalog : stall;
+    grokModule.listGrokModels = successfulSide === "cli" ? async () => successfulCatalog : stall;
+    try {
+      let finished = false;
+      const pending = getDriver("grok").listModels({
+        catalogDeadlineTs: Date.now() + 100,
+        abortController: parentController,
+      }).then((catalog) => { finished = true; return catalog; });
+      await Promise.resolve();
+      t.mock.timers.tick(99);
+      await Promise.resolve();
+      assert.equal(finished, false, "allow the other probe its remaining catalog budget");
+      t.mock.timers.tick(1);
+      assert.deepEqual(await pending, successfulCatalog);
+      assert.equal(stalledSignal.aborted, true, "cancel the unfinished child probe");
+      assert.equal(parentController.signal.aborted, false, "a partial success does not abort the whole catalog request");
+    } finally {
+      grokAcpModule.listGrokAcpModels = originalAcp;
+      grokModule.listGrokModels = originalCli;
+    }
+  });
+}
