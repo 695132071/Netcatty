@@ -2481,6 +2481,16 @@ function createStartSessionApi(ctx) {
           });
 
           conn.on("error", (err) => {
+            // ssh2 reports agent failures before trying the next auth method.
+            // Keep the connection and its authentication deadline alive.
+            if (err.level === "agent") {
+              log("non-fatal agent auth error (will try next method)", {
+                sessionId,
+                hostname: options.hostname,
+                error: err.message,
+              });
+              return;
+            }
             clearAuthReadyTimer();
             // After the promise is settled, we can't reject again. But if the
             // session was already established (resolved), we still need to notify
