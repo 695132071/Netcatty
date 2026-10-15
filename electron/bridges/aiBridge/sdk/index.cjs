@@ -104,6 +104,7 @@ const DRIVER_REGISTRY = {
     async listModels(ctx) {
       return copilot.listCopilotModels({
         cliPath: ctx.binPath,
+        runtimeEnv: ctx.env,
         abortController: ctx.abortController,
         signal: ctx.signal,
       });
