@@ -722,7 +722,9 @@ test("connectCopilotStdioPath keeps POSIX and native Windows executables direct"
 });
 
 test("connectCopilotStdioPath wraps a Windows npm loader", () => {
-  const loader = require("../../tempDirBridge.cjs").getTempFilePath("copilot-loader.js");
+  const dir = require("../../tempDirBridge.cjs").getTempFilePath("copilot-loader-fixture");
+  fs.mkdirSync(dir, { recursive: true });
+  const loader = path.join(dir, "npm-loader.js");
   fs.writeFileSync(loader, "", { flag: "wx" });
   let win;
   try {
@@ -730,6 +732,12 @@ test("connectCopilotStdioPath wraps a Windows npm loader", () => {
     assert.ok(win && win !== loader && win.endsWith(".js"), "Windows npm loader uses the headless wrapper");
   } finally {
     if (win) fs.rmSync(win, { force: true });
-    fs.rmSync(loader, { force: true });
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("connectCopilotStdioPath preserves configured Windows JavaScript launchers", () => {
+  for (const launcher of ["C:\\tools\\copilot\\custom-launcher.js", "/fixture/@github/copilot/custom-launcher.js"]) {
+    assert.equal(connectCopilotStdioPath(launcher, "win32"), launcher);
   }
 });

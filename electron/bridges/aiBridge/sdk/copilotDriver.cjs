@@ -83,7 +83,7 @@ function connectCopilotStdioPath(cliPath, platform = process.platform) {
   const resolved = resolveCopilotExecutableForSdk(cliPath);
   // The SDK already hides native Windows executables and owns their PID for
   // forceStop(). Only the Windows npm loader needs the extra hidden launch.
-  if (platform !== "win32" || !resolved?.toLowerCase().endsWith(".js")) return resolved;
+  if (platform !== "win32" || !/(?:^|[\\/])npm-loader\.js$/i.test(resolved || "")) return resolved;
   return buildCopilotHeadlessWrapperPath(resolved) ?? resolved;
 }
 
