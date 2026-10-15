@@ -86,6 +86,11 @@ import {
   retargetWorkspaceActiveChatAfterMemberLoss,
   seedWorkspaceAIActiveSessionFromMembers,
 } from '../../domain/workspaceAiScopeHandoff';
+import {
+  buildUndoLastTurnBranch,
+  type UndoLastTurnRestoredDraft,
+} from '../../domain/aiUndoLastTurn';
+
 
 function providerPatchIsNoop(
   current: ProviderConfig,
@@ -697,6 +702,32 @@ export function useAIState() {
     return session;
   }, [defaultAgentId, persistSessions, setActiveSessionId]);
 
+  // Non-destructive "undo last turn": branch the session at the boundary
+  // before the latest user message and keep the original in history intact.
+  // Returns the new branch id plus the undone user message for the composer.
+  const undoLastTurnInSession = useCallback(async (sessionId: string): Promise<{
+    sessionId: string;
+    restored: UndoLastTurnRestoredDraft;
+  } | null> => {
+    const nextId = `ai_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+    const source = sessionsRef.current.find(s => s.id === sessionId);
+    if (!source) return null;
+    const result = buildUndoLastTurnBranch(source, { newId: nextId, now: Date.now() });
+    if (!result) return null;
+
+    const branched = result.session;
+    setSessionsRaw(prev => {
+      // Keep both recently used chats within the existing history limit.
+      const next = [branched, source, ...prev.filter(session => session.id !== source.id)];
+      setLatestAISessionsSnapshot(next);
+      persistSessions(next);
+      return next;
+    });
+    const scopeKey = `${branched.scope.type}:${branched.scope.targetId ?? ''}`;
+    setActiveSessionId(scopeKey, branched.id);
+    return { sessionId: branched.id, restored: result.restored };
+  }, [persistSessions, setActiveSessionId]);
+
   const deleteSession = useCallback((sessionId: string, scopeKey?: string) => {
     cleanupDeletedAIChatSessions([sessionId]);
     if (persistTimerRef.current) {
@@ -1275,6 +1306,7 @@ export function useAIState() {
     addDraftFiles,
     removeDraftFile,
     createSession,
+    undoLastTurnInSession,
     deleteSession,
     deleteSessionsByTarget,
     updateSessionTitle,
@@ -1335,6 +1367,7 @@ export function useAIState() {
     addDraftFiles,
     removeDraftFile,
     createSession,
+    undoLastTurnInSession,
     deleteSession,
     deleteSessionsByTarget,
     updateSessionTitle,

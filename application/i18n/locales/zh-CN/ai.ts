@@ -522,6 +522,8 @@ export const zhCNAiMessages: Messages = {
   'ai.chat.hoursAgo': '{n}小时前',
   'ai.chat.daysAgo': '{n}天前',
   'ai.chat.newChat': '新对话',
+  'ai.chat.undoLastTurn': '撤销上一轮',
+  'ai.chat.undoLastTurnNotice': "原对话已保留。已执行的命令和文件修改不会撤销；之前保存的完整输出和后台任务，请回原对话查看。",
   'ai.chat.allSessions': '所有会话',
   'ai.chat.loadEarlierMessages': '加载更早的消息（还有 {n} 条）',
   'ai.chat.jumpNav': '跳转到消息',

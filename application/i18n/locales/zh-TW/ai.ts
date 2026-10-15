@@ -512,6 +512,8 @@ export const zhTWAiMessages: Messages = {
   'ai.chat.hoursAgo': '{n}小時前',
   'ai.chat.daysAgo': '{n}天前',
   'ai.chat.newChat': '新對話',
+  'ai.chat.undoLastTurn': '復原上一輪',
+  'ai.chat.undoLastTurnNotice': "原對話已保留。已執行的命令和檔案修改不會復原；之前儲存的完整輸出和背景工作，請回原對話查看。",
   'ai.chat.allSessions': '所有工作階段',
   'ai.chat.loadEarlierMessages': '載入更早的訊息（還有 {n} 條）',
   'ai.chat.jumpNav': '跳轉到訊息',
