@@ -179,3 +179,25 @@ test("exit messages without a reported code stay plain instead of showing a sent
   );
   assert.equal(formatSessionClosedExitMessage({}), "\r\n[session closed]");
 });
+
+test("infrastructure teardowns must not render a numeric code as a clean exit (#3631)", () => {
+  // A terminal-worker exit broadcast carries the worker's own exit status
+  // (graceful drain = 0). It belongs to the infrastructure failure, not to
+  // any remote shell, so it must never read as "session closed (code 0)".
+  assert.equal(
+    formatSessionClosedExitMessage({
+      reason: "error",
+      exitCode: 0,
+      error: "Terminal worker exited with code 0",
+    }),
+    "\r\n[session closed unexpectedly]",
+  );
+  assert.equal(
+    formatSessionClosedExitMessage({ reason: "error", exitCode: 1 }),
+    "\r\n[session closed unexpectedly]",
+  );
+  assert.equal(
+    formatSessionClosedExitMessage({ reason: "error" }),
+    "\r\n[session closed unexpectedly]",
+  );
+});

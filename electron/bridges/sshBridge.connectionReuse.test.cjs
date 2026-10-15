@@ -2474,6 +2474,31 @@ test("a connection close without an exit-signal stays a transport close", async 
   const exits = getExitPayloads(sender);
   assert.equal(exits.length, 1);
   assert.equal(exits[0].reason, "closed");
-  assert.equal(exits[0].exitCode, 0);
+  assert.equal(exits[0].exitCode, undefined);
+  assert.equal(exits[0].remoteClosedWithoutExitStatus, true);
   assert.equal(exits[0].exitSignal, undefined);
 });
+
+for (const exitCode of [0, 7]) {
+  test(`connection close preserves reported shell status ${exitCode} before channel finalization`, async (t) => {
+    const { bridge } = loadBridgeWithMockedSsh2(t, { connectReady: true });
+    const sessions = new Map();
+    const start = registerStartHandler(bridge, sessions);
+    const sender = makeSender();
+    const sessionId = `status-then-conn-close-${exitCode}`;
+    await start({ sender }, {
+      hostname: "10.0.0.50", username: "alice", port: 22,
+      authMethod: "password", password: "secret",
+      useSshAgent: false, verifyHostKeys: false, sessionId,
+    });
+    const session = sessions.get(sessionId);
+    session.stream.emit("exit", exitCode);
+    session.conn.emit("close");
+    await waitForExitDeliveries();
+    const exits = getExitPayloads(sender);
+    assert.equal(exits.length, 1);
+    assert.equal(exits[0].reason, "exited");
+    assert.equal(exits[0].exitCode, exitCode);
+    assert.equal(exits[0].remoteClosedWithoutExitStatus, undefined);
+  });
+}

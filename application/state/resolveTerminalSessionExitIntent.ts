@@ -22,6 +22,10 @@ export function formatSessionClosedExitMessage(evt: TerminalSessionExitEvent): s
   if (evt?.reason === "signaled" || (typeof evt?.exitSignal === "string" && evt.exitSignal.trim().length > 0)) {
     return "\r\n[session closed by remote signal]";
   }
+  // Infrastructure exit codes do not describe the remote shell's status.
+  if (evt?.reason === "error") {
+    return "\r\n[session closed unexpectedly]";
+  }
   return `\r\n[session closed${evt?.exitCode !== undefined ? ` (code ${evt.exitCode})` : ""}]`;
 }
 
