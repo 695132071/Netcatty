@@ -17,7 +17,7 @@ import {
 } from "./promptDetector";
 import { getCompletions, parseCommandLine, type CompletionSuggestion } from "./completionEngine";
 import type { Snippet } from "../../../domain/models";
-import { recordCommand } from "./commandHistoryStore";
+import { recordCommand, subscribeCommandHistoryCleared } from "../../../application/state/commandHistoryStore";
 import { seedLocalShellHistoryFromHistfiles } from "./localShellHistorySeed";
 import { shellEscape } from "./completionEngine";
 import { preloadCommonSpecs } from "./figSpecLoader";
@@ -144,8 +144,8 @@ function isSubsequence(query: string, target: string): boolean {
 
 /**
  * Remove history rows that no longer match the edited input while a debounced
- * provider refresh is pending. Other sources keep their provider-specific
- * matching semantics (snippet search, plugin replacement, etc.).
+ * provider refresh is pending. Snippets must be re-queried for the new input
+ * before they can be selected or executed. Other sources retain their matching.
  */
 export function reconcileAutocompletePopupState(
   prev: AutocompleteState,
@@ -158,6 +158,7 @@ export function reconcileAutocompletePopupState(
   const inputContext = parseCommandLine(input);
   const allowFuzzyHistory = input.length >= 2 && inputContext.wordIndex === 0;
   const suggestions = prev.suggestions.filter((suggestion) => {
+    if (suggestion.source === "snippet") return false;
     if (suggestion.source !== "history") return true;
     const text = suggestion.text.toLowerCase();
     if (suggestion.historyMatch === "path-argument") {
@@ -1311,6 +1312,32 @@ export function useTerminalAutocomplete(
       repositionPopup();
     });
   }, [termRef, writeToTerminal, repositionPopup]);
+
+  /**
+   * Drop every trace of the popup when command history is cleared, including a
+   * clear performed in another renderer (e.g. the main window while this
+   * detached popup is open).
+   *
+   * Mirrors the Escape path: live preview writes the highlighted candidate into
+   * the shell line, so hiding the popup alone would leave the deleted command
+   * ready for Enter, with `lastAcceptedCommandRef` still pointing at it.
+   * Restore the typed baseline and reset the refs first.
+   */
+  const handleCommandHistoryCleared = useCallback(() => {
+    if (previewActiveRef.current) {
+      renderPreviewSelection(-1); // restore the typed baseline
+    }
+    clearState();
+    previewActiveRef.current = false;
+    // Drop a command accepted before the clear so a fast Enter cannot record it
+    // through the accepted-command path (the line buffer is authoritative now).
+    lastAcceptedCommandRef.current = null;
+  }, [clearState, renderPreviewSelection]);
+
+  useEffect(
+    () => subscribeCommandHistoryCleared(handleCommandHistoryCleared),
+    [handleCommandHistoryCleared],
+  );
 
   /** Accept a snippet: clear the user's typed input, then run it via the
    *  host-canonical send path (onAcceptSnippet). */

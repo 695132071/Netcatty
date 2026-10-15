@@ -1,4 +1,5 @@
 import test from 'node:test';
+import { normalizeStoredAgentModelSelection, shouldUseStoredAgentModel } from '../../components/AIChatSidePanelHelpers';
 import assert from 'node:assert/strict';
 
 import {
@@ -19,9 +20,21 @@ import {
 } from './types';
 
 test('Claude presets advertise effort levels separately from the model id', () => {
-  for (const preset of CLAUDE_MODEL_PRESETS) {
+  assert.equal(CLAUDE_MODEL_PRESETS.length, 15);
+  const withLevels = CLAUDE_MODEL_PRESETS.filter((preset) => preset.thinkingLevels);
+  assert.ok(withLevels.length > 0);
+  for (const preset of withLevels) {
     assert.deepEqual(preset.thinkingLevels, ['low', 'medium', 'high', 'max']);
     assert.ok(preset.defaultThinkingLevel);
+  }
+  // Current-generation entries keep explicit effort levels; older fallback
+  // entries and unverified generations omit them rather than inventing.
+  const byId = new Map(CLAUDE_MODEL_PRESETS.map((preset) => [preset.id, preset]));
+  for (const id of ['claude-opus-5-5', 'claude-sonnet-5-5', 'claude-haiku-5-5', 'claude-haiku-4-5']) {
+    assert.ok(byId.get(id)?.thinkingLevels, `${id} should keep effort levels`);
+  }
+  for (const id of ['claude-fable-5-1', 'claude-sonnet-5', 'claude-opus-4-6']) {
+    assert.equal(byId.get(id)?.thinkingLevels, undefined, `${id} should not invent effort levels`);
   }
   assert.equal(resolveAgentModelSelection(CLAUDE_MODEL_PRESETS[0]!), 'default/medium');
 });
@@ -251,4 +264,27 @@ test('getAgentModelPresets resolves Windows command paths with backslashes', () 
     getAgentModelPresets('C\\Program Files\\nodejs\\claude.exe'),
     CLAUDE_MODEL_PRESETS,
   );
+});
+
+test('Claude fallback preserves saved family aliases and effort', () => {
+  for (const selection of ['sonnet/medium', 'haiku/low']) {
+    assert.equal(shouldUseStoredAgentModel(selection, CLAUDE_MODEL_PRESETS), true);
+    assert.equal(normalizeStoredAgentModelSelection(selection, CLAUDE_MODEL_PRESETS), selection);
+  }
+  assert.equal(CLAUDE_MODEL_PRESETS.find((preset) => preset.id === 'sonnet')?.name, 'Sonnet');
+  assert.equal(CLAUDE_MODEL_PRESETS.find((preset) => preset.id === 'haiku')?.name, 'Haiku');
+});
+
+
+test('explicit Claude fallback IDs preserve unspecified effort and explicit effort choices', () => {
+  for (const preset of CLAUDE_MODEL_PRESETS.filter((model) => model.id.startsWith('claude-'))) {
+    assert.equal(normalizeStoredAgentModelSelection(preset.id, CLAUDE_MODEL_PRESETS), preset.id);
+    assert.equal(resolveAgentModelSelection(preset), preset.id);
+    for (const level of preset.thinkingLevels ?? []) {
+      const explicit = `${preset.id}/${level}`;
+      assert.equal(normalizeStoredAgentModelSelection(explicit, CLAUDE_MODEL_PRESETS), explicit);
+    }
+  }
+  assert.equal(normalizeStoredAgentModelSelection('sonnet/medium', CLAUDE_MODEL_PRESETS), 'sonnet/medium');
+  assert.equal(normalizeStoredAgentModelSelection('haiku/low', CLAUDE_MODEL_PRESETS), 'haiku/low');
 });

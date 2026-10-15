@@ -50,6 +50,7 @@ import {
   resolveTerminalChainHosts,
   resolveTerminalSessionHost,
 } from '../domain/terminalHostResolution';
+import { useDefaultLocalShellContext } from '../lib/useDiscoveredShells';
 import { Tooltip, TooltipContent, TooltipTrigger } from './ui/tooltip';
 import { toast } from './ui/toast';
 import { useI18n } from '../application/i18n/I18nProvider';
@@ -182,7 +183,7 @@ function buildScriptSessionMeta(
     connected: session.status === 'connected',
     name: session.customName || session.hostLabel || host?.label,
     hostname: host?.hostname ?? session.hostname,
-    username: host?.username ?? session.username,
+    username: session.protocol === 'local' ? session.username : host?.username ?? session.username,
   };
 }
 
@@ -238,6 +239,7 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
   onAddKnownHost,
   onCommandExecuted,
   onDeleteShellHistoryEntry,
+  onClearCommandHistory,
   onTerminalDataCapture,
   onCreateWorkspaceFromSessions,
   onAddSessionToWorkspace,
@@ -669,7 +671,9 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
   const handleSessionExit = useCallback((sessionId: string, evt: TerminalSessionExitEvent) => {
     const intent = resolveTerminalSessionExitIntent(
       evt,
-      terminalSettings?.autoCloseOnExit ?? true,
+      // No terminal settings loaded yet -> do not close the tab; auto-close is
+      // opt-in via Settings -> Terminal -> Behavior (DEFAULT_TERMINAL_SETTINGS).
+      terminalSettings?.autoCloseOnExit ?? false,
     );
     if (intent.kind === "closeSession") {
       handleCloseSession(sessionId);
@@ -1193,14 +1197,16 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
     () => new Set(proxyProfiles.map((profile) => profile.id)),
     [proxyProfiles],
   );
+  const defaultLocalShell = useDefaultLocalShellContext(terminalSettings);
   const effectiveHosts = useMemo(
     () => hosts.map((host) => resolveEffectiveTerminalHost({
       host,
       groupConfigs,
       proxyProfiles,
       validProxyProfileIds: proxyProfileIdSet,
+      defaultLocalShell,
     })),
-    [groupConfigs, hosts, proxyProfileIdSet, proxyProfiles],
+    [groupConfigs, hosts, proxyProfileIdSet, proxyProfiles, defaultLocalShell],
   );
 
   // Pre-compute fallback hosts to avoid creating new objects on every render
@@ -1213,11 +1219,12 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
         groupConfigs,
         proxyProfiles,
         localOs: detectLocalOs(navigator.userAgent || navigator.platform),
+        defaultLocalShell,
       });
       map.set(session.id, applySessionFontSizeToHost(hostForSession, session));
     }
     return map;
-  }, [sessions, hosts, groupConfigs, proxyProfiles]);
+  }, [sessions, hosts, groupConfigs, proxyProfiles, defaultLocalShell]);
   const resolvedSessionHostIds = useMemo(() => {
     const ids = new Set<string>();
     for (const session of sessions) {
@@ -2527,6 +2534,7 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
     handleCloseSidePanel,
     handleCommandExecuted,
     handleHistoryDelete: onDeleteShellHistoryEntry,
+    handleHistoryClear: onClearCommandHistory,
     handleCommandSubmitted,
     handleComposeSend,
     handleHistoryPaste,

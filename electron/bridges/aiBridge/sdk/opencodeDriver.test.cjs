@@ -500,6 +500,52 @@ test("runOpenCodeTurn continues after a tool error part and reaches session.idle
   assert.equal(events.some((event) => event.k === "error"), false);
 });
 
+for (const scoped of [false, true]) {
+  test(`runOpenCodeTurn ${scoped ? "fails on the current session error" : "warns about plugin errors without stopping the session"} (#3173)`, async () => {
+    const { events, emitter } = collector();
+    emitter.warning = (id, message) => events.push({ k: "warning", id, message });
+    const message = scoped ? "bad key" : "Failed to install plugin: invalid package name";
+    const stream = {
+      async *[Symbol.asyncIterator]() {
+        yield {
+          type: "session.error",
+          properties: { ...(scoped ? { sessionID: "sess-1" } : {}), error: { data: { message } } },
+        };
+        if (!scoped) {
+          yield {
+            type: "session.error",
+            properties: { error: { data: { message: "Failed to install another plugin" } } },
+          };
+        }
+        yield {
+          type: "message.part.updated",
+          properties: { part: { type: "text", sessionID: "sess-1", id: "p1", text: "reply" }, delta: "reply" },
+        };
+        yield { type: "session.idle", properties: { sessionID: "sess-1" } };
+      },
+    };
+    await runOpenCodeTurn({
+      prompt: "continue",
+      resumeSessionId: "sess-1",
+      emitter,
+      openCodeFactory: async () => ({
+        client: {
+          global: { event: async () => ({ stream }) },
+          session: { promptAsync: async () => ({ data: true }) },
+        },
+        server: { close() {} },
+      }),
+    });
+    assert.equal(events.some((event) => event.k === "error" && event.m === message), scoped);
+    assert.equal(events.some((event) => event.k === "warning" && event.message === message), !scoped);
+    assert.equal(events.some((event) => event.k === "text" && event.t === "reply"), !scoped);
+    assert.equal(events.some((event) => event.k === "done"), !scoped);
+    const warnings = events.filter((event) => event.k === "warning");
+    assert.equal(warnings.length, scoped ? 0 : 2);
+    assert.equal(new Set(warnings.map((event) => event.id)).size, warnings.length);
+  });
+}
+
 test("mapOpenCodeModels flattens providers", () => {
   assert.deepEqual(mapOpenCodeModels({
     providers: [

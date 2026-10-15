@@ -37,6 +37,7 @@ import { useExternalMcpToggleState } from '../state/useExternalMcpToggleState';
 import { selectPluginThemeTokens } from '../state/pluginContributionEnvironment';
 import { netcattyBridge } from '../../infrastructure/services/netcattyBridge';
 import { resolveEffectiveTerminalHost } from '../../domain/terminalHostResolution';
+import { useDefaultLocalShellContext } from '../../lib/useDiscoveredShells';
 import { getAvailablePaneMagnificationController } from '../../domain/paneMagnification';
 import { pluginViewTabStore, usePluginViewTabs } from '../state/pluginViewTabStore';
 import { buildPluginSettingScopeCatalog } from '../state/usePluginSettingScopeCatalog';
@@ -260,7 +261,7 @@ function AppViewInner({ domains }: AppViewProps) {
   useMainWindowInputFocusRecovery({ onPageHidden: dismissTransientOverlays });
 
   const {
-    addShellHistoryEntry, removeShellHistoryEntry, addSessionToWorkspace, addToWorkspaceDialog, appendHostToWorkspace, appendLocalTerminalToWorkspace,
+    addShellHistoryEntry, clearAllCommandHistory, removeShellHistoryEntry, addSessionToWorkspace, addToWorkspaceDialog, appendHostToWorkspace, appendLocalTerminalToWorkspace,
     clearAndRemoveSource, clearAndRemoveSources, closeLogView, closeSession, closeTabsBatch, closeWorkspace, commitPluginImporterData, commitVaultImportTransaction, commitVaultGroupMutation, copySessionToNewWindowWithCurrentShell, copySessionWithCurrentShell, duplicateSessionWithCurrentShell, copyWorkspaceWithCurrentShell,
     convertKnownHostToHost, createWorkspaceFromSessions, createWorkspaceFromTargets, createWorkspaceWithHosts,
     customGroups, currentTerminalTheme, deepLinkHostDraft, draggingSessionId, effectiveKnownHosts, editorTabs, editorWordWrap, emptyVaultConflict,
@@ -354,14 +355,16 @@ function AppViewInner({ domains }: AppViewProps) {
     [proxyProfiles],
   );
 
+  const defaultLocalShell = useDefaultLocalShellContext(terminalSettings);
   const resolveWorkspaceAppendHost = useCallback((host: typeof hosts[number]) => (
     resolveEffectiveTerminalHost({
       host,
       groupConfigs,
       proxyProfiles,
       validProxyProfileIds,
+      defaultLocalShell,
     })
-  ), [groupConfigs, proxyProfiles, validProxyProfileIds]);
+  ), [groupConfigs, proxyProfiles, validProxyProfileIds, defaultLocalShell]);
 
   const handleAppendHostToWorkspace = useCallback((workspaceId: string, hostId: string) => {
     const host = hosts.find((entry) => entry.id === hostId);
@@ -746,6 +749,7 @@ function AppViewInner({ domains }: AppViewProps) {
           onAddKnownHost={handleAddKnownHost}
           onCommandExecuted={handleTerminalCommandExecuted}
           onDeleteShellHistoryEntry={removeShellHistoryEntry}
+          onClearCommandHistory={clearAllCommandHistory}
           onTerminalDataCapture={handleTerminalDataCapture}
           onCreateWorkspaceFromSessions={createWorkspaceFromSessions}
           onAddSessionToWorkspace={addSessionToWorkspace}

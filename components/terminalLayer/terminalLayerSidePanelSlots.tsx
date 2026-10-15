@@ -493,6 +493,7 @@ function SidePanelHistorySlotInner({
     HistorySidePanel,
     handleHistoryPaste,
     handleHistoryDelete,
+    handleHistoryClear,
     handleHistoryRun,
   } = ctx;
 
@@ -507,6 +508,7 @@ function SidePanelHistorySlotInner({
         globalEntries={shellHistory as import('../../domain/models').ShellHistoryEntry[]}
         onFetch={remoteHistory.fetch}
         onDeleteGlobalEntry={handleHistoryDelete}
+        onClearGlobalHistory={handleHistoryClear}
         onPasteToTerminal={handleHistoryPaste}
         onRunInTerminal={handleHistoryRun}
         isVisible

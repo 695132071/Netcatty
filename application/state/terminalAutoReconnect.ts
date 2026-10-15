@@ -40,7 +40,16 @@ export function shouldAutoReconnectAfterExit({
   if (!hasEverConnected) return false;
   if (!isTerminalAutoReconnectEnabled(terminalSettings)) return false;
   if (!isAutoReconnectableSshHost(host)) return false;
-  return evt.reason !== "exited";
+  // "exited" is a shell exit. "timeout" is an administrative idle/TMOUT logout
+  // (or a connect timeout). "signaled" — or a plumbed exit-signal on an
+  // otherwise "closed" end — is a server kick (idle policy, SIGHUP, SIGTERM).
+  // Reconnecting would fight that policy. Transport "error" and bare "closed"
+  // still retry.
+  if (evt.reason === "error") return true;
+  if (evt.reason === "exited" || evt.reason === "timeout" || evt.reason === "signaled") {
+    return false;
+  }
+  return typeof evt.exitSignal !== "string" || evt.exitSignal.trim().length === 0;
 }
 
 export function shouldContinueAutoReconnectAfterFailure({

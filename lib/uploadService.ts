@@ -769,6 +769,7 @@ async function uploadEntries(
     standaloneTransferId: string,
     fileTotalBytes: number,
   ): Promise<{ cancelled?: boolean; error?: string }> => {
+    if (controller?.isCancelled(standaloneTransferId)) return { cancelled: true };
     let localFilePath = getDropEntryLocalPath(entry);
     let ownedTempPath: string | undefined;
 
@@ -784,13 +785,13 @@ async function uploadEntries(
         ownedTempPath = await bridge.stageUploadFile(entry.file, standaloneTransferId);
       } catch (error) {
         controller?.removeActiveTransfer(standaloneTransferId);
-        if (controller?.isCancelled() || /cancel/i.test(error instanceof Error ? error.message : String(error))) {
+        if (controller?.isCancelled(standaloneTransferId) || /cancel/i.test(error instanceof Error ? error.message : String(error))) {
           return { cancelled: true };
         }
         throw error;
       }
       localFilePath = ownedTempPath;
-      if (controller?.isCancelled()) {
+      if (controller?.isCancelled(standaloneTransferId)) {
         await bridge.deleteTempFile(ownedTempPath).catch(() => {});
         return { cancelled: true };
       }
@@ -956,6 +957,11 @@ async function uploadEntries(
           );
 
           if (uploadResult.cancelled) {
+            if (!bundleTaskId && !controller?.isCancelled()) {
+              settleFileTask(standaloneTransferId, lifecycleManaged, (taskId) => callbacks?.onTaskCancelled?.(taskId));
+              results.push({ fileName: entry.relativePath, success: false, cancelled: true });
+              continue;
+            }
             wasCancelled = true;
             settleFileTask(bundledChildTaskId, lifecycleManaged, (taskId) => callbacks?.onTaskCancelled?.(taskId));
             settleTask(bundleTaskId ?? "", (taskId) => callbacks?.onTaskCancelled?.(taskId));

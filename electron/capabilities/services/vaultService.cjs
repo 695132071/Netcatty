@@ -47,6 +47,7 @@ function createVaultService(ctx = {}) {
       return invokeVaultAgent("host.open", {
         hostId: params.hostId,
         chatSessionId: params.chatSessionId,
+        newTab: params.newTab,
       });
     },
     createHosts: async (params = {}) => {

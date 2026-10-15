@@ -177,7 +177,7 @@ test("path history follows the current argument instead of the whole line", () =
   assert.equal(changedArgument.popupVisible, false);
 });
 
-test("provider-specific non-history rows remain until their debounced refresh", () => {
+test("snippet rows are removed synchronously while their next query is pending", () => {
   const snippet: CompletionSuggestion = {
     text: "deploy production",
     displayText: "deploy production",
@@ -186,7 +186,8 @@ test("provider-specific non-history rows remain until their debounced refresh", 
   };
 
   const next = reconcileAutocompletePopupState(popupState([snippet]), "dp");
-  assert.deepEqual(next.suggestions, [snippet]);
+  assert.deepEqual(next.suggestions, []);
+  assert.equal(next.popupVisible, false);
   assert.equal(next.selectedIndex, -1);
 });
 

@@ -23,6 +23,7 @@ import {
   type SidePanelTabRemap,
 } from '../../domain/workspaceSidePanelTabRemap';
 import { AI_PANEL_FORCE_HIDE_SHELL } from '../ai/aiPanelDiagnostics';
+import { attachWindowResizeFocusRestore } from '../terminal/restoreWindowResizeFocus';
 import { toast } from '../ui/toast';
 import { getTerminalSidePanelShellWidth } from './TerminalLayerSidePanelSection';
 import type { RendererCwdSource } from '../terminal/sftpCwd';
@@ -746,6 +747,23 @@ export function useTerminalLayerEffects(ctx: TerminalLayerEffectsContext) {
     if (!tabChanged || !refocusActiveTerminalSession) return;
     refocusActiveTerminalSession();
   }, [activeTabId, isTerminalLayerVisible, refocusActiveTerminalSession]);
+
+  // Restore keyboard focus after the OS window is resized or maximized.
+  // #3647: dragging the frame (or maximizing) leaves the active xterm helper
+  // textarea unfocused on Windows, so keystrokes do nothing until a click.
+  // Reuse the tab-change refocus path; the helper only fires once the resize
+  // settles and is gated on the app window actually holding input focus.
+  useEffect(() => {
+    if (!isTerminalLayerVisible) return undefined;
+    return attachWindowResizeFocusRestore({
+      win: window,
+      doc: document,
+      refocus: () => {
+        if (isComposeBarOpen) return;
+        refocusActiveTerminalSession?.();
+      },
+    });
+  }, [document, isComposeBarOpen, isTerminalLayerVisible, refocusActiveTerminalSession, window]);
 
   // When focusedSessionId changes or terminal layer becomes visible,
     // focus the corresponding terminal to restore :focus-within CSS state

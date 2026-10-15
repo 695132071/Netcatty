@@ -2,6 +2,7 @@ import type { UploadBridge } from "./uploadService.types";
 
 export class UploadController {
   private cancelled = false;
+  private cancelledFileIds = new Set<string>();
   private activeFileTransferIds = new Set<string>();
   private activeCompressionIds = new Set<string>();
   private currentTransferId = "";
@@ -47,16 +48,7 @@ export class UploadController {
     // Cancel all active file uploads
     const activeIds = Array.from(this.activeFileTransferIds);
     for (const transferId of activeIds) {
-      try {
-        if (this.bridge?.cancelStagedUploadFile) {
-          await this.bridge.cancelStagedUploadFile(transferId);
-        }
-        if (this.bridge?.cancelTransfer) {
-          await this.bridge.cancelTransfer(transferId);
-        }
-      } catch {
-        // Ignore cancel errors
-      }
+      await this.cancelFile(transferId);
     }
 
     // Also cancel current one if not in the set
@@ -71,11 +63,22 @@ export class UploadController {
     }
   }
 
+  /** Cancel one standalone file without stopping the shared upload queue. */
+  async cancelFile(transferId: string): Promise<void> {
+    this.cancelledFileIds.add(transferId);
+    try {
+      await this.bridge?.cancelStagedUploadFile?.(transferId);
+      await this.bridge?.cancelTransfer?.(transferId);
+    } catch {
+      // The transfer runtime reconciles backend cancellation failures.
+    }
+  }
+
   /**
    * Check if upload was cancelled
    */
-  isCancelled(): boolean {
-    return this.cancelled;
+  isCancelled(fileId?: string): boolean {
+    return this.cancelled || (!!fileId && this.cancelledFileIds.has(fileId));
   }
 
   /**
@@ -98,6 +101,7 @@ export class UploadController {
    */
   reset(): void {
     this.cancelled = false;
+    this.cancelledFileIds.clear();
     this.cancelListeners.clear();
     this.activeFileTransferIds.clear();
     this.activeCompressionIds.clear();

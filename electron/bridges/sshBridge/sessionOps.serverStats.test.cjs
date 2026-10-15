@@ -746,6 +746,46 @@ test("getServerStats measures latency by pinging the stats connection", async ()
   assert.deepEqual(pingedConns, [session.moshStatsConn]);
 });
 
+test("getServerStats does not open an unauthenticated SSH handshake (#3630)", async (t) => {
+  const net = require("node:net");
+  const { createSshPingLatencyProbe } = require("./sshPingLatency.cjs");
+  let accepted = 0;
+  const server = net.createServer((socket) => {
+    accepted += 1;
+    socket.destroy();
+  });
+  t.after(() => new Promise((resolve) => server.close(() => resolve())));
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const port = server.address().port;
+
+  const conn = Object.assign(fakeConn(LINUX_STATS), {
+    config: { keepaliveInterval: 30000 },
+  });
+  const sessions = new Map([["sid", {
+    type: "ssh",
+    conn,
+    hostname: "127.0.0.1",
+    port,
+    _reuseEndpoint: { hostname: "127.0.0.1", port },
+  }]]);
+  let pingTarget = null;
+  const measureSshPingLatency = createSshPingLatencyProbe();
+  const api = makeSessionOps(sessions, {
+    measureSshPingLatency: (target, timeoutMs) => {
+      pingTarget = target;
+      return measureSshPingLatency(target, timeoutMs);
+    },
+  });
+
+  const result = await api.getServerStats({ sender: {} }, { sessionId: "sid" });
+  await new Promise((resolve) => setTimeout(resolve, 50));
+
+  assert.equal(result.success, true);
+  assert.equal(pingTarget, conn);
+  assert.equal(result.stats.latencyMs, null);
+  assert.equal(accepted, 0);
+});
+
 test("getServerStats pings the companion connection for jump-host sessions", async () => {
   const sessions = new Map([["sid", {
     type: "mosh",

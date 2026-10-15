@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { JSDOM } from "jsdom";
+import { reconcileAutocompletePopupState, type AutocompleteState } from "./autocomplete/useTerminalAutocomplete.ts";
 
 /**
  * Regression test for #3426: hovering autocomplete rows must not change the
@@ -10,7 +11,7 @@ import { JSDOM } from "jsdom";
  * the hovered row and self-oscillating (violent mousemove jitter).
  */
 
-test("autocomplete popup keeps a fixed geometry while hovering rows (#3426)", async () => {
+test("autocomplete popup keeps a fixed geometry while hovering rows (#3426)", async (t) => {
   const dom = new JSDOM('<!doctype html><html><body><div id="root"></div></body></html>', {
     pretendToBeVisual: true,
     url: "http://localhost",
@@ -193,6 +194,38 @@ test("autocomplete popup keeps a fixed geometry while hovering rows (#3426)", as
         assert.equal(detail.style.flexShrink, "1");
       }
     }
+
+    await t.test("edited snippet rows cannot be clicked before the provider refresh", async () => {
+      let clicks = 0;
+      const state: AutocompleteState = {
+        suggestions: [{ text: "deploy", displayText: "deploy", source: "snippet", score: 2000,
+          snippet: { id: "deploy", label: "deploy", command: "echo deploy" } }],
+        selectedIndex: -1, popupVisible: true,
+        popupAnchorViewport: { left: 100, top: 300, bottom: 316 },
+        expandUpward: false, subDirPanels: [], subDirFocusLevel: -1,
+      };
+      const renderPopup = async (next: AutocompleteState) => {
+        await act(async () => {
+          root.render(<AutocompletePopup
+            suggestions={next.suggestions} selectedIndex={next.selectedIndex}
+            anchorViewport={next.popupAnchorViewport} visible={next.popupVisible}
+            onSelect={() => { clicks++; }} containerRef={containerRef}
+          />);
+        });
+      };
+      await renderPopup(state);
+      const label = Array.from(rootNode.querySelectorAll<HTMLElement>("span"))
+        .find((el) => el.textContent === "deploy");
+      const row = label?.closest<HTMLElement>("div[style*='cursor']");
+      assert.ok(row);
+      await act(async () => {
+        row.dispatchEvent(new window.MouseEvent("mousedown", { bubbles: true }));
+      });
+      assert.equal(clicks, 1, "an unselected fresh snippet is clickable");
+      await renderPopup(reconcileAutocompletePopupState(state, "git pull xyz"));
+      assert.equal(Boolean(rootNode.querySelector(".xterm-autocomplete-popup")), false);
+      assert.equal(clicks, 1);
+    });
 
     await act(async () => {
       root.unmount();

@@ -234,6 +234,10 @@ const scheduleReconnectIfNeeded = (
     return true;
   }
 
+  // One failed dial can report both a status event and a rejected start.
+  // Once exhausted, neither notification may begin another retry cycle.
+  if (exhaustedReconnectRules.has(ruleId)) return false;
+
   const currentConn = activeConnections.get(ruleId);
   if (currentConn?.reconnectSuppressed) return false;
   if (currentConn?.reconnectTimerCallback) {
@@ -681,6 +685,10 @@ const subscribeSyncedConnection = async (
     connection.status = resolveBackendStatus(snapshot.status);
     connection.error = snapshot.error;
   }
+  if (connection.status === 'active') {
+    exhaustedReconnectRules.delete(ruleId);
+    connection.reconnectAttempts = 0;
+  }
   return true;
 };
 
@@ -820,6 +828,10 @@ export const reconcileWithBackend = async (): Promise<{
           if (existing.status !== backendStatus || existing.error !== tunnel.error) {
             existing.status = backendStatus;
             existing.error = tunnel.error;
+            if (backendStatus === 'active') {
+              exhaustedReconnectRules.delete(ruleId);
+              existing.reconnectAttempts = 0;
+            }
             result.appeared.push(ruleId);
           }
         }
@@ -893,7 +905,9 @@ export const startPortForward = async (
   
   // Clear any existing reconnect timer
   clearReconnectTimer(rule.id);
-  
+  // Explicit starts (including network recovery) authorize a fresh cycle.
+  exhaustedReconnectRules.delete(rule.id);
+
   if (!bridge?.startPortForward) {
     // Fallback for browser/dev mode - simulate the connection
     logger.warn('[PortForwardingService] Backend not available, simulating connection...');

@@ -33,7 +33,7 @@ const createFakeTerm = (cols = 80) => {
     onRender: (handler: (element: FakeElement) => void) => { dispose: () => void };
     onDispose: (handler: Handler) => { dispose: () => void };
   }> = [];
-  const markers: Array<{ line: number; disposed: boolean }> = [];
+  const markers: Array<{ line: number; disposed: boolean; dispose: () => void }> = [];
 
   const term = {
     cols,
@@ -474,6 +474,84 @@ test('CursorLineHighlighter restores after the terminal resets its decorations',
   term.scrollOutput(0);
   assert.equal(term.decorations.length, 2);
   assert.equal(term.decorations.at(-1)?.disposed, false);
+  highlighter.dispose();
+});
+
+test('CursorLineHighlighter self-heals when xterm disposes its decorations without a write', () => {
+  const term = createFakeTerm(80);
+  const highlighter = new CursorLineHighlighter(term as never);
+  highlighter.setEnabled(true);
+  assert.equal(term.decorations.at(-1)?.disposed, false);
+
+  // xterm-side disposal (decoration service reset / term.reset): no cursor
+  // move and no write follow, only the next render frame.
+  term.resetDecorations();
+  assert.equal(term.decorations[0]?.disposed, true);
+
+  term.render();
+  assert.equal(term.decorations.at(-1)?.disposed, false);
+  assert.equal(term.decorations.at(-1)?.options.width, 80);
+  highlighter.dispose();
+});
+
+test('CursorLineHighlighter recreates after a buffer clear wipes markers and decorations', () => {
+  const term = createFakeTerm(80);
+  const highlighter = new CursorLineHighlighter(term as never);
+  highlighter.setEnabled(true);
+  assert.equal(term.markers.at(-1)?.disposed, false);
+
+  // term.clear() disposes every marker; decorations follow their markers.
+  for (const marker of term.markers) marker.dispose();
+  term.resetDecorations();
+  assert.equal(term.decorations.at(-1)?.disposed, true);
+
+  term.render();
+  assert.equal(term.decorations.at(-1)?.disposed, false);
+  assert.equal(term.markers.at(-1)?.line, 0);
+  highlighter.dispose();
+});
+
+test('CursorLineHighlighter does not duplicate decorations on redundant renders', () => {
+  const term = createFakeTerm(80);
+  const highlighter = new CursorLineHighlighter(term as never);
+  highlighter.setEnabled(true);
+  const aliveBefore = term.decorations.filter((decoration) => !decoration.disposed).length;
+
+  term.render();
+  term.render();
+  assert.equal(
+    term.decorations.filter((decoration) => !decoration.disposed).length,
+    aliveBefore,
+  );
+  highlighter.dispose();
+});
+
+test('CursorLineHighlighter does not churn markers when a fully colored row has no decorations', () => {
+  const cols = 8;
+  const term = createFakeTerm(cols);
+  // Every cell has an explicit ANSI background and the row is full, so both
+  // highlight ranges and the blank tail are legitimately empty.
+  term.setColoredBackgrounds(Array.from({ length: cols }, (_, column) => column));
+  const highlighter = new CursorLineHighlighter(term as never);
+  highlighter.setEnabled(true);
+
+  assert.equal(term.decorations.length, 0);
+  assert.equal(term.markers.length, 1);
+  const marker = term.markers[0];
+  assert.ok(marker);
+  assert.equal(marker.disposed, false);
+  assert.equal(marker.line, 0);
+  const aliveBefore = term.markers.filter((candidate) => !candidate.disposed).length;
+
+  term.render();
+  term.render();
+  term.render();
+
+  assert.equal(term.markers.length, 1);
+  assert.equal(term.markers.filter((candidate) => !candidate.disposed).length, aliveBefore);
+  assert.equal(marker.disposed, false);
+  assert.equal(marker.line, 0);
+  assert.equal(term.decorations.length, 0);
   highlighter.dispose();
 });
 

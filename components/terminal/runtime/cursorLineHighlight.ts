@@ -37,6 +37,8 @@ export class CursorLineHighlighter implements IDisposable {
   private activeColor: string | null = null;
   private activeRanges: HighlightRange[] = [];
   private activeTailRanges: HighlightRange[] = [];
+  /** False once any tracked decoration has been disposed out from under us. */
+  private decorationsAlive = false;
   private readonly disposables: IDisposable[] = [];
   private pendingRefresh = false;
   private disposed = false;
@@ -46,10 +48,16 @@ export class CursorLineHighlighter implements IDisposable {
       this.term.onCursorMove(() => this.markPendingRefresh()),
       this.term.onWriteParsed(() => this.markPendingRefresh()),
       this.term.onRender(() => {
-        if (this.pendingRefresh) {
-          this.pendingRefresh = false;
-          this.refresh();
-        }
+        const pending = this.pendingRefresh;
+        this.pendingRefresh = false;
+        if (this.disposed || !this.enabled) return;
+        // Writes and cursor moves defer to render, but xterm can also dispose
+        // or clear our decorations out from under us (term.clear/reset,
+        // decoration service resets, marker reindexing) without any further
+        // cursor move or write. Verify the tracked set on every render so the
+        // highlight can self-heal at the cursor line instead of staying
+        // anchored to stale bookkeeping (wrong/missing line).
+        if (pending || !this.isTrackingIntact()) this.refresh();
       }),
       this.term.onSelectionChange(() => this.refresh({ force: true })),
       this.term.onResize(() => this.refresh({ force: true })),
@@ -111,6 +119,7 @@ export class CursorLineHighlighter implements IDisposable {
       color === this.activeColor &&
       rangesEqual(ranges, this.activeRanges) &&
       rangesEqual(tailRanges, this.activeTailRanges) &&
+      this.decorationsAlive &&
       this.marker &&
       !this.marker.isDisposed &&
       this.marker.line === absoluteLine
@@ -160,13 +169,18 @@ export class CursorLineHighlighter implements IDisposable {
 
     this.marker = marker;
     this.decorations = decorations;
+    // An empty set is valid when the whole row already has ANSI backgrounds or
+    // inverse cells. Tracking stays intact so later frames do not churn markers.
+    this.decorationsAlive = true;
     this.decorationDisposeListeners = decorations.map((decoration) =>
       decoration.onDispose(() => {
         if (this.decorations.includes(decoration)) {
+          this.decorationsAlive = false;
           this.activeLine = null;
           this.activeCols = null;
           this.activeColor = null;
           this.activeRanges = [];
+          this.activeTailRanges = [];
         }
       }),
     );
@@ -244,11 +258,25 @@ export class CursorLineHighlighter implements IDisposable {
     this.marker = null;
     this.decorations = [];
     this.decorationDisposeListeners = [];
+    this.decorationsAlive = false;
     this.activeLine = null;
     this.activeCols = null;
     this.activeColor = null;
     this.activeRanges = [];
     this.activeTailRanges = [];
+  }
+
+  /**
+   * Cheap render-time check that the tracked marker and decorations are still
+   * owned by xterm. xterm disposes highlight decorations on buffer clears,
+   * resets, and marker reindexing without emitting cursor-move/write events,
+   * so a stale tracking state must be recreated before the next frame paints.
+   */
+  private isTrackingIntact(): boolean {
+    if (this.marker === null || this.marker.isDisposed) {
+      return this.marker === null && this.decorations.length === 0;
+    }
+    return this.decorationsAlive;
   }
 
   private clearOwned(

@@ -2,11 +2,19 @@
  * Persistent command history store for terminal autocomplete.
  * Stores commands per host with frequency tracking and timestamp ordering.
  * Uses localStorageAdapter as the persistence layer (works in renderer process).
+ *
+ * Lives in application state rather than the UI layer so the vault hook and the
+ * terminal UI depend on one lower-layer API, and so every renderer (main window
+ * and detached terminal popups) shares the same clear semantics.
  */
 
-import { localStorageAdapter } from "../../../infrastructure/persistence/localStorageAdapter";
+import { localStorageAdapter } from "../../infrastructure/persistence/localStorageAdapter";
+import {
+  STORAGE_KEY_COMMAND_HISTORY,
+  STORAGE_KEY_COMMAND_HISTORY_CLEARED,
+} from "../../infrastructure/config/storageKeys";
 
-const STORAGE_KEY = "netcatty:commandHistory";
+const STORAGE_KEY = STORAGE_KEY_COMMAND_HISTORY;
 const MAX_ENTRIES = 10000;
 const MAX_ENTRIES_PER_HOST = 5000;
 
@@ -26,9 +34,21 @@ export interface HistoryEntry {
 interface HistoryStore {
   entries: HistoryEntry[];
   version: number;
+  /**
+   * Monotonic counter bumped by every global clear. Other renderers compare it
+   * to detect a clear performed elsewhere, and in-flight histfile imports use
+   * it to discard work that started before the clear.
+   */
+  clearGeneration?: number;
 }
 
 let cachedStore: HistoryStore | null = null;
+/** Last clear generation this renderer has observed. */
+let knownClearGeneration: number | null = null;
+
+function readClearGeneration(store: HistoryStore): number {
+  return typeof store.clearGeneration === "number" ? store.clearGeneration : 0;
+}
 
 function loadStore(): HistoryStore {
   if (cachedStore) return cachedStore;
@@ -36,18 +56,29 @@ function loadStore(): HistoryStore {
     const parsed = localStorageAdapter.read<HistoryStore>(STORAGE_KEY);
     if (parsed) {
       cachedStore = parsed;
+      knownClearGeneration = readClearGeneration(parsed);
       return parsed;
     }
   } catch {
     // Corrupted data, reset
   }
-  cachedStore = { entries: [], version: 1 };
+  cachedStore = { entries: [], version: 1, clearGeneration: 0 };
+  knownClearGeneration = 0;
   return cachedStore;
 }
 
 let saveTimer: ReturnType<typeof setTimeout> | null = null;
 
 function persistStoreNow(store: HistoryStore): boolean {
+  // A peer clear is visible in storage before its queued event is handled.
+  // Never flush a cached pre-clear snapshot over that newer empty store.
+  const persisted = localStorageAdapter.read<HistoryStore>(STORAGE_KEY);
+  if (persisted && readClearGeneration(persisted) > readClearGeneration(store)) {
+    cachedStore = persisted;
+    knownClearGeneration = readClearGeneration(persisted);
+    notifyCommandHistoryCleared();
+    return true;
+  }
   const ok = localStorageAdapter.write(STORAGE_KEY, store);
   if (ok) return true;
   // Storage full — evict lowest scored entries (not just oldest by insertion)
@@ -67,6 +98,13 @@ function saveStore(store: HistoryStore): void {
   }, 500);
 }
 
+function cancelPendingSave(): void {
+  if (saveTimer) {
+    clearTimeout(saveTimer);
+    saveTimer = null;
+  }
+}
+
 /**
  * Flush any pending debounced history write immediately.
  * Used after bulk imports (e.g. local histfile seeding) so a seed-complete
@@ -75,11 +113,110 @@ function saveStore(store: HistoryStore): void {
  */
 export function flushCommandHistoryStore(): boolean {
   if (!cachedStore) return true;
-  if (saveTimer) {
-    clearTimeout(saveTimer);
-    saveTimer = null;
-  }
+  cancelPendingSave();
   return persistStoreNow(cachedStore);
+}
+
+/**
+ * React to a write performed by another renderer (main window or a detached
+ * terminal popup).
+ *
+ * A bumped clear generation drops the cache and pending save, then notifies
+ * live autocomplete controllers. Ordinary peer writes must not cancel a local
+ * command that is still waiting for its debounced save.
+ */
+function applyExternalCommandHistoryWrite(
+  rawNewValue: string | null,
+  rawOldValue: string | null,
+): void {
+  let incomingGeneration: number | null = null;
+  if (rawNewValue) {
+    try {
+      incomingGeneration = readClearGeneration(JSON.parse(rawNewValue) as HistoryStore);
+    } catch {
+      incomingGeneration = null;
+    }
+  }
+
+  let previousGeneration = knownClearGeneration;
+  if (previousGeneration === null) {
+    // A fresh popup can have compose recall before its first autocomplete query.
+    // The event's old value is its baseline, even after an earlier global clear.
+    try {
+      previousGeneration = rawOldValue
+        ? readClearGeneration(JSON.parse(rawOldValue) as HistoryStore)
+        : 0;
+    } catch {
+      previousGeneration = 0;
+    }
+  }
+  if (incomingGeneration !== null && incomingGeneration > previousGeneration) {
+    cancelPendingSave();
+    cachedStore = null;
+    knownClearGeneration = incomingGeneration;
+    notifyCommandHistoryCleared();
+  } else {
+    if (!saveTimer) cachedStore = null;
+    if (incomingGeneration !== null && knownClearGeneration === null) {
+      knownClearGeneration = incomingGeneration;
+    }
+  }
+}
+
+// The native `storage` event fires in *other* same-origin windows (main window
+// and detached terminal popups) when a key changes there.
+if (typeof window !== "undefined" && typeof window.addEventListener === "function") {
+  window.addEventListener("storage", (event) => {
+    if (event.key === STORAGE_KEY) applyExternalCommandHistoryWrite(event.newValue, event.oldValue);
+  });
+}
+
+/**
+ * Current clear generation. Callers capture this before async work and compare
+ * afterwards to detect a clear that happened while they were waiting.
+ */
+export function getCommandHistoryClearGeneration(): number {
+  if (knownClearGeneration === null) loadStore();
+  return knownClearGeneration ?? 0;
+}
+
+/**
+ * Record that the user explicitly cleared all command history.
+ *
+ * Histfile seeding honors this tombstone: a clear is a user decision to delete
+ * locally recorded history, so a later first-time import must not restore the
+ * commands the user deleted (a pre-clear in-flight check alone cannot catch a
+ * clear that happened before the import started).
+ */
+export function markCommandHistoryCleared(): void {
+  localStorageAdapter.writeBoolean(STORAGE_KEY_COMMAND_HISTORY_CLEARED, true);
+}
+
+/** True once the user has cleared all command history at least once. */
+export function hasCommandHistoryBeenCleared(): boolean {
+  return localStorageAdapter.readBoolean(STORAGE_KEY_COMMAND_HISTORY_CLEARED) === true;
+}
+
+type CommandHistoryClearedListener = () => void;
+const clearedListeners = new Set<CommandHistoryClearedListener>();
+
+/**
+ * Subscribe to command-history clears, including clears performed in another
+ * renderer. Live autocomplete controllers use this to drop visible suggestions
+ * and ghost text and abort in-flight completions, so a stale row cannot be
+ * accepted and recorded after the history was cleared.
+ */
+export function subscribeCommandHistoryCleared(
+  listener: CommandHistoryClearedListener,
+): () => void {
+  clearedListeners.add(listener);
+  return () => {
+    clearedListeners.delete(listener);
+  };
+}
+
+function notifyCommandHistoryCleared(): void {
+  for (const listener of [...clearedListeners]) listener();
 }
 
 /**
@@ -149,10 +286,7 @@ export function removeCommandHistoryEntry(command: string, hostId: string): bool
   if (nextEntries.length === store.entries.length) return false;
 
   store.entries = nextEntries;
-  if (saveTimer) {
-    clearTimeout(saveTimer);
-    saveTimer = null;
-  }
+  cancelPendingSave();
   return persistStoreNow(store);
 }
 
@@ -427,6 +561,8 @@ function fuzzyScore(query: string, target: string): number {
 
 /**
  * Clear all history for a specific host, or all history if no hostId given.
+ * A global clear also bumps the shared clear generation so other renderers and
+ * in-flight histfile imports can detect it.
  */
 export function clearHistory(hostId?: string): void {
   const store = loadStore();
@@ -434,6 +570,12 @@ export function clearHistory(hostId?: string): void {
     store.entries = store.entries.filter((e) => e.hostId !== hostId);
   } else {
     store.entries = [];
+    store.clearGeneration = readClearGeneration(store) + 1;
   }
-  saveStore(store);
+  // Destructive clears must be durable: cancel any pending debounced write and
+  // persist synchronously so a later stale flush cannot restore the entries.
+  cancelPendingSave();
+  persistStoreNow(store);
+  knownClearGeneration = readClearGeneration(store);
+  if (!hostId) notifyCommandHistoryCleared();
 }
