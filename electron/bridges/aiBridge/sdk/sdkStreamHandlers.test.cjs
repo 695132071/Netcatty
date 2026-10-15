@@ -1535,3 +1535,12 @@ test("list-models without a prior success keeps presets and never persists empty
     cleanup();
   }
 });
+
+
+test("Copilot catalogs separate supported GitHub credentials and profiles", () => {
+  for (const name of ["COPILOT_GITHUB_TOKEN", "GH_TOKEN", "GITHUB_TOKEN", "GH_CONFIG_DIR"]) {
+    const key = buildSdkModelCacheKey("copilot", "/same/copilot", { [name]: "fixture-profile-a" });
+    assert.notEqual(key, buildSdkModelCacheKey("copilot", "/same/copilot", { [name]: "fixture-profile-b" }), name);
+    assert.doesNotMatch(key, /fixture-profile-a/);
+  }
+});

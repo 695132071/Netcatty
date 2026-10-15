@@ -70,6 +70,15 @@ const MODEL_CACHE_ENV_HINTS = [
   'XDG_CACHE_HOME',
   'CLAUDE_CODE_EXECUTABLE',
   'CODEBUDDY_CODE_PATH',
+  'CODEBUDDY_API_KEY',
+  'CODEBUDDY_AUTH_TOKEN',
+  'CODEBUDDY_INTERNET_ENVIRONMENT',
+  'XAI_API_KEY',
+  'GROK_CONFIG_DIR',
+  'COPILOT_GITHUB_TOKEN',
+  'GH_TOKEN',
+  'GITHUB_TOKEN',
+  'GH_CONFIG_DIR',
   'CURSOR_API_KEY',
   'NETCATTY_CURSOR_AUTH_MODE',
   'NETCATTY_CURSOR_CLI_BIN',
@@ -199,7 +208,11 @@ export function createSdkRuntimeModelCache(options: SdkRuntimeModelCacheOptions 
             // report its own warning, or the banner and Retry would vanish.
             if (!cached) return cloneCatalog(normalized);
             const retained = cloneCatalog(cached);
-            return normalized.warning ? { ...retained, warning: normalized.warning } : retained;
+            if (normalized.warning) {
+              retained.warning = normalized.warning;
+              touchEntry(key, { ...retained, updatedAt: cached.updatedAt });
+            }
+            return retained;
           }
           touchEntry(key, { ...cloneCatalog(normalized), updatedAt: now() });
           pruneEntries();
@@ -333,20 +346,13 @@ function isStillValidClaudeAlias(
   return CLAUDE_CLI_MODEL_ALIASES.has(baseId);
 }
 
-// Copilot's build-time fallback is a single `auto` entry, and the picker list
-// mixes renderer-appended rows into it: composer custom ids and retained
-// stored selections, both minimal `{id, name: id}` shapes. Detect the
-// degraded fallback by the auto row among those appended rows instead of
-// exact list equality; a real live catalog carries at least one row whose
-// display name differs from its id (e.g. {id: 'gpt-5', name: 'GPT-5'}).
-function isCopilotAutoOnlyFallback(
-  presets: AgentModelPreset[],
-  agent?: ExternalAgentConfig,
+// Discovery failure is explicit: a successful Copilot catalog may also
+// contain only auto, and manual picker rows need not contain auto at all.
+function isDegradedCopilotCatalog(
+  agent: ExternalAgentConfig | undefined,
+  catalogUnavailable: boolean,
 ): boolean {
-  if (getExternalAgentSdkBackend(agent) !== 'copilot') return false;
-  if (!presets.some((preset) => preset?.id === 'auto')) return false;
-  return presets.every((preset) => preset?.id === 'auto'
-    || (preset != null && preset.name === preset.id));
+  return catalogUnavailable && getExternalAgentSdkBackend(agent) === 'copilot';
 }
 
 /**
@@ -392,15 +398,16 @@ export function shouldUseStoredAgentModel(
   storedModelId: string | null | undefined,
   presets: AgentModelPreset[],
   agent?: ExternalAgentConfig,
+  catalogUnavailable = false,
 ): boolean {
   if (!storedModelId) return false;
   return storedModelStillResolvesForAgent(storedModelId, presets, agent)
     || (presets.length === 0 && shouldLoadSdkRuntimeModels(agent))
-    || isCopilotAutoOnlyFallback(presets, agent);
+    || isDegradedCopilotCatalog(agent, catalogUnavailable);
 }
 
 /**
- * A stored selection preserved through the claude-alias or copilot auto-only
+ * A stored selection preserved through the claude-alias or copilot
  * degraded fallback has no preset row of its own; append one (reusing the
  * build-time preset when it defines the id) so the picker can render and
  * check the selection while the send preflight passes the same value.
@@ -409,10 +416,11 @@ export function appendRetainedStoredModelPreset(
   presets: AgentModelPreset[],
   storedModelId: string | null | undefined,
   agent?: ExternalAgentConfig,
+  catalogUnavailable = false,
 ): AgentModelPreset[] {
   if (!storedModelId || modelPresetsContainId(presets, storedModelId)) return presets;
   if (!isStillValidClaudeAlias(storedModelId, agent)
-    && !isCopilotAutoOnlyFallback(presets, agent)) {
+    && !isDegradedCopilotCatalog(agent, catalogUnavailable)) {
     return presets;
   }
   const canonical = canonicalizeEffortEncodedModelId(storedModelId);

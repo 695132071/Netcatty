@@ -349,8 +349,8 @@ test('a saved Copilot model survives the auto-only degraded fallback', () => {
 
   // Live discovery failed (no last-known store yet): the saved explicit model
   // must keep resolving instead of silently switching to `auto`.
-  assert.equal(shouldUseStoredAgentModel('claude-sonnet-4.5', autoOnlyFallback, copilotAgent), true);
-  assert.equal(shouldUseStoredAgentModel('claude-sonnet-4.5/high', autoOnlyFallback, copilotAgent), true);
+  assert.equal(shouldUseStoredAgentModel('claude-sonnet-4.5', autoOnlyFallback, copilotAgent, true), true);
+  assert.equal(shouldUseStoredAgentModel('claude-sonnet-4.5/high', autoOnlyFallback, copilotAgent, true), true);
   // Other backends with the same shape are unaffected.
   const opencodeAgent: ExternalAgentConfig = {
     id: 'managed_opencode',
@@ -366,9 +366,9 @@ test('a saved Copilot model survives the auto-only degraded fallback', () => {
     { id: 'auto', name: 'Auto', description: 'Automatic model selection' },
     { id: 'gpt-custom', name: 'gpt-custom' },
   ];
-  assert.equal(shouldUseStoredAgentModel('claude-sonnet-4.5', mixedFallback, copilotAgent), true);
+  assert.equal(shouldUseStoredAgentModel('claude-sonnet-4.5', mixedFallback, copilotAgent, true), true);
   assert.equal(modelPresetsContainId(
-    appendRetainedStoredModelPreset(mixedFallback, 'claude-sonnet-4.5', copilotAgent),
+    appendRetainedStoredModelPreset(mixedFallback, 'claude-sonnet-4.5', copilotAgent, true),
     'claude-sonnet-4.5',
   ), true);
   // A real Copilot catalog (multiple entries with named rows) does not
@@ -420,6 +420,7 @@ test('appendRetainedStoredModelPreset makes preserved saved models visible', () 
     [{ id: 'auto', name: 'Auto' }],
     'claude-sonnet-4.5',
     copilotAgent,
+    true,
   );
   assert.deepEqual(withCopilot[1], { id: 'claude-sonnet-4.5', name: 'claude-sonnet-4.5' });
 
@@ -429,6 +430,7 @@ test('appendRetainedStoredModelPreset makes preserved saved models visible', () 
     [{ id: 'auto', name: 'Auto' }],
     'claude-sonnet-4.5/high',
     copilotAgent,
+    true,
   );
   assert.deepEqual(withCopilotSuffix[1], { id: 'claude-sonnet-4.5/high', name: 'claude-sonnet-4.5/high' });
   assert.equal(modelPresetsContainId(withCopilotSuffix, 'claude-sonnet-4.5/high'), true);
@@ -439,7 +441,7 @@ test('appendRetainedStoredModelPreset makes preserved saved models visible', () 
     { id: 'auto', name: 'Auto' },
     { id: 'claude-sonnet-4.5', name: 'claude-sonnet-4.5' },
   ];
-  const besideBase = appendRetainedStoredModelPreset(baseOnly, 'claude-sonnet-4.5/high', copilotAgent);
+  const besideBase = appendRetainedStoredModelPreset(baseOnly, 'claude-sonnet-4.5/high', copilotAgent, true);
   assert.equal(besideBase.length, 3);
   assert.equal(modelPresetsContainId(besideBase, 'claude-sonnet-4.5/high'), true);
 
@@ -653,6 +655,32 @@ test('SDK runtime model cache keeps the retry warning when a degraded refresh re
 
   assert.deepEqual(retried.models, [{ id: 'gpt-5', name: 'GPT-5' }]);
   assert.equal(retried.warning, 'catalog unavailable');
-  // The cached entry itself stays healthy and unwarned.
-  assert.equal(cache.read(key)?.warning, undefined);
+  // Later reads retain the warning without extending the good catalog's age.
+  assert.equal(cache.read(key)?.warning, 'catalog unavailable');
+  assert.equal(cache.read(key)?.updatedAt, 1_000);
+  const nextRead = await cache.refresh(key, async () => { throw new Error('fresh cache should be reused'); });
+  assert.equal(nextRead.warning, 'catalog unavailable');
+});
+
+
+test('degraded Copilot selection survives custom rows while live auto-only remains authoritative', () => {
+  const agent: ExternalAgentConfig = { id: 'copilot', name: 'Copilot', command: 'copilot', enabled: true, sdkBackend: 'copilot' };
+  const customRows = [{ id: 'manual-model', name: 'manual-model' }];
+  const retained = appendRetainedStoredModelPreset(customRows, 'saved-model', agent, true);
+  assert.equal(modelPresetsContainId(retained, 'saved-model'), true);
+  assert.equal(shouldUseStoredAgentModel('saved-model', retained, agent, true), true);
+  assert.equal(shouldAdoptSdkCurrentModel('auto', 'saved-model', retained, agent), false);
+  const live = [{ id: 'auto', name: 'auto' }];
+  assert.equal(appendRetainedStoredModelPreset(live, 'saved-model', agent, false), live);
+  assert.equal(shouldUseStoredAgentModel('saved-model', live, agent, false), false);
+  assert.equal(shouldAdoptSdkCurrentModel('auto', 'saved-model', live, agent), true);
+});
+
+test('renderer catalogs separate supported credential and profile overrides', () => {
+  const agent = { id: 'agent', command: '/same/cli', sdkBackend: 'copilot' };
+  for (const name of ['COPILOT_GITHUB_TOKEN', 'GH_TOKEN', 'GITHUB_TOKEN', 'GH_CONFIG_DIR', 'CODEBUDDY_API_KEY', 'CODEBUDDY_AUTH_TOKEN', 'CODEBUDDY_INTERNET_ENVIRONMENT', 'XAI_API_KEY', 'GROK_CONFIG_DIR']) {
+    const key = buildSdkRuntimeModelCacheKey({ ...agent, env: { [name]: 'fixture-profile-a' } });
+    assert.notEqual(key, buildSdkRuntimeModelCacheKey({ ...agent, env: { [name]: 'fixture-profile-b' } }), name);
+    assert.doesNotMatch(key, /fixture-profile-a/);
+  }
 });

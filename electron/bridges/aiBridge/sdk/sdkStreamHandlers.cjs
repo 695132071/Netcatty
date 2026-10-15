@@ -125,6 +125,10 @@ const SDK_MODEL_CACHE_ENV_KEYS = [
   // `grok login` credentials live under GROK_CONFIG_DIR (default ~/.grok), so
   // two login profiles that share HOME and the binary need separate catalogs.
   "GROK_CONFIG_DIR",
+  "COPILOT_GITHUB_TOKEN",
+  "GH_TOKEN",
+  "GITHUB_TOKEN",
+  "GH_CONFIG_DIR",
   "CURSOR_API_KEY",
 ];
 

@@ -329,7 +329,7 @@ const AIChatSidePanelActive: React.FC<AIChatSidePanelProps> = ({
   // is tracked separately to block sends until the branch settles: a turn
   // submitted meanwhile would run against the (soon hidden) source session.
   const [isUndoingLastTurn, setIsUndoingLastTurn] = useState(false);
-  const [runtimeAgentModelPresets, setRuntimeAgentModelPresets] = useState<Record<string, { cacheKey: string; models: AgentModelPreset[] }>>({});
+  const [runtimeAgentModelPresets, setRuntimeAgentModelPresets] = useState<Record<string, { cacheKey: string; models: AgentModelPreset[]; catalogUnavailable: boolean }>>({});
   const [runtimeModelWarnings, setRuntimeModelWarnings] = useState<Record<string, { cacheKey: string; message: string }>>({});
   // Tracks SDK runtime model catalogs currently loading (per agent scope):
   // while an OpenCode catalog is pending we must not flash the built-in
@@ -1012,21 +1012,15 @@ const AIChatSidePanelActive: React.FC<AIChatSidePanelProps> = ({
       ),
       agentModelMapRef.current[agentId],
       agent,
+      Boolean(catalog.warning),
     );
-    if (runtimePresets.length === 0) {
-      setRuntimeAgentModelPresets((prev) => {
-        if (!(agentId in prev)) return prev;
-        const { [agentId]: _removed, ...rest } = prev;
-        return rest;
-      });
-    } else {
-      setRuntimeAgentModelPresets((prev) => (
-        prev[agentId]?.cacheKey === target.cacheKey
-          && agentModelPresetsShallowEqual(prev[agentId].models, runtimePresets)
-          ? prev
-          : { ...prev, [agentId]: { cacheKey: target.cacheKey, models: runtimePresets } }
-      ));
-    }
+    setRuntimeAgentModelPresets((prev) => (
+      prev[agentId]?.cacheKey === target.cacheKey
+        && prev[agentId].catalogUnavailable === Boolean(catalog.warning)
+        && agentModelPresetsShallowEqual(prev[agentId].models, catalogPresets)
+        ? prev
+        : { ...prev, [agentId]: { cacheKey: target.cacheKey, models: catalogPresets, catalogUnavailable: Boolean(catalog.warning) } }
+    ));
     // Another path (e.g. send preflight) applied the catalog before the
     // deferred idle callback scheduled in the visibility effect: clear its
     // stale pending flag so the composer stops claiming models are loading.
@@ -1227,10 +1221,15 @@ const AIChatSidePanelActive: React.FC<AIChatSidePanelProps> = ({
     if (hasCodexCustomConfig && codexConfigModel) {
       return [{ id: codexConfigModel, name: codexConfigModel }];
     }
-    if (runtimePresets) {
-      return appendComposerCustomModelPresets(
-        runtimePresets,
-        collectCustomModelIds(currentAgentId, runtimePresets),
+    if (runtimePresets?.length) {
+      return appendRetainedStoredModelPreset(
+        appendComposerCustomModelPresets(
+          runtimePresets,
+          collectCustomModelIds(currentAgentId, runtimePresets),
+        ),
+        agentModelMap[currentAgentId],
+        currentAgentConfig,
+        Boolean(runtimeEntry?.catalogUnavailable),
       );
     }
     // While an OpenCode catalog load is pending, do not flash the built-in
@@ -1263,13 +1262,15 @@ const AIChatSidePanelActive: React.FC<AIChatSidePanelProps> = ({
         filteredPresets,
         collectCustomModelIds(currentAgentId, filteredPresets),
       ),
-      agentModelMapRef.current[currentAgentId],
+      agentModelMap[currentAgentId],
       currentAgentConfig,
+      Boolean(runtimeEntry && target && runtimeEntry.cacheKey === target.cacheKey && runtimeEntry.catalogUnavailable),
     );
   }, [
     currentAgentConfig,
     currentAgentId,
     runtimeAgentModelPresets,
+    agentModelMap,
     runtimeModelLoading,
     buildExternalAgentRuntimeModelTarget,
     hasCodexCustomConfig,
@@ -1502,6 +1503,7 @@ const AIChatSidePanelActive: React.FC<AIChatSidePanelProps> = ({
               ),
               agentModelMapRef.current[sendAgentId],
               currentAgentConfig,
+              Boolean(catalog.warning),
             );
             const storedModelId = agentModelMapRef.current[sendAgentId];
             if (
