@@ -1835,8 +1835,14 @@ export const createTerminalSessionStarters = (ctx: TerminalSessionStartersContex
       // which was already resolved to command+args and stored on the session object by App.tsx.
       // Only pass shell/shellArgs when we have concrete per-session values;
       // otherwise omit them so the backend uses its own default shell detection.
+      // An empty array is truthy, so `|| undefined` does not filter it out.
+      // Vault local hosts snapshot absent args as `[]` (to preserve
+      // launch-time no-args semantics for clone/popup relaunch), but the
+      // snapshot must still be omitted here: the bridge only applies its
+      // discovered-shell args and getLocalShellArgs fallbacks when shellArgs
+      // is absent (#1221).
       const sessionShell = ctx.host.localShell;
-      const sessionShellArgs = ctx.host.localShellArgs;
+      const sessionShellArgs = ctx.host.localShellArgs?.length ? ctx.host.localShellArgs : undefined;
       const localStartDir = ctx.host.localStartDir || ctx.terminalSettings?.localStartDir;
 
       const id = await ctx.terminalBackend.startLocalSession({
@@ -1844,7 +1850,7 @@ export const createTerminalSessionStarters = (ctx: TerminalSessionStartersContex
         cols: term.cols,
         rows: term.rows,
         shell: sessionShell || undefined,
-        shellArgs: sessionShellArgs || undefined,
+        shellArgs: sessionShellArgs,
         cwd: localStartDir,
         env: {
           TERM: ctx.terminalSettings?.terminalEmulationType ?? "xterm-256color",

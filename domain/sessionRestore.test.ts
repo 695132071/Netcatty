@@ -864,3 +864,14 @@ test("resolveInheritedCwdIntent: skips mosh/et and network devices and bad paths
 test("resolveInheritedCwdIntent: skips windows local shells", () => {
   assert.equal(resolveInheritedCwdIntent({ session: { protocol: "local", shellType: "powershell", cwd: "/x" }, isNetworkDevice: false }), null);
 });
+
+test("restore retains an explicit backend-default local shell snapshot", () => {
+  const payload = buildSessionRestorePayload({
+    sessions: [{ ...session("local-default"), protocol: "local", localShell: "", localShellArgs: [], localStartDir: "~" }],
+    workspaces: [], tabOrder: [], activeTabId: "local-default", now: 123,
+  });
+  const restored = sanitizeSessionRestorePayload(JSON.parse(JSON.stringify(payload)));
+  assert.equal(restored.sessions[0].localShell, "");
+  assert.deepEqual(restored.sessions[0].localShellArgs, []);
+  assert.equal(restored.sessions[0].localStartDir, "~");
+});
