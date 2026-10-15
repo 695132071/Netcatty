@@ -488,7 +488,6 @@ test("listCopilotModels resolves a shim to npm-loader.js by default even when a 
 test("listCopilotModels prefers the native copilot.exe only with NETCATTY_COPILOT_PREFER_NATIVE=1", async () => {
   if (process.platform !== "win32") return; // resolution only special-cases win32
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "netcatty-copilot-native-"));
-  let wrapperPath = null;
   const previous = process.env.NETCATTY_COPILOT_PREFER_NATIVE;
   process.env.NETCATTY_COPILOT_PREFER_NATIVE = "1";
   try {
@@ -513,13 +512,9 @@ test("listCopilotModels prefers the native copilot.exe only with NETCATTY_COPILO
       RuntimeConnection: { forStdio: (config) => { captured.forStdio = config; return {}; } },
     };
     const models = await listCopilotModels({ cliPath: shim, sdkModule });
-    wrapperPath = captured.forStdio.path;
-    const wrapperSource = fs.readFileSync(wrapperPath, "utf8");
-    assert.ok(wrapperSource.includes("windowsHide: true"), "wrapper spawns with windowsHide");
-    assert.ok(wrapperSource.includes(JSON.stringify(nativeExe).slice(1, -1)), "wrapper bakes the preferred native exe");
+    assert.equal(captured.forStdio.path, nativeExe, "the SDK owns the preferred native process directly");
     assert.deepEqual(models, [{ id: "auto", name: "auto" }]);
   } finally {
-    if (wrapperPath) fs.rmSync(wrapperPath, { force: true });
     if (previous === undefined) {
       delete process.env.NETCATTY_COPILOT_PREFER_NATIVE;
     } else {
@@ -529,7 +524,7 @@ test("listCopilotModels prefers the native copilot.exe only with NETCATTY_COPILO
   }
 });
 
-test("listCopilotModels hands the headless wrapper (baking the resolved path) to the SDK", async () => {
+test("listCopilotModels wraps only Windows JavaScript loaders for the SDK", async () => {
   for (const cliPath of ["/opt/copilot/npm-loader.js", "C:\\tools\\copilot\\copilot.exe"]) {
     const captured = {};
     const sdkModule = {
@@ -543,8 +538,8 @@ test("listCopilotModels hands the headless wrapper (baking the resolved path) to
     };
     await listCopilotModels({ cliPath, sdkModule });
     const wrapperPath = captured.forStdio.path;
-    if (process.platform !== "win32") {
-      assert.equal(wrapperPath, cliPath, "POSIX hands the SDK the resolved CLI path directly");
+    if (process.platform !== "win32" || !cliPath.endsWith(".js")) {
+      assert.equal(wrapperPath, cliPath, "POSIX and native executables pass through directly");
       continue;
     }
     try {
