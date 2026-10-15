@@ -387,6 +387,7 @@ export const esTerminalMessages: Messages = {
   'cloudSync.aiSessions.title': 'Sincronizar el historial de chats de IA',
   'cloudSync.aiSessions.desc': 'Incluye las sesiones de chat de IA en la sincronización en la nube. Los mensajes se combinan de forma incremental entre dispositivos; el contenido de los adjuntos permanece en este dispositivo.',
   'cloudSync.aiSessions.compatibility': 'Las versiones antiguas pueden sobrescribir el historial. Actualiza Netcatty en todos los dispositivos sincronizados.',
+  'cloudSync.aiSessions.enableFailed': 'No se pudieron cargar los chats de la nube. Vuelve a conectarte e inténtalo de nuevo.',
   'cloudSync.strategy.smartMergePreserve': 'Fusión inteligente (sin borrar)',
   'cloudSync.strategy.smartMergePreserveDesc': 'Combina los cambios de ambos lados y nunca propaga un borrado de un solo lado: una entrada se conserva hasta que se elimina en todos los dispositivos. Recomendado al restaurar copias de seguridad o al usar varios equipos.',
   'cloudSync.strategy.smartMergeDesc': 'Combina los cambios de ambos lados cuando sea posible; si Netcatty no puede decidir con seguridad, te pedirá que elijas.',

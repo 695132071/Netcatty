@@ -93,6 +93,7 @@ export const CloudSyncDashboardTabs: React.FC<CloudSyncDashboardTabsProps> = ({
   onDowngradeConvergent,
   disconnectOtherProviders,
 }) => {
+  const [aiSessionsSyncBusy, setAiSessionsSyncBusy] = useState(false);
 
   const [pluginSyncProviders, setPluginSyncProviders] = useState<Array<{
     id: string;
@@ -609,7 +610,13 @@ export const CloudSyncDashboardTabs: React.FC<CloudSyncDashboardTabsProps> = ({
                             <Switch
                                 aria-label={t('cloudSync.aiSessions.title')}
                                 checked={sync.aiSessionsSyncEnabled}
-                                onCheckedChange={sync.setAiSessionsSyncEnabled}
+                                disabled={aiSessionsSyncBusy}
+                                onCheckedChange={(enabled) => {
+                                    setAiSessionsSyncBusy(true);
+                                    void sync.setAiSessionsSyncEnabled(enabled).catch(() => {
+                                        toast.error(t('cloudSync.aiSessions.enableFailed'));
+                                    }).finally(() => setAiSessionsSyncBusy(false));
+                                }}
                             />
                         </div>
                     </SettingsAnchor>

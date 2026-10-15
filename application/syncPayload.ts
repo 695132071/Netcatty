@@ -1235,12 +1235,54 @@ export async function buildLocalVaultPayloadAsync(
   return base;
 }
 
-/**
- * Apply a downloaded `SyncPayload` to local state via the provided importers.
- *
- * This ensures both vault data and port-forwarding rules are imported
- * consistently across windows.
- */
+/** Merge downloaded chat data through the existing state and persistence boundary. */
+async function applyAiSessionData(sessions: NonNullable<SyncPayload['aiSessions']>, includeLocalOnlyData: boolean): Promise<void> {
+  const localSessions = collectLocalAiSessions();
+  const incoming = includeLocalOnlyData
+    ? sessions
+    : sessions.map(stripAiSessionDeviceState);
+  const localById = new Map(localSessions.map((session) => [session.id, session]));
+  const resetSdkSessions: string[] = [];
+  const mergedSessions = mergeAiSessionLists(localSessions, incoming).map((session) => {
+    // Native SDK threads belong to this device. Reuse the local thread
+    // only while it already contains the entire merged transcript.
+    if (includeLocalOnlyData) return session;
+    const local = localById.get(session.id);
+    const portableMessages = (value: typeof session) => stripAiSessionPayloadForSync([value])[0].messages;
+    const transcriptChanged = local
+      && JSON.stringify(portableMessages(local)) !== JSON.stringify(portableMessages(session));
+    if (transcriptChanged) resetSdkSessions.push(session.id);
+    const { externalSessionId: _remoteThread, ...portable } = session;
+    return local?.externalSessionId && !transcriptChanged
+      ? { ...portable, externalSessionId: local.externalSessionId }
+      : portable;
+  });
+  if (!writeSessionsForStorage(mergedSessions)) {
+    throw new Error('Unable to save downloaded AI chat history');
+  }
+  await cleanupSdkAgentSessions(resetSdkSessions);
+  setLatestAISessionsSnapshot(mergedSessions);
+  publishAISessionsSnapshot({ ...getAISessionsSnapshot(), sessions: mergedSessions });
+  emitAIStateChanged(STORAGE_KEY_AI_SESSIONS);
+}
+
+/** Read existing cloud chats before an enabled empty local list can overwrite them. */
+export async function setAiSessionsSyncPreference(
+  enabled: boolean,
+  loadRemoteSessions: () => Promise<Array<NonNullable<SyncPayload['aiSessions']>>>,
+): Promise<void> {
+  const wasEnabled = localStorageAdapter.read<{ enabled?: boolean }>(STORAGE_KEY_CLOUD_SYNC_AI_SESSIONS)?.enabled === true;
+  if (enabled && !wasEnabled) {
+    const remotes = await loadRemoteSessions();
+    const sessions = remotes.reduce((merged, incoming) => mergeAiSessionLists(merged, incoming), []);
+    await applyAiSessionData(sessions, false);
+  }
+  if (!localStorageAdapter.write(STORAGE_KEY_CLOUD_SYNC_AI_SESSIONS, { enabled })) {
+    throw new Error('Unable to save the chat sync preference');
+  }
+}
+
+/** Apply downloaded vault data and supported settings through their state boundaries. */
 async function preparePayloadApply(
   payload: SyncPayload,
   importers: SyncPayloadImporters,
@@ -1305,34 +1347,10 @@ async function preparePayloadApply(
 
     // AI chat sessions merge append-only: a cloud snapshot may be missing
     // turns that only exist on this device, so union instead of replace.
-    if (Array.isArray(sanitizedPayload.aiSessions)) {
-      const localSessions = collectLocalAiSessions();
-      const incoming = options.includeLocalOnlyData
-        ? sanitizedPayload.aiSessions
-        : sanitizedPayload.aiSessions.map(stripAiSessionDeviceState);
-      const localById = new Map(localSessions.map((session) => [session.id, session]));
-      const resetSdkSessions: string[] = [];
-      const mergedSessions = mergeAiSessionLists(localSessions, incoming).map((session) => {
-        // Native SDK threads belong to this device; a cloud copy can neither
-        // supply one nor replace the existing local thread for this chat.
-        if (options.includeLocalOnlyData) return session;
-        const local = localById.get(session.id);
-        const portableMessages = (value: typeof session) => stripAiSessionPayloadForSync([value])[0].messages;
-        const transcriptChanged = local
-          && JSON.stringify(portableMessages(local)) !== JSON.stringify(portableMessages(session));
-        if (transcriptChanged) resetSdkSessions.push(session.id);
-        const { externalSessionId: _remoteThread, ...portable } = session;
-        return local?.externalSessionId && !transcriptChanged
-          ? { ...portable, externalSessionId: local.externalSessionId }
-          : portable;
-      });
-      if (!writeSessionsForStorage(mergedSessions)) {
-        throw new Error('Unable to save downloaded AI chat history');
-      }
-      await cleanupSdkAgentSessions(resetSdkSessions);
-      setLatestAISessionsSnapshot(mergedSessions);
-      publishAISessionsSnapshot({ ...getAISessionsSnapshot(), sessions: mergedSessions });
-      emitAIStateChanged(STORAGE_KEY_AI_SESSIONS);
+    const applyAiSessions = options.includeLocalOnlyData
+      || localStorageAdapter.read<{ enabled?: boolean }>(STORAGE_KEY_CLOUD_SYNC_AI_SESSIONS)?.enabled === true;
+    if (applyAiSessions && Array.isArray(sanitizedPayload.aiSessions)) {
+      await applyAiSessionData(sanitizedPayload.aiSessions, options.includeLocalOnlyData);
     }
 
     // Apply synced settings

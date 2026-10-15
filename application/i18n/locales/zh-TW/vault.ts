@@ -791,6 +791,7 @@ export const zhTWVaultMessages: Messages = {
   'cloudSync.aiSessions.title': '同步 AI 對話記錄',
   'cloudSync.aiSessions.desc': '把 AI 對話記錄納入雲同步。多裝置的對話會按追加方式合併，附件內容仍保留在本機。',
   'cloudSync.aiSessions.compatibility': '舊版本可能覆寫對話記錄，請先更新所有參與同步的裝置。',
+  'cloudSync.aiSessions.enableFailed': '未能讀取雲端既有對話，請恢復連線後重試。',
   'cloudSync.strategy.smartMergePreserve': '智慧合併（不傳播刪除）',
   'cloudSync.strategy.smartMergePreserveDesc': '合併兩邊的變化，且單側刪除不會同步到其它裝置——只有所有裝置都刪掉才會真正消失。還原備份或多台機器同步時建議使用。',
   'cloudSync.strategy.smartMergeDesc': '儘量保留兩邊的變化；如果無法安全判斷，會再讓你手動選擇。',

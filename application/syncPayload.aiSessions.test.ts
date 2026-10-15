@@ -17,6 +17,7 @@ const { getAISessionsSnapshot } = await import('./state/aiSessionsStore');
 const {
   buildCloudSyncPayload, buildLocalVaultPayload, collectAiSessionsForSync,
   applySyncPayload, applyLocalVaultPayload, hasMeaningfulSyncData,
+  setAiSessionsSyncPreference,
 } = await import('./syncPayload');
 
 const vault = { hosts: [], keys: [], identities: [], snippets: [], customGroups: [], knownHosts: [] };
@@ -87,6 +88,51 @@ test('restoring an old backup without chat leaves current chats alone', async ()
   });
   assert.deepEqual(snapshots.latestAISessionsSnapshot, [local]);
   assert.deepEqual(JSON.parse(storage.get(keys.STORAGE_KEY_AI_SESSIONS)!), [local]);
+});
+
+test('cloud downloads respect local chat opt-in while still applying vault data', async () => {
+  save([], false);
+  let vaultImports = 0;
+  const downloaded = { ...vault, aiSessions: [session()], syncedAt: 2 };
+  await applySyncPayload(downloaded, { importVaultData: () => { vaultImports++; } });
+  assert.equal(vaultImports, 1);
+  assert.deepEqual(snapshots.latestAISessionsSnapshot, []);
+  assert.deepEqual(JSON.parse(storage.get(keys.STORAGE_KEY_AI_SESSIONS)!), []);
+  save([], true);
+  await applySyncPayload(downloaded, { importVaultData: () => { vaultImports++; } });
+  assert.equal(vaultImports, 2);
+  assert.equal(snapshots.latestAISessionsSnapshot?.[0].id, 'chat');
+});
+
+test('enabling sync imports existing cloud chats before an empty local list can be uploaded', async () => {
+  save([], false);
+  let loads = 0;
+  await setAiSessionsSyncPreference(true, async () => {
+    loads++;
+    assert.equal(collectAiSessionsForSync(), undefined);
+    return [[session()]];
+  });
+  assert.equal(loads, 1);
+  assert.equal(collectAiSessionsForSync()?.[0].id, 'chat');
+  assert.equal(getAISessionsSnapshot().sessions[0].id, 'chat');
+  await setAiSessionsSyncPreference(false, async () => { throw new Error('Disable must not load'); });
+  assert.equal(collectAiSessionsForSync(), undefined);
+});
+
+test('an unsuccessful initial cloud read leaves chat sync disabled and local history unchanged', async () => {
+  save([], false);
+  await assert.rejects(setAiSessionsSyncPreference(true, async () => { throw new Error('offline'); }), /offline/);
+  assert.equal(collectAiSessionsForSync(), undefined);
+  assert.deepEqual(snapshots.latestAISessionsSnapshot, []);
+});
+
+test('enabling from multiple mirrored providers retains the newer turns from either copy', async () => {
+  save([], false);
+  const newer = session();
+  newer.updatedAt = 3;
+  newer.messages.push({ id: 'new-turn', role: 'assistant', content: 'Newer provider turn', timestamp: 3 });
+  await setAiSessionsSyncPreference(true, async () => [[newer], [session()]]);
+  assert.deepEqual(collectAiSessionsForSync()?.[0].messages.map((message) => message.id), ['message', 'new-turn']);
 });
 
 test('cloud restore never resumes a source device SDK thread, and preserves matching local threads', async () => {

@@ -177,7 +177,7 @@ export interface CloudSyncHook {
   setSyncStrategy: (strategy: CloudSyncStrategy) => void;
   /** Whether AI chat sessions are included in cloud sync payloads (opt-in). */
   aiSessionsSyncEnabled: boolean;
-  setAiSessionsSyncEnabled: (enabled: boolean) => void;
+  setAiSessionsSyncEnabled: (enabled: boolean) => Promise<void>;
   setConvergentSyncEnabled: (enabled: boolean) => ConvergentSyncLocalConfig;
   refreshConvergentSyncConfig: () => ConvergentSyncLocalConfig;
 
@@ -751,8 +751,14 @@ export const useCloudSync = (): CloudSyncHook => {
   const aiSessionsSyncEnabled = useSyncExternalStore(
     subscribeAiSessionsSyncEnabled, readAiSessionsSyncEnabled, readAiSessionsSyncEnabled,
   );
-  const setAiSessionsSyncEnabled = useCallback((enabled: boolean) => {
-    localStorageAdapter.write(STORAGE_KEY_CLOUD_SYNC_AI_SESSIONS, { enabled });
+  const setAiSessionsSyncEnabled = useCallback(async (enabled: boolean) => {
+    const { setAiSessionsSyncPreference } = await import('../syncPayload');
+    await setAiSessionsSyncPreference(enabled, async () => {
+      const providers = Object.entries(manager.getAllProviders())
+        .filter(([, connection]) => isProviderReadyForSync(connection));
+      const remotes = await Promise.all(providers.map(([provider]) => manager.downloadFromProvider(provider as CloudProvider)));
+      return remotes.map((remote) => remote?.payload.aiSessions ?? []);
+    });
   }, []);
 
   const setSyncStrategy = useCallback((strategy: CloudSyncStrategy) => {
