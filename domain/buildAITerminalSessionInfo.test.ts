@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import { buildAITerminalSessionInfo } from "./buildAITerminalSessionInfo.ts";
-import type { Host, TerminalSession } from "../../types";
+import type { Host, TerminalSession } from "../types";
 
 const baseHost = (overrides: Partial<Host> = {}): Host =>
   ({
@@ -83,4 +83,33 @@ test("suppresses network deviceType for ET sessions", () => {
     "linux",
   );
   assert.equal(info.deviceType, undefined);
+});
+
+test("prefers a session custom name over the shared host label", () => {
+  const info = buildAITerminalSessionInfo(
+    baseSession({ customName: "Bastion - production" }),
+    baseHost({ label: "Bastion" }),
+    "linux",
+  );
+  assert.equal(info.label, "Bastion - production");
+});
+
+test("only saved remote hosts can receive persistent server approvals", () => {
+  const saved = baseHost();
+  assert.equal(buildAITerminalSessionInfo(baseSession(), saved, "linux", {
+    allHosts: [saved],
+  }).savedHostId, "h1");
+  assert.equal(buildAITerminalSessionInfo(baseSession(), saved, "linux", {
+    allHosts: [],
+  }).savedHostId, undefined);
+  const temporary = baseHost({ ephemeral: true });
+  assert.equal(buildAITerminalSessionInfo(baseSession(), temporary, "linux", {
+    allHosts: [temporary],
+  }).savedHostId, undefined);
+  assert.equal(buildAITerminalSessionInfo(baseSession({ protocol: "local" }), saved, "linux", {
+    allHosts: [saved],
+  }).savedHostId, undefined);
+  assert.equal(buildAITerminalSessionInfo(baseSession({ protocol: "serial" }), saved, "linux", {
+    allHosts: [saved],
+  }).savedHostId, undefined);
 });

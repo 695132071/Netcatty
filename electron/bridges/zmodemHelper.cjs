@@ -9,7 +9,17 @@
  * The renderer is only notified for progress display via lightweight IPC events.
  */
 
-const Zmodem = require("zmodem.js");
+// Apply the Buffer fast paths to zmodem.js receive/send hot paths, plus the
+// Send-session robustness fixes for `rz` uploads (see zmodemFastPath.cjs).
+// NETCATTY_ZMODEM_FAST_PATH=0 disables only the performance paths.
+const {
+  applyZmodemFastPath,
+  applyZmodemSendSessionFixes,
+  applyZmodemSendFastPath,
+} = require("./zmodemFastPath.cjs");
+const Zmodem = applyZmodemSendFastPath(
+  applyZmodemSendSessionFixes(applyZmodemFastPath(require("zmodem.js"))),
+);
 const fs = require("node:fs");
 const path = require("node:path");
 
@@ -22,13 +32,14 @@ function getElectron() {
 
 /**
  * Resolve per-file overwrite choices into an upload plan. Pure (no I/O):
- * `resolveDecision(name)` is awaited only for files in `existingList`, in input
- * order; `{ applyToRest: true }` reuses that action for the remaining conflicts.
+ * `resolveDecision(name, { signal })` is awaited only for files in
+ * `existingList`, in input order; `{ applyToRest: true }` reuses that action
+ * for the remaining conflicts.
  * Returns indices into the original `names` array so callers preserve per-file
  * identity even when two files share a basename.
  * Actions: 'overwrite' (rm remote then send), 'skip' (don't send), 'cancel' (abort all).
  */
-async function buildUploadPlan(names, existingList, resolveDecision) {
+async function buildUploadPlan(names, existingList, resolveDecision, signal) {
   const existing = new Set(existingList);
   const offerIndices = [];
   const removeIndices = [];
@@ -38,7 +49,11 @@ async function buildUploadPlan(names, existingList, resolveDecision) {
     if (!existing.has(name)) { offerIndices.push(idx); continue; }
     let action = bulkAction;
     if (!action) {
-      const decision = (await resolveDecision(name)) || { action: "skip" };
+      throwIfZmodemCancelled(signal);
+      const decision = (await racePromiseWithAbortSignal(
+        resolveDecision(name, { signal }),
+        signal,
+      )) || { action: "skip" };
       action = decision.action;
       if (decision.applyToRest && action !== "cancel") bulkAction = action;
     }
@@ -92,6 +107,11 @@ function buildModeRestores(dir, names, removeIndices, modes) {
  *   Optional. When writeToRemote returns false, the upload loop awaits this
  *   before sending more file data (typically waitForWritableDrain(stream)).
  *   Callers should forward `opts.signal` so cancel can abort a blocked drain.
+ * @param {() => number} [opts.getTransportPendingBytes]
+ *   Optional. Return the bytes the transport has queued but not delivered yet
+ *   (e.g. the SSH channel backlog). Enables delivered-byte upload progress:
+ *   while parked on backpressure the loop reports queued-minus-outstanding
+ *   bytes so the progress indicator tracks actual delivery (issue #3663).
  * @param {() => import('electron').WebContents | null} opts.getWebContents
  *   Returns the Electron WebContents for sending progress IPC events.
  * @param {string} [opts.label]
@@ -115,6 +135,22 @@ function createZmodemSentry(opts) {
   let transferAbortController = null;
   const pendingEchoes = [];
   let pendingTerminalSuppression = null;
+  let pendingTerminalSuppressionAt = 0;
+  let pendingHexHeaderFragment = null;
+  let pendingHexHeaderFragmentTimer = null;
+  // Set when a stripped hex header's trailing XON (0x11) may arrive in the
+  // next terminal-output chunk; at most one byte is then dropped.
+  let suppressNextTerminalXon = false;
+
+  function setPendingTerminalSuppression(buf) {
+    pendingTerminalSuppression = buf;
+    pendingTerminalSuppressionAt = Date.now();
+  }
+
+  function clearPendingTerminalSuppression() {
+    pendingTerminalSuppression = null;
+    pendingTerminalSuppressionAt = 0;
+  }
   let cancelInterruptTimer = null;
   let ignoreDetectionUntil = 0;
   // After aborting, suppress incoming data briefly so residual ZMODEM
@@ -126,9 +162,31 @@ function createZmodemSentry(opts) {
   const COOLDOWN_MS = 2000;
   const ECHO_TTL_MS = 1500;
   const ECHO_MAX_BYTES = 256;
+  // "**" + ZDLE + 'B': the start of every ZMODEM hex header.
+  const ZMODEM_HEX_HEADER_PREFIX = Buffer.from([0x2a, 0x2a, 0x18, 0x42]);
+  // 4-byte pattern + 14 hex digits + CR is the most a still-incomplete
+  // header can look like before the final LF (plus optional XON) arrives.
+  const ZMODEM_HEX_HEADER_MAX_PARTIAL = 19;
+  // How long a withheld partial-header fragment may sit unresolved before
+  // it is flushed through to the terminal anyway.
+  const HEX_HEADER_FRAGMENT_TTL_MS = Number.isFinite(opts.hexHeaderFragmentTtlMs)
+    ? Math.max(1, opts.hexHeaderFragmentTtlMs)
+    : 1000;
+  /**
+   * Upper bound on how long a drag-drop echo suppression may stay armed.
+   * The suppression hides the terminal echo of the upload command, whose echo
+   * always precedes the remote rz starting. If the echo never matches (e.g. it
+   * was coalesced with a prompt, or rz is missing and the SFTP fallback kicks
+   * in), a stale suppression would keep stripping matched prefixes from later
+   * terminal output — including the echo of the user's next command (#3423).
+   */
+  const SUPPRESSION_TTL_MS = 5000;
   const dragDropStartTimeoutMs = Number.isFinite(opts.dragDropStartTimeoutMs)
     ? Math.max(0, opts.dragDropStartTimeoutMs)
     : 15000;
+  const pendingTerminalSuppressionTtlMs = Number.isFinite(
+    opts.pendingTerminalSuppressionTtlMs,
+  ) ? opts.pendingTerminalSuppressionTtlMs : SUPPRESSION_TTL_MS;
 
   function prunePendingEchoes(now = Date.now()) {
     while (pendingEchoes.length && pendingEchoes[0].expiresAt <= now) {
@@ -137,8 +195,8 @@ function createZmodemSentry(opts) {
   }
 
   function rememberOutgoingEcho(octets) {
+    if (!octets?.length || octets.length > ECHO_MAX_BYTES) return;
     const buf = Buffer.from(octets);
-    if (!buf.length || buf.length > ECHO_MAX_BYTES) return;
     prunePendingEchoes();
     pendingEchoes.push({
       buf,
@@ -170,6 +228,11 @@ function createZmodemSentry(opts) {
   function stripPendingTerminalSuppression(data) {
     if (!pendingTerminalSuppression?.length) return data;
 
+    if (Date.now() - pendingTerminalSuppressionAt > pendingTerminalSuppressionTtlMs) {
+      clearPendingTerminalSuppression();
+      return data;
+    }
+
     let buf = Buffer.isBuffer(data) ? data : Buffer.from(data);
     const fullMatchAt = buf.indexOf(pendingTerminalSuppression);
     if (fullMatchAt !== -1) {
@@ -197,6 +260,14 @@ function createZmodemSentry(opts) {
     return buf;
   }
 
+  function isHexDigitByte(byte) {
+    return (
+      (byte >= 0x30 && byte <= 0x39)
+      || (byte >= 0x41 && byte <= 0x46)
+      || (byte >= 0x61 && byte <= 0x66)
+    );
+  }
+
   function stripVisibleZmodemHeaders(data) {
     let buf = Buffer.isBuffer(data) ? data : Buffer.from(data);
     let searchFrom = 0;
@@ -210,12 +281,7 @@ function createZmodemSentry(opts) {
 
       let isHexHeader = true;
       for (let i = 0; i < 14; i += 1) {
-        const byte = buf[prefixAt + 4 + i];
-        const isHexDigit =
-          (byte >= 0x30 && byte <= 0x39) ||
-          (byte >= 0x41 && byte <= 0x46) ||
-          (byte >= 0x61 && byte <= 0x66);
-        if (!isHexDigit) {
+        if (!isHexDigitByte(buf[prefixAt + 4 + i])) {
           isHexHeader = false;
           break;
         }
@@ -231,6 +297,10 @@ function createZmodemSentry(opts) {
         headerLength = 20;
         if (buf[prefixAt + 20] === 0x11) {
           headerLength = 21;
+        } else if (prefixAt + 20 === buf.length) {
+          // The optional XON that follows the CR/LF may arrive in the next
+          // chunk; strip at most one leading XON byte from it (#3651).
+          suppressNextTerminalXon = true;
         }
       }
 
@@ -242,6 +312,119 @@ function createZmodemSentry(opts) {
     }
 
     return buf;
+  }
+
+  function flushPendingHexHeaderFragment() {
+    pendingHexHeaderFragmentTimer = null;
+    const buf = pendingHexHeaderFragment;
+    pendingHexHeaderFragment = null;
+    if (buf?.length) onData(buf);
+  }
+
+  /**
+   * A ZMODEM hex header (the ZRQINIT/ZRINIT preamble of `sz`/`rz`) can be
+   * split across transport chunks. zmodem.js hands each original chunk to
+   * to_terminal verbatim and only complete headers can be stripped, so a
+   * chunk that ends in the middle of the preamble painted it as terminal
+   * garble (#3651). Detect the trailing bytes that may still form one and
+   * hold them back; the next chunk either completes the header (stripped
+   * above) or proves the buffer invalid. A TTL guard flushes held bytes so
+   * deferrals can never lose legitimate terminal output.
+   *
+   * Returns the index from which the buffer should be withheld, or -1.
+   */
+  function findTrailingHexHeaderFragment(buf) {
+    if (!buf.length) return -1;
+
+    // Longest still-incomplete header tail: the 4-byte pattern, 14 hex
+    // digits, and a CR — i.e. everything up to the final LF (+ optional XON).
+    const windowStart = Math.max(0, buf.length - ZMODEM_HEX_HEADER_MAX_PARTIAL);
+
+    for (let i = windowStart; i <= buf.length - 4; i += 1) {
+      let matched = true;
+      for (let j = 0; j < 4; j += 1) {
+        if (buf[i + j] !== ZMODEM_HEX_HEADER_PREFIX[j]) {
+          matched = false;
+          break;
+        }
+      }
+      if (!matched) continue;
+
+      let digits = 0;
+      while (i + 4 + digits < buf.length && isHexDigitByte(buf[i + 4 + digits])) {
+        digits += 1;
+      }
+
+      // Chunk ends inside the hex digits — the header may still complete.
+      if (i + 4 + digits === buf.length) return i;
+
+      // Digit run ended before the 14 required digits, or overshoots them:
+      // not a hex header.
+      if (digits !== 14) continue;
+
+      // A CR (but not yet the trailing LF) may still complete the header.
+      if (buf.length - i <= 19) return i;
+
+      break;
+    }
+
+    // The "**" + ZDLE + 'B' pattern itself may be split: withhold any
+    // trailing bytes that are a prefix of it until the next chunk resolves.
+    for (let k = Math.min(3, buf.length); k >= 1; k -= 1) {
+      let matches = true;
+      for (let j = 0; j < k; j += 1) {
+        if (buf[buf.length - k + j] !== ZMODEM_HEX_HEADER_PREFIX[j]) {
+          matches = false;
+          break;
+        }
+      }
+      if (matches) return buf.length - k;
+    }
+
+    return -1;
+  }
+
+  /**
+   * Join any previously withheld partial-header bytes onto the new chunk so
+   * the suppression/stripping stages can see a complete header again. This
+   * must run BEFORE the stripping stages, or a header split across two
+   * chunks would be judged complete too late and reach the terminal.
+   */
+  function assembleTerminalChunk(octets) {
+    const buf = Buffer.isBuffer(octets) ? octets : Buffer.from(octets);
+    if (!pendingHexHeaderFragment?.length) {
+      return buf;
+    }
+    if (pendingHexHeaderFragmentTimer) {
+      clearTimeout(pendingHexHeaderFragmentTimer);
+      pendingHexHeaderFragmentTimer = null;
+    }
+    const merged = Buffer.concat([pendingHexHeaderFragment, buf]);
+    pendingHexHeaderFragment = null;
+    return merged;
+  }
+
+  /**
+   * Withhold a trailing partial hex header (if any) and arm a timer that
+   * flushes it when no more bytes arrive to resolve it.
+   */
+  function deferIncompleteHexHeader(data) {
+    const buf = Buffer.isBuffer(data) ? data : Buffer.from(data);
+
+    const fragmentAt = findTrailingHexHeaderFragment(buf);
+    if (fragmentAt === -1) return buf;
+
+    if (fragmentAt < buf.length) {
+      pendingHexHeaderFragment = Buffer.from(buf.subarray(fragmentAt));
+      if (!pendingHexHeaderFragmentTimer) {
+        pendingHexHeaderFragmentTimer = setTimeout(
+          flushPendingHexHeaderFragment,
+          HEX_HEADER_FRAGMENT_TTL_MS,
+        );
+      }
+    }
+
+    return fragmentAt ? buf.subarray(0, fragmentAt) : Buffer.alloc(0);
   }
 
   function looksLikeResidualZmodemData(data) {
@@ -288,6 +471,10 @@ function createZmodemSentry(opts) {
       cleanupDragDropTempFiles(dragDropUpload);
       dragDropUpload = null;
     }
+    // A pending upload that never reaches ZMODEM detection (rz missing → SFTP
+    // fallback, cancel, start timeout) must not leave its command-echo
+    // suppression armed, or it will eat the user's next typed command (#3423).
+    clearPendingTerminalSuppression();
   }
 
   function takeDragDropUpload() {
@@ -377,12 +564,48 @@ function createZmodemSentry(opts) {
     );
   }
 
+  /**
+   * After an ignorable send-session consume error, the bytes that followed
+   * the offending header in the same chunk stay buffered in the session's
+   * _input_buffer — e.g. the post-file ZRINIT that rz sends right behind a
+   * final ZRPOS ping. Re-feed them so the pending handshake (xfer.end() /
+   * close()) resolves instead of stalling until its timeout. Best-effort:
+   * anything still unparseable is dropped or picked up by the next consume.
+   */
+  function refeedRemainingSessionBytes() {
+    const zsession = currentZSession;
+    if (
+      !zsession ||
+      !Array.isArray(zsession._input_buffer) ||
+      !zsession._input_buffer.length
+    ) {
+      return;
+    }
+    const rest = Buffer.from(zsession._input_buffer.splice(0));
+    try {
+      sentry.consume(rest);
+    } catch {
+      /* ignore — next regular consume retries whatever is left */
+    }
+  }
+
 
   const sentry = new Zmodem.Sentry({
     to_terminal(octets) {
       // Normal data – pass raw bytes to the caller for charset-aware decoding.
-      let sanitizedOctets = stripPendingTerminalSuppression(Buffer.from(octets));
+      // Bytes that may be the start of a ZMODEM hex header split across
+      // chunks are withheld first (and later stripped or flushed) so the
+      // preamble of sz/rz never reaches the terminal as garble (#3651).
+      let sanitizedOctets = assembleTerminalChunk(octets);
+      if (suppressNextTerminalXon) {
+        suppressNextTerminalXon = false;
+        if (sanitizedOctets[0] === 0x11) {
+          sanitizedOctets = sanitizedOctets.subarray(1);
+        }
+      }
+      sanitizedOctets = stripPendingTerminalSuppression(sanitizedOctets);
       sanitizedOctets = stripVisibleZmodemHeaders(sanitizedOctets);
+      sanitizedOctets = deferIncompleteHexHeader(sanitizedOctets);
       if (!sanitizedOctets.length) return;
       onData(sanitizedOctets);
     },
@@ -390,7 +613,13 @@ function createZmodemSentry(opts) {
     sender(octets) {
       // ZMODEM protocol bytes – send raw to remote.
       rememberOutgoingEcho(octets);
-      const ok = writeToRemote(Buffer.from(octets));
+      // Zero-copy view for the send fast path's Buffers; number arrays
+      // (non-data frames) still go through the Buffer.from() conversion.
+      const wireBuf =
+        octets instanceof Uint8Array
+          ? Buffer.from(octets.buffer, octets.byteOffset, octets.byteLength)
+          : Buffer.from(octets);
+      const ok = writeToRemote(wireBuf);
       // Track backpressure: if stream.write() returned false, the
       // kernel TCP buffer is full.  The upload loop should pause.
       if (ok === false) {
@@ -413,11 +642,11 @@ function createZmodemSentry(opts) {
       active = true;
       const zsession = detection.confirm();
       currentZSession = zsession;
-      pendingTerminalSuppression = zsession.type === "receive"
+      setPendingTerminalSuppression(zsession.type === "receive"
         ? Buffer.from(Zmodem.Header.build("ZRQINIT").to_hex())
         : zsession._last_ZRINIT?.to_hex
           ? Buffer.from(zsession._last_ZRINIT.to_hex())
-          : null;
+          : null);
 
       const transferType = zsession.type === "send" ? "upload" : "download";
 
@@ -440,6 +669,7 @@ function createZmodemSentry(opts) {
       const transferSignal = transferAbortController.signal;
       const transferOpts = {
         ...opts,
+        signal: transferSignal,
         getDragDropUpload: () => dragDropUpload,
         takeDragDropUpload,
         clearDragDropUpload,
@@ -535,14 +765,18 @@ function createZmodemSentry(opts) {
         // but the repeated header is harmless, so ignore it and keep waiting.
         if (isIgnorableSendKeepaliveError(errMsg)) {
           console.log(`[ZMODEM][${label}] Ignoring repeated pre-offer ZRINIT`);
+          refeedRemainingSessionBytes();
           return;
         }
 
         // Some receivers emit a final ZRPOS ping right before they send the
         // post-file ZRINIT. If that ping is processed a beat late, zmodem.js
         // complains even though the transfer can continue normally.
+        // Re-feed buffered bytes (e.g. that ZRINIT) so the pending
+        // xfer.end() handshake resolves instead of stalling to its timeout.
         if (isIgnorableSendResumePingError(errMsg)) {
           console.log(`[ZMODEM][${label}] Ignoring late post-file ZRPOS`);
+          refeedRemainingSessionBytes();
           return;
         }
 
@@ -655,12 +889,12 @@ function createZmodemSentry(opts) {
       const pendingEchoCount = pendingEchoes.length;
       try {
         rememberOutgoingEcho(cmdBuf);
-        pendingTerminalSuppression = Buffer.from(uploadCommand.replace(/\r$/, ""));
+        setPendingTerminalSuppression(Buffer.from(uploadCommand.replace(/\r$/, "")));
         writeToRemote(cmdBuf);
         scheduleDragDropStartTimeout();
       } catch (err) {
         pendingEchoes.length = pendingEchoCount;
-        pendingTerminalSuppression = null;
+        clearPendingTerminalSuppression();
         clearDragDropUpload();
         throw err;
       }
@@ -678,10 +912,23 @@ const UPLOAD_SESSION_CLOSE_TIMEOUT_MS = 15000;
 /** Max wait for a single transport drain after write() returned false. */
 const UPLOAD_DRAIN_TIMEOUT_MS = 60000;
 /** Upload read/send chunk size. */
+// Keep the batch bounded so SSH backpressure is observed before another
+// large group of 8192-byte wire subpackets enters the channel queue.
 const UPLOAD_CHUNK_SIZE = 64 * 1024;
+/** Default interval between non-final upload progress IPC events. */
+const DEFAULT_UPLOAD_PROGRESS_THROTTLE_MS = 100;
+/** Interval between delivered-byte progress reports while parked on drain. */
+const UPLOAD_DRAIN_PROGRESS_INTERVAL_MS = 100;
 
 function resolveTimeoutMs(value, fallback) {
   return Number.isFinite(value) && value >= 0 ? value : fallback;
+}
+
+function resolveProgressThrottleMs(value) {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed >= 0
+    ? parsed
+    : DEFAULT_UPLOAD_PROGRESS_THROTTLE_MS;
 }
 
 /**
@@ -715,6 +962,10 @@ function createZmodemCancelledError() {
   const err = new Error("Transfer cancelled");
   err.code = "NETCATTY_ZMODEM_CANCELLED";
   return err;
+}
+
+function throwIfZmodemCancelled(signal) {
+  if (signal?.aborted) throw createZmodemCancelledError();
 }
 
 /**
@@ -849,6 +1100,9 @@ function waitForWritableDrain(stream, opts = {}) {
  */
 function createZmodemUploadDrainWaiter(opts) {
   return async function waitForDrain() {
+    if (opts.signal?.aborted) {
+      throw createZmodemCancelledError();
+    }
     if (!opts.getNeedsDrain()) return;
 
     if (typeof opts.waitForTransportDrain === "function") {
@@ -873,8 +1127,81 @@ function createZmodemUploadDrainWaiter(opts) {
     }
 
     opts.clearNeedsDrain();
-    await new Promise((resolve) => setImmediate(resolve));
+    await racePromiseWithAbortSignal(
+      new Promise((resolve) => setImmediate(resolve)),
+      opts.signal,
+    );
   };
+}
+
+/**
+ * Park the upload loop on transport backpressure while keeping progress
+ * updates alive (issue #3663).
+ *
+ * Once a large write backlog fills the transport, the upload loop otherwise
+ * sits silent on the "drain" event while the transport keeps delivering the
+ * queued backlog at full link speed: on SSH the entire channel window drains
+ * between two upload-loop steps, so the progress indicator freezes mid-file
+ * and jumps when the loop resumes. While the drain wait stays pending, poll
+ * it and let the caller emit progress events showing bytes the transport has
+ * actually accepted instead.
+ *
+ * Falls back to a plain drain wait when the transport cannot report its
+ * outstanding byte count. Rejections (timeout, cancellation) propagate.
+ *
+ * @param {{
+ *   waitForDrain?: () => Promise<void>,
+ *   getTransportPendingBytes?: () => unknown,
+ *   progressThrottleMs?: number,
+ * }} opts
+ * @param {() => void} emitProgress Called at most once per throttle interval
+ *   while the drain wait stays pending.
+ * @returns {Promise<void>}
+ */
+async function awaitUploadDrainWithProgress(opts, emitProgress) {
+  if (!opts.waitForDrain) return;
+  if (typeof opts.getTransportPendingBytes !== "function") {
+    await opts.waitForDrain();
+    return;
+  }
+
+  let settled = false;
+  const drain = opts.waitForDrain().finally(() => {
+    settled = true;
+  });
+  drain.catch(() => {}); // observed at the final await; never surface early
+  // A drain wait without pending backpressure resolves after one event-loop
+  // turn; yield once so backpressure-free uploads do not gain polling delay.
+  await new Promise((resolve) => setImmediate(resolve));
+  if (settled) {
+    await drain;
+    return;
+  }
+
+  const intervalMs = Math.max(
+    UPLOAD_DRAIN_PROGRESS_INTERVAL_MS,
+    resolveProgressThrottleMs(opts.progressThrottleMs),
+  );
+  // Parked: report accepted bytes right away, then once per interval while
+  // the transport drains its backlog. Progress emissions must never break
+  // (or slow) the transfer itself.
+  try { emitProgress(); } catch { /* ignore */ }
+  // Race each poll delay against drain. A wait that settles mid-interval
+  // must resume the upload immediately; sleeping out the rest of the
+  // interval throttles every backpressure cycle by up to ~100ms.
+  while (!settled) {
+    let timer;
+    await Promise.race([
+      drain.then(() => {}, () => {}),
+      new Promise((resolve) => {
+        timer = setTimeout(resolve, intervalMs);
+      }),
+    ]);
+    clearTimeout(timer);
+    if (settled) break;
+    try { emitProgress(); } catch { /* ignore */ }
+  }
+  await drain;
 }
 
 /**
@@ -933,7 +1260,11 @@ function resolveUploadFileEndTimeoutMs(opts) {
 
 async function waitForUploadHandshake(promise, ms, message, opts) {
   try {
-    return await withTimeout(promise, ms, message);
+    return await withTimeout(
+      racePromiseWithAbortSignal(promise, opts?.signal),
+      ms,
+      message,
+    );
   } catch (err) {
     if (isZmodemTimeoutError(err)) {
       try { opts.onUploadTimeout?.(); } catch { /* ignore */ }
@@ -1001,6 +1332,7 @@ async function handleUpload(zsession, opts) {
   }
 
   try {
+    throwIfZmodemCancelled(opts.signal);
     const fileStats = filePaths.map((fp) => fs.statSync(fp));
 
   // Conflict handling (SSH only — callbacks absent on local/telnet/serial).
@@ -1016,28 +1348,47 @@ async function handleUpload(zsession, opts) {
   // transfer fails before the replacement is committed.
   if (!isDragDropUpload && opts.probeReceiveConflicts && opts.requestOverwriteDecision) {
     try {
-      const probe = await opts.probeReceiveConflicts(allNames);
+      const probe = await racePromiseWithAbortSignal(
+        opts.probeReceiveConflicts(allNames, { signal: opts.signal }),
+        opts.signal,
+      );
+      throwIfZmodemCancelled(opts.signal);
       if (probe && probe.dir && Array.isArray(probe.existing) && probe.existing.length > 0) {
         probeDir = probe.dir;
         probeModes = probe.modes || {};
-        plan = await buildUploadPlan(allNames, probe.existing, opts.requestOverwriteDecision);
+        plan = await buildUploadPlan(
+          allNames,
+          probe.existing,
+          opts.requestOverwriteDecision,
+          opts.signal,
+        );
+        throwIfZmodemCancelled(opts.signal);
         if (plan.aborted) {
           try { zsession.abort(); } catch { /* ignore */ }
           abortRemoteProcess(opts.writeToRemote);
           throw new Error("Transfer cancelled");
         }
         if (plan.removeIndices.length && opts.removeRemoteFiles) {
+          throwIfZmodemCancelled(opts.signal);
           const base = probe.dir.replace(/\/+$/, "");
           const targets = [...new Set(plan.removeIndices.map((i) => `${base}/${allNames[i]}`))];
           try {
-            await opts.removeRemoteFiles(targets);
+            await racePromiseWithAbortSignal(
+              opts.removeRemoteFiles(targets, { signal: opts.signal }),
+              opts.signal,
+            );
+            throwIfZmodemCancelled(opts.signal);
           } catch (err) {
+            if (isZmodemCancelledError(err)) throw err;
             console.warn("[ZMODEM] removeRemoteFiles failed; rz will skip:", err?.message || err);
           }
         }
       }
     } catch (err) {
-      if (err instanceof Error && err.message === "Transfer cancelled") throw err;
+      if (
+        (err instanceof Error && err.message === "Transfer cancelled") ||
+        isZmodemCancelledError(err)
+      ) throw err;
       console.warn("[ZMODEM] conflict probe failed; proceeding:", err?.message || err);
     }
   }
@@ -1051,29 +1402,63 @@ async function handleUpload(zsession, opts) {
   const skippedOfferIndices = [];
 
   for (let i = 0; i < offers.length; i++) {
+    throwIfZmodemCancelled(opts.signal);
     const { originalIndex, filePath, stat, name } = offers[i];
     opts.resetUploadBackpressure?.();
-
-    safeSend(getWebContents(), "netcatty:zmodem:progress", {
-      sessionId,
-      filename: name,
-      transferred: 0,
-      total: stat.size,
-      fileIndex: i,
-      fileCount: offers.length,
-      transferType: "upload",
-    });
 
     let bytesRemaining = 0;
     for (let j = i; j < offers.length; j++) bytesRemaining += offers[j].stat.size;
 
-    const xfer = await zsession.send_offer({
-      name,
-      size: stat.size,
-      mtime: new Date(stat.mtimeMs),
-      files_remaining: offers.length - i,
-      bytes_remaining: bytesRemaining,
-    });
+    // Progress should track bytes the transport accepted, not just bytes
+    // queued (#3663): on SSH the channel can buffer its whole window before
+    // write() returns false, so queued-only reporting freezes the progress
+    // bar while the backlog drains at link speed. When the transport can
+    // report outstanding bytes, show `sent - outstanding` and never move
+    // the bar backwards.
+    const getOutstandingBytes = typeof opts.getTransportPendingBytes === "function"
+      ? opts.getTransportPendingBytes
+      : null;
+    let sent = 0;
+    let displayedTransferred = 0;
+    const emitFileProgress = () => {
+      const outstanding = getOutstandingBytes ? Number(getOutstandingBytes()) : NaN;
+      const delivered = Number.isFinite(outstanding)
+        ? sent - Math.max(outstanding, 0)
+        : sent;
+      displayedTransferred = Math.min(
+        Math.max(delivered, displayedTransferred),
+        stat.size,
+      );
+      safeSend(getWebContents(), "netcatty:zmodem:progress", {
+        sessionId,
+        filename: name,
+        transferred: displayedTransferred,
+        total: stat.size,
+        fileIndex: i,
+        fileCount: offers.length,
+        transferType: "upload",
+      });
+    };
+
+    emitFileProgress();
+
+    // The offer handshake is the only upload step without a built-in
+    // deadline: if rz dies before answering ZFILE (crash, YMODEM fallback),
+    // send_offer() would park this loop forever and block all future
+    // ZMODEM transfers. Bound it like xfer.end() / zsession.close().
+    throwIfZmodemCancelled(opts.signal);
+    const xfer = await waitForUploadHandshake(
+      zsession.send_offer({
+        name,
+        size: stat.size,
+        mtime: new Date(stat.mtimeMs),
+        files_remaining: offers.length - i,
+        bytes_remaining: bytesRemaining,
+      }),
+      resolveUploadFileEndTimeoutMs(opts),
+      `Remote did not respond to the offer for ${name}. The upload was stopped so the terminal can recover.`,
+      opts,
+    );
 
     if (!xfer) {
       // Receiver protected/skipped this file (e.g. rz without -y).
@@ -1084,7 +1469,10 @@ async function handleUpload(zsession, opts) {
     // Read and send in chunks
     const fd = fs.openSync(filePath, "r");
     const buf = Buffer.alloc(UPLOAD_CHUNK_SIZE);
-    let sent = 0;
+    // Progress IPC is throttled by default for every transport. Pass 0 only
+    // when a caller explicitly needs one event per chunk.
+    const progressThrottleMs = resolveProgressThrottleMs(opts.progressThrottleMs);
+    let lastProgressEmitAt = -Infinity;
 
     try {
       while (true) {
@@ -1098,19 +1486,18 @@ async function handleUpload(zsession, opts) {
         xfer.send(new Uint8Array(buf.buffer, buf.byteOffset, bytesRead));
         sent += bytesRead;
 
-        safeSend(getWebContents(), "netcatty:zmodem:progress", {
-          sessionId,
-          filename: name,
-          transferred: sent,
-          total: stat.size,
-          fileIndex: i,
-          fileCount: offers.length,
-          transferType: "upload",
-        });
+        const now = Date.now();
+        if (progressThrottleMs === 0 || now - lastProgressEmitAt >= progressThrottleMs) {
+          emitFileProgress();
+          lastProgressEmitAt = now;
+        }
 
-        // Wait for transport to drain if its buffer is full, then yield
-        // so inbound ZMODEM control frames can be processed.
-        if (opts.waitForDrain) await opts.waitForDrain();
+        // Wait for transport to drain if its buffer is full (emitting
+        // delivered-byte progress while parked, #3663), then yield so
+        // inbound ZMODEM control frames can be processed.
+        if (opts.waitForDrain) {
+          await awaitUploadDrainWithProgress(opts, emitFileProgress);
+        }
         await yieldToIO();
       }
       // All data written to Node.js buffer — but TCP may still be
@@ -1152,8 +1539,13 @@ async function handleUpload(zsession, opts) {
     const restores = buildModeRestores(probeDir, allNames, restoreIndices, probeModes);
     if (!restores.length) return;
     try {
-      await opts.restoreRemoteModes(restores);
+      await racePromiseWithAbortSignal(
+        opts.restoreRemoteModes(restores, { signal: opts.signal }),
+        opts.signal,
+      );
+      throwIfZmodemCancelled(opts.signal);
     } catch (err) {
+      if (isZmodemCancelledError(err)) throw err;
       console.warn("[ZMODEM] restoreRemoteModes failed:", err?.message || err);
     }
   }
@@ -1260,7 +1652,12 @@ async function handleDownload(zsession, opts) {
     xfer.accept({
       on_input(payload) {
         if (writeAborted) return;
-        const chunk = Buffer.from(payload);
+        // payload is a number[] on the original zmodem.js pipeline and a
+        // Uint8Array on the fast path; take a zero-copy view in the fast
+        // case instead of copying every payload byte again.
+        const chunk = Array.isArray(payload)
+          ? Buffer.from(payload)
+          : Buffer.from(payload.buffer, payload.byteOffset, payload.byteLength);
         ws.write(chunk);
         received += chunk.length;
 
@@ -1385,6 +1782,8 @@ module.exports = {
   handleDownload,
   waitForWritableDrain,
   createZmodemUploadDrainWaiter,
+  awaitUploadDrainWithProgress,
   UPLOAD_CHUNK_SIZE,
   UPLOAD_DRAIN_TIMEOUT_MS,
+  UPLOAD_DRAIN_PROGRESS_INTERVAL_MS,
 };

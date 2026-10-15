@@ -17,11 +17,13 @@ import {
   X,
 } from "lucide-react";
 import React, { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import { useVirtualizer } from "@tanstack/react-virtual";
 
 import { useI18n } from "../application/i18n/I18nProvider";
 import {
   sftpTransferCenterStore,
   useSftpTransferCenterBadge,
+  useSftpTransferResuming,
   type SftpTransferCenterSnapshot,
 } from "../application/state/sftpTransferCenterStore";
 import { transferRuntime } from "../application/state/sftp/transferRuntime";
@@ -341,15 +343,19 @@ function formatTransferPathLine(task: Pick<TransferTask, "sourcePath" | "targetP
 function TransferRow({
   task,
   childTasks = [],
+  expanded,
+  onToggleExpanded,
+  isLast,
 }: {
   task: TransferTask;
   childTasks?: readonly TransferTask[];
+  expanded: boolean;
+  onToggleExpanded: () => void;
+  isLast: boolean;
 }) {
   const { t } = useI18n();
-  const [expanded, setExpanded] = useState(false);
   const folderReplaceWarningId = React.useId();
   // Optimistic spinner from click until store status moves off paused/interrupted.
-  const [resumeClicked, setResumeClicked] = useState(false);
   const isDirParent = isDirectoryParentTask(task);
   const showCollapsedChildren = isDirParent && shouldShowCollapsedActiveChildren(task.status);
   const activeChildren = useMemo(
@@ -391,22 +397,8 @@ function TransferRow({
   const storeResuming = task.reconnectRequired === true
     && ["pending", "queued", "transferring"].includes(task.status)
     && !task.error;
-  const isResuming = storeResuming
-    || (resumeClicked && ["paused", "interrupted", "attention", "pending", "queued"].includes(task.status) && !task.error);
-  // Clear optimistic click once the store has left the idle-resume surface or failed.
-  useEffect(() => {
-    if (!resumeClicked) return;
-    if (
-      storeResuming
-      || task.status === "transferring"
-      || task.status === "completed"
-      || task.status === "failed"
-      || task.status === "cancelled"
-      || !!task.error
-    ) {
-      setResumeClicked(false);
-    }
-  }, [resumeClicked, storeResuming, task.status, task.error]);
+  const sharedResuming = useSftpTransferResuming(task.id);
+  const isResuming = sharedResuming || storeResuming;
   const canPause = task.resumable !== false && task.status === "transferring" && canControl && !isResuming;
   // Orphaned tasks after app restart (interrupted / attention / paused without a
   // live panel owner) must still expose resume/cancel from the global center.
@@ -461,7 +453,6 @@ function TransferRow({
     }));
   };
   const resumeTask = () => {
-    setResumeClicked(true);
     // Dedicated resume opens vault sessions for local↔remote and SFTP↔SFTP.
     // Only force-open the panel when the row still needs a live owner/adoption
     // (e.g. conflict) — not on every remote-to-remote resume click.
@@ -478,7 +469,7 @@ function TransferRow({
 
   return (
     <div
-      className="border-b border-border/40 px-3 py-2.5 last:border-b-0 hover:bg-muted/30"
+      className={cn("border-border/40 px-3 py-2.5 hover:bg-muted/30", isLast ? "border-b-0" : "border-b")}
       data-section="global-sftp-transfer-row"
       data-transfer-status={task.status}
       data-directory-parent={isDirParent ? "true" : undefined}
@@ -506,7 +497,7 @@ function TransferRow({
           {canToggleChildren && (
             <TransferAction
               label={expanded ? t("sftp.transfers.collapseChildren") : t("sftp.transfers.expandChildren")}
-              onClick={() => setExpanded((value) => !value)}
+              onClick={onToggleExpanded}
             >
               {expanded ? <ChevronUp size={13} /> : <ChevronDown size={13} />}
             </TransferAction>
@@ -755,6 +746,59 @@ function TransferRow({
   );
 }
 
+function TransferList({ tasks, childrenByParent, empty }: {
+  tasks: readonly TransferTask[];
+  childrenByParent: ReadonlyMap<string, TransferTask[]>;
+  empty: React.ReactNode;
+}) {
+  const scrollRef = useRef<HTMLDivElement>(null);
+  // Keep folder expansion when a row scrolls out of the mounted viewport.
+  const [expandedIds, setExpandedIds] = useState<ReadonlySet<string>>(() => new Set());
+  const virtual = tasks.length > 20;
+  const virtualizer = useVirtualizer({
+    count: tasks.length,
+    getScrollElement: () => scrollRef.current,
+    estimateSize: () => 112,
+    getItemKey: (index) => tasks[index].id,
+    overscan: 4,
+    enabled: virtual,
+  });
+  const renderRow = (task: TransferTask, index: number) => (
+    <TransferRow
+      key={task.id}
+      task={task}
+      childTasks={childrenByParent.get(task.id) ?? []}
+      expanded={expandedIds.has(task.id)}
+      isLast={index === tasks.length - 1}
+      onToggleExpanded={() => setExpandedIds((previous) => {
+        const next = new Set(previous);
+        if (next.has(task.id)) next.delete(task.id);
+        else next.add(task.id);
+        return next;
+      })}
+    />
+  );
+  return (
+    <div ref={scrollRef} className="max-h-[460px] overflow-auto" data-section="global-sftp-transfer-list">
+      {tasks.length === 0 ? empty : !virtual ? tasks.map(renderRow) : (
+        <div className="relative w-full" style={{ height: virtualizer.getTotalSize() }}>
+          {virtualizer.getVirtualItems().map((row) => (
+            <div
+              key={row.key}
+              ref={virtualizer.measureElement}
+              data-index={row.index}
+              className="absolute left-0 top-0 w-full"
+              style={{ transform: `translateY(${row.start}px)` }}
+            >
+              {renderRow(tasks[row.index], row.index)}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export function GlobalSftpTransferCenter() {
   const { t } = useI18n();
   // Badge is a stable store snapshot (identity unchanged on pure progress).
@@ -793,7 +837,7 @@ export function GlobalSftpTransferCenter() {
     .sort((a, b) => (b.priority ?? 0) - (a.priority ?? 0) || b.startTime - a.startTime), [bucket, snapshot.tasks]);
   const { visible, collapsed } = splitBackgroundTransfers(bucketTasks);
   const displayed = showBackground ? [...visible, ...collapsed] : visible;
-  const { batchEligibility, pauseAll, resumeAll } = useGlobalSftpTransferActions(snapshot.tasks);
+  const { batchEligibility, pauseAll, resumeAll, cancelAll, isCancelling } = useGlobalSftpTransferActions(snapshot.tasks);
 
   return (
     <Popover open={open} onOpenChange={setOpen}>
@@ -833,12 +877,15 @@ export function GlobalSftpTransferCenter() {
           <div className="min-w-0 pr-2 text-sm font-semibold">
             {t("sftp.transferCenter.title")}
           </div>
-          <div className="flex items-center gap-1">
-            <Button variant="ghost" size="sm" className="h-7 text-xs" onClick={pauseAll} disabled={batchEligibility.pausableCount === 0}>
+          <div className="flex flex-wrap items-center justify-end gap-1">
+            <Button variant="ghost" size="sm" className="h-7 text-xs" onClick={pauseAll} disabled={isCancelling || batchEligibility.pausableCount === 0}>
               <Pause size={12} className="mr-1" />{t("sftp.transferCenter.pauseAll")}
             </Button>
-            <Button variant="ghost" size="sm" className="h-7 text-xs" onClick={resumeAll} disabled={batchEligibility.resumableCount === 0}>
+            <Button variant="ghost" size="sm" className="h-7 text-xs" onClick={resumeAll} disabled={isCancelling || batchEligibility.resumableCount === 0}>
               <Play size={12} className="mr-1" />{t("sftp.transferCenter.resumeAll")}
+            </Button>
+            <Button variant="ghost" size="sm" className="h-7 text-xs text-destructive" onClick={() => { void cancelAll(); }} disabled={isCancelling || batchEligibility.cancellableCount === 0}>
+              <X size={12} className="mr-1" />{t("sftp.transferCenter.cancelAll")}
             </Button>
           </div>
         </div>
@@ -866,20 +913,17 @@ export function GlobalSftpTransferCenter() {
           ))}
         </div>
 
-        <div className="max-h-[460px] overflow-auto">
-          {displayed.length === 0 ? (
+        <TransferList
+          key={`${bucket}-${showBackground}`}
+          tasks={displayed}
+          childrenByParent={childrenByParent}
+          empty={(
             <div className="flex h-40 flex-col items-center justify-center text-muted-foreground">
               {badge.hasAttention && bucket !== "attention" && bucket !== "all" ? <AlertCircle size={22} /> : <ArrowDownUp size={22} />}
               <span className="mt-2 text-xs">{t("sftp.transferCenter.empty")}</span>
             </div>
-          ) : displayed.map((task) => (
-            <TransferRow
-              key={task.id}
-              task={task}
-              childTasks={childrenByParent.get(task.id) ?? []}
-            />
-          ))}
-        </div>
+          )}
+        />
 
         {(() => {
           const showBackgroundToggle = collapsed.length > 0;

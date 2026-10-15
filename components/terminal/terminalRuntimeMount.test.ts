@@ -146,7 +146,7 @@ test('session launch paths use the same effective protocol as Provider snapshots
 
 test('trusted command delivery reaches plugin providers without duplicating the host callback', () => {
   const callbackStart = terminalSource.indexOf('const pluginAwareOnCommandSubmitted = useCallback');
-  const callbackEnd = terminalSource.indexOf('const pluginAwareOnCommandCompleted = useCallback', callbackStart);
+  const callbackEnd = terminalSource.indexOf('const cwdAwareOnCommandSubmitted = useCallback', callbackStart);
   assert.notEqual(callbackStart, -1);
   assert.notEqual(callbackEnd, -1);
 
@@ -159,7 +159,7 @@ test('trusted command delivery reaches plugin providers without duplicating the 
 test('password-prompt input is consumed before every semantic command callback', () => {
   assert.match(
     xtermRuntimeSource,
-    /const sensitive = ctx\.passwordPromptActiveRef\?\.current === true;[\s\S]*?recordTerminalCommandExecution\([\s\S]*?\{ sensitive, allowHostStyleGreaterThanPrompt: ctx\.allowHostStyleGreaterThanPrompt \},\s*\);/,
+    /const sensitive = ctx\.passwordPromptActiveRef\?\.current === true[\s\S]*?recordTerminalCommandExecution\([\s\S]*?\{ sensitive, allowHostStyleGreaterThanPrompt: ctx\.allowHostStyleGreaterThanPrompt \},\s*\);/,
   );
   assert.match(
     terminalSource,
@@ -168,7 +168,10 @@ test('password-prompt input is consumed before every semantic command callback',
 });
 
 test('terminal output treats unknown prompt-shaped input boundaries as sensitive', () => {
-  assert.match(terminalSource, /const promptSecurityOptions = \{ allowHostStyleGreaterThan: isNetworkDevice \};/);
+  assert.match(
+    terminalSource,
+    /const promptSecurityOptions = \{\s*allowHostStyleGreaterThan: isNetworkDevice,\s*alternateScreen: termRef\.current\s*\? isTerminalAlternateScreenActive\(termRef\.current\)\s*: false,\s*\};/,
+  );
   assert.match(terminalSource, /isUntrustedTerminalInputPrompt\([\s\S]*?promptSecurityOptions/);
   assert.match(terminalSource, /passwordPromptActiveRef\.current = true;[\s\S]*?autocompleteCloseRef\.current\?\.\(\);/);
   assert.match(terminalSource, /isConfirmedTerminalShellPrompt\([\s\S]*?passwordPromptActiveRef\.current = false;/);
@@ -180,9 +183,20 @@ test('terminal view derives the network-device prompt policy before autocomplete
     /const isNetworkDevice = host\.deviceType === 'network'[\s\S]*?classifyDistroId\(host\.distro\) === 'network-device';/,
   );
   assert.match(terminalViewSource, /allowHostStyleGreaterThanPrompt=\{isNetworkDevice\}/);
+  assert.match(terminalViewSource, /isNetworkDevice=\{isNetworkDevice\}/);
   assert.match(
     terminalSource,
     /xTermRuntimeContextRef\.current = \{[\s\S]*?allowHostStyleGreaterThanPrompt: isNetworkDevice,/,
+  );
+  assert.match(
+    terminalSource,
+    /resolveTerminalAutocompleteSettings\(\{[\s\S]*?isNetworkDevice: host\.deviceType === 'network'[\s\S]*?classifyDistroId\(host\.distro\) === 'network-device',\s*\}\);/,
+  );
+  assert.doesNotMatch(terminalSource, /singleChannelSsh/);
+  const autocompleteSource = readFileSync(new URL('./TerminalAutocomplete.tsx', import.meta.url), 'utf8');
+  assert.match(
+    autocompleteSource,
+    /useTerminalAutocomplete\(\{[\s\S]*?isNetworkDevice,/,
   );
 });
 

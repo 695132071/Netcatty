@@ -34,7 +34,15 @@ test("buildExternalAgentSystemContext (skills mode) routes attachments through N
     chatSessionId: "chat-1",
   });
 
-  assert.match(context, /attachment list --json --chat-session chat-1/i);
-  assert.match(context, /attachment read --filename <filename> --json --chat-session chat-1/i);
+  assert.match(context, /attachment list --json/i);
+  assert.match(context, /attachment read --filename <filename> --json/i);
+  assert.match(context, /already bound in this process via the host environment/i);
+  assert.doesNotMatch(context, /--chat-session/);
   assert.match(context, /Use the local shell only to invoke Netcatty CLI commands/i);
+  assert.match(context, /notes list\|get\|create\|update\|delete\|import --json/);
+  assert.match(context, /notes create or notes update ONLY when the user explicitly wants/i);
+  assert.match(context, /notes import --attachment-index from attachment list for attached Markdown/i);
+  assert.match(context, /Never interpolate note text into a shell command/i);
+  assert.match(context, /do not silently create a Vault note/i);
+  assert.match(context, /if approval is denied, stop/i);
 });

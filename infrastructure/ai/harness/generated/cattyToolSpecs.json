@@ -4,7 +4,7 @@
     "toolName": "get_environment",
     "rpcMethod": "netcatty/getContext",
     "localExecution": false,
-    "description": "List scoped terminal sessions available to the agent.",
+    "description": "List scoped terminal sessions available to the agent. Call this first for any task involving a live Netcatty terminal, remote server, SSH session, SFTP path, or terminal tab. Select the target by label or hostname, then pass its sessionId to terminal and SFTP tools. Call it again after the user opens, closes, or renames a session.",
     "inputShape": {},
     "policy": {
       "write": false,
@@ -89,7 +89,7 @@
     "toolName": "terminal_execute",
     "rpcMethod": "netcatty/exec",
     "localExecution": false,
-    "description": "Execute a short command in a terminal session and wait for completion. Use only for commands expected to finish within about 60 seconds. For long-running commands use terminal_start and terminal_poll. Commands run in an isolated subshell of the visible terminal: the user sees the output live, but shell state such as cd, export, or set does not persist between calls — use absolute paths or combine cd with the command (cd /path && cmd).",
+    "description": "Execute a short command in a terminal session and wait for completion. Use this instead of the local shell when the command is intended for a Netcatty terminal or remote host. Call get_environment first to resolve the sessionId. Use only for commands expected to finish within about 60 seconds. For long-running commands use terminal_start and terminal_poll. Commands run in an isolated subshell of the visible terminal: the user sees the output live, but shell state such as cd, export, or set does not persist between calls — use absolute paths or combine cd with the command (cd /path && cmd).",
     "inputShape": {
       "sessionId": {
         "type": "string",
@@ -117,7 +117,7 @@
     "toolName": "terminal_start",
     "rpcMethod": "netcatty/jobStart",
     "localExecution": false,
-    "description": "Start a long-running command in a terminal session. Prefer for builds, scans, log-following, or anything likely to exceed about 2 minutes. Shell state such as cd or export does not persist between calls — combine cd with the command.",
+    "description": "Start a long-running command in a terminal session. Use this instead of the local shell for long-running commands on a Netcatty terminal or remote host. Call get_environment first to resolve the sessionId. Prefer for builds, scans, log-following, or anything likely to exceed about 2 minutes. Shell state such as cd or export does not persist between calls — combine cd with the command.",
     "inputShape": {
       "sessionId": {
         "type": "string",
@@ -547,7 +547,7 @@
     "toolName": "vault_hosts_list",
     "rpcMethod": "vault/hosts/list",
     "localExecution": false,
-    "description": "List saved hosts in the vault (metadata only — no passwords or keys).",
+    "description": "List saved hosts in the vault (metadata only — no passwords or keys). Use when the user names a saved Netcatty host but get_environment has no matching live session. Resolve the hostId here, call host_open, then call get_environment to obtain the new sessionId.",
     "inputShape": {},
     "policy": {
       "write": false,
@@ -569,7 +569,7 @@
       "hosts": {
         "type": "string",
         "optional": false,
-        "description": "JSON array of host objects you extracted from the user's text. Each object: hostname (required; host/ip aliases accepted), label (name alias accepted), port, username, password, keyPath or keypath (local private-key file path), passphrase (saved passphrase for that key path), group, tags (array or comma-separated string), notes (Host Details remarks — NOT Vault sidebar Notes), protocol (ssh|telnet|local)."
+        "description": "JSON array of host objects you extracted from the user's text. Each object: hostname (required; host/ip aliases accepted), label (name alias accepted), port, username, password, keyPath or keypath (local private-key file path), passphrase (saved passphrase for that key path), group, tags (array or comma-separated string), notes (Host Details remarks — NOT Vault sidebar Notes), protocol (ssh|telnet|local), os (linux|windows|macos)."
       },
       "dryRun": {
         "type": "string",
@@ -684,6 +684,11 @@
         "optional": true,
         "description": "New protocol: ssh, telnet, local, or serial."
       },
+      "os": {
+        "type": "string",
+        "optional": true,
+        "description": "Operating system override: auto (default), linux, windows, macos, freebsd, or unknown. Use auto to use detected system information; network device mode is separate."
+      },
       "identityId": {
         "type": "string",
         "optional": true,
@@ -737,7 +742,7 @@
       "serialConfig": {
         "type": "string",
         "optional": true,
-        "description": "JSON object for serial connections: path, baudRate, and optional dataBits, stopBits, parity, flowControl, localEcho, lineMode, backspaceBehavior (default or ctrl-h). Existing backspaceBehavior is preserved when omitted."
+        "description": "JSON object for serial connections: path, baudRate, and optional dataBits, stopBits, parity, flowControl, localEcho, lineMode, backspaceBehavior (default or ctrl-h), byteOrientedBackspace (boolean, default false; enable only for devices that delete bytes rather than characters). Existing backspaceBehavior and byteOrientedBackspace are preserved when omitted."
       }
     },
     "policy": {
@@ -778,12 +783,12 @@
     "toolName": "vault_hosts_import",
     "rpcMethod": "vault/hosts/import",
     "localExecution": false,
-    "description": "Parse known host export file formats (PuTTY, MobaXterm, CSV, SecureCRT, ssh_config) into vault hosts. For arbitrary unstructured text, map to host objects and use vault_hosts_create instead. Only for text in known export formats (PuTTY reg, MobaXterm ini, CSV template, SecureCRT, ssh_config). If attached host text is unknown or auto-detection fails, use read_attachment content, extract fields yourself, and call vault_hosts_create.",
+    "description": "Parse known host export file formats (PuTTY, MobaXterm, CSV, SecureCRT, FinalShell, ssh_config) into vault hosts. For arbitrary unstructured text, map to host objects and use vault_hosts_create instead. Only for text in known export formats (PuTTY reg, MobaXterm ini, CSV template, SecureCRT, FinalShell JSON, ssh_config). If attached host text is unknown or auto-detection fails, use read_attachment content, extract fields yourself, and call vault_hosts_create.",
     "inputShape": {
       "format": {
         "type": "string",
         "optional": false,
-        "description": "Import format: csv, putty, mobaxterm, securecrt, ssh_config, or auto to detect from text."
+        "description": "Import format: csv, putty, mobaxterm, securecrt, finalshell, ssh_config, or auto to detect from text."
       },
       "text": {
         "type": "string",
@@ -889,12 +894,32 @@
     "toolName": "vault_notes_get",
     "rpcMethod": "vault/notes/get",
     "localExecution": false,
-    "description": "Get a Vault → Notes entry by id (full markdown content).",
+    "description": "Read or search a Vault → Notes entry by exact id, at most 6000 characters per call. Content is only the returned range, not necessarily the whole note. Follow nextOffset with expectedUpdatedAt until null for a complete read; query searches only return matching excerpts. Read every range without query before summarizing the whole note or replacing its content; never treat unread text as absent. For long notes, retain section summaries rather than repeatedly loading all ranges. If the note changed, restart.",
     "inputShape": {
       "noteId": {
         "type": "string",
         "optional": false,
         "description": "Vault note ID from vault_notes_list."
+      },
+      "offset": {
+        "type": "number",
+        "optional": true,
+        "description": "Zero-based UTF-16 offset; default 0. Continue with returned nextOffset."
+      },
+      "maxChars": {
+        "type": "number",
+        "optional": true,
+        "description": "Maximum excerpt length in UTF-16 units, at least 2; default and hard cap 6000."
+      },
+      "query": {
+        "type": "string",
+        "optional": true,
+        "description": "Optional case-sensitive literal search, 1-200 UTF-16 units. Returns an excerpt starting at the next match at/after offset; matchOffset=null means no match. Keep query when continuing search."
+      },
+      "expectedUpdatedAt": {
+        "type": "number",
+        "optional": true,
+        "description": "Pass note.updatedAt from the first read on subsequent reads to detect changes; restart if it changed."
       }
     },
     "policy": {
@@ -922,7 +947,7 @@
       "content": {
         "type": "string",
         "optional": false,
-        "description": "Markdown note body."
+        "description": "Markdown note body. An empty string creates an empty note."
       },
       "group": {
         "type": "string",
@@ -970,12 +995,12 @@
       "content": {
         "type": "string",
         "optional": true,
-        "description": "New markdown body."
+        "description": "New markdown body. An empty string clears the body."
       },
       "group": {
         "type": "string",
         "optional": true,
-        "description": "New folder path."
+        "description": "New folder path. An empty string clears the folder."
       },
       "linkedHostIds": {
         "type": "string",
@@ -1009,6 +1034,49 @@
         "type": "string",
         "optional": false,
         "description": "Vault note ID to delete."
+      }
+    },
+    "policy": {
+      "write": true,
+      "sensitiveRead": false,
+      "longRunning": false,
+      "requiresChatSession": false,
+      "bypassesObserverBlock": false,
+      "bypassesApproval": false,
+      "bypassesChatCancel": false
+    }
+  },
+  {
+    "capabilityId": "vault.note.import",
+    "toolName": "vault_notes_import",
+    "rpcMethod": "vault/notes/import",
+    "localExecution": false,
+    "description": "Import one or more markdown documents into Vault → Notes. Titles come from an explicit title, the first level-one heading, or the file name. NOT for adding SSH hosts. Import generated or attached markdown into Vault → Notes. Use content plus fileName for one document, or documents for a batch. This creates notes; it does not add SSH hosts. Confirm mode asks the user to approve the import.",
+    "inputShape": {
+      "content": {
+        "type": "string",
+        "optional": true,
+        "description": "Markdown body for a single document. An empty string is valid. Omit when documents is set."
+      },
+      "fileName": {
+        "type": "string",
+        "optional": true,
+        "description": "Source file name for a single document, such as runbook.md. Used when the body has no heading."
+      },
+      "title": {
+        "type": "string",
+        "optional": true,
+        "description": "Optional title override for a single document. Otherwise the first level-one heading or file name is used."
+      },
+      "documents": {
+        "type": "string",
+        "optional": true,
+        "description": "JSON array of {fileName, content, title?} for a batch import. Do not combine with content."
+      },
+      "group": {
+        "type": "string",
+        "optional": true,
+        "description": "Optional folder path applied to every imported note."
       }
     },
     "policy": {
@@ -1206,7 +1274,7 @@
     "toolName": "snippets_run",
     "rpcMethod": "vault/snippets/run",
     "localExecution": false,
-    "description": "Run a vault snippet or automation script in a terminal session. Text snippets paste shell commands; scripts (kind=script) run via the nct JavaScript runtime. Text snippets (kind=snippet) paste shell commands with optional {{variables}}. Scripts (kind=script) run via nct JavaScript runtime — use scripts_run for script-only workflows.",
+    "description": "Run a vault snippet or automation script in a terminal session. Text snippets paste shell commands; scripts (kind=script) run via the nct JavaScript runtime. Text snippets (kind=snippet) paste shell commands with optional named placeholders written with two curly braces on each side. Scripts (kind=script) run via nct JavaScript runtime — use scripts_run for script-only workflows.",
     "inputShape": {
       "snippetId": {
         "type": "string",
@@ -1968,6 +2036,11 @@
         "type": "string",
         "optional": true,
         "description": "true or false."
+      },
+      "autoReconnect": {
+        "type": "string",
+        "optional": true,
+        "description": "true or false. Reconnect automatically after unexpected disconnects."
       }
     },
     "policy": {
@@ -2031,6 +2104,11 @@
         "type": "string",
         "optional": true,
         "description": "true or false."
+      },
+      "autoReconnect": {
+        "type": "string",
+        "optional": true,
+        "description": "true or false. Reconnect automatically after unexpected disconnects."
       }
     },
     "policy": {
@@ -2221,8 +2299,8 @@
   {
     "capabilityId": "harness.terminal.read_context",
     "toolName": "terminal_read_context",
-    "rpcMethod": null,
-    "localExecution": true,
+    "rpcMethod": "netcatty/readContext",
+    "localExecution": false,
     "description": "Read a bounded slice of the current terminal screen or scrollback from the active AI scope.",
     "inputShape": {
       "sessionId": {

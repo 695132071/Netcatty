@@ -4,7 +4,7 @@ import test from "node:test";
 import type { Host } from "../../domain/models";
 import { prepareSerialConfigForSavedHost } from "../../domain/serialBackspace";
 import { buildTelnetDeepLinkConnectionHost } from "../../domain/telnetDeepLink";
-import { resolveEffectiveTerminalHost } from "../../domain/terminalHostResolution";
+import { resolveEffectiveTerminalHost, resolveTerminalSessionHost } from "../../domain/terminalHostResolution";
 import {
   createHostTerminalSession,
   createSerialTerminalSession,
@@ -101,6 +101,28 @@ test("workspace host factory creates a complete serial session", () => {
   });
 });
 
+test("serial session factories preserve byteOrientedBackspace", () => {
+  const quickSession = createSerialTerminalSession("session-q", {
+    path: "COM4",
+    baudRate: 9600,
+    byteOrientedBackspace: false,
+  });
+  const savedHostSession = createHostTerminalSession("session-h", host({
+    protocol: "serial",
+    hostname: "COM3",
+    port: 115200,
+    username: "",
+    serialConfig: {
+      path: "COM3",
+      baudRate: 115200,
+      byteOrientedBackspace: false,
+    },
+  }));
+
+  assert.equal(quickSession.serialConfig?.byteOrientedBackspace, false);
+  assert.equal(savedHostSession.serialConfig?.byteOrientedBackspace, false);
+});
+
 test("workspace append snapshots serial Backspace behavior inherited from a group", () => {
   const savedHost = host({
     protocol: "serial",
@@ -148,4 +170,17 @@ test("host session factories snapshot plugin connection configuration", () => {
   assert.equal(workspace.workspaceId, "workspace-1");
   assert.deepEqual(workspace.pluginConnection, pluginConnection);
   assert.notEqual(workspace.pluginConnection, pluginConnection);
+});
+
+test("local sessions preserve intentionally absent display metadata when the saved shell changes", () => {
+  const original = host({ protocol: "local", hostname: "localhost", localShell: "/bin/bash" });
+  const source = createHostTerminalSession("original-bash", original);
+  const edited = { ...original, localShell: "/bin/zsh", localShellName: "Zsh", localShellIcon: "zsh" };
+  const copied = resolveTerminalSessionHost({ session: source, hosts: [edited], groupConfigs: [], proxyProfiles: [], localOs: "macos" });
+  assert.equal(copied.localShell, "/bin/bash");
+  assert.equal(copied.localShellName, "");
+  assert.equal(copied.localShellIcon, "");
+  const named = createHostTerminalSession("named-zsh", edited);
+  assert.equal(named.localShellName, "Zsh");
+  assert.equal(named.localShellIcon, "zsh");
 });

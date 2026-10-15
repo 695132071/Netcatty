@@ -17,9 +17,24 @@ export interface PermissionGrantRule {
 export interface PermissionGrantMatchContext {
   capabilityId: string;
   sessionId?: string;
+  hostId?: string;
   chatSessionId?: string;
   hostname?: string;
   args?: Record<string, unknown>;
+}
+
+function ruleMatchesTarget(rule: PermissionGrantRule, ctx: PermissionGrantMatchContext): boolean {
+  if (rule.sessionPattern.startsWith('host:')) {
+    const hostId = rule.sessionPattern.slice('host:'.length);
+    const opensThisHost = ctx.capabilityId === 'vault.host.open' && ctx.args?.hostId === hostId;
+    return Boolean(hostId && ctx.hostId === hostId && (ctx.sessionId || opensThisHost));
+  }
+  return rule.capabilityId !== '*' && rule.sessionPattern !== 'host:';
+}
+
+function ruleMatchesCapability(rule: PermissionGrantRule, ctx: PermissionGrantMatchContext): boolean {
+  return (rule.capabilityId === ctx.capabilityId || rule.capabilityId === '*')
+    && ruleMatchesTarget(rule, ctx);
 }
 
 type CattyToolSpecRef = {
@@ -114,7 +129,7 @@ export function matchPermissionGrant(
   if (commandGrantMatch) return commandGrantMatch;
 
   for (const rule of rules) {
-    if (rule.capabilityId !== ctx.capabilityId) continue;
+    if (!ruleMatchesCapability(rule, ctx)) continue;
     if (rule.commandPattern) continue;
 
     if (!argsPatternMatches(rule.argsPattern, args)) continue;
@@ -135,7 +150,7 @@ function matchCommandPatternGrants(
   if (commandSegments.length === 0) return null;
 
   const eligibleRules = rules.filter((rule) => (
-    rule.capabilityId === ctx.capabilityId
+    ruleMatchesCapability(rule, ctx)
     && Boolean(rule.commandPattern)
     && argsPatternMatches(rule.argsPattern, args)
   ));

@@ -101,7 +101,9 @@ export type TerminalBackendApi = {
     cb: (sessionId: string, sourceSessionId?: string) => void,
   ) => (() => void) | undefined;
   writeToSession: (sessionId: string, data: string, options?: { automated?: boolean; sensitive?: boolean; lineDelayMs?: number; logRewrite?: ProgrammaticCommandLogRewrite }) => void;
-  interruptSession?: (sessionId: string, trace?: NetcattyTerminalInterruptTrace) => void;
+  /** Signal buffered user input so main-process auto-login cancels. */
+  notifyUserInput?: (sessionId: string) => void;
+  interruptSession?: NetcattyBridge["interruptSession"];
   resizeSession: (sessionId: string, cols: number, rows: number) => void;
   closeSession: (sessionId: string, options?: { bootEpoch?: number }) => void | Promise<void>;
   /** Pause/resume the source stream for output back-pressure (optional). */
@@ -150,6 +152,17 @@ export type TerminalSessionStartersContext = {
   // One-shot source session intent for Copy/Split. Consumed by the first SSH
   // attempt so later reconnects do not skip the initial login sequence.
   reuseConnectionFromSessionIdRef?: MutableRefObject<string | undefined>;
+  // Duplicate Session clones carry this marker for their whole lifetime: every
+  // SSH attempt must send `reuseTransport: false` so the bridge never borrows
+  // the source's live or any other pooled transport.
+  requireFreshConnection?: boolean;
+  // Set by the reconnect path (manual retry / auto-reconnect) for the rest of
+  // the pane's lifetime: every SSH attempt must dial a brand-new connection
+  // instead of borrowing a live or idle pooled transport. Reusing an
+  // already-authenticated connection skips the server-side login, so remote
+  // supplementary-group changes (e.g. `usermod -aG`) stay invisible until the
+  // whole app quits (#3293).
+  requireFreshConnectionOnReconnectRef?: MutableRefObject<boolean>;
   // Persists across renderer auth retries after the one-shot source intent is
   // consumed. Cleared only after a backend session starts successfully.
   reuseConnectionSourceAttemptedRef?: MutableRefObject<boolean>;
@@ -165,6 +178,7 @@ export type TerminalSessionStartersContext = {
   isNetworkDevice?: boolean;
   startupCommand?: string;
   noAutoRun?: boolean;
+  recordSerialSnippetInput?: (data: string) => void;
   multiLineRunMode?: TerminalSession["multiLineRunMode"];
   shellType?: TerminalSession["shellType"];
   suppressHostStartupCommandRef?: RefObject<boolean>;
@@ -256,6 +270,8 @@ export type TerminalSessionDataMeta = {
   droppedOutputAlternateScreenAction?: 'enter' | 'leave';
   /** True while Mosh is still on the ephemeral SSH handshake PTY. */
   moshHandshake?: boolean;
+  /** The Mosh SSH bootstrap is blocked on input that Netcatty cannot answer automatically. */
+  moshHandshakeRequiresUserInput?: boolean;
   terminalPerf?: NetcattyTerminalOutputPerfMeta;
   /** Original host output units acknowledged even when an interceptor changes display length. */
   pluginPipelineIngressBytes?: number;

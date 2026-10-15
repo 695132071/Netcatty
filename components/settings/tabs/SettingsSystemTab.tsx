@@ -121,6 +121,11 @@ interface SettingsSystemTabProps {
   setToggleWindowHotkey: (hotkey: string) => void;
   closeToTray: boolean;
   setCloseToTray: (enabled: boolean) => void;
+  showTrayIcon: boolean;
+  setShowTrayIcon: (enabled: boolean) => void;
+  autoLaunchEnabled: boolean;
+  setAutoLaunchEnabled: (enabled: boolean) => void;
+  autoLaunchSupported: boolean;
   httpNetworkProxy: HttpNetworkProxySettings;
   setHttpNetworkProxy: (settings: HttpNetworkProxySettings | ((prev: HttpNetworkProxySettings) => HttpNetworkProxySettings)) => void;
   hotkeyRegistrationError: string | null;
@@ -170,6 +175,11 @@ const SettingsSystemTab: React.FC<SettingsSystemTabProps> = ({
   setToggleWindowHotkey,
   closeToTray,
   setCloseToTray,
+  showTrayIcon,
+  setShowTrayIcon,
+  autoLaunchEnabled,
+  setAutoLaunchEnabled,
+  autoLaunchSupported,
   httpNetworkProxy,
   setHttpNetworkProxy,
   hotkeyRegistrationError,
@@ -602,6 +612,25 @@ const SettingsSystemTab: React.FC<SettingsSystemTabProps> = ({
               )}
               {t('settings.update.hint')}
             </SettingHint>
+
+          <SectionHeader title={t("settings.autoLaunch.title")} />
+            <SettingCard className="py-4">
+              <SettingRow
+                anchorId="system-auto-launch"
+                label={t("settings.autoLaunch.enabled")}
+                description={
+                  autoLaunchSupported
+                    ? t("settings.autoLaunch.enabledDesc")
+                    : t("settings.autoLaunch.unsupportedDesc")
+                }
+              >
+                <Toggle
+                  checked={autoLaunchEnabled}
+                  onChange={setAutoLaunchEnabled}
+                  disabled={!autoLaunchSupported}
+                />
+              </SettingRow>
+            </SettingCard>
 
           <SectionHeader title={t("settings.system.networkProxy.title")} />
             <SettingCard className="space-y-4 py-4">
@@ -1288,6 +1317,23 @@ const SettingsSystemTab: React.FC<SettingsSystemTabProps> = ({
                   onChange={setCloseToTray}
                 />
               </SettingRow>
+
+              {/* Show System Tray Icon */}
+              <SettingRow
+                anchorId="system-show-tray-icon"
+                label={t("settings.globalHotkey.showTrayIcon")}
+                description={t("settings.globalHotkey.showTrayIconDesc")}
+              >
+                <Toggle
+                  checked={showTrayIcon}
+                  onChange={setShowTrayIcon}
+                />
+              </SettingRow>
+              {!showTrayIcon && (
+                <p className="text-sm text-muted-foreground">
+                  {t("settings.globalHotkey.showTrayIconHiddenHint")}
+                </p>
+              )}
             </SettingCard>
 
             <SettingHint>

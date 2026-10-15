@@ -886,10 +886,20 @@ function createFileOpsApi(ctx) {
     }
     
     function formatSftpStatResult(payloadPath, stat, permissions) {
+      // The renderer contract (SftpStatResult.size) requires a number. A
+      // stat-less SCP host reports an unknown size internally (undefined) so
+      // size-sensitive backend checks can skip it, but that value must not
+      // cross the IPC boundary: conflict dialogs and TransferTask.totalBytes
+      // would render "NaN undefined". Map unknown to 0 ("--" when formatted).
+      const sizeKnown = Number.isFinite(stat.size);
+      const size = sizeKnown ? stat.size : 0;
       return {
         name: path.basename(payloadPath),
         type: stat.isDirectory ? "directory" : stat.isSymbolicLink ? "symlink" : "file",
-        size: stat.size,
+        size,
+        // Skip-unchanged and resume checks must not mistake the placeholder 0
+        // for a real zero-byte file; they gate on this marker instead.
+        sizeKnown,
         lastModified: stat.modifyTime,
         permissions,
       };
@@ -1051,14 +1061,6 @@ function createFileOpsApi(ctx) {
       const signal = payload?.abortSignal || null;
       throwIfAborted(signal);
 
-      const sshClient = client.client;
-      if (!sshClient || typeof sshClient.exec !== "function") {
-        throw new Error("SSH exec unavailable");
-      }
-      if (typeof execRemoteShellCommand !== "function") {
-        throw new Error("SSH exec unavailable");
-      }
-
       let archiveSize = 0;
       try {
         if (!isScpModeClient(client) && typeof lstatAsync === "function") {
@@ -1069,6 +1071,21 @@ function createFileOpsApi(ctx) {
         }
       } catch {
         archiveSize = 0;
+      }
+
+      if (client.__netcattySingleChannelSsh || client.client?.__netcattySingleChannelSsh) {
+        const err = new Error(
+          "This host is configured for single-channel SSH. Remote archive extraction needs a shell channel, which this file-transfer login cannot open.",
+        );
+        err.code = "ERR_SFTP_SINGLE_CHANNEL_EXEC";
+        throw err;
+      }
+      const sshClient = client.client;
+      if (!sshClient || typeof sshClient.exec !== "function") {
+        throw new Error("SSH exec unavailable");
+      }
+      if (typeof execRemoteShellCommand !== "function") {
+        throw new Error("SSH exec unavailable");
       }
 
       await execRemoteShellCommand(sshClient, command, {
@@ -1117,9 +1134,15 @@ function createFileOpsApi(ctx) {
       }
     
       // Method 1: SSH exec `echo ~` (with 5s timeout to avoid hanging on
-      // hosts with blocking shell init scripts or forced commands)
+      // hosts with blocking shell init scripts or forced commands).
+      // Skip on single-channel PAM bastions: the extra exec drops the SFTP
+      // transport (Cloudbility / QiZhi), same class as JumpServer exec denial.
       const sshClient = client.client;
-      if (sshClient && typeof sshClient.exec === "function") {
+      if (
+        sshClient
+        && typeof sshClient.exec === "function"
+        && !client.__netcattySingleChannelSsh
+      ) {
         let execStream = null;
         try {
           const result = await executeBoundedSshCommand(sshClient, "echo ~", {

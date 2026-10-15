@@ -55,26 +55,20 @@ export const useManagedSourceSync = ({
   );
 
   const readExistingFileContent = useCallback(
-    async (filePath: string): Promise<string | null> => {
+    async (filePath: string): Promise<string> => {
       const bridge = netcattyBridge.get();
       if (!bridge?.readLocalFile) {
-        return null;
+        throw new Error("readLocalFile not available");
       }
-      try {
-        const buffer = await bridge.readLocalFile(filePath);
-        const decoder = new TextDecoder();
-        return decoder.decode(buffer);
-      } catch {
-        // File might not exist yet
-        return null;
-      }
+      const buffer = await bridge.readLocalFile(filePath);
+      return new TextDecoder().decode(buffer);
     },
     [],
   );
 
   const mergeWithExistingContent = useCallback(
     (
-      existingContent: string | null,
+      existingContent: string,
       managedHosts: Host[],
       allHosts: Host[],
     ): string => {
@@ -82,7 +76,7 @@ export const useManagedSourceSync = ({
       const managedContent = serializeHostsToSshConfig(managedHosts, allHosts);
 
       if (!existingContent) {
-        // No existing file, just wrap the managed content
+        // The existing file is empty; wrap the managed content.
         return `${MANAGED_BLOCK_BEGIN}\n${managedContent}${MANAGED_BLOCK_END}\n`;
       }
 
@@ -156,6 +150,14 @@ export const useManagedSourceSync = ({
 
   const syncManagedSource = useCallback(
     async (source: ManagedSource): Promise<{ sourceId: string; success: boolean }> => {
+      // Drain any in-flight Vault host write BEFORE taking the vault lock.
+      // updateHosts commits its encrypted write under the vault lock, so if this
+      // sync acquires the lock first, readPersistedHosts runs while the lock is
+      // held and only waits for the encrypt phase — returning the previous host
+      // snapshot and writing the stale alias back to the file (lagging one edit
+      // behind, see issue #3259). Waiting outside the lock also waits for the
+      // queued disk write, so the read below sees the just-edited hosts.
+      await onReadPersistedHosts();
       return withVaultImportLock("vault", async () => {
         const persistedSources = localStorageAdapter.read<ManagedSource[]>(
           STORAGE_KEY_MANAGED_SOURCES,

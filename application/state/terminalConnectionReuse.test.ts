@@ -7,6 +7,7 @@ import {
   createCopiedTerminalSessionClone,
   createSplitTerminalSessionClone,
   isTerminalSessionEligibleForSftpReuse,
+  resolveSftpReuseSourceSessionId,
 } from "./terminalConnectionReuse";
 
 const session = (overrides: Partial<TerminalSession> = {}): TerminalSession => ({
@@ -31,6 +32,18 @@ test("SSH sessions stay SFTP-linkable while reconnecting", () => {
   assert.equal(isTerminalSessionEligibleForSftpReuse(session({ protocol: "local" })), false);
   assert.equal(isTerminalSessionEligibleForSftpReuse(session({ moshEnabled: true })), false);
   assert.equal(isTerminalSessionEligibleForSftpReuse(session({ etEnabled: true })), false);
+});
+
+test("Mosh and ET drops keep their origin but do not request SSH session reuse", () => {
+  assert.equal(resolveSftpReuseSourceSessionId(session(), "session-1"), "session-1");
+  assert.equal(
+    resolveSftpReuseSourceSessionId(session({ moshEnabled: true }), "session-1"),
+    undefined,
+  );
+  assert.equal(
+    resolveSftpReuseSourceSessionId(session({ etEnabled: true }), "session-1"),
+    undefined,
+  );
 });
 
 test("non-SSH or unavailable sessions do not reuse a connection", () => {
@@ -83,6 +96,50 @@ test("copy session clones reuse SSH sources and preserve serial config", () => {
 
   assert.equal(copied.reuseConnectionFromSessionId, "session-1");
   assert.deepEqual(copied.serialConfig, { path: "/dev/tty.usbserial", baudRate: 115200 });
+});
+
+test("copy session clones open a fresh connection when reuseConnection is false", () => {
+  const fresh = createCopiedTerminalSessionClone(session(), { id: "copy-fresh", reuseConnection: false });
+  assert.equal(fresh.reuseConnectionFromSessionId, undefined);
+  // The explicit fresh flag must survive: without it the bridge treats the
+  // clone as eligible for general endpoint reuse and can still borrow the
+  // source's live authenticated transport.
+  assert.equal(fresh.requireFreshConnection, true);
+  // Local sources never had reuse to drop — behavior is unchanged.
+  assert.equal(
+    createCopiedTerminalSessionClone(session({ protocol: "local" }), { id: "copy-local-fresh", reuseConnection: false }).reuseConnectionFromSessionId,
+    undefined,
+  );
+});
+
+test("copy and split clones default to no fresh-connection requirement", () => {
+  assert.equal(createCopiedTerminalSessionClone(session(), { id: "copy-default" }).requireFreshConnection, undefined);
+  assert.equal(createSplitTerminalSessionClone(session(), { id: "split-default" }).requireFreshConnection, undefined);
+  assert.equal(
+    createCopiedTerminalSessionClone(session(), { id: "copy-reuse", reuseConnection: true }).requireFreshConnection,
+    undefined,
+  );
+});
+
+test("fresh SSH clones discard inherited directories even when a caller supplies one", () => {
+  for (const protocol of ["ssh", undefined] as const) {
+    const clone = createCopiedTerminalSessionClone(session({ protocol }), {
+      id: "fresh-no-cwd", reuseConnection: false, inheritedCwd: "/srv/old-target",
+    });
+    assert.equal(clone.pendingInitialCwd, undefined);
+    assert.equal(clone.requireFreshConnection, true);
+  }
+  const localClone = createCopiedTerminalSessionClone(session({ protocol: "local" }), {
+    id: "local-cwd", reuseConnection: false, inheritedCwd: "/home/alice/project",
+  });
+  assert.equal(localClone.localStartDir, "/home/alice/project");
+});
+
+test("copy session clones default to connection reuse when reuseConnection is unset", () => {
+  assert.equal(
+    createCopiedTerminalSessionClone(session(), { id: "copy-default" }).reuseConnectionFromSessionId,
+    "session-1",
+  );
 });
 
 test("split and copy session clones preserve local start directory", () => {
@@ -166,4 +223,32 @@ test("split and copy session clones preserve isolated plugin connection snapshot
   assert.notEqual(copied.pluginConnection, pluginConnection);
   assert.equal(split.reuseConnectionFromSessionId, undefined);
   assert.equal(copied.reuseConnectionFromSessionId, undefined);
+});
+
+for (const clone of [createSplitTerminalSessionClone, createCopiedTerminalSessionClone]) {
+  test(`${clone.name} keeps the type of an explicit local shell despite global settings`, () => {
+    for (const [localShell, shellType] of [["cmd.exe", "cmd"], ["pwsh.exe", "powershell"]] as const) {
+      const source = session({ protocol: "local", localShell, shellType });
+      const copied = clone(source, { id: "clone", localShellType: "posix" });
+      assert.equal(copied.localShell, localShell);
+      assert.equal(copied.shellType, shellType);
+      assert.equal(clone({ ...source, shellType: undefined },
+        { id: "legacy", localShellType: "posix" }).shellType, shellType);
+    }
+    const implicit = clone(session({ protocol: "local", shellType: "cmd" }),
+      { id: "clone-default", localShellType: "posix" });
+    assert.equal(implicit.shellType, "posix", "implicit shells still follow global settings");
+  });
+}
+
+test("copied backend-default local snapshot retains its shell semantics after global settings change", () => {
+  const source = session({ protocol: "local", localShell: "", localShellArgs: [], shellType: "powershell", localStartDir: "~" });
+  for (const clone of [
+    createCopiedTerminalSessionClone(source, { id: "copy-default-snapshot", localShellType: "posix" }),
+    createSplitTerminalSessionClone(source, { id: "split-default-snapshot", localShellType: "posix" }),
+  ]) {
+    assert.equal(clone.localShell, "");
+    assert.equal(clone.shellType, "powershell");
+    assert.equal(clone.localStartDir, "~");
+  }
 });

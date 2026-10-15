@@ -1,3 +1,4 @@
+import { runTransferAndWaitForOwner, TransferOwnerChangedError, type TransferOwnerObservation } from "./waitForTransferOwner";
 import type { Host, Identity, KnownHost, SSHKey, TerminalSettings, TransferTask } from "../../../domain/models";
 import { validateTransferResumeSource } from "../../../domain/sftpTransferCenter";
 import { STORAGE_KEY_SFTP_TRANSFER_CONCURRENCY } from "../../../infrastructure/config/storageKeys";
@@ -61,7 +62,10 @@ export type DedicatedResumeResult = {
 
 export type DedicatedResumeOptions = {
   children?: readonly TransferTask[];
-  onChildUpdate?: (child: TransferTask) => void;
+  /** Return true only when the consumer takes responsibility for disposing the observation. */
+  onChildUpdate?: (child: TransferTask, observation?: TransferOwnerObservation) => unknown;
+  onChildSuperseded?: (taskId: string) => void;
+  flushChildUpdates?: () => void;
   onDirectoryCheckpointUpdate?: (checkpoint: TransferTask["directoryResumeCheckpoint"]) => void;
   shouldAbort?: () => boolean;
 };
@@ -95,8 +99,8 @@ export function resetDedicatedSessionOpenGateForTests(): void {
 }
 
 /**
- * Resolve a vault host for a transfer endpoint. Prefer stable id; fall back to
- * label/hostname when the id is stale after vault edits or older task records.
+ * Resolve the recorded endpoint, never a same-named replacement. Legacy tasks
+ * without an id may use label/hostname only when exactly one host matches.
  */
 export function resolveHostForTransferEndpoint(
   hosts: readonly Host[],
@@ -104,16 +108,16 @@ export function resolveHostForTransferEndpoint(
   hostLabel?: string,
 ): Host | null {
   if (hostId) {
-    const byId = hosts.find((host) => host.id === hostId);
-    if (byId) return byId;
+    return hosts.find((host) => host.id === hostId) ?? null;
   }
   const needle = (hostLabel || "").trim().toLowerCase();
   if (!needle) return null;
-  return hosts.find((host) => {
+  const matches = hosts.filter((host) => {
     const label = (host.label || "").trim().toLowerCase();
     const hostname = (host.hostname || "").trim().toLowerCase();
     return label === needle || hostname === needle;
-  }) ?? null;
+  });
+  return matches.length === 1 ? matches[0] : null;
 }
 
 export type OpenTransferSftpSessionOptions = {
@@ -670,6 +674,7 @@ async function resumeSingleFileWithDedicatedSession(
             const validationError = validateTransferResumeSource(task, {
               size: sourceStat.size,
               lastModified: sourceStat.lastModified,
+              sizeKnown: sourceStat.sizeKnown,
             }, { allowSourceGrowth });
             const classified = classifyResumeSourceValidationError(validationError);
             if (classified.kind === "modified") {
@@ -1000,6 +1005,11 @@ async function resumeDirectoryWithDedicatedSession(
   onProgress?: (progress: DedicatedResumeProgress) => void,
   options?: DedicatedResumeOptions,
 ): Promise<DedicatedResumeResult> {
+  // Fresh recovery authorizes only pauses already present at its entry. Keep
+  // row references so a newer cross-window pause invalidates that permission.
+  const pausedAtResume = new Map(sftpTransferCenterStore.getSnapshot().tasks
+    .filter((child) => child.parentTaskId === parent.id && child.status === "paused")
+    .map((child) => [child.id, child]));
   const bridge = netcattyBridge.get();
   if (!bridge?.startStreamTransfer) {
     return { success: false, error: "Transfer bridge unavailable" };
@@ -1084,6 +1094,12 @@ async function resumeDirectoryWithDedicatedSession(
           // the source since the interrupted attempt, so rebuild it from empty.
           await resetDirectoryReplaceStage(parent, endpoints, targetSftpId);
         }
+        // Session setup and traversal may finish more children. Capture only
+        // after resetting the stage/checkpoint: all these completions refer to
+        // the discarded destination, while later completions remain valid.
+        const completedAtRestart = new Map(sftpTransferCenterStore.getSnapshot().tasks
+          .filter((child) => child.parentTaskId === parent.id && child.status === "completed")
+          .map((child) => [child.id, child]));
         const destRoot = resolveDirectoryResumeTargetRoot(parent);
         if (endpoints.isDownload) await ensureLocalDir(destRoot);
         if (targetSftpId) await ensureRemoteDir(targetSftpId, destRoot);
@@ -1182,8 +1198,25 @@ async function resumeDirectoryWithDedicatedSession(
             }
             if (targetSftpId) await ensureRemoteDir(targetSftpId, getParentPath(file.targetPath));
 
+            let countedCompleted = false;
+            const onOwnerChanged = () => {
+              if (countedCompleted) {
+                countedCompleted = false;
+                completedCount -= 1;
+                failedCount += 1;
+              }
+              options?.onChildSuperseded?.(childId);
+            };
+            let childObservation: TransferOwnerObservation | undefined = sftpTransferCenterStore.observeTaskSettlement(
+              childBase, resetPersistedCheckpoint ? completedAtRestart.get(childId) : undefined, onOwnerChanged,
+            );
+            const publishChild = (child: TransferTask) => {
+              if (childObservation?.hasIdentityConflict()) throw new TransferOwnerChangedError("Transfer identity changed before child update");
+              if (options?.onChildUpdate?.(child, childObservation) === true) childObservation = undefined;
+            };
             try {
               if (options?.shouldAbort?.()) throw new Error("Transfer cancelled");
+              if (childObservation.hasIdentityConflict()) throw new TransferOwnerChangedError("Transfer identity changed before source validation");
 
               const sourceType = endpoints.isUpload ? "local" as const : "sftp" as const;
               const targetType = endpoints.isDownload ? "local" as const : "sftp" as const;
@@ -1200,6 +1233,7 @@ async function resumeDirectoryWithDedicatedSession(
               const validationError = validateTransferResumeSource(childBase, {
                 size: sourceStat.size,
                 lastModified: sourceStat.lastModified,
+                sizeKnown: sourceStat.sizeKnown,
               }, { allowSourceGrowth });
               const classified = classifyResumeSourceValidationError(validationError);
               if (classified.kind === "restart") {
@@ -1211,8 +1245,7 @@ async function resumeDirectoryWithDedicatedSession(
                   sourceLastModified: sourceStat.lastModified,
                 };
               } else if (classified.kind === "modified") {
-                attentionCount += 1;
-                options?.onChildUpdate?.({
+                publishChild({
                   ...childBase,
                   status: "attention",
                   error: classified.message || validationError || "Source was modified",
@@ -1221,6 +1254,7 @@ async function resumeDirectoryWithDedicatedSession(
                   phase: undefined,
                   retryable: true,
                 });
+                attentionCount += 1;
                 return;
               } else if (classified.kind === "fatal") {
                 throw new Error(classified.message || validationError || "Resume validation failed");
@@ -1230,61 +1264,71 @@ async function resumeDirectoryWithDedicatedSession(
                 // zero-byte plans (`||` would incorrectly promote to grown size).
                 const plannedBytes = Number(childBase.totalBytes);
                 const hasPlannedBytes = Number.isFinite(plannedBytes) && plannedBytes >= 0;
+                // Stat-less SCP sources report size as a placeholder 0; keep the
+                // planned size rather than re-planning to a fake zero.
+                const sourceSizeKnown = sourceStat.sizeKnown !== false && Number.isFinite(sourceStat.size);
                 childBase = {
                   ...childBase,
-                  totalBytes: allowSourceGrowth
-                    ? (hasPlannedBytes ? plannedBytes : sourceStat.size)
-                    : (sourceStat.size || childBase.totalBytes),
-                  sourceLastModified: allowSourceGrowth
-                    && hasPlannedBytes
-                    && sourceStat.size > plannedBytes
-                    ? (childBase.sourceLastModified ?? sourceStat.lastModified)
-                    : (sourceStat.lastModified ?? childBase.sourceLastModified),
+                  totalBytes: !sourceSizeKnown
+                    ? childBase.totalBytes
+                    : allowSourceGrowth
+                      ? (hasPlannedBytes ? plannedBytes : sourceStat.size)
+                      : (sourceStat.size || childBase.totalBytes),
+                  sourceLastModified: !sourceSizeKnown
+                    ? (sourceStat.lastModified ?? childBase.sourceLastModified)
+                    : allowSourceGrowth
+                      && hasPlannedBytes
+                      && sourceStat.size > plannedBytes
+                      ? (childBase.sourceLastModified ?? sourceStat.lastModified)
+                      : (sourceStat.lastModified ?? childBase.sourceLastModified),
                 };
               }
 
               // Re-check abort after async stat before inserting a transferring child.
               if (options?.shouldAbort?.()) throw new Error("Transfer cancelled");
-              options?.onChildUpdate?.(childBase);
+              const streamResult = await runTransferAndWaitForOwner(childBase, () => {
+                // Publish only after admission, while identity changes are observed.
+                options?.onChildUpdate?.(childBase);
+                return bridge.startStreamTransfer!({
+                  transferId: childId,
+                  // Lifecycle events must carry the current identity even while
+                  // large-history renderer child updates remain batched.
+                  parentTaskId: childBase.parentTaskId,
+                  directoryEntryIndex: childBase.directoryEntryIndex,
+                  directoryEntryIdentity: childBase.directoryEntryIdentity,
+                  sourcePath: file.sourcePath,
+                  targetPath: file.targetPath,
+                  sourceType,
+                  targetType,
+                  sourceSftpId,
+                  targetSftpId,
+                  sourceHostId: endpoints.sourceHost?.id,
+                  targetHostId: endpoints.targetHost?.id,
+                  totalBytes: Number.isFinite(childBase.totalBytes)
+                    ? childBase.totalBytes
+                    : (file.size || undefined),
+                  resumable: parent.resumable !== false,
+                  checkpointBytes: childBase.checkpointBytes ?? 0,
+                  resumeStage: childBase.resumeStage,
+                  downloadCheckpointBytes: childBase.downloadCheckpointBytes,
+                  uploadCheckpointBytes: childBase.uploadCheckpointBytes,
+                  sourceFingerprint: childBase.sourceFingerprint,
+                  skipAdmission: true,
+                });
+              }, () => options?.shouldAbort?.() === true, pausedAtResume.get(childId),
+                resetPersistedCheckpoint ? completedAtRestart.get(childId) : undefined,
+                // Drop queued UI updates at the ownership change itself: waiting
+                // for this invocation's reply may allow an intervening batch flush.
+                onOwnerChanged,
+                (observation) => { childObservation = observation; return true; }, childObservation);
 
-              const streamResult = await bridge.startStreamTransfer!({
-                transferId: childId,
-                sourcePath: file.sourcePath,
-                targetPath: file.targetPath,
-                sourceType,
-                targetType,
-                sourceSftpId,
-                targetSftpId,
-                sourceHostId: endpoints.sourceHost?.id,
-                targetHostId: endpoints.targetHost?.id,
-                totalBytes: Number.isFinite(childBase.totalBytes)
-                  ? childBase.totalBytes
-                  : (file.size || undefined),
-                resumable: parent.resumable !== false,
-                checkpointBytes: childBase.checkpointBytes ?? 0,
-                resumeStage: childBase.resumeStage,
-                downloadCheckpointBytes: childBase.downloadCheckpointBytes,
-                uploadCheckpointBytes: childBase.uploadCheckpointBytes,
-                sourceFingerprint: childBase.sourceFingerprint,
-                skipAdmission: true,
-              });
+              if (childObservation?.hasIdentityConflict()) throw new TransferOwnerChangedError("Transfer identity changed before child update");
 
-              if (streamResult?.superseded === true) {
-                for (;;) {
-                  if (options?.shouldAbort?.()) throw new Error("Transfer cancelled");
-                  const latest = sftpTransferCenterStore.getTask(childBase.id);
-                  const status = latest?.status;
-                  if (status === "completed") break;
-                  if (status === "failed") throw new Error(latest?.error || "Transfer failed");
-                  if (status === "cancelled") throw new Error("Transfer cancelled");
-                  await new Promise((resolve) => setTimeout(resolve, 200));
-                }
-              } else if (streamResult?.error || streamResult?.cancelled) {
+              if (streamResult?.error || streamResult?.cancelled) {
                 throw new Error(streamResult.error || "Transfer cancelled");
               }
 
-              completedCount += 1;
-              options?.onChildUpdate?.({
+              publishChild({
                 ...childBase,
                 status: "completed",
                 transferredBytes: Number.isFinite(childBase.totalBytes)
@@ -1296,13 +1340,21 @@ async function resumeDirectoryWithDedicatedSession(
                 reconnectRequired: false,
                 phase: undefined,
               });
+              countedCompleted = true;
+              completedCount += 1;
               bumpParentProgress(0);
             } catch (error) {
               if (options?.shouldAbort?.() || /cancelled|canceled/i.test(error instanceof Error ? error.message : String(error))) {
                 throw error instanceof Error ? error : new Error(String(error));
               }
               failedCount += 1;
-              options?.onChildUpdate?.({
+              // Another invocation owns this ID now. Report this walk's failure
+              // without replacing the winner or recreating its compacted row.
+              if (error instanceof TransferOwnerChangedError || childObservation?.hasIdentityConflict()) {
+                options?.onChildSuperseded?.(childId);
+                return;
+              }
+              publishChild({
                 ...childBase,
                 status: "failed",
                 error: error instanceof Error ? error.message : String(error),
@@ -1311,6 +1363,8 @@ async function resumeDirectoryWithDedicatedSession(
                 reconnectRequired: false,
                 phase: undefined,
               });
+            } finally {
+              childObservation?.dispose();
             }
           },
         );
@@ -1320,6 +1374,10 @@ async function resumeDirectoryWithDedicatedSession(
     );
 
     if (result?.error) throw new Error(result.error);
+
+    // Commit deferred child outcomes before deciding success or promoting a stage.
+    // Async connection cleanup must not outlive provisional completion evidence.
+    options?.flushChildUpdates?.();
 
     if (attentionCount > 0 && failedCount === 0 && completedCount + attentionCount >= totalFiles) {
       return {

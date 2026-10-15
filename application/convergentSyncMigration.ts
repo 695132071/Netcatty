@@ -137,7 +137,7 @@ export async function initializePreparedConvergentMigration(options: {
   prepared: PreparedConvergentMigration;
   buildCurrentPayload: () => SyncPayload | Promise<SyncPayload>;
   buildPreApplyPayload: () => SyncPayload;
-  applyPayload: (payload: SyncPayload) => void | Promise<void>;
+  preparePayloadApply: (payload: SyncPayload) => Promise<() => Promise<void>>;
   translateProtectiveBackupFailure: (message: string) => string;
   manager?: CloudSyncManager;
   now?: number;
@@ -164,8 +164,9 @@ export async function initializePreparedConvergentMigration(options: {
             'Local sync data changed after the migration preview. Review the updated migration before enabling convergent sync.',
           );
         }
+        const applyPreparedPayload = await options.preparePayloadApply(prepared.plan.payload as SyncPayload);
         return async () => {
-          await options.applyPayload(prepared.plan.payload as SyncPayload);
+          await applyPreparedPayload();
           for (const baseline of prepared.providerBaselines) {
             await manager.saveConvergentProviderBaseline(baseline);
           }
@@ -195,8 +196,9 @@ export async function initializePreparedConvergentMigration(options: {
               'Local sync data changed while publishing the convergent migration. Retry sync to preserve the newer local edits.',
             );
           }
+          const applyPreparedPayload = await options.preparePayloadApply(mergedPayload);
           return async () => {
-            await options.applyPayload(mergedPayload);
+            await applyPreparedPayload();
             await commitReplica();
           };
         },

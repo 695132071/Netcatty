@@ -16,6 +16,7 @@ import {
   getSftpConflictTypeKey,
 } from "../domain/sftpConflict";
 import { isMissingStatError } from "../domain/sftpStatError";
+import { resolveSftpTransferConcurrency } from "../domain/sftpTransferConcurrency";
 
 // ============================================================================
 // Types
@@ -268,6 +269,7 @@ async function uploadEntriesWithOptionalCompression(
       controller,
       resolveConflict,
       config.targetHostId,
+      config.fileTransferConcurrency,
     );
   }
 
@@ -284,6 +286,7 @@ async function uploadEntriesWithOptionalCompression(
       controller,
       resolveConflict,
       config.targetHostId,
+      config.fileTransferConcurrency,
     );
   }
 
@@ -414,6 +417,7 @@ async function uploadEntriesWithOptionalCompression(
     controller,
     replayResolvedConflict,
     config.targetHostId,
+    config.fileTransferConcurrency,
   );
   return [...resolvedResults, ...terminalCompressedResults, ...regularResults];
 }
@@ -432,6 +436,7 @@ async function uploadEntries(
   controller?: UploadController,
   resolveConflict?: UploadConfig["resolveConflict"],
   targetHostId?: string,
+  fileTransferConcurrency?: number,
 ): Promise<UploadResult[]> {
   const results: UploadResult[] = [];
   const createdDirs = new Set<string>();
@@ -764,6 +769,7 @@ async function uploadEntries(
     standaloneTransferId: string,
     fileTotalBytes: number,
   ): Promise<{ cancelled?: boolean; error?: string }> => {
+    if (controller?.isCancelled(standaloneTransferId)) return { cancelled: true };
     let localFilePath = getDropEntryLocalPath(entry);
     let ownedTempPath: string | undefined;
 
@@ -779,13 +785,13 @@ async function uploadEntries(
         ownedTempPath = await bridge.stageUploadFile(entry.file, standaloneTransferId);
       } catch (error) {
         controller?.removeActiveTransfer(standaloneTransferId);
-        if (controller?.isCancelled() || /cancel/i.test(error instanceof Error ? error.message : String(error))) {
+        if (controller?.isCancelled(standaloneTransferId) || /cancel/i.test(error instanceof Error ? error.message : String(error))) {
           return { cancelled: true };
         }
         throw error;
       }
       localFilePath = ownedTempPath;
-      if (controller?.isCancelled()) {
+      if (controller?.isCancelled(standaloneTransferId)) {
         await bridge.deleteTempFile(ownedTempPath).catch(() => {});
         return { cancelled: true };
       }
@@ -919,9 +925,9 @@ async function uploadEntries(
     settleTask(taskId, settle);
   };
 
-  // Keep external multi-file uploads conservative: each file may open an
-  // isolated fastPut channel with its own in-flight WRITE fanout.
-  const UPLOAD_CONCURRENCY = 2;
+  const uploadConcurrency = resolveSftpTransferConcurrency(
+    () => fileTransferConcurrency,
+  );
 
   try {
     let entryIndex = 0;
@@ -951,6 +957,11 @@ async function uploadEntries(
           );
 
           if (uploadResult.cancelled) {
+            if (!bundleTaskId && !controller?.isCancelled()) {
+              settleFileTask(standaloneTransferId, lifecycleManaged, (taskId) => callbacks?.onTaskCancelled?.(taskId));
+              results.push({ fileName: entry.relativePath, success: false, cancelled: true });
+              continue;
+            }
             wasCancelled = true;
             settleFileTask(bundledChildTaskId, lifecycleManaged, (taskId) => callbacks?.onTaskCancelled?.(taskId));
             settleTask(bundleTaskId ?? "", (taskId) => callbacks?.onTaskCancelled?.(taskId));
@@ -1021,7 +1032,7 @@ async function uploadEntries(
     };
 
     const workers = Array.from(
-      { length: Math.min(UPLOAD_CONCURRENCY, fileEntries.length || 1) },
+      { length: Math.min(uploadConcurrency, fileEntries.length || 1) },
       () => worker(),
     );
     await Promise.all(workers);

@@ -20,3 +20,9 @@ test('session tab menu exposes optional edit-host when a vault host is present',
   assert.match(source, /editHost && onEditHost/);
   assert.match(source, /terminal\.layer\.hostTree\.editHost/);
 });
+
+test('session tab menu offers duplicate-session alongside copy-tab', () => {
+  assert.match(source, /onDuplicateSession\?: \(sessionId: string\) => void/);
+  assert.match(source, /onDuplicateSession &&/);
+  assert.match(source, /tabs\.duplicateSession/);
+});

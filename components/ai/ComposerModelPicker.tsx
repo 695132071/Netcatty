@@ -2,6 +2,7 @@ import { Check, ChevronLeft, ChevronRight, Loader2, Pin, Search, Star } from 'lu
 import React, { useEffect, useMemo, useState } from 'react';
 import { useI18n } from '../../application/i18n/I18nProvider';
 import {
+  canonicalizeEffortEncodedModelId,
   filterComposerModels,
   resolveComposerEnterModelId,
   resolvePinnedAndRecentModels,
@@ -21,9 +22,20 @@ export interface ComposerModelPickerProps {
   selectedProviderId?: string;
   selectedModelId?: string;
   modelPresets?: AgentModelPreset[];
+  /**
+   * The host's live model catalog (external SDK agents like OpenCode) is still
+   * loading. Show the loading row instead of an empty/placeholder list.
+   */
+  loading?: boolean;
   prefs: ComposerModelPrefs;
+  /**
+   * Offer the "use custom model" action. Disable when the host locks the
+   * model (e.g. a managed Codex config's `model` field overrides every
+   * selection), so the action never becomes a silent no-op.
+   */
+  allowCustomEntry?: boolean;
   onSelectProviderModel?: (providerId: string, modelId: string, contextWindow?: number) => void;
-  onSelectModel?: (modelId: string) => void;
+  onSelectModel?: (modelId: string, options?: { custom?: boolean }) => void;
   onTogglePinned: (entry: ComposerModelPrefEntry) => void;
 }
 
@@ -56,7 +68,7 @@ const ModelRow: React.FC<{
       {selected
         ? <Check size={11} className="text-primary shrink-0" />
         : <span className="w-[11px] shrink-0" />}
-      <span className="min-w-0 flex-1 truncate text-foreground/88">{model.name}</span>
+      <span className="min-w-0 flex-1 truncate text-foreground/88" title={model.name}>{model.name}</span>
     </button>
     <button
       type="button"
@@ -82,7 +94,9 @@ export const ComposerModelPicker: React.FC<ComposerModelPickerProps> = ({
   selectedProviderId,
   selectedModelId,
   modelPresets = [],
+  loading = false,
   prefs,
+  allowCustomEntry = true,
   onSelectProviderModel,
   onSelectModel,
   onTogglePinned,
@@ -133,11 +147,27 @@ export const ComposerModelPicker: React.FC<ComposerModelPickerProps> = ({
   );
 
   const trimmedQuery = query.trim();
+  // Manual model ids are accepted in both modes: provider-bound catalogs and
+  // preset lists from external CLI agents whose catalogs lag new models.
   const showCustom = Boolean(
-    hasProviders
+    allowCustomEntry
     && trimmedQuery
     && !models.some((model) => model.id.toLowerCase() === trimmedQuery.toLowerCase()),
   );
+
+  // Ids the prefs already mark as custom. A saved custom model that was
+  // appended to the preset list is selectable from Recent/Pinned while
+  // showCustom is false (query empty, id present in the list); the callback
+  // must keep the custom provenance or the host overwrites the pref entry
+  // without it and resolveComposerCustomModelIds drops the model (#3534).
+  const customPrefIds = useMemo(() => {
+    const ids = new Set<string>();
+    for (const entry of [...prefs.pinned, ...prefs.recent]) {
+      if (entry.providerId || entry.custom !== true) continue;
+      ids.add(canonicalizeEffortEncodedModelId(entry.modelId).trim().toLowerCase());
+    }
+    return ids;
+  }, [prefs]);
 
   const selectModel = (modelId: string) => {
     const contextWindow = models.find((model) => model.id === modelId)?.contextWindow;
@@ -145,11 +175,23 @@ export const ComposerModelPicker: React.FC<ComposerModelPickerProps> = ({
       onSelectProviderModel?.(previewProvider.id, modelId, contextWindow);
       return;
     }
-    onSelectModel?.(modelId);
+    // showCustom is only true when no catalog id matches the query, so a
+    // matching pick here came from the manual-entry action (row or Enter).
+    // Otherwise preserve provenance already recorded in the prefs.
+    const custom = Boolean(
+      (showCustom && modelId.toLowerCase() === trimmedQuery.toLowerCase())
+      || customPrefIds.has(modelId.toLowerCase()),
+    );
+    onSelectModel?.(modelId, custom ? { custom: true } : undefined);
   };
 
   const prefEntryFor = (modelId: string): ComposerModelPrefEntry => (
-    previewProvider ? { providerId: previewProvider.id, modelId } : { modelId }
+    previewProvider
+      ? { providerId: previewProvider.id, modelId }
+      // Preserve custom provenance on pin/unpin: a manual model pinned while
+      // other selections evict its unmarked recent twin would otherwise lose
+      // the custom marker and fall back to a catalog model (#3534).
+      : { modelId, ...(customPrefIds.has(modelId.toLowerCase()) ? { custom: true as const } : {}) }
   );
 
   if (hasProviders && view === 'providers') {
@@ -235,7 +277,7 @@ export const ComposerModelPicker: React.FC<ComposerModelPickerProps> = ({
       </div>
 
       <div className="max-h-[280px] overflow-y-auto">
-        {catalog.loading && (
+        {(catalog.loading || (loading && !hasProviders)) && (
           <div className="flex h-8 items-center gap-1.5 px-2.5 text-[11px] text-muted-foreground/55">
             <Loader2 size={11} className="animate-spin" />
             {t('ai.chat.loadingModels')}
@@ -308,7 +350,7 @@ export const ComposerModelPicker: React.FC<ComposerModelPickerProps> = ({
           />
         ))}
 
-        {!catalog.loading && filtered.length === 0 && !showCustom && (
+        {!catalog.loading && !loading && filtered.length === 0 && !showCustom && (
           <div className="px-2.5 py-2 text-[11px] text-muted-foreground/50">
             {catalog.error || t('ai.chat.noMatchingModels')}
           </div>

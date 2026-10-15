@@ -10,6 +10,7 @@ const {
 } = require("../boundedSshExec.cjs");
 const { openBoundedSftpChannel } = require("../boundedSftpOpen.cjs");
 const { openBoundedForwardOutCallback } = require("../boundedSshChannelOpen.cjs");
+const { remoteSoftwareRequiresSingleChannel } = require("../../../domain/singleChannelSshBanner.shared.cjs");
 
 /** Bound shell/scp probes so a hung remote exec cannot leave the panel connecting forever. */
 const SCP_PROBE_TIMEOUT_MS = 15_000;
@@ -68,8 +69,27 @@ function shouldRetrySftpKeyboardInteractiveFirst(options, authConfig, err) {
   );
 }
 
+function allowsSharedSftpTransport(options) {
+  return options?.reuseTransport !== false && !options?.sudo && options?.singleChannelSsh !== true;
+}
+
 function shouldRegisterFreshSftpTransport(options) {
-  return options?.reuseTransport !== false && !options?.sudo;
+  return allowsSharedSftpTransport(options);
+}
+
+/** Sudo is part of the requested connection contract; never downgrade it. */
+async function openRequiredSudoSftp({
+  connectSudoSftp,
+  sshClient,
+  password,
+  closeFreshClient,
+}) {
+  try {
+    return await connectSudoSftp(sshClient, password);
+  } catch (error) {
+    closeFreshClient();
+    throw error;
+  }
 }
 
 function createOpenConnectionApi(ctx) {
@@ -750,6 +770,17 @@ function createOpenConnectionApi(ctx) {
       let pendingDialCoordination = options._pendingDialCoordination || null;
 
       const openOnSharedTransport = async (transport, detail = "reusing shared SSH transport") => {
+        if (
+          options.singleChannelSsh
+          || transport.endpoint?.singleChannelSsh
+          || remoteSoftwareRequiresSingleChannel(transport?.conn?._remoteVer)
+        ) {
+          const err = new Error(
+            "This host is configured for single-channel SSH. Opening SFTP on the terminal connection would disconnect it.",
+          );
+          err.code = "ERR_SFTP_SINGLE_CHANNEL_BASTION";
+          throw err;
+        }
         const refHolder = {
           id: connId,
           __sshLeaseKind: "sftp",
@@ -759,6 +790,7 @@ function createOpenConnectionApi(ctx) {
         const reusedClient = createSessionBackedSftpClient(connId, transport.conn, {
           refHolder,
           sourceSessionId: options.sourceSessionId || null,
+          singleChannelSsh: !!(options.singleChannelSsh || transport.endpoint?.singleChannelSsh),
         });
         reusedClient.__netcattyEndpointKey = transport.endpointKey || buildEndpointKey(reuseEndpoint);
         reusedClient.__netcattyTransportManaged = true;
@@ -799,8 +831,7 @@ function createOpenConnectionApi(ctx) {
       // a transfer never silently attaches to a terminal/parked conn.
       if (
         !pendingDialCoordination
-        && options.reuseTransport !== false
-        && !options.sudo
+        && allowsSharedSftpTransport(options)
         && typeof findTransportByEndpoint === "function"
         && typeof createSessionBackedSftpClient === "function"
       ) {
@@ -819,8 +850,7 @@ function createOpenConnectionApi(ctx) {
 
       if (
         !pendingDialCoordination
-        && options.reuseTransport !== false
-        && !options.sudo
+        && allowsSharedSftpTransport(options)
         && typeof beginTransportDial === "function"
       ) {
         const coordination = beginTransportDial(reuseEndpoint, { kind: "channel" });
@@ -831,7 +861,12 @@ function createOpenConnectionApi(ctx) {
               : await waitForTransportDial(coordination);
             return await openOnSharedTransport(transport, "reused coordinated transport");
           } catch (coordinationErr) {
-            if (coordination.role === "join") throw coordinationErr;
+            if (
+              coordination.role === "join"
+              && coordinationErr?.code !== "ERR_SFTP_SINGLE_CHANNEL_BASTION"
+            ) {
+              throw coordinationErr;
+            }
             console.warn(
               `[SFTP] Coordinated transport reuse failed for ${connId}; connecting fresh:`,
               coordinationErr?.message || String(coordinationErr),
@@ -851,6 +886,7 @@ function createOpenConnectionApi(ctx) {
 
       async function openFreshSftp() {
       const client = new SftpClient();
+      let peerSingleChannelSsh = options.singleChannelSsh === true;
       client.__netcattyEndpointKey = buildEndpointKey(reuseEndpoint);
       let freshClientClosed = false;
       const closeFreshClient = () => {
@@ -1191,6 +1227,9 @@ function createOpenConnectionApi(ctx) {
           sshClient.once('ready', () => {
             clearAuthReadyTimer();
             cleanup();
+            if (remoteSoftwareRequiresSingleChannel(sshClient._remoteVer)) {
+              peerSingleChannelSsh = true;
+            }
             sendSftpProgress(event.sender, connId, options.hostname, 'connected');
 
             const fileProtocol = normalizeFileProtocol(options.fileProtocol);
@@ -1235,28 +1274,19 @@ function createOpenConnectionApi(ctx) {
               (async () => {
                 try {
                   const sudoPass = options.password || "";
-                  const sftpWrapper = await connectSudoSftp(sshClient, sudoPass);
+                  const sftpWrapper = await openRequiredSudoSftp({
+                    connectSudoSftp,
+                    sshClient,
+                    password: sudoPass,
+                    closeFreshClient,
+                  });
                   sftpWrapper.on('close', () => client.end());
                   finishSftp(sftpWrapper);
                 } catch (e) {
-                  // Fallback: if sftp-server binary is missing (exit code 127),
-                  // try standard SFTP subsystem instead of failing completely.
-                  // This handles systems like ESXi that don't have sftp-server
-                  // but support the SFTP subsystem natively.
-                  if (e.message && e.message.includes('exit code 127')) {
-                    console.warn('[SFTP] sftp-server not found, falling back to standard SFTP subsystem');
-                    options.sudo = false; // Mark as non-sudo for downstream logic
-                    openBoundedSftpChannel(sshClient).then((sftp) => {
-                      finishSftp(sftp);
-                    }).catch((sftpErr) => {
-                        // Do not drop to SCP after a sudo-mode open: elevation was requested.
-                        closeFreshClient();
-                        reject(sftpErr);
-                    });
-                  } else {
-                    closeFreshClient();
-                    reject(e);
-                  }
+                  // Elevation is part of the requested connection contract. A
+                  // standard SFTP fallback would look successful while silently
+                  // losing access to the requested destination.
+                  reject(e);
                 }
               })();
             } else {
@@ -1265,6 +1295,12 @@ function createOpenConnectionApi(ctx) {
                 finishSftp(sftp);
               }).catch((err) => {
                   if (fileProtocol === "auto") {
+                    if (peerSingleChannelSsh) {
+                      reject(new Error(
+                        `SFTP subsystem unavailable (${err.message}). This host is configured for single-channel SSH, so SCP fallback is disabled.`,
+                      ));
+                      return;
+                    }
                     void finishScp(`SFTP subsystem unavailable (${err.message})`);
                     return;
                   }
@@ -1298,7 +1334,7 @@ function createOpenConnectionApi(ctx) {
         const sshConn = client.client;
         if (
           sshConn
-          && shouldRegisterFreshSftpTransport(options)
+          && shouldRegisterFreshSftpTransport({ ...options, singleChannelSsh: peerSingleChannelSsh })
           && typeof createTransport === "function"
           && typeof borrowTransport === "function"
         ) {
@@ -1337,6 +1373,10 @@ function createOpenConnectionApi(ctx) {
           }
         }
 
+        client.__netcattySingleChannelSsh = peerSingleChannelSsh;
+        if (client.client) {
+          client.client.__netcattySingleChannelSsh = peerSingleChannelSsh;
+        }
         sftpClients.set(connId, client);
     
         // Store jump connections for cleanup when SFTP is closed (legacy path

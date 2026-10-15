@@ -1,6 +1,14 @@
 /* eslint-disable no-undef */
 const { executeBoundedSshCommand } = require("../boundedSshExec.cjs");
 const { listInteractiveShellPids } = require("../sshInteractiveShells.cjs");
+function extraExecUnsupportedError(session) {
+  if (!session?.singleChannelSsh) return null;
+  console.log("[SSH] skipped extra exec on single-channel session", session.hostname || "");
+  return {
+    success: false,
+    error: "Remote SSH server does not support extra exec channels",
+  };
+}
 function decodeLsofFileName(value) {
   if (typeof value !== 'string') return null;
   // lsof's caret form is ambiguous: a BEL byte and the literal characters
@@ -53,22 +61,74 @@ function decodeLsofFileName(value) {
   }
 }
 
+/**
+ * Wrap a one-shot remote probe so it cannot outlive the client-side timeout.
+ *
+ * If the renderer or transport abandons an exec (client-side run timeout,
+ * window close, teardown), sshd can keep the remote shell alive — on weak
+ * hosts these orphaned probe shells linger and burn CPU until someone kills
+ * them by hand (#3187). A watchdog subshell SIGKILLs the probe shell once the
+ * same bound the client enforces has elapsed, so an abandoned probe always
+ * terminates remotely even when the server never reacts to the channel close.
+ *
+ * POSIX-safe: `$$` inside a subshell still refers to the parent shell on
+ * bash/dash/ash, so the watchdog knows the probe shell's PID. Killing only
+ * `$$` is not enough: a probe blocked in an external child (`df`, `ps`,
+ * `lsof`, `cat`, ...) leaves that child orphaned, still holding the channel's
+ * output descriptors. The watchdog therefore also SIGKILLs the probe shell's
+ * whole descendant tree (found via a PPID walk over `ps`, excluding the
+ * watchdog's own lineage) before killing the probe shell itself. On hosts
+ * without a usable `ps` the watchdog degrades to the old self-kill. The
+ * subshell's stdio is detached from the channel so nothing it forks (notably
+ * its `sleep`) can hold the channel's output descriptors open. The trailing
+ * cleanup runs on the success path and must also kill the watchdog's pending
+ * `sleep` child: killing only the subshell would leave that `sleep` alive
+ * until the full watchdog duration (which equals the client-side timeout),
+ * and while it lived it would hold the channel's descriptors, delaying the
+ * channel close until then — turning successful probes into timeouts.
+ * Children are enumerated via a PPID walk *before* the subshell is killed;
+ * once it dies they are reparented to init and unreachable. After a watchdog
+ * kill the main shell is SIGKILLed before reaching the cleanup, so the
+ * already-finished watchdog leaves no orphaned `sleep` behind.
+ */
+function withRemoteWatchdog(command, timeoutMs) {
+  const seconds = Math.max(1, Math.ceil((Number(timeoutMs) || 10000) / 1000));
+  const descendantTreeAwk =
+    '{ pp[$1+0]=$2+0 } END { for (p in pp) { q=p+0; d=0; while (q>0 && d<4096) { if (q==root) { printf "%s ", p+0; break } if (q==self) break; q=pp[q]+0; d++ } } }';
+  const watchdog = [
+    `( sleep ${seconds}`,
+    // Resolve the watchdog subshell's own PID so the tree walk can skip it
+    // (killing ourselves mid-list would abort the remaining kills).
+    // exec replaces the command-substitution shell: without it Bash may
+    // report that intermediate PID instead of the watchdog subshell.
+    `&& nc_self=$(exec sh -c 'echo $PPID' 2>/dev/null)`,
+    `&& nc_tree=$(ps -e -o pid=,ppid= 2>/dev/null | awk -v root="$$" -v self="$nc_self" '${descendantTreeAwk}')`,
+    `&& kill -9 $nc_tree "$$" 2>/dev/null ) </dev/null >/dev/null 2>&1 & nc_watchdog_pid=$!`,
+  ].join(' ');
+  return [
+    watchdog,
+    command,
+    'nc_status=$?',
+    // Reap the watchdog's pending `sleep` before killing the subshell: after
+    // the subshell is SIGKILLed its children are reparented to init and a
+    // PPID walk can no longer find them.
+    'nc_kids=$(ps -e -o pid=,ppid= 2>/dev/null | awk -v root="$nc_watchdog_pid" -v self="-1" \'' +
+      descendantTreeAwk +
+      "')",
+    'kill -9 $nc_kids "$nc_watchdog_pid" 2>/dev/null',
+    'exit $nc_status',
+  ].join('; ');
+}
+
 function createSessionOpsApi(ctx) {
   with (ctx) {
     const cwdRecoveryToken = Symbol('cwd-recovery');
-    function getTcpLatencyTarget(session) {
-      if (session.tcpLatencyDirect === false) return null;
-
-      const auth = session.tcpLatencyTarget || session.moshStatsAuth || session.etStatsAuth || session._reuseEndpoint || null;
-      if (auth?.hasJumpHost || auth?.hasProxy) return null;
-
-      const hostname = auth?.hostname || session.hostname;
-      const rawPort = auth?.port ?? 22;
-      const port = Number(rawPort);
-      if (!hostname || !Number.isInteger(port) || port < 1 || port > 65535) return null;
-      return { hostname, port };
+    function withPosixRemoteWatchdog(command, timeoutMs) {
+      // sshd invokes `$SHELL -c command`. fish/zsh cannot parse the POSIX watchdog.
+      // `exec sh -c` is accepted by fish and replaces the login shell so the
+      // POSIX sh's $PPID is sshd (needed by the cwd probe).
+      return `exec sh -c ${quoteShellArg(withRemoteWatchdog(command, timeoutMs))}`;
     }
-
     async function getSessionRemoteInfo(_event, payload) {
       const { sessionId } = payload || {};
       const session = sessions.get(sessionId);
@@ -97,6 +157,8 @@ function createSessionOpsApi(ctx) {
     async function getSessionDistroInfo(_event, payload) {
       const { sessionId } = payload || {};
       const session = sessions.get(sessionId);
+      const bastionBlock = extraExecUnsupportedError(session);
+      if (bastionBlock) return bastionBlock;
       if (session?.type === "et") {
         if (typeof execOnEtSession !== "function") {
           return { success: false, error: "ET command executor unavailable" };
@@ -106,12 +168,23 @@ function createSessionOpsApi(ctx) {
           knownHosts: session.etStatsAuth?.knownHosts,
         });
       }
-      if (!session || !session.conn) {
+      if (session?.type === 'mosh' && !session.moshStatsConn && typeof ensureMoshStatsConnection === 'function') {
+        try {
+          await ensureMoshStatsConnection(session, sessionId, _event?.sender);
+        } catch (err) {
+          return { success: false, error: err?.message || String(err) };
+        }
+      }
+      const conn = session?.conn || session?.moshStatsConn;
+      if (!conn) {
         return { success: false, error: 'Session not found or not connected' };
       }
-      const command = "cat /etc/os-release 2>/dev/null || uname -a";
+      const command = withPosixRemoteWatchdog(
+        "cat /etc/os-release 2>/dev/null || uname -a",
+        5000,
+      );
       try {
-        const { stdout, stderr } = await executeBoundedSshCommand(session.conn, command, {
+        const { stdout, stderr } = await executeBoundedSshCommand(conn, command, {
           openingTimeoutMs: 5000,
           runTimeoutMs: 5000,
           maxOutputBytes: 256 * 1024,
@@ -128,6 +201,8 @@ function createSessionOpsApi(ctx) {
       if (!session) {
         return { success: false, error: 'Session not found' };
       }
+      const bastionHistoryBlock = extraExecUnsupportedError(session);
+      if (bastionHistoryBlock) return bastionHistoryBlock;
 
       const safeLimit =
         Number.isFinite(limit) && limit > 0 && limit <= 10000 ? Math.floor(limit) : 1000;
@@ -255,6 +330,12 @@ function createSessionOpsApi(ctx) {
       if (!session || !session.conn) {
         return { success: false, error: 'Session not found or not connected' };
       }
+      log('getSessionPwd invoked', {
+        sessionId,
+        singleChannelSsh: !!session.singleChannelSsh,
+      });
+      const bastionPwdBlock = extraExecUnsupportedError(session);
+      if (bastionPwdBlock) return bastionPwdBlock;
       if (
         session.blockUntargetedCwdProbe
         && session.cwdRecoveryPromise
@@ -474,9 +555,10 @@ function createSessionOpsApi(ctx) {
         //      same-uid login shell cwd when allowed.
         //   5. Falls back to the user's home directory if the caller allows it.
         //
-        // `exec` makes sh replace the user's login shell (fish/bash/...)
-        // so sh keeps the same PID and $PPID = sshd. Starting another shell
-        // without exec would make $PPID point at the intermediate shell instead.
+        // Outer `exec sh -c` replaces the login shell (fish/zsh/...) so the
+        // POSIX sh's $PPID is sshd. That pid is exported as NC_SSHD_PPID
+        // because the watchdog wrapper would otherwise become $PPID of the
+        // inner posixScript (and macOS/BSD have no /proc fallback).
         const posixScript = `SELF=$$
     TARGET_LOGIN=${targetLoginPid}
     ALLOW_HOME_FALLBACK=${allowHomeFallback ? "1" : "0"}
@@ -571,13 +653,62 @@ function createSessionOpsApi(ctx) {
       _rc_cwd=$(readlink "/proc/$1/cwd" 2>/dev/null)
       if [ -n "$_rc_cwd" ]; then printf '%s\\n' "$_rc_cwd"; return 0; fi
       if command -v lsof >/dev/null 2>&1; then
-        _rc_cwd=$(LC_ALL=C lsof -a -p "$1" -d cwd -Fn 2>/dev/null | sed -n 's/^n//p' | head -n1)
+        # lsof can label an unreadable root shell's cwd as a directory while
+        # appending "(readlink: Permission denied)" to its name on AL2023
+        # (#3493). Check annotation-shaped names before using them: real
+        # directories can also end in text such as " (owner: alice)".
+        _rc_cwd=$(LC_ALL=C lsof -a -p "$1" -d cwd -Fnt 2>/dev/null | awk '
+          /^f/ { is_dir=0 }
+          /^t/ { is_dir=($0 == "tDIR" || $0 == "tVDIR") }
+          /^n/ && is_dir {
+            name=substr($0, 2)
+            if (name ~ / \\([A-Za-z][A-Za-z0-9]*: .*\\)$/) print "?" name
+            else print name
+            exit
+          }
+        ')
+        case "$_rc_cwd" in
+          \\?*)
+            _rc_cwd=\${_rc_cwd#?}
+            # lsof escapes non-ASCII bytes under LC_ALL=C. Decode only for
+            # the existence check; keep the original for the client decoder.
+            _rc_test_cwd=$(printf '%s' "$_rc_cwd" | LC_ALL=C awk '
+              function hex(c) { return index("0123456789abcdef", tolower(c)) - 1 }
+              {
+                for (i=1; i<=length($0); i++) {
+                  c=substr($0,i,1)
+                  if (c!="\\\\") { printf "%s", c; continue }
+                  e=substr($0,++i,1)
+                  if (e=="x") {
+                    hi=hex(substr($0,++i,1)); lo=hex(substr($0,++i,1))
+                    if (hi<0 || lo<0) exit 1
+                    printf "%c", hi*16+lo
+                  } else if (e=="\\\\") printf "\\\\"
+                  else if (e=="n") printf "\\n"
+                  else if (e=="r") printf "\\r"
+                  else if (e=="t") printf "\\t"
+                  else if (e=="b") printf "%c", 8
+                  else if (e=="f") printf "%c", 12
+                  else if (e=="v") printf "%c", 11
+                  else if (e ~ /^[0-7]$/) {
+                    n=e+0
+                    for (j=0; j<2 && substr($0,i+1,1) ~ /^[0-7]$/; j++) {
+                      n=n*8+substr($0,++i,1)
+                    }
+                    printf "%c", n
+                  } else exit 1
+                }
+              }
+            ') || return 1
+            [ -d "$_rc_test_cwd" ] || return 1
+            ;;
+        esac
         if [ -n "$_rc_cwd" ]; then printf 'NETCATTY_LSOF_CWD=%s\\n' "$_rc_cwd"; return 0; fi
       fi
       return 1
     }
     login="$TARGET_LOGIN"
-    [ -n "$login" ] || login=$(find_login_shell "$PPID")
+    [ -n "$login" ] || login=$(find_login_shell "\${NC_SSHD_PPID:-$PPID}")
     if [ -n "$login" ]; then
       printf 'NETCATTY_LOGIN_PID=%s\\n' "$login" >&2
       pid=$(find_active_shell "$login")
@@ -613,8 +744,16 @@ function createSessionOpsApi(ctx) {
     emit_home "$home"
     emit_home "$HOME"
     exit 1`;
-        const cmd = `exec sh -c ${quoteShellArg(posixScript)}`;
-    
+        // Capture sshd's pid in the exec'd POSIX sh (`$PPID` is sshd because
+        // `exec` replaced the login shell). Do not `exec` the inner posixScript:
+        // that would skip the watchdog cleanup after it.
+        const cmd = `exec sh -c ${quoteShellArg(
+          `export NC_SSHD_PPID=$PPID; ${withRemoteWatchdog(
+            `sh -c ${quoteShellArg(posixScript)}`,
+            timeoutMs,
+          )}`
+        )}`;
+
         void executeBoundedSshCommand(session.conn, cmd, {
           // Do not shorten channel opening: a timeout there invalidates the
           // shared SSH transport. Only bound the best-effort command itself.
@@ -666,10 +805,11 @@ function createSessionOpsApi(ctx) {
     
     // Resolve the directory the running `rz` writes to (its own cwd) and report
     // which of `names` already exist there. Returns { dir, existing } or null.
-    async function probeReceiveConflicts(session, names) {
+    async function probeReceiveConflicts(session, names, { signal } = {}) {
         if (!session || !session.conn || !Array.isArray(names) || names.length === 0) {
           return null;
         }
+        if (session.singleChannelSsh) return null;
         const script = `SELF=$$
     find_login_shell() {
       ps -e -o pid=,ppid=,tty=,comm= 2>/dev/null | awk -v pp="$1" -v self="$SELF" '
@@ -707,6 +847,8 @@ function createSessionOpsApi(ctx) {
               openingTimeoutMs: 5000,
               runTimeoutMs: 5000,
               maxOutputBytes: 1024 * 1024,
+              signal,
+              invalidateTransportOnAbort: false,
             });
             let dir = null; const existing = []; const modes = {};
             for (const line of out.split("\n")) {
@@ -724,20 +866,35 @@ function createSessionOpsApi(ctx) {
     }
     
     // rm -f the given absolute remote paths (quoted; injection-safe).
-    async function removeRemoteFiles(session, paths) {
+    async function removeRemoteFiles(session, paths, { signal } = {}) {
         if (!session || !session.conn || !Array.isArray(paths) || paths.length === 0) return;
+        if (session.singleChannelSsh) return;
         const argv = paths.map((p) => quoteShellArg(p)).join(" ");
+        const commitToken = "NETCATTY_ZMODEM_COMMIT";
+        const command = `exec sh -c ${quoteShellArg(
+          `IFS= read -r token || exit 125; ` +
+          `[ "$token" = ${quoteShellArg(commitToken)} ] || exit 125; ` +
+          `rm -f -- "$@"`,
+        )} sh ${argv}`;
         await executeBoundedSshCommand(
           session.conn,
-          `exec sh -c 'rm -f -- "$@"' sh ${argv}`,
-          { openingTimeoutMs: 5000, runTimeoutMs: 5000, maxOutputBytes: 64 * 1024 },
+          command,
+          {
+            openingTimeoutMs: 5000,
+            runTimeoutMs: 5000,
+            maxOutputBytes: 64 * 1024,
+            signal,
+            invalidateTransportOnAbort: false,
+            onStream: (stream) => stream.end(`${commitToken}\n`),
+          },
         ).catch(() => {});
     }
     
     // chmod the given { path, mode } entries back to their captured permissions
     // (parameterized; injection-safe). Modes are validated octal before use.
-    async function restoreRemoteModes(session, entries) {
+    async function restoreRemoteModes(session, entries, { signal } = {}) {
         if (!session || !session.conn || !Array.isArray(entries) || entries.length === 0) return;
+        if (session.singleChannelSsh) return;
         const args = [];
         for (const e of entries) {
           if (!e || !e.path || !/^[0-7]{3,4}$/.test(String(e.mode))) continue;
@@ -746,10 +903,23 @@ function createSessionOpsApi(ctx) {
         }
         if (args.length === 0) return;
         const script = 'while [ "$#" -ge 2 ]; do chmod "$1" "$2" 2>/dev/null; shift 2; done';
+        const commitToken = "NETCATTY_ZMODEM_COMMIT";
+        const command = `exec sh -c ${quoteShellArg(
+          `IFS= read -r token || exit 125; ` +
+          `[ "$token" = ${quoteShellArg(commitToken)} ] || exit 125; ` +
+          script,
+        )} sh ${args.join(" ")}`;
         await executeBoundedSshCommand(
           session.conn,
-          `exec sh -c ${quoteShellArg(script)} sh ${args.join(" ")}`,
-          { openingTimeoutMs: 5000, runTimeoutMs: 5000, maxOutputBytes: 64 * 1024 },
+          command,
+          {
+            openingTimeoutMs: 5000,
+            runTimeoutMs: 5000,
+            maxOutputBytes: 64 * 1024,
+            signal,
+            invalidateTransportOnAbort: false,
+            onStream: (stream) => stream.end(`${commitToken}\n`),
+          },
         ).catch(() => {});
     }
     
@@ -770,6 +940,8 @@ function createSessionOpsApi(ctx) {
       if (!session || !session.conn) {
         return { success: false, entries: [], error: 'Session not found' };
       }
+      const bastionListBlock = extraExecUnsupportedError(session);
+      if (bastionListBlock) return { ...bastionListBlock, entries: [] };
     
       if (typeof dirPath !== "string" || dirPath.length === 0) {
         return { success: false, entries: [], error: 'Invalid directory path' };
@@ -892,6 +1064,8 @@ function createSessionOpsApi(ctx) {
       if (!session) {
         return { success: false, error: 'Session not found or not connected' };
       }
+      const bastionStatsBlock = extraExecUnsupportedError(session);
+      if (bastionStatsBlock) return bastionStatsBlock;
 
       const isEtSession = session.type === "et";
       const etUsesExecFallback = isEtSession && session.etStatsAuth?.hasJumpHost;
@@ -1114,9 +1288,23 @@ function createSessionOpsApi(ctx) {
         `kernel=$(uname -r 2>/dev/null || echo "")`,
         `uptime=$(awk '{printf "%.0f",$1}' /proc/uptime 2>/dev/null || echo "")`,
         `loadavg=$(awk '{print $1" "$2" "$3}' /proc/loadavg 2>/dev/null || echo "")`,
+        // GPU: NVIDIA GPUs expose utilization + VRAM through the driver-bundled
+        // nvidia-smi. Best-effort — empty on hosts without the tool, so the UI
+        // simply hides the GPU chip. Utilization is averaged across GPUs and
+        // VRAM is summed independently; incomplete memory totals remain unknown.
+        // The first GPU's name is kept for the tooltip.
+        // Bound GPU queries independently so a stuck driver cannot stop CPU/memory
+        // polling. Hosts without timeout also omit this optional metric.
+        // macOS is skipped: powermetrics needs root, which stats must not.
+        `gpustat=$(gpucsv=$(timeout -s KILL 2 nvidia-smi --query-gpu=utilization.gpu,memory.used,memory.total,name --format=csv,noheader,nounits 2>/dev/null) && printf '%s\\n' "$gpucsv" | awk -F', *' 'NF >= 4 {g++; if($1 ~ /^[0-9]+$/) {n++; u+=$1} if($2 ~ /^[0-9]+$/) {mu+=$2; uc++} if($3 ~ /^[0-9]+$/) {mt+=$3; tc++} if(name=="") name=$4} END{if(n>0) printf "%.0f %s %s %s", u/n, (uc==g ? sprintf("%.0f",mu) : "N/A"), (tc==g ? sprintf("%.0f",mt) : "N/A"), name}' 2>/dev/null || echo "")`,
         // Output all stats (using CPURAW and PERCORERAW instead of CPU and PERCORE)
-        `echo "CPURAW:$cpuraw|CORES:$cores|PERCORERAW:$percoreraw|MEMINFO:$meminfo|PROCS:$procs|NET:$net|HOST:$hostname_value|OS:$osname|KERNEL:$kernel|UPTIME:$uptime|LOAD:$loadavg"`
+        `echo "CPURAW:$cpuraw|CORES:$cores|PERCORERAW:$percoreraw|MEMINFO:$meminfo|PROCS:$procs|NET:$net|GPU:$gpustat|HOST:$hostname_value|OS:$osname|KERNEL:$kernel|UPTIME:$uptime|LOAD:$loadavg"`
       ].join('; ');
+
+      // Client-side run bound shared by the stats and disk probes; the remote
+      // watchdog uses the same value so an abandoned probe self-kills instead
+      // of lingering on the target host (#3187).
+      const statsRunTimeoutMs = 10000;
 
       // Get mounted disk info. GNU and BusyBox support df -T; the awk parser
       // also accepts the legacy POSIX -kP layout as a fallback. PVE/LXC guests
@@ -1124,11 +1312,11 @@ function createSessionOpsApi(ctx) {
       // so keep non-pseudo filesystems. Skip FUSE/cloud/NFS/CIFS network mounts:
       // their quotas are not local capacity. Keep a loop-backed rootfs while
       // dropping snap loops, derive missing percentages, and fall back to "/".
-      const linuxDiskStatsCommand = [
+      const linuxDiskStatsCommand = withPosixRemoteWatchdog([
         `disks=$( { ${linuxDiskTable}; } | ${linuxDiskAwk} | sed 's/,$//' )`,
         `[ -n "$disks" ] || disks=$( { ${linuxDiskRoot}; } | ${linuxDiskAwk} | sed 's/,$//' )`,
         `echo "DISKS:$disks"`,
-      ].join('; ');
+      ].join('; '), statsRunTimeoutMs);
 
       // Dropbear rejects command requests larger than 9000 bytes by closing
       // the entire SSH transport, including an already-open interactive shell.
@@ -1136,10 +1324,13 @@ function createSessionOpsApi(ctx) {
       // additions cannot repeat issue #2924.
       const dropbearMaxCommandBytes = 9000;
       const latencyMarker = "NC_LATENCY_MARK";
-      const statsCommand = `printf "${latencyMarker}|"; ostype=$(uname -s 2>/dev/null || echo "Unknown"); if [ "$ostype" = "Darwin" ]; then ${macosStatsCommand}; elif [ "$ostype" = "Linux" ]; then ${linuxStatsCommand}; else echo "UNSUPPORTED_OS:$ostype"; fi`;
+      const statsCommand = withPosixRemoteWatchdog(
+        `printf "${latencyMarker}|"; ostype=$(uname -s 2>/dev/null || echo "Unknown"); if [ "$ostype" = "Darwin" ]; then ${macosStatsCommand}; elif [ "$ostype" = "Linux" ]; then ${linuxStatsCommand}; else echo "UNSUPPORTED_OS:$ostype"; fi`,
+        statsRunTimeoutMs,
+      );
       const statsExecOptions = {
-        openingTimeoutMs: 10000,
-        runTimeoutMs: 10000,
+        openingTimeoutMs: statsRunTimeoutMs,
+        runTimeoutMs: statsRunTimeoutMs,
         maxOutputBytes: 1024 * 1024,
         setTimeoutFn: setTimeout,
         clearTimeoutFn: clearTimeout,
@@ -1153,9 +1344,17 @@ function createSessionOpsApi(ctx) {
         }
         return executeBoundedSshCommand(conn, command, options);
       };
-      const tcpLatencyTarget = getTcpLatencyTarget(session);
-      const tcpLatencyPromise = tcpLatencyTarget && typeof measureTcpConnectLatency === 'function'
-        ? Promise.resolve(measureTcpConnectLatency(tcpLatencyTarget)).catch(() => null)
+      // Measure latency with an SSH transport ping on the connection already
+      // serving stats. A separate TCP connect to the SSH port would land in
+      // sshd logs as a failed pre-auth login with no username (issue #3320).
+      // A shared interactive connection must honor the user's keepalive opt-out
+      // (some network devices ignore these requests and would poison the FIFO).
+      // Dedicated Mosh/ET companions disable periodic keepalives internally;
+      // they are not shared with forwarding and can still carry stats pings.
+      const pingDisabled = sshStatsConn === session.conn
+        && sshStatsConn?.config?.keepaliveInterval === 0;
+      const pingLatencyPromise = sshStatsConn && !pingDisabled && typeof measureSshPingLatency === 'function'
+        ? Promise.resolve(measureSshPingLatency(sshStatsConn)).catch(() => null)
         : Promise.resolve(null);
       const formatStatsError = (error) => (
         error?.code === "SSH_EXEC_OPEN_TIMEOUT" || error?.code === "SSH_EXEC_RUN_TIMEOUT"
@@ -1182,7 +1381,7 @@ function createSessionOpsApi(ctx) {
                 .filter(Boolean)
                 .join('|');
             }
-            const measuredLatency = await tcpLatencyPromise;
+            const measuredLatency = await pingLatencyPromise;
             if (settled) return;
             const latencyMs = Number.isFinite(measuredLatency) ? measuredLatency : null;
     
@@ -1217,7 +1416,10 @@ function createSessionOpsApi(ctx) {
             let kernelRelease = "";
             let uptimeSeconds = null;
             let loadAverage = [];
-    
+            let gpu = null;
+            let gpuName = null;
+            let gpuMemUsed = null;
+            let gpuMemTotal = null;
             for (const part of parts) {
               if (part.startsWith('CPU:')) {
                 // macOS: command reports normalized CPU% directly (no delta needed)
@@ -1341,6 +1543,28 @@ function createSessionOpsApi(ctx) {
                       if (!isNaN(rxBytes) && !isNaN(txBytes)) {
                         networkInterfaces.push({ name, rxBytes, txBytes });
                       }
+                    }
+                  }
+                }
+              } else if (part.startsWith('GPU:')) {
+                // Linux: "<avgUtil> <sumMemUsed> <sumMemTotal> <first GPU name>"
+                const gpuStr = part.substring(4).trim();
+                if (gpuStr && gpuStr !== '') {
+                  const gpuFields = gpuStr.split(/\s+/);
+                  const util = parseInt(gpuFields[0], 10);
+                  if (!isNaN(util)) {
+                    gpu = Math.min(100, Math.max(0, util));
+                    if (gpuFields.length >= 2) {
+                      const memUsed = parseInt(gpuFields[1], 10);
+                      if (!isNaN(memUsed)) gpuMemUsed = memUsed;
+                    }
+                    if (gpuFields.length >= 3) {
+                      const memTotal = parseInt(gpuFields[2], 10);
+                      if (!isNaN(memTotal)) gpuMemTotal = memTotal;
+                    }
+                    if (gpuFields.length >= 4) {
+                      const name = gpuFields.slice(3).join(' ').trim();
+                      if (name) gpuName = name;
                     }
                   }
                 }
@@ -1492,6 +1716,10 @@ function createSessionOpsApi(ctx) {
                 cpu,           // CPU usage percentage (0-100)
                 cpuCores,      // Number of CPU cores
                 cpuPerCore,    // Per-core CPU usage array
+                gpu,           // NVIDIA GPU utilization percentage (0-100), null when unavailable
+                gpuName,       // First GPU name (tooltip), null when unavailable
+                gpuMemUsed,    // Summed VRAM used in MB, null when unavailable
+                gpuMemTotal,   // Summed VRAM total in MB, null when unavailable
                 memTotal,      // Total memory in MB
                 memUsed,       // Used memory in MB (excluding buffers/cache)
                 memFree,       // Free memory in MB
@@ -1506,7 +1734,7 @@ function createSessionOpsApi(ctx) {
                 disks,         // Array of all mounted disks
                 netRxSpeed,    // Total network receive speed (bytes/sec)
                 netTxSpeed,    // Total network transmit speed (bytes/sec)
-                latencyMs,      // TCP connection establishment latency to the SSH endpoint (ms)
+                latencyMs,      // SSH transport ping on the existing session (ms); never a second TCP dial (#3630)
                 netInterfaces, // Per-interface network stats
                 hostname,
                 osName,

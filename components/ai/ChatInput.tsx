@@ -6,7 +6,7 @@
  * and a bottom toolbar with muted controls + subtle send button.
  */
 
-import { ArrowUp, AtSign, Check, ChevronDown, ChevronRight, Cpu, Eye, FileText, ImageIcon, Loader2, MessageSquare, Package, Plus, ShieldCheck, SquareTerminal, X, Zap } from 'lucide-react';
+import { ArrowUp, AtSign, BookOpen, Check, ChevronDown, ChevronRight, Cpu, Eye, FileText, ImageIcon, Loader2, MessageSquare, Package, Plus, ShieldCheck, SquareTerminal, X, Zap } from 'lucide-react';
 import {
   resolveModelSelectionWithThinking,
   resolveThinkingSelection,
@@ -54,6 +54,8 @@ import {
 } from '../ai-elements/prompt-input';
 import type { PromptInputStatus } from '../ai-elements/prompt-input';
 import type { AgentModelPreset, AIPermissionMode, ProviderConfig, UploadedFile } from '../../infrastructure/ai/types';
+import type { VaultNote } from '../../domain/models';
+import { createVaultNoteSearchIndex } from '../../domain/notes';
 import { ProviderIconBadge } from '../settings/tabs/ai/ProviderIconBadge';
 import { VariableSizeVirtualList, type VariableSizeVirtualListHandle } from '../ui/VariableSizeVirtualList';
 import { Tooltip, TooltipContent, TooltipTrigger } from '../ui/tooltip';
@@ -204,6 +206,14 @@ interface ChatInputProps {
   placeholder?: string;
   /** Available model presets for the current agent */
   modelPresets?: AgentModelPreset[];
+  /** Live agent model catalog (OpenCode) is still loading. */
+  modelCatalogLoading?: boolean;
+  /**
+   * Offer the picker's "use custom model" action. Disable when the current
+   * agent locks the model (e.g. managed Codex `model` config overrides the
+   * selection on every send).
+   */
+  allowCustomModelEntry?: boolean;
   /** Currently selected model ID */
   selectedModelId?: string;
   /** Callback when user selects a model */
@@ -216,6 +226,10 @@ interface ChatInputProps {
   onRemoveFile?: (id: string) => void;
   /** Available hosts for @ mention */
   hosts?: Array<{ sessionId: string; hostname: string; label: string; connected: boolean }>;
+  /** Available Vault → Notes entries for the Mention Note picker */
+  notes?: VaultNote[];
+  /** Callback when the user picks a note to attach as context */
+  onMentionNote?: (note: VaultNote) => void;
   /** User skills currently selected for the next send */
   selectedUserSkills?: Array<{ id: string; slug: string; name: string; description: string }>;
   /** Available user skills for /skill-slug insertion */
@@ -265,12 +279,16 @@ const ChatInput: React.FC<ChatInputProps> = ({
   agentName,
   placeholder,
   modelPresets = [],
+  modelCatalogLoading = false,
+  allowCustomModelEntry = true,
   selectedModelId,
   onModelSelect,
   files = [],
   onAddFiles,
   onRemoveFile,
   hosts = [],
+  notes = [],
+  onMentionNote,
   selectedUserSkills = [],
   userSkills = [],
   quickMessages = [],
@@ -285,7 +303,7 @@ const ChatInput: React.FC<ChatInputProps> = ({
   parked = false,
 }) => {
   const { t } = useI18n();
-  const hasTerminalSelectionAttachment = files.some((file) => file.terminalSelection);
+  const hasTerminalSelectionAttachment = files.some((file) => file.terminalSelection || file.vaultNoteId);
   const composerDisabled = disabled || isSteering;
   const composerTextRef = useRef(value);
   const hasTextStoreRef = useRef<ComposerHasTextStore | null>(null);
@@ -298,13 +316,15 @@ const ChatInput: React.FC<ChatInputProps> = ({
   const [composerMaxHeight, setComposerMaxHeight] = useState(CHAT_INPUT_MAX_HEIGHT);
   const composerDesiredHeightRef = useRef<number | null>(null);
   // Consolidate menu state into a single discriminated union to prevent multiple menus open simultaneously
-  type ActiveMenu = 'model' | 'thinking' | 'attach' | 'atMention' | 'slashCommand' | 'perm' | null;
+  type ActiveMenu = 'model' | 'thinking' | 'attach' | 'atMention' | 'noteMention' | 'slashCommand' | 'perm' | null;
   const [activeMenu, setActiveMenu] = useState<ActiveMenu>(null);
   const [menuPos, setMenuPos] = useState<{ left: number; bottom: number } | null>(null);
   const [inputPanelPos, setInputPanelPos] = useState<{ left: number; bottom: number; width: number } | null>(null);
   const [modelPrefs, setModelPrefs] = useState<ComposerModelPrefs>(() => readComposerModelPrefs(pickerScope));
   const [slashQuery, setSlashQuery] = useState('');
   const [slashRange, setSlashRange] = useState<{ start: number; end: number } | null>(null);
+  // Search query for the Mention Note picker
+  const [noteQuery, setNoteQuery] = useState('');
   // Active highlight index for @ mention / slash skill keyboard navigation
   const [activeMenuIndex, setActiveMenuIndex] = useState(0);
 
@@ -313,6 +333,7 @@ const ChatInput: React.FC<ChatInputProps> = ({
   const showThinkingPicker = activeMenu === 'thinking';
   const showAttachMenu = activeMenu === 'attach';
   const showAtMention = activeMenu === 'atMention';
+  const showNoteMention = activeMenu === 'noteMention';
   const showSlashCommandPicker = activeMenu === 'slashCommand';
   const showPermPicker = activeMenu === 'perm';
 
@@ -322,6 +343,7 @@ const ChatInput: React.FC<ChatInputProps> = ({
     setInputPanelPos(null);
     setSlashQuery('');
     setSlashRange(null);
+    setNoteQuery('');
   }, []);
 
   useEffect(() => {
@@ -582,7 +604,12 @@ const ChatInput: React.FC<ChatInputProps> = ({
     closeAllMenus();
   }, [readComposerText, commitComposerText, closeAllMenus]);
 
-  const openInputPanelMenu = useCallback((menu: 'atMention' | 'slashCommand') => {
+  const handleSelectNoteMention = useCallback((note: VaultNote) => {
+    onMentionNote?.(note);
+    closeAllMenus();
+  }, [onMentionNote, closeAllMenus]);
+
+  const openInputPanelMenu = useCallback((menu: 'atMention' | 'noteMention' | 'slashCommand') => {
     const pos = getInputPanelMenuPos();
     if (!pos) return;
     setMenuPos(null);
@@ -745,6 +772,58 @@ const ChatInput: React.FC<ChatInputProps> = ({
   useEffect(() => {
     if (showSlashCommandPicker) setActiveMenuIndex(0);
   }, [showSlashCommandPicker, slashCommandKey]);
+
+  // Mention Note picker: filtered notes, highlight reset, search-input focus
+  const searchMentionNotes = useMemo(
+    () => showNoteMention ? createVaultNoteSearchIndex(notes) : null,
+    [notes, showNoteMention],
+  );
+  const noteMentionItems = useMemo(
+    () => searchMentionNotes?.(noteQuery) ?? [],
+    [searchMentionNotes, noteQuery],
+  );
+  const noteMentionKey = useMemo(
+    () => JSON.stringify(noteMentionItems.map((note) => note.id)),
+    [noteMentionItems],
+  );
+  const noteSearchInputRef = useRef<HTMLInputElement>(null);
+  const noteListId = React.useId();
+  useEffect(() => {
+    if (showNoteMention) setActiveMenuIndex(0);
+  }, [showNoteMention, noteMentionKey]);
+  useEffect(() => {
+    if (!showNoteMention || noteMentionItems.length === 0) return;
+    atMentionListRef.current?.scrollToIndex(activeMenuIndex);
+  }, [activeMenuIndex, noteMentionKey, noteMentionItems.length, showNoteMention]);
+  useEffect(() => {
+    if (!showNoteMention) return;
+    noteSearchInputRef.current?.focus();
+  }, [showNoteMention]);
+
+  const handleNoteMentionKeyDown = useCallback((e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.nativeEvent.isComposing) return;
+    if (e.key === 'Escape') {
+      e.preventDefault();
+      closeAllMenus();
+      return;
+    }
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      const note = noteMentionItems[Math.min(activeMenuIndex, noteMentionItems.length - 1)];
+      if (note) handleSelectNoteMention(note);
+      return;
+    }
+    if (noteMentionItems.length === 0) return;
+    if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      setActiveMenuIndex((i) => (i + 1) % noteMentionItems.length);
+      return;
+    }
+    if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      setActiveMenuIndex((i) => (i - 1 + noteMentionItems.length) % noteMentionItems.length);
+    }
+  }, [activeMenuIndex, closeAllMenus, handleSelectNoteMention, noteMentionItems]);
 
   useEffect(() => {
     if (!showSlashCommandPicker || !menuPos || slashCommandItems.length === 0) return;
@@ -921,7 +1000,10 @@ const ChatInput: React.FC<ChatInputProps> = ({
     ? providerSwitcherChipLabel
     : (selectedPreset?.name || modelName || providerName || t('ai.chat.noModel'));
   const modelChipMaxWidth = hasProviderSwitcher ? 'max-w-[168px]' : 'max-w-[96px]';
-  const hasModelPicker = hasProviderSwitcher || (modelPresets.length > 0 && !!onModelSelect);
+  // Keep the picker open-able while an OpenCode catalog load is pending so
+  // the user sees the loading row instead of stale built-in presets (#3584).
+  const hasModelPicker = hasProviderSwitcher
+    || ((modelPresets.length > 0 || modelCatalogLoading) && !!onModelSelect);
   const thinkingLevels = useMemo(
     () => (
       hasProviderSwitcher && onThinkingLevelChange
@@ -1041,6 +1123,8 @@ const ChatInput: React.FC<ChatInputProps> = ({
               >
                 {file.terminalSelection ? (
                   <SquareTerminal size={12} className="text-muted-foreground/70 shrink-0" />
+                ) : file.vaultNoteId ? (
+                  <BookOpen size={11} className="text-muted-foreground/60 shrink-0" />
                 ) : file.mediaType.startsWith('image/') ? (
                   <ImageIcon size={11} className="text-muted-foreground/60 shrink-0" />
                 ) : (
@@ -1051,6 +1135,12 @@ const ChatInput: React.FC<ChatInputProps> = ({
                     <span className="block truncate max-w-[210px] text-foreground/82">
                       {t('ai.chat.terminalSelectionAttachment')}
                       {file.lineCount ? ` · ${t('ai.chat.terminalSelectionLines').replace('{count}', String(file.lineCount))}` : ''}
+                    </span>
+                  </span>
+                ) : file.vaultNoteId ? (
+                  <span className="min-w-0">
+                    <span className="block truncate max-w-[210px] text-foreground/82">
+                      {file.vaultNoteTitle || file.filename}
                     </span>
                   </span>
                 ) : (
@@ -1209,6 +1299,76 @@ const ChatInput: React.FC<ChatInputProps> = ({
           document.body,
         )}
 
+        {/* Mention Note popover */}
+        {showNoteMention && inputPanelPos && createPortal(
+          <>
+            <div className="fixed inset-0 z-[999]" onClick={closeAllMenus} />
+            <div
+              className="fixed z-[1000] overflow-hidden rounded-lg border border-border/50 bg-popover shadow-lg"
+              style={{ left: inputPanelPos.left, bottom: inputPanelPos.bottom, width: 'auto', minWidth: Math.min(240, inputPanelPos.width), maxWidth: inputPanelPos.width }}
+            >
+              <div className="p-1.5 border-b border-border/40">
+                <input
+                  ref={noteSearchInputRef}
+                  role="combobox"
+                  aria-label={t('ai.chat.menuMentionNote')}
+                  aria-expanded={true}
+                  aria-controls={noteListId}
+                  aria-autocomplete="list"
+                  aria-activedescendant={noteMentionItems[activeMenuIndex] ? `${noteListId}-${activeMenuIndex}` : undefined}
+                  type="text"
+                  value={noteQuery}
+                  onChange={(e) => setNoteQuery(e.target.value)}
+                  onKeyDown={handleNoteMentionKeyDown}
+                  placeholder={t('ai.chat.mentionNoteSearch')}
+                  className="w-full h-6 rounded-md bg-muted/40 px-2 text-[12px] text-foreground outline-none placeholder:text-muted-foreground/50"
+                />
+              </div>
+              <div id={noteListId} role="listbox" aria-label={t('ai.chat.menuMentionNote')}>
+              {noteMentionItems.length === 0 ? (
+                <div className="px-3 py-2 text-[11px] text-muted-foreground/60">{t('ai.chat.mentionNoteEmpty')}</div>
+              ) : (
+                <div className="max-h-[280px]" style={{ height: Math.min(280, 8 + noteMentionItems.reduce((total, note) => total + (note.group ? 52 : 36), 0)) }}>
+                  <VariableSizeVirtualList
+                    ref={atMentionListRef}
+                    items={noteMentionItems}
+                    getItemHeight={(note) => note.group ? 52 : 36}
+                    getItemKey={(note) => note.id}
+                    className="h-full"
+                    contentClassName="p-1"
+                    renderItem={(note, idx) => {
+                      const isActive = idx === activeMenuIndex;
+                      return (
+                        <button
+                          id={`${noteListId}-${idx}`}
+                          type="button"
+                          role="option"
+                          aria-selected={isActive}
+                          onMouseEnter={() => setActiveMenuIndex(idx)}
+                          onClick={() => handleSelectNoteMention(note)}
+                          className={`h-full w-full rounded-md px-2 py-1 text-left transition-colors cursor-pointer ${isActive ? 'bg-muted/40' : 'hover:bg-muted/30'}`}
+                        >
+                          <div className="flex items-center gap-2 text-[12px] text-foreground/90">
+                            <BookOpen size={11} className="text-muted-foreground/50 shrink-0" />
+                            <span className="truncate">{note.title || t('ai.chat.untitledNote')}</span>
+                          </div>
+                          {note.group ? (
+                            <div className="pl-5 text-[10px] text-muted-foreground/60 truncate">
+                              {note.group}
+                            </div>
+                          ) : null}
+                        </button>
+                      );
+                    }}
+                  />
+                </div>
+              )}
+              </div>
+            </div>
+          </>,
+          document.body,
+        )}
+
         {/* / command popover */}
         {showSlashPickerUI && createPortal(
           <>
@@ -1314,6 +1474,19 @@ const ChatInput: React.FC<ChatInputProps> = ({
                   <button
                     type="button"
                     role="menuitem"
+                    aria-label={t('ai.chat.menuMentionNote')}
+                    disabled={!onMentionNote}
+                    title={!onMentionNote ? t('ai.chat.mentionNoteUnavailable') : undefined}
+                    onClick={() => openInputPanelMenu('noteMention')}
+                    className="w-full flex items-center gap-2.5 px-3 py-1.5 text-left text-[12px] hover:bg-muted/30 transition-colors cursor-pointer whitespace-nowrap disabled:opacity-40 disabled:cursor-not-allowed"
+                  >
+                    <BookOpen size={13} className="text-muted-foreground/60" />
+                    <span className="flex-1 text-foreground/85">{t('ai.chat.menuMentionNote')}</span>
+                    {notes.length > 0 && <ChevronRight size={10} className="text-muted-foreground/50" />}
+                  </button>
+                  <button
+                    type="button"
+                    role="menuitem"
                     aria-label="Mention host"
                     onClick={() => openInputPanelMenu('atMention')}
                     className="w-full flex items-center gap-2.5 px-3 py-1.5 text-left text-[12px] hover:bg-muted/30 transition-colors cursor-pointer whitespace-nowrap"
@@ -1366,7 +1539,7 @@ const ChatInput: React.FC<ChatInputProps> = ({
               ) : (
                 <Cpu size={11} className="text-muted-foreground/64" />
               )}
-              <span className={`truncate min-w-0 ${modelChipMaxWidth}`}>{modelLabel}</span>
+              <span className={`truncate min-w-0 ${modelChipMaxWidth}`} title={modelLabel}>{modelLabel}</span>
               {hasModelPicker && <ChevronDown size={9} className="text-muted-foreground/50" />}
             </button>
             {contextUsage && (
@@ -1425,19 +1598,23 @@ const ChatInput: React.FC<ChatInputProps> = ({
                     selectedProviderId={providerSwitcher?.selectedProviderId}
                     selectedModelId={hasProviderSwitcher ? providerSwitcher?.selectedModelId : selectedBaseModelId}
                     modelPresets={hasProviderSwitcher ? undefined : modelPresets}
+                    loading={!hasProviderSwitcher ? modelCatalogLoading : undefined}
+                    allowCustomEntry={allowCustomModelEntry}
                     prefs={modelPrefs}
                     onSelectProviderModel={(providerId, modelId, contextWindow) => {
                       providerSwitcher?.onSelect(providerId, modelId, contextWindow);
                       setModelPrefs(rememberComposerRecentModel(pickerScope, { providerId, modelId }));
                       closeAllMenus();
                     }}
-                    onSelectModel={(modelId) => {
+                    onSelectModel={(modelId, options) => {
                       const preset = modelPresets.find((item) => item.id === modelId);
                       const nextId = preset
                         ? resolveModelSelectionWithThinking(preset, selectedPresetThinking)
                         : modelId;
                       onModelSelect?.(nextId);
-                      setModelPrefs(rememberComposerRecentModel(pickerScope, { modelId }));
+                      setModelPrefs(rememberComposerRecentModel(pickerScope, options?.custom
+                        ? { modelId, custom: true }
+                        : { modelId }));
                       closeAllMenus();
                     }}
                     onTogglePinned={(entry) => {
@@ -1452,6 +1629,7 @@ const ChatInput: React.FC<ChatInputProps> = ({
               <ComposerThinkingChip
                 levels={thinkingLevels}
                 selectedLevel={visibleThinking}
+                allowDefault={hasProviderSwitcher && !!onThinkingLevelChange}
                 disabled={lockTurnConfiguration}
                 open={showThinkingPicker}
                 menuPos={showThinkingPicker ? menuPos : null}
@@ -1634,12 +1812,16 @@ function chatInputPropsAreEqual(prev: ChatInputProps, next: ChatInputProps): boo
     && prev.agentName === next.agentName
     && prev.placeholder === next.placeholder
     && prev.modelPresets === next.modelPresets
+    && prev.modelCatalogLoading === next.modelCatalogLoading
+    && prev.allowCustomModelEntry === next.allowCustomModelEntry
     && prev.selectedModelId === next.selectedModelId
     && prev.onModelSelect === next.onModelSelect
     && prev.files === next.files
     && prev.onAddFiles === next.onAddFiles
     && prev.onRemoveFile === next.onRemoveFile
     && prev.hosts === next.hosts
+    && prev.notes === next.notes
+    && prev.onMentionNote === next.onMentionNote
     && prev.selectedUserSkills === next.selectedUserSkills
     && prev.userSkills === next.userSkills
     && prev.quickMessages === next.quickMessages

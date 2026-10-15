@@ -15,7 +15,10 @@ export {
 } from "./vaultHostCreate";
 import { parseQuickConnectInput } from "./quickConnect";
 import { findExactHeaderIndex, findHeaderIndex, parseCsv } from "./vaultImport/csvUtils";
-import { decodeCsvKeyPath, decodeCsvPassphrase } from "./vaultImport/csvCredentialFields";
+import { decodeCsvKeyPath, decodeCsvLocalShell, decodeCsvPassphrase } from "./vaultImport/csvCredentialFields";
+import { parseCsvProxy } from "./vaultImport/csvProxy";
+import { attachMobaXtermPasswords } from "./vaultImport/mobaXtermPasswords";
+import { decodeFinalShellPassword } from "./finalShellPassword";
 export {
   exportHostsToCsvWithStats,
   getVaultCsvTemplate,
@@ -102,6 +105,7 @@ export type VaultImportFormat =
   | "mobaxterm"
   | "csv"
   | "securecrt"
+  | "finalshell"
   | "ssh_config";
 
 export const VAULT_IMPORT_FORMATS: VaultImportFormat[] = [
@@ -109,6 +113,7 @@ export const VAULT_IMPORT_FORMATS: VaultImportFormat[] = [
   "putty",
   "mobaxterm",
   "securecrt",
+  "finalshell",
   "ssh_config",
 ];
 
@@ -321,7 +326,9 @@ const createHost = (input: {
 
 const dedupeHosts = (
   hosts: Host[],
-  options?: { isCollapsible?: (host: Host) => boolean },
+  options?: {
+    isCollapsible?: (host: Host) => boolean;
+  },
 ): { hosts: Host[]; duplicates: number } => {
   const seen = new Map<string, Host>();
   const retained: Host[] = [];
@@ -440,6 +447,8 @@ const importFromCsv = (text: string): VaultImportResult => {
   const usernameIdx = findHeaderIndex(header, ["username", "user", "login"]);
   const keyPathIdx = findExactHeaderIndex(header, ["keypath", "key path", "identityfile", "identity file"]);
   const explicitPassphraseIdx = findExactHeaderIndex(header, ["passphrase", "keypassphrase", "key passphrase"]);
+  const proxyIdx = findExactHeaderIndex(header, ["proxy", "proxyserver", "proxy server"]);
+  const localShellIdx = findExactHeaderIndex(header, ["localshell"]);
   const passphraseIdx = keyPathIdx >= 0 ? explicitPassphraseIdx : -1;
   const exactPasswordIdx = findExactHeaderIndex(header, ["password", "pass", "passwd"]);
   const fuzzyNamedPasswordIdx = findHeaderIndex(header, ["password", "passwd"]);
@@ -522,6 +531,23 @@ const importFromCsv = (text: string): VaultImportResult => {
     const passphrase = decodedPassphrase && !isEncryptedCredentialPlaceholder(decodedPassphrase)
       ? decodedPassphrase
       : undefined;
+    const proxyRaw = (proxyIdx >= 0 ? row[proxyIdx] : undefined)?.trim();
+    const proxyConfig = proxyRaw ? parseCsvProxy(proxyRaw) : undefined;
+    if (proxyRaw && !proxyConfig) {
+      issues.push({
+        level: "warning",
+        message: `CSV row ${i + 2}: Proxy was ignored because it is not a valid http://, socks5://, or command:// value.`,
+      });
+    }
+
+    const localShellRaw = (localShellIdx >= 0 ? row[localShellIdx] : undefined)?.trim();
+    const localShellSpec = localShellRaw ? decodeCsvLocalShell(localShellRaw) : undefined;
+    if (localShellRaw && !localShellSpec) {
+      issues.push({
+        level: "warning",
+        message: `CSV row ${i + 2}: LocalShell was ignored because it is not a valid encoded local-shell value.`,
+      });
+    }
 
     if (decodedPassphrase && isEncryptedCredentialPlaceholder(decodedPassphrase)) {
       issues.push({
@@ -549,6 +575,15 @@ const importFromCsv = (text: string): VaultImportResult => {
       tags,
       notes,
     });
+    if (proxyConfig) host.proxyConfig = proxyConfig;
+    if (localShellSpec && protocol === "local") {
+      if (localShellSpec.shell) host.localShell = localShellSpec.shell;
+      if (localShellSpec.shellArgs) host.localShellArgs = localShellSpec.shellArgs;
+      if (localShellSpec.shellName) host.localShellName = localShellSpec.shellName;
+      if (localShellSpec.shellIcon) host.localShellIcon = localShellSpec.shellIcon;
+      if (localShellSpec.startDir) host.localStartDir = localShellSpec.startDir;
+      if (localShellSpec.os) host.os = localShellSpec.os;
+    }
     parsedHosts.push(host);
     if (keyPath && passphrase) {
       const keyPathKey = normalizeKeyPathKey(keyPath);
@@ -571,6 +606,10 @@ const importFromCsv = (text: string): VaultImportResult => {
     }
   }
 
+  // Local-shell entries share the endpoint key (local|localhost|22|<group>), so
+  // the shell identity is part of buildVaultHostMergeKey; otherwise importing a
+  // backup with CMD and PowerShell in the same group silently keeps only the
+  // first shell and flags the rest as duplicates.
   const { hosts, duplicates } = dedupeHosts(parsedHosts);
   const keyPassphrases = hosts.flatMap((host) => {
     const selectedKeyPath = host.identityFilePaths?.find((path) => path.trim())?.trim();
@@ -985,6 +1024,70 @@ const importFromSshConfig = (text: string): VaultImportResult => {
   };
 };
 
+const importFromFinalShell = (text: string): VaultImportResult => {
+  let connection: Record<string, unknown>;
+  try {
+    const parsed = JSON.parse(text.trim()) as unknown;
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      throw new Error("FinalShell connection must be a JSON object.");
+    }
+    connection = parsed as Record<string, unknown>;
+  } catch (error) {
+    throw new Error(error instanceof SyntaxError ? "Invalid FinalShell JSON." : String(error));
+  }
+
+  const issues: VaultImportIssue[] = [];
+  const connectionType = Number(connection.conection_type);
+  if (connectionType !== 100) {
+    return {
+      hosts: [],
+      groups: [],
+      issues: [{ level: "warning", message: "FinalShell connection: unsupported connection type." }],
+      stats: { parsed: 1, imported: 0, skipped: 1, duplicates: 0 },
+    };
+  }
+
+  const hostname = typeof connection.host === "string" ? connection.host.trim() : "";
+  if (!hostname) {
+    return {
+      hosts: [],
+      groups: [],
+      issues: [{ level: "warning", message: "FinalShell connection: missing host." }],
+      stats: { parsed: 1, imported: 0, skipped: 1, duplicates: 0 },
+    };
+  }
+
+  const encryptedPassword = typeof connection.password === "string"
+    ? connection.password.trim()
+    : "";
+  const password = encryptedPassword ? decodeFinalShellPassword(encryptedPassword) : undefined;
+  if (encryptedPassword && password === undefined) {
+    issues.push({
+      level: "warning",
+      message: "FinalShell password could not be decrypted and was skipped.",
+    });
+  }
+
+  const port = typeof connection.port === "number" || typeof connection.port === "string"
+    ? parsePort(String(connection.port))
+    : undefined;
+  const host = createHost({
+    label: typeof connection.name === "string" ? connection.name : undefined,
+    hostname,
+    port,
+    username: typeof connection.user_name === "string" ? connection.user_name : undefined,
+    password,
+    notes: typeof connection.description === "string" ? connection.description : undefined,
+    protocol: "ssh",
+  });
+  return {
+    hosts: [host],
+    groups: [],
+    issues,
+    stats: { parsed: 1, imported: 1, skipped: 0, duplicates: 0 },
+  };
+};
+
 const importFromSecureCrt = (text: string, fileName?: string): VaultImportResult => {
   const issues: VaultImportIssue[] = [];
   const lines = text.split(/\r?\n/);
@@ -1104,13 +1207,20 @@ const importFromSecureCrt = (text: string, fileName?: string): VaultImportResult
   };
 };
 
-const importFromMobaXterm = (text: string): VaultImportResult => {
+const importFromMobaXterm = (
+  text: string,
+  options?: { masterPassword?: string },
+): VaultImportResult => {
   const issues: VaultImportIssue[] = [];
   const lines = text.split(/\r?\n/);
 
   type Entry = { section: string; key: string; value: string };
   const entries: Entry[] = [];
   const sectionGroups = new Map<string, string | undefined>();
+  const passwordEntries = new Map<string, string>();
+  const credentialEntries = new Map<string, { username: string; ciphertext: string }>();
+  const misc = new Map<string, string>();
+  let hasSesspass = false;
 
   let section = "";
   for (const line of lines) {
@@ -1128,13 +1238,36 @@ const importFromMobaXterm = (text: string): VaultImportResult => {
     if (!mKv) continue;
     const key = mKv[1].trim();
     const value = mKv[2].trim();
-    const isBookmarkSection = /^bookmarks(?:_\d+)?$/i.test(section.trim());
+    const sectionName = section.trim();
+    const isBookmarkSection = /^bookmarks(?:_\d+)?$/i.test(sectionName);
 
     if (isBookmarkSection && key.toLowerCase() === "subrep") {
       sectionGroups.set(section, normalizeGroupPath(value));
       continue;
     }
     if (isBookmarkSection && key.toLowerCase() === "imgnum") continue;
+    if (/^passwords$/i.test(sectionName) && key && value) {
+      passwordEntries.set(key, value);
+      continue;
+    }
+    if (/^credentials$/i.test(sectionName) && key && value) {
+      const colon = value.indexOf(":");
+      if (colon > 0) {
+        credentialEntries.set(key, {
+          username: value.slice(0, colon),
+          ciphertext: value.slice(colon + 1),
+        });
+      }
+      continue;
+    }
+    if (/^misc$/i.test(sectionName)) {
+      misc.set(key.toLowerCase(), value);
+      continue;
+    }
+    if (/^sesspass$/i.test(sectionName)) {
+      hasSesspass = true;
+      continue;
+    }
 
     entries.push({ section, key, value });
   }
@@ -1253,7 +1386,18 @@ const importFromMobaXterm = (text: string): VaultImportResult => {
     );
   }
 
-  const { hosts, duplicates } = dedupeHosts(parsedHosts);
+  const { hosts: uniqueHosts, duplicates } = dedupeHosts(parsedHosts);
+  const attached = attachMobaXtermPasswords(uniqueHosts, {
+    passwords: passwordEntries,
+    credentials: credentialEntries,
+    sessionP: misc.get("sessionp"),
+    sysUsername: misc.get("mpsetaccount"),
+    sysHostname: misc.get("mpsetcomputer"),
+    passwordsInRegistry: misc.get("passwordsinregistry") === "1",
+    hasSesspass,
+  }, { masterPassword: options?.masterPassword });
+  issues.push(...attached.issues);
+  const hosts = attached.hosts;
   const groups = uniq(hosts.map((h) => h.group).filter(Boolean) as string[]);
   return {
     hosts,
@@ -1266,7 +1410,7 @@ const importFromMobaXterm = (text: string): VaultImportResult => {
 export const importVaultHostsFromText = (
   format: VaultImportFormat,
   text: string,
-  options?: { fileName?: string },
+  options?: { fileName?: string; masterPassword?: string },
 ): VaultImportResult => {
   const input = text ?? "";
   switch (format) {
@@ -1278,8 +1422,10 @@ export const importVaultHostsFromText = (
       return importFromSshConfig(input);
     case "securecrt":
       return importFromSecureCrt(input, options?.fileName);
+    case "finalshell":
+      return importFromFinalShell(input);
     case "mobaxterm":
-      return importFromMobaXterm(input);
+      return importFromMobaXterm(input, options);
     default: {
       const _exhaustive: never = format;
       return _exhaustive;
@@ -1301,9 +1447,12 @@ export function detectVaultImportFormat(text: string): VaultImportFormat | null 
   const hasMobaBookmarkSection = /^\[Bookmarks(?:_\d+)?\]\s*$/im.test(input);
   const hasMobaBookmarkMetadata = /^SubRep=.*$/im.test(input) && /^ImgNum=\d+\s*$/im.test(input);
   const hasMobaSessionLine = /^[^=\r\n]+=\s*(?:; logout)?\s*#\d+#\d+%[^%\r\n]+%\d+/im.test(input);
+  const hasMobaFullConfig = /^\[Misc\]\s*$/im.test(input)
+    && (/^SessionP=/im.test(input) || /^\[Passwords\]\s*$/im.test(input) || /^\[Credentials\]\s*$/im.test(input));
   if (
     /\[MobaXterm\]/i.test(input)
-    || (hasMobaBookmarkSection && (hasMobaBookmarkMetadata || hasMobaSessionLine))
+    || (hasMobaBookmarkSection && (hasMobaBookmarkMetadata || hasMobaSessionLine || hasMobaFullConfig))
+    || (hasMobaFullConfig && hasMobaBookmarkSection)
   ) {
     return "mobaxterm";
   }
@@ -1316,9 +1465,26 @@ export function detectVaultImportFormat(text: string): VaultImportFormat | null 
     return "securecrt";
   }
 
+  try {
+    const candidate = JSON.parse(input) as unknown;
+    if (
+      candidate
+      && typeof candidate === "object"
+      && !Array.isArray(candidate)
+      && Object.prototype.hasOwnProperty.call(candidate, "conection_type")
+      && typeof (candidate as Record<string, unknown>).host === "string"
+    ) {
+      return "finalshell";
+    }
+  } catch {
+    // Not JSON; continue with text formats.
+  }
+
   const firstLine = input.split(/\r?\n/, 1)[0] ?? "";
   if (
-    /hostname|host(name)?|server/i.test(firstLine)
+    !input.startsWith("{")
+    && !input.startsWith("[")
+    && /hostname|host(name)?|server/i.test(firstLine)
     && (firstLine.includes(",") || firstLine.includes("\t"))
   ) {
     return "csv";

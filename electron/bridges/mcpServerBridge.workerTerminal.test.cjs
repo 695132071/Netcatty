@@ -120,10 +120,12 @@ test("MCP/Catty terminal_execute proxies to worker when terminal sessions live i
           deviceType: "",
           connected: true,
           hostId: "",
+          savedHostId: "",
           hostChain: [],
           activePortForwards: [],
         },
         enforceWallTimeout: true,
+        commandBlocklist: [],
       },
       options: {},
     },
@@ -430,9 +432,11 @@ test("MCP/Catty terminal_start, poll, and stop proxy worker background jobs", as
       deviceType: "",
       connected: true,
       hostId: "",
+      savedHostId: "",
       hostChain: [],
       activePortForwards: [],
     },
+    commandBlocklist: [],
   });
 });
 

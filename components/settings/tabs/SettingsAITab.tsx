@@ -51,6 +51,7 @@ import { CopilotCliCard } from "./ai/CopilotCliCard";
 import { CodebuddyCard } from "./ai/CodebuddyCard";
 import { SafetySettings } from "./ai/SafetySettings";
 import { ExternalMcpCard } from "./ai/ExternalMcpCard";
+import { ToolAccessGuidance } from "./ai/ToolAccessGuidance";
 import { PermissionGrantsSettings } from "./ai/PermissionGrantsSettings";
 import { useAIPermissionGrantsState } from "../../../application/state/useAIPermissionGrantsState";
 import { WebSearchSettings } from "./ai/WebSearchSettings";
@@ -111,7 +112,7 @@ function getSavedManagedAgentPathInfo(
   return {
     path: command,
     binPath: command,
-    version: null,
+    version: managed.cliVersion ?? null,
     available: savedAvailable,
     installed: true,
     authenticated: undefined,
@@ -225,6 +226,7 @@ const SettingsAITab: React.FC<SettingsAITabProps> = ({
     codebuddy: string;
     opencode: string;
     grok: string;
+    mimo: string;
   } | null>(null);
   if (!initialManagedPathsRef.current) {
     initialManagedPathsRef.current = getInitialManagedAgentPaths(externalAgents);
@@ -297,6 +299,12 @@ const SettingsAITab: React.FC<SettingsAITabProps> = ({
   const [grokCustomPath, setGrokCustomPath] = useState(() => initialManagedPathsRef.current?.grok ?? "");
   const [isResolvingGrok, setIsResolvingGrok] = useState(false);
 
+  const [mimoPathInfo, setMimoPathInfo] = useState<AgentPathInfo | null>(
+    () => getSavedManagedAgentPathInfo(externalAgents, "mimo"),
+  );
+  const [mimoCustomPath, setMimoCustomPath] = useState(() => initialManagedPathsRef.current?.mimo ?? "");
+  const [isResolvingMimo, setIsResolvingMimo] = useState(false);
+
   const codebuddyManagedAgent = useMemo(
     () => externalAgents.find((a) => a.id === "discovered_codebuddy"),
     [externalAgents],
@@ -341,12 +349,16 @@ const SettingsAITab: React.FC<SettingsAITabProps> = ({
   const mountedRef = useRef(true);
   const agentPathRequestIdRef = useRef<Partial<Record<ManagedAgentKey, number>>>({});
   const codexRequestIdRef = useRef(0);
-  useEffect(() => () => {
-    mountedRef.current = false;
-    codexRequestIdRef.current += 1;
-    for (const key of ["codex", "claude", "copilot", "cursor", "codebuddy", "opencode", "grok"] as ManagedAgentKey[]) {
-      agentPathRequestIdRef.current[key] = (agentPathRequestIdRef.current[key] ?? 0) + 1;
-    }
+  useEffect(() => {
+    mountedRef.current = true;
+    const agentPathRequestIds = agentPathRequestIdRef.current;
+    return () => {
+      mountedRef.current = false;
+      codexRequestIdRef.current += 1;
+      for (const key of ["codex", "claude", "copilot", "cursor", "codebuddy", "opencode", "grok", "mimo"] as ManagedAgentKey[]) {
+        agentPathRequestIds[key] = (agentPathRequestIds[key] ?? 0) + 1;
+      }
+    };
   }, []);
 
   const applyResolvedAgentPath = useCallback((
@@ -366,7 +378,9 @@ const SettingsAITab: React.FC<SettingsAITabProps> = ({
               ? setCodebuddyPathInfo
               : agentKey === "opencode"
                 ? setOpencodePathInfo
-                : setGrokPathInfo;
+                : agentKey === "grok"
+                  ? setGrokPathInfo
+                  : setMimoPathInfo;
 
     setInfo(result);
 
@@ -409,7 +423,9 @@ const SettingsAITab: React.FC<SettingsAITabProps> = ({
               ? setIsResolvingCodebuddy
               : agentKey === "opencode"
                 ? setIsResolvingOpencode
-                : setIsResolvingGrok;
+                : agentKey === "grok"
+                  ? setIsResolvingGrok
+                  : setIsResolvingMimo;
 
     setResolving(true);
     const requestId = (agentPathRequestIdRef.current[agentKey] ?? 0) + 1;
@@ -450,7 +466,9 @@ const SettingsAITab: React.FC<SettingsAITabProps> = ({
                   ? setCodebuddyPathInfo
                   : agentKey === "opencode"
                     ? setOpencodePathInfo
-                    : setGrokPathInfo;
+                    : agentKey === "grok"
+                      ? setGrokPathInfo
+                      : setMimoPathInfo;
         setInfo(result);
         return result;
       }
@@ -489,6 +507,7 @@ const SettingsAITab: React.FC<SettingsAITabProps> = ({
       { key: "codebuddy", delayMs: 1280, path: initialPaths?.codebuddy ?? "" },
       { key: "opencode", delayMs: 1560, path: initialPaths?.opencode ?? "" },
       { key: "grok", delayMs: 1840, path: initialPaths?.grok ?? "" },
+      { key: "mimo", delayMs: 2120, path: initialPaths?.mimo ?? "" },
     ];
     const cancelTasks = tasks
       .filter((task) => !autoResolvedAgentStateRef.current[task.key])
@@ -640,6 +659,11 @@ const SettingsAITab: React.FC<SettingsAITabProps> = ({
     }, 900);
   }, []);
 
+  const codexManagedAgent = useMemo(
+    () => externalAgents.find((agent) => agent.id === "discovered_codex"),
+    [externalAgents],
+  );
+
   const refreshCodexIntegration = useCallback(async (opts?: { refreshShellEnv?: boolean; validateChatGptAuth?: boolean; codexPath?: string }) => {
     const bridge = getBridge();
     if (!bridge?.aiCodexGetIntegration) return;
@@ -650,7 +674,7 @@ const SettingsAITab: React.FC<SettingsAITabProps> = ({
     setIsCodexLoading(true);
     setCodexError(null);
     try {
-      const integration = await bridge.aiCodexGetIntegration(opts);
+      const integration = await bridge.aiCodexGetIntegration({ ...opts, agentEnv: codexManagedAgent?.env });
       if (!isCurrentRequest()) return;
       setCodexIntegration(integration);
     } catch (err) {
@@ -662,7 +686,7 @@ const SettingsAITab: React.FC<SettingsAITabProps> = ({
         setIsCodexLoading(false);
       }
     }
-  }, []);
+  }, [codexManagedAgent?.env]);
 
   const codexCommittedPath = useMemo(
     () => getManagedAgentCommandPath(externalAgents, "codex") || codexPathInfo?.path || undefined,
@@ -677,10 +701,6 @@ const SettingsAITab: React.FC<SettingsAITabProps> = ({
     codexCommittedPath
   ), [codexCommittedPath]);
 
-  const codexManagedAgent = useMemo(
-    () => externalAgents.find((agent) => agent.id === "discovered_codex"),
-    [externalAgents],
-  );
   const codexRuntime = codexManagedAgent?.codexRuntime ?? 'sdk';
 
   const refreshCodexAppServerStatus = useCallback(async () => {
@@ -748,7 +768,9 @@ const SettingsAITab: React.FC<SettingsAITabProps> = ({
               ? opencodeCustomPath
               : agentKey === "grok"
                 ? grokCustomPath
-                : "";
+                : agentKey === "mimo"
+                  ? mimoCustomPath
+                  : "";
     const result = await resolveAgentPath(agentKey, customPath, {
       refreshShellEnv: true,
       commandSource: customPath.trim() ? "manual" : "auto",
@@ -760,7 +782,7 @@ const SettingsAITab: React.FC<SettingsAITabProps> = ({
         codexPath: result?.path || customPath.trim() || undefined,
       });
     }
-  }, [claudeCustomPath, codexCustomPath, copilotCustomPath, codebuddyCustomPath, opencodeCustomPath, grokCustomPath, resolveAgentPath, refreshCodexIntegration]);
+  }, [claudeCustomPath, codexCustomPath, copilotCustomPath, codebuddyCustomPath, opencodeCustomPath, grokCustomPath, mimoCustomPath, resolveAgentPath, refreshCodexIntegration]);
 
   const handleResetCustomPath = useCallback(async (agentKey: ManagedAgentKey) => {
     if (agentKey === "codex") {
@@ -775,6 +797,8 @@ const SettingsAITab: React.FC<SettingsAITabProps> = ({
       setOpencodeCustomPath("");
     } else if (agentKey === "grok") {
       setGrokCustomPath("");
+    } else if (agentKey === "mimo") {
+      setMimoCustomPath("");
     }
 
     const result = await resolveAgentPath(agentKey, "", {
@@ -856,7 +880,7 @@ const SettingsAITab: React.FC<SettingsAITabProps> = ({
     setCodexError(null);
     setIsCodexLoading(true);
     try {
-      const result = await bridge.aiCodexStartLogin({ codexPath: getCodexPathOverride() });
+      const result = await bridge.aiCodexStartLogin({ codexPath: getCodexPathOverride(), agentEnv: codexManagedAgent?.env });
       if (!isCurrentRequest()) return;
       if (!result.ok || !result.session) {
         throw new Error(result.error || "Failed to start Codex login");
@@ -871,7 +895,7 @@ const SettingsAITab: React.FC<SettingsAITabProps> = ({
         setIsCodexLoading(false);
       }
     }
-  }, [getCodexPathOverride]);
+  }, [getCodexPathOverride, codexManagedAgent?.env]);
 
   const handleCancelCodexLogin = useCallback(async () => {
     const bridge = getBridge();
@@ -907,7 +931,7 @@ const SettingsAITab: React.FC<SettingsAITabProps> = ({
     setCodexError(null);
     setIsCodexLoading(true);
     try {
-      const result = await bridge.aiCodexLogout({ codexPath: getCodexPathOverride() });
+      const result = await bridge.aiCodexLogout({ codexPath: getCodexPathOverride(), agentEnv: codexManagedAgent?.env });
       if (!isCurrentRequest()) return;
       if (!result.ok) {
         throw new Error(result.error || "Failed to log out from Codex");
@@ -923,7 +947,7 @@ const SettingsAITab: React.FC<SettingsAITabProps> = ({
         setIsCodexLoading(false);
       }
     }
-  }, [getCodexPathOverride, refreshCodexIntegration]);
+  }, [getCodexPathOverride, refreshCodexIntegration, codexManagedAgent?.env]);
 
   const refreshUserSkillsStatus = useCallback(async () => {
     const bridge = getBridge();
@@ -1201,6 +1225,21 @@ const SettingsAITab: React.FC<SettingsAITabProps> = ({
             />
           </SettingsSection>
 
+          <SettingsSection
+            title={t('ai.mimo.title')}
+            leading={<AgentIconBadge agent={{ id: "mimo", icon: "mimo", name: "MiMo Code" }} variant="plain" className="h-5 w-5 text-muted-foreground/90" />}
+          >
+            <CopilotCliCard
+              pathInfo={mimoPathInfo}
+              isResolvingPath={isResolvingMimo}
+              customPath={mimoCustomPath}
+              onCustomPathChange={setMimoCustomPath}
+              onRecheckPath={() => void handleCheckCustomPath("mimo")}
+              onResetPath={() => void handleResetCustomPath("mimo")}
+              i18nPrefix="ai.mimo"
+            />
+          </SettingsSection>
+
           {agentOptions.length > 1 ? (
             <SettingsSection anchorId="ai-default-agent" title={t('ai.defaultAgent')}>
               <SettingCard>
@@ -1252,6 +1291,9 @@ const SettingsAITab: React.FC<SettingsAITabProps> = ({
                   className="w-48"
                 />
               </SettingRow>
+              <div className="pb-4">
+                <ToolAccessGuidance mode={toolIntegrationMode} />
+              </div>
             </SettingCard>
           </SettingsSection>
 

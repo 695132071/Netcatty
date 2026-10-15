@@ -214,8 +214,8 @@ test("RIS resets SGR so post-reset text is not colored from pre-entry style", ()
   const html = renderer.toHtmlContent();
   assert.match(html, /shell-after/);
   // Pre-entry red SGR must not wrap post-RIS shell text.
-  assert.equal(/color:\s*#cd3131[^"]*"[^>]*>shell-after/.test(html), false);
-  assert.match(html, /color:\s*#cd3131[^"]*"[^>]*>before/);
+  assert.equal(/color:\s*var\(--ansi-1[^)]*\)[^"]*"[^>]*>shell-after/.test(html), false);
+  assert.match(html, /color:\s*var\(--ansi-1[^)]*\)[^"]*"[^>]*>before/);
 });
 
 test("RIS rebases screen so later cursor-home does not overwrite history", () => {
@@ -247,4 +247,86 @@ test("split C1 CSI alternate-screen enter still omits TUI paint", () => {
   renderer.feed("h~\nstatus\n");
   renderer.feed("\x9b?1049l$ done\n");
   assert.equal(renderer.finish(), "before\n$ done");
+});
+
+test("SGR colors are emitted as themeable CSS variables with hex fallbacks", () => {
+  const renderer = createTerminalTextRenderer();
+  renderer.feed("\x1b[31mred \x1b[91mbright-red \x1b[44mbg-blue \x1b[0mplain\n");
+  const html = renderer.toHtmlContent();
+  // Basic / bright / background colors map to --ansi-N variables so the
+  // wrapping HTML page can swap palettes for light and dark themes.
+  assert.match(html, /color:\s*var\(--ansi-1, #cd3131\)[^"]*"[^>]*>red/);
+  assert.match(html, /color:\s*var\(--ansi-9, #f14c4c\)[^"]*"[^>]*>bright-red/);
+  assert.match(html, /color:\s*#f14c4c; background-color:\s*#2472c8/);
+});
+
+test("256-color base and cube foregrounds use themeable variables", () => {
+  const renderer = createTerminalTextRenderer();
+  renderer.feed("\x1b[38;5;1mbase\x1b[0m \x1b[38;5;208mcube\n");
+  const html = renderer.toHtmlContent();
+  assert.match(html, /color:\s*var\(--ansi-1, #cd3131\)[^"]*"[^>]*>base/);
+  assert.match(html, /color:\s*var\(--term-custom-ff8700, #ff8700\)[^"]*"[^>]*>cube/);
+});
+
+test("inverse text falls back to themeable default background/foreground", () => {
+  const renderer = createTerminalTextRenderer();
+  renderer.feed("\x1b[7minversed\x1b[0m\n");
+  const html = renderer.toHtmlContent();
+  assert.match(
+    html,
+    /color:\s*var\(--term-default-bg, #1e1e1e\); background-color:\s*var\(--term-default-fg, #d4d4d4\)/,
+  );
+});
+
+test("explicit backgrounds preserve original foreground/background pairs across themes", () => {
+  const renderer = createTerminalTextRenderer();
+  renderer.feed("\x1b[37;41mERROR\x1b[0m \x1b[40mTEXT\x1b[0m \x1b[38;5;15;48;5;1mindexed\x1b[0m \x1b[31;7minverse\x1b[0m \x1b[48;2;0;0;0mRGB background\x1b[0m");
+  const html = renderer.toHtmlContent();
+  assert.match(html, /color: #e5e5e5; background-color: #cd3131[^>]*>ERROR/);
+  assert.match(html, /color: #d4d4d4; background-color: #000000[^>]*>TEXT/);
+  assert.match(html, /color: #ffffff; background-color: #cd3131[^>]*>indexed/);
+  assert.match(html, /color: #1e1e1e; background-color: #cd3131[^>]*>inverse/);
+  assert.match(html, /color: #d4d4d4; background-color: #000000[^>]*>RGB background/);
+});
+
+test("line timestamps follow writes, erasure and preserved cleared screens", () => {
+  const renderer = createTerminalTextRenderer();
+  const formatLine = (line, timestamp) => line ? `[${timestamp}] ${line}` : line;
+  renderer.feed("before tui\n", 89);
+  renderer.feed("\x1b[H\x1b[2Jframe one\n", 389);
+  renderer.feed("\x1b[H\x1b[2Jframe two\n", 489);
+  const expected = "[89] before tui\n\n[389] frame one\n\n[489] frame two";
+  assert.equal(renderer.toString({ includePendingClearedScreen: true, formatLine }), expected);
+  renderer.finish();
+  assert.equal(renderer.toString({ formatLine }), expected);
+  assert.equal(renderer.toHtmlContent({ formatLine }), expected);
+});
+
+test("line timestamps track split ANSI writes and partial line erasure", () => {
+  const renderer = createTerminalTextRenderer();
+  const formatLine = (line, timestamp) => line ? `[${timestamp}] ${line}` : line;
+  renderer.feed("unchanged\r\nlong tail", 89);
+  renderer.feed("\r\x1b[", 389);
+  renderer.feed("31mshort\x1b[K", 489);
+  assert.equal(renderer.toString({ formatLine }), "[89] unchanged\n[489] short");
+  assert.match(renderer.toHtmlContent({ formatLine }), /\[489\] <span[^>]*>short<\/span>/);
+});
+
+test("no-op line erasure preserves the output timestamp", () => {
+  const renderer = createTerminalTextRenderer();
+  const formatLine = (line, timestamp) => line ? `[${timestamp}] ${line}` : line;
+  renderer.feed("completed", 1000);
+  renderer.feed("\x1b[K", 9000);
+  assert.equal(renderer.toString({ formatLine }), "[1000] completed");
+  renderer.feed("\r\x1b[4C\x1b[K", 10000);
+  assert.equal(renderer.toString({ formatLine }), "[10000] comp");
+});
+
+test("erasing styled spaces updates the visible line timestamp", () => {
+  const renderer = createTerminalTextRenderer();
+  const formatLine = (line, timestamp) => line ? `[${timestamp}] ${line}` : line;
+  renderer.feed("\x1b[41m   \x1b[0mtext", 1000);
+  assert.match(renderer.toHtmlContent({ formatLine }), /background-color/);
+  renderer.feed("\r\x1b[2C\x1b[1K", 9000);
+  assert.equal(renderer.toHtmlContent({ formatLine }), "[9000]    text");
 });

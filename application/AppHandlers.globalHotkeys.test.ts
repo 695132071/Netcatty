@@ -315,6 +315,30 @@ test('pane zoom hotkey delegates to the active in-app magnification surface', ()
   assert.equal(toggles, 1);
 });
 
+test('broadcast hotkey toggles global mode for an active orphan tab', () => {
+  let globalToggles = 0;
+  let workspaceToggles = 0;
+
+  executeHotkeyActionImpl(() => ({
+    activeTabStore: { getActiveTabId: () => 'orphan-1' },
+    editorTabs: [],
+    orderedTabs: ['orphan-1', 'orphan-2'],
+    settings: { showSftpTab: true, shellOnlyTabNumberShortcuts: false },
+    toEditorTabId: (id: string) => id,
+    sessions: [
+      { id: 'orphan-1' },
+      { id: 'orphan-2' },
+    ],
+    workspaces: [],
+    canUseGlobalBroadcast: true,
+    toggleBroadcast: () => { workspaceToggles += 1; },
+    toggleGlobalBroadcast: () => { globalToggles += 1; },
+  }), 'broadcast', {} as KeyboardEvent);
+
+  assert.equal(globalToggles, 1);
+  assert.equal(workspaceToggles, 0);
+});
+
 test('move-focus shortcut cannot send input behind a magnified pane', () => {
   let moveCalls = 0;
   executeHotkeyActionImpl(() => ({
@@ -724,3 +748,50 @@ test('toggleOpacity hotkey invokes toggleWindowOpacity', () => {
 
   assert.equal(called, true);
 });
+for (const scenario of [
+  { name: 'single orphan', active: 'one', sessions: [{ id: 'one' }], available: false, expected: null },
+  { name: 'two orphans', active: 'one', sessions: [{ id: 'one' }, { id: 'two' }], available: true, expected: 'global' },
+  { name: 'hidden active session', active: 'hidden', sessions: [{ id: 'one' }, { id: 'two' }, { id: 'hidden', hiddenFromTabs: true }], available: true, expected: null },
+  { name: 'non-terminal tab', active: 'vault', sessions: [{ id: 'one' }, { id: 'two' }], available: true, expected: null },
+  { name: 'workspace', active: 'workspace', sessions: [{ id: 'one', workspaceId: 'workspace' }, { id: 'two', workspaceId: 'workspace' }], available: false, expected: 'workspace' },
+]) {
+  for (const scheme of ['pc', 'mac'] as const) {
+    test(`broadcast shortcut ${scheme}: ${scenario.name} only consumes an executed toggle`, () => {
+      const target = new FakeHTMLElement();
+      let prevented = 0;
+      let stopped = 0;
+      let globalEnabled = false;
+      let workspaceEnabled = false;
+      const toggles: string[] = [];
+      const event = {
+        key: 'b', code: 'KeyB', ctrlKey: scheme === 'pc', metaKey: scheme === 'mac',
+        altKey: false, shiftKey: false, target, composedPath: () => [target],
+        preventDefault: () => { prevented += 1; },
+        stopPropagation: () => { stopped += 1; },
+      } as unknown as KeyboardEvent;
+      const actionCtx = {
+        activeTabStore: { getActiveTabId: () => scenario.active },
+        editorTabs: [], orderedTabs: [], settings: {}, toEditorTabId: (id: string) => id,
+        sessions: scenario.sessions,
+        workspaces: scenario.active === 'workspace' ? [{ id: 'workspace' }] : [],
+        canUseGlobalBroadcast: scenario.available,
+        toggleGlobalBroadcast: () => { globalEnabled = !globalEnabled; toggles.push('global'); },
+        toggleBroadcast: (id: string) => { assert.equal(id, 'workspace'); workspaceEnabled = !workspaceEnabled; toggles.push('workspace'); },
+      };
+      const invoke = () => handleGlobalHotkeyKeyDownImpl(() => ({
+        HOTKEY_DEBUG: false, closeTabKeyStr: '', hotkeyScheme: scheme,
+        keyBindings: DEFAULT_KEY_BINDINGS, matchesKeyBinding,
+        executeHotkeyAction: (action: string, e: KeyboardEvent) => executeHotkeyActionImpl(() => actionCtx, action, e),
+      }), event);
+      invoke();
+      assert.equal(globalEnabled, scenario.expected === 'global');
+      assert.equal(workspaceEnabled, scenario.expected === 'workspace');
+      invoke();
+      assert.equal(globalEnabled, false);
+      assert.equal(workspaceEnabled, false);
+      assert.deepEqual(toggles, scenario.expected ? [scenario.expected, scenario.expected] : []);
+      assert.equal(prevented, scenario.expected ? 2 : 0);
+      assert.equal(stopped, scenario.expected ? 2 : 0);
+    });
+  }
+}

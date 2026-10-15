@@ -33,6 +33,61 @@ test("keeps autocomplete enabled for shell-like terminal protocols", () => {
   );
 });
 
+test("keeps network-device autocomplete popup but disables live preview (#1193)", () => {
+  assert.deepEqual(
+    resolveTerminalAutocompleteSettings({
+      protocol: "ssh",
+      isNetworkDevice: true,
+      terminalSettings: {
+        autocompleteEnabled: true,
+        autocompleteGhostText: false,
+        autocompletePopupMenu: true,
+        autocompleteDebounceMs: 100,
+        autocompleteMinChars: 1,
+        autocompleteMaxSuggestions: 8,
+      },
+    }),
+    {
+      enabled: true,
+      showGhostText: false,
+      showPopupMenu: true,
+      livePreview: false,
+      allowLineReplacement: true,
+      debounceMs: 100,
+      minChars: 1,
+      maxSuggestions: 8,
+      historyScope: "host",
+      shiftEnterNewlineEnabled: true,
+    },
+  );
+  assert.deepEqual(
+    resolveTerminalAutocompleteSettings({
+      protocol: "ssh",
+      isNetworkDevice: true,
+    }),
+    { livePreview: false },
+  );
+});
+
+test("single-channel bastions disable live preview and line replacement", () => {
+  const settings = resolveTerminalAutocompleteSettings({
+    protocol: "ssh",
+    restrictPtyRewrites: true,
+    terminalSettings: {
+      autocompleteEnabled: true,
+    },
+  });
+  assert.equal(settings?.livePreview, false);
+  assert.equal(settings?.allowLineReplacement, false);
+  assert.deepEqual(
+    resolveTerminalAutocompleteSettings({
+      protocol: "ssh",
+      restrictPtyRewrites: true,
+    }),
+    { livePreview: false, allowLineReplacement: false },
+  );
+});
+
 test("keeps serial autocomplete available but disables input-line preview and replacement", () => {
   assert.deepEqual(
     resolveTerminalAutocompleteSettings({
@@ -89,4 +144,13 @@ test("falls back to raised maxSuggestions default when unset", () => {
     })?.maxSuggestions,
     50,
   );
+});
+
+test('unknown systems do not rewrite the command line while retaining suggestions', () => {
+  for (const terminalSettings of [undefined, { autocompleteEnabled: true }]) {
+    const settings = resolveTerminalAutocompleteSettings({protocol:'ssh', systemUnknown:true, terminalSettings});
+    assert.equal(settings?.enabled, true);
+    assert.equal(settings?.livePreview, false);
+    assert.equal(settings?.allowLineReplacement, false);
+  }
 });

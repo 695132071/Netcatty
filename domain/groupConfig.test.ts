@@ -14,6 +14,16 @@ const host = (overrides: Partial<Host> = {}): Host => ({
   ...overrides,
 });
 
+test("applyGroupDefaults ignores a legacy single-channel group flag", () => {
+  const result = applyGroupDefaults(
+    host(),
+    { deviceType: "network", singleChannelSsh: true } as Partial<GroupConfig>,
+  );
+
+  assert.equal(result.deviceType, "network");
+  assert.equal("singleChannelSsh" in result, false);
+});
+
 test("applyGroupDefaults lets a host proxy profile override a group custom proxy", () => {
   const groupDefaults: Partial<GroupConfig> = {
     proxyConfig: { type: "http", host: "group-proxy.example.com", port: 3128 },
@@ -47,6 +57,12 @@ test("applyGroupDefaults lets host device type override group device type", () =
   const result = applyGroupDefaults(host({ deviceType: "general" }), { deviceType: "network" });
 
   assert.equal(result.deviceType, "general");
+});
+
+test("applyGroupDefaults skips remote-only device type for local shell hosts", () => {
+  const result = applyGroupDefaults(host({ protocol: "local" }), { deviceType: "network" });
+
+  assert.equal(result.deviceType, undefined);
 });
 
 test("applyGroupDefaults inherits startup command run mode", () => {
@@ -513,6 +529,19 @@ test("sanitizeGroupConfig keeps a still-valid fontFamily untouched", () => {
   assert.equal(after.fontFamilyOverride, true);
 });
 
+test("sanitizeGroupConfig drops a legacy single-channel SSH flag", () => {
+  const source = {
+    path: "team",
+    username: "alice",
+    singleChannelSsh: true,
+  } as Parameters<typeof sanitizeGroupConfig>[0];
+  const after = sanitizeGroupConfig(source);
+
+  assert.equal("singleChannelSsh" in after, false);
+  assert.equal(after.username, "alice");
+  assert.equal("singleChannelSsh" in source, true);
+});
+
 test("sanitizeGroupConfig preserves legacy group passwords as password-only", () => {
   const after = sanitizeGroupConfig({
     path: "team",
@@ -580,4 +609,122 @@ test("applyGroupDefaults keeps host algorithm overrides instead of inheriting", 
     { algorithms: groupOverrides },
   );
   assert.deepEqual(result.algorithms, hostOverrides);
+});
+
+test("group notes survive sanitization but are not connection defaults", () => {
+  const config = { path: "Project", notes: "# VPN\nConnect before SSH.", username: "admin" };
+  assert.equal(sanitizeGroupConfig(config).notes, config.notes);
+  assert.equal(resolveGroupDefaults("Project", [config]).notes, undefined);
+  assert.equal(resolveGroupDefaults("Project/Servers", [config]).notes, undefined);
+});
+
+test("applyGroupDefaults does not inherit group SSH credentials into serial hosts", () => {
+  const groupDefaults: Partial<GroupConfig> = {
+    username: "group-ssh-user",
+    password: "group-ssh-password",
+    savePassword: true,
+    authMethod: "password",
+  };
+
+  const result = applyGroupDefaults(
+    host({ protocol: "serial", username: undefined, password: undefined }),
+    groupDefaults,
+  );
+
+  assert.equal(result.username, undefined);
+  assert.equal(result.password, undefined);
+});
+
+test("applyGroupDefaults still inherits non-credential defaults into serial hosts", () => {
+  const result = applyGroupDefaults(
+    host({ protocol: "serial", username: undefined, charset: undefined }),
+    { username: "group-ssh-user", charset: "UTF-8" },
+  );
+
+  assert.equal(result.username, undefined);
+  assert.equal(result.charset, "UTF-8");
+});
+
+test("applyGroupDefaults does not inherit group SSH credentials into local shell hosts", () => {
+  const groupDefaults: Partial<GroupConfig> = {
+    username: "group-ssh-user",
+    password: "group-ssh-password",
+    savePassword: true,
+    authMethod: "password",
+    identityId: "identity-1",
+    identityFileId: "identity-file-1",
+  };
+
+  const result = applyGroupDefaults(
+    host({ protocol: "local", username: undefined, password: undefined }),
+    groupDefaults,
+  );
+
+  assert.equal(result.username, undefined);
+  assert.equal(result.password, undefined);
+  assert.equal(result.savePassword, undefined);
+  assert.equal(result.authMethod, undefined);
+  assert.equal(result.identityId, undefined);
+  assert.equal(result.identityFileId, undefined);
+});
+
+test("applyGroupDefaults does not inherit SSH transport/input defaults into local shell hosts", () => {
+  const groupDefaults: Partial<GroupConfig> = {
+    backspaceBehavior: "ctrl-h",
+    moshEnabled: true,
+    moshServerPath: "/usr/bin/mosh-server",
+    etEnabled: true,
+    etPort: 8737,
+    legacyAlgorithms: true,
+    skipEcdsaHostKey: true,
+    agentForwarding: true,
+    hostChain: { hostIds: ["bastion-1"] },
+    charset: "UTF-8",
+    fontSize: 14,
+  };
+
+  const result = applyGroupDefaults(
+    host({
+      protocol: "local",
+      backspaceBehavior: undefined,
+      algorithms: undefined,
+      charset: undefined,
+      fontSize: undefined,
+    }),
+    groupDefaults,
+  );
+
+  assert.equal(result.backspaceBehavior, undefined);
+  assert.equal(result.moshEnabled, undefined);
+  assert.equal(result.moshServerPath, undefined);
+  assert.equal(result.etEnabled, undefined);
+  assert.equal(result.etPort, undefined);
+  assert.equal(result.legacyAlgorithms, undefined);
+  assert.equal(result.skipEcdsaHostKey, undefined);
+  assert.equal(result.agentForwarding, undefined);
+  assert.equal(result.hostChain, undefined);
+  // Display/appearance defaults still apply to local shells.
+  assert.equal(result.charset, "UTF-8");
+  assert.equal(result.fontSize, 14);
+});
+
+test("applyGroupDefaults still inherits non-credential defaults into local shell hosts", () => {
+  const result = applyGroupDefaults(
+    host({ protocol: "local", username: undefined, charset: undefined, fontSize: undefined }),
+    { username: "group-ssh-user", charset: "UTF-8", fontSize: 14 },
+  );
+
+  assert.equal(result.username, undefined);
+  assert.equal(result.charset, "UTF-8");
+  assert.equal(result.fontSize, 14);
+});
+
+test("applyGroupDefaults does not inherit the group startup command into local shell hosts", () => {
+  const result = applyGroupDefaults(
+    host({ protocol: "local" }),
+    { startupCommand: "rm -rf /", startupCommandRunMode: "paste" },
+  );
+
+  assert.equal(result.startupCommand, undefined);
+  assert.equal(result.startupCommandRunMode, "paste");
 });

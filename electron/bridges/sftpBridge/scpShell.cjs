@@ -126,11 +126,15 @@ function buildStatCommand(remotePath, encoding = "utf-8") {
     'elif [ -d "$p" ]; then t=d',
     'else t=f; fi',
     'mode=$(ls -ld -- "$p" 2>/dev/null | awk \'{print $1}\')',
-    'size=$(stat -c %s -- "$p" 2>/dev/null || stat -f %z -- "$p" 2>/dev/null || echo 0)',
+    // A missing/unsupported stat binary must not masquerade as a real 0-byte
+    // file: post-upload size verification would then reject a successful
+    // upload with "expected N bytes, got 0" (#3399). Emit the same "?" unknown
+    // marker used for mode so the parser can report an unknown size instead.
+    'size=$(stat -c %s -- "$p" 2>/dev/null || stat -f %z -- "$p" 2>/dev/null || echo "?")',
     'mtime=$(date -r "$p" +%s 2>/dev/null || stat -c %Y -- "$p" 2>/dev/null || stat -f %m -- "$p" 2>/dev/null || echo 0)',
     'abs=$(cd "$(dirname -- "$p")" 2>/dev/null && printf "%s/%s\\n" "$(pwd -P 2>/dev/null || pwd)" "$(basename -- "$p")" || printf "%s\\n" "$p")',
     'ino=$(stat -c %i -- "$p" 2>/dev/null || stat -f %i -- "$p" 2>/dev/null || echo)',
-    'printf "%s|%s|%s|%s|%s|%s\\n" "$t" "${mode:-?}" "${size:-0}" "${mtime:-0}" "$abs" "${ino}"',
+    'printf "%s|%s|%s|%s|%s|%s\\n" "$t" "${mode:-?}" "${size:-?}" "${mtime:-0}" "$abs" "${ino}"',
   ].join("; ");
 }
 
@@ -327,26 +331,72 @@ function parseLsLaOutput(stdout, { basePath = "" } = {}) {
   return results;
 }
 
-function parseStatRecord(stdout) {
+function parseStatRecord(stdout, { stderr = "", exitCode = null } = {}) {
   const line = String(stdout || "").trim().split(/\r?\n/)[0] || "";
+  const stderrText = String(stderr || "").trim();
+  // A missing path emits an ENOENT marker and exits 2. Shell startup
+  // messages may precede it on either stream; exit status alone is not enough.
+  const hasMissingMarker = line === "ENOENT"
+    || stderrText.split(/\r?\n/).some((entry) => entry.trim() === "ENOENT");
+  if (hasMissingMarker && (exitCode == null || exitCode === 2)) {
+    throw new ScpShellError("No such file", "ENOENT");
+  }
   if (!line || line === "ENOENT") {
-    const err = new ScpShellError("No such file", "ENOENT");
-    err.code = "ENOENT";
+    const detail = [
+      "exec channel returned empty response",
+      exitCode != null ? `exit ${exitCode}` : null,
+      stderrText ? `stderr: ${stderrText.slice(0, 200)}` : null,
+    ].filter(Boolean).join("; ");
+    const err = new ScpShellError(detail, "EMPTY_RESPONSE");
+    err.code = "EMPTY_RESPONSE";
+    err.exitCode = exitCode;
+    err.stderr = stderrText;
+    throw err;
+  }
+  // Any other nonzero status is a remote execution failure — even when stdout
+  // looks like a valid record (e.g. a forced-command wrapper that forwards the
+  // stat record before failing). Such metadata is untrustworthy, so reject it
+  // instead of letting the caller proceed on it.
+  if (exitCode != null && exitCode !== 0) {
+    const detail = [
+      `stat command exited ${exitCode}`,
+      stderrText ? `stderr: ${stderrText.slice(0, 200)}` : null,
+    ].filter(Boolean).join("; ");
+    const err = new ScpShellError(detail);
+    err.exitCode = exitCode;
+    err.stderr = stderrText;
     throw err;
   }
   const parts = line.split("|");
   if (parts.length < 5) {
-    throw new ScpShellError(`Malformed stat record: ${line.slice(0, 80)}`);
+    // Non-empty stdout that isn't a stat record: the remote command may have
+    // failed (nonzero exit, e.g. a restricted shell printing a banner) while
+    // still writing to stdout. Preserve exit code and stderr so failures with
+    // output aren't reduced to a bare "malformed" message.
+    const detail = [
+      `Malformed stat record: ${line.slice(0, 80)}`,
+      exitCode != null ? `exit ${exitCode}` : null,
+      stderrText ? `stderr: ${stderrText.slice(0, 200)}` : null,
+    ].filter(Boolean).join("; ");
+    const err = new ScpShellError(detail);
+    err.exitCode = exitCode;
+    err.stderr = stderrText;
+    throw err;
   }
   const [t, modeStr, sizeStr, mtimeStr, abs, inoStr] = parts;
   const ino = inoStr && /^\d+$/.test(String(inoStr).trim())
     ? String(inoStr).trim()
     : undefined;
+  // "?" (or an empty field) means the remote could not measure the size —
+  // e.g. a device without a stat binary. Report undefined rather than a fake
+  // 0 so callers can skip size-sensitive checks instead of failing them.
+  const sizeStrTrim = String(sizeStr ?? "").trim();
+  const size = /^\d+$/.test(sizeStrTrim) ? Number(sizeStrTrim) : undefined;
   return {
     type: t === "d" ? "directory" : t === "l" ? "symlink" : "file",
     isDirectory: t === "d",
     isSymbolicLink: t === "l",
-    size: Number(sizeStr) || 0,
+    size,
     modifyTime: (Number(mtimeStr) || 0) * 1000,
     mode: lsModeToNumber(modeStr),
     permissions: parseLsModeToPermissions(modeStr),

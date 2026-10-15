@@ -1,4 +1,6 @@
+import { remoteSoftwareRequiresSingleChannel } from './singleChannelSshBanner.shared.mjs';
 import { Host, Snippet, TerminalSettings } from './models';
+import type { HostOperatingSystem, HostOsSelection } from './models/connection';
 import { sanitizeHostIconFields } from './hostIcon';
 import { migrateHostConnectScriptIds } from './hostConnectScripts.ts';
 import { migrateDeprecatedFontOverride } from '../infrastructure/config/fonts';
@@ -105,6 +107,7 @@ export const normalizeDistroId = (value?: string) => {
   ) {
     return 'macos';
   }
+  if (v === 'windows' || v === 'win32' || /^openssh_for_windows(?:_|$)/.test(v)) return 'windows';
   if (v.includes('freebsd')) return 'freebsd';
   if (v.includes('ubuntu')) return 'ubuntu';
   if (v.includes('debian')) return 'debian';
@@ -215,6 +218,29 @@ export const classifyDistroId = (distroId?: string): DeviceClass => {
   return 'other';
 };
 
+export const HOST_OS_SELECTIONS = ['auto', 'linux', 'windows', 'macos', 'freebsd', 'unknown'] as const;
+
+export function getHostOsSelection(host?: Pick<Host, 'os' | 'osOverride'> | null): HostOsSelection {
+  if (host?.osOverride && (HOST_OS_SELECTIONS as readonly string[]).includes(host.osOverride)) {
+    return host.osOverride;
+  }
+  return host?.os === 'windows' || host?.os === 'macos' ? host.os : 'auto';
+}
+
+/** Resolve system facts separately from cosmetic manualDistro/icon choices. */
+export function resolveHostOs(
+  host?: Pick<Host, 'os' | 'osOverride' | 'distro' | 'deviceType' | 'protocol'> | null,
+): HostOperatingSystem {
+  if (host?.protocol === 'local') return host.os;
+  const selection = getHostOsSelection(host);
+  if (selection !== 'auto') return selection;
+  if (host?.deviceType === 'network' || classifyDistroId(host?.distro) === 'network-device') return 'unknown';
+  const distro = normalizeDistroId(host?.distro);
+  if (distro === 'windows' || distro === 'macos' || distro === 'freebsd') return distro;
+  if ((LINUX_DISTRO_OPTIONS as readonly string[]).includes(distro)) return 'linux';
+  return 'unknown';
+}
+
 /**
  * Decide whether to offer the "enable Network Device Mode" suggestion after
  * distro/vendor detection. We only nag once per host, and never when the user
@@ -245,11 +271,22 @@ export const shouldSuggestNetworkDeviceMode = (opts: {
 };
 
 /**
+ * True when an extra exec channel on the terminal transport is unsafe because
+ * the host is a network device. Use this to skip probes. Do not store it as
+ * session.singleChannelSsh: that runtime flag is stamped only after a
+ * recognized one-channel bastion banner.
+ */
+export const hostRestrictsExtraSshChannels = (
+  host?: Pick<Host, 'deviceType'> | null,
+): boolean => host?.deviceType === 'network';
+
+/**
  * Decide whether it is safe to run the post-connect `pwd` probe that
  * discovers the session's working directory. The probe opens an extra exec
  * channel running a POSIX-shell script; strict network-device CLIs such as
  * Huawei VRP respond by closing the whole SSH session (#1043), so it must be
- * skipped for them.
+ * skipped for them. Software banners that allow only one session channel per
+ * TCP connection have the same constraint.
  *
  * `isNetworkDevice` covers hosts we already classified (a reconnect, or an
  * explicit `deviceType: 'network'`). On a brand-new host that field is not
@@ -259,8 +296,12 @@ export const shouldSuggestNetworkDeviceMode = (opts: {
 export const shouldProbeSessionCwd = (opts: {
   isNetworkDevice: boolean;
   remoteSshVersion?: string;
+  restrictExtraSshChannels?: boolean;
 }): boolean =>
-  !opts.isNetworkDevice && !detectVendorFromSshVersion(opts.remoteSshVersion);
+  !opts.isNetworkDevice
+  && !opts.restrictExtraSshChannels
+  && !remoteSoftwareRequiresSingleChannel(opts.remoteSshVersion)
+  && !detectVendorFromSshVersion(opts.remoteSshVersion);
 
 export const getEffectiveHostDistro = (
   host?: Pick<Host, 'distro' | 'manualDistro' | 'distroMode'> | null,
@@ -430,6 +471,7 @@ export const sanitizeHost = (host: Host, snippets: Snippet[] = []): Host => {
         ? 'auto'
         : undefined;
   const cleanHostIcon = sanitizeHostIconFields(host);
+  const osSelection = getHostOsSelection(host);
   const migrated = migrateDeprecatedFontOverride(host);
   // Before explicit per-host authentication modes existed, new hosts were
   // persisted with authMethod="password" even though an empty password still
@@ -468,6 +510,8 @@ export const sanitizeHost = (host: Host, snippets: Snippet[] = []): Host => {
       : migrated.authMethod ?? inferredLegacyAuthMethod,
     authPolicyVersion: 1,
     hostname: cleanHostname,
+    osOverride: osSelection,
+    os: osSelection === 'linux' || osSelection === 'windows' || osSelection === 'macos' ? osSelection : host.os,
     distro: cleanDistro,
     distroMode: cleanDistroMode,
     manualDistro: cleanManualDistro || undefined,
@@ -487,5 +531,6 @@ export const sanitizeHost = (host: Host, snippets: Snippet[] = []): Host => {
     connectScriptIds: connectScriptIds && connectScriptIds.length > 0 ? connectScriptIds : undefined,
     pluginConnection,
   };
+  delete (sanitized as { singleChannelSsh?: unknown }).singleChannelSsh;
   return stripBuiltInConnectionFieldsForPluginHost(sanitized);
 };

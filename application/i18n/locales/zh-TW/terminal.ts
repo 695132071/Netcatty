@@ -1,6 +1,15 @@
 import type { Messages } from '../types';
 
 export const zhTWTerminalMessages: Messages = {
+  'terminal.menu.saveScreen': '儲存目前畫面',
+  'terminal.saveScreen.failed': '儲存終端畫面失敗。',
+  // 多行貼上確認對話框（#3398）
+  'terminal.pasteConfirm.title': '要貼上多行文字嗎？',
+  'terminal.pasteConfirm.summary': '將向工作階段傳送 {lines} 行（{chars} 個字元）。',
+  'terminal.pasteConfirm.preview': '預覽（可編輯）',
+  'terminal.pasteConfirm.send': '傳送',
+  'terminal.pasteConfirm.sendLineByLine': '逐行傳送',
+  'terminal.pasteConfirm.cancel': '取消',
   'terminal.sudoHint.pressEnter': '按 Enter 貼上已儲存的密碼',
   'terminal.passwordPicker.title': '已儲存的密碼',
   'terminal.passwordPicker.empty': '沒有已儲存的密碼',
@@ -269,6 +278,8 @@ export const zhTWTerminalMessages: Messages = {
   'settings.terminal.font.weightBold.desc': '粗體文字字重 (100-900)',
   'settings.terminal.font.smoothing': '字型平滑',
   'settings.terminal.font.smoothing.desc': '使用 macOS 原生字型抗鋸齒',
+  'settings.terminal.font.ligatures': '字型連字',
+  'settings.terminal.font.ligatures.desc': '支援連字的字型把 != 這類字元顯示成一個符號',
   'settings.terminal.font.linePadding': '行間距',
   'settings.terminal.font.linePadding.desc': '行之間的額外間距 (0-10)',
   'settings.terminal.font.emulationType': '終端模擬型別',
@@ -276,6 +287,8 @@ export const zhTWTerminalMessages: Messages = {
   'settings.terminal.cursor.style.block': '塊',
   'settings.terminal.cursor.style.bar': '豎線',
   'settings.terminal.cursor.style.underline': '下劃線',
+  'settings.terminal.cursor.barWidth': '豎線游標粗細',
+  'settings.terminal.cursor.barWidth.desc': 'vi 等應用程式使用豎線游標時的寬度（1-4 像素）',
   'settings.terminal.cursor.blink': '游標閃爍',
   'settings.terminal.cursor.highlightLine': '高亮目前行',
   'settings.terminal.cursor.highlightLine.desc': '為游標所在行加上淡色背景，方便定位目前輸入位置',
@@ -289,6 +302,8 @@ export const zhTWTerminalMessages: Messages = {
   'settings.terminal.accessibility.minimumContrastRatio.desc': '調整顏色以滿足對比度要求 (1 = 停用, 21 = 最大)',
   'settings.terminal.behavior.rightClick': '右鍵行為',
   'settings.terminal.behavior.rightClick.desc': '在終端中右鍵時執行的操作',
+  'settings.terminal.behavior.rightClick.longPressMenu': '右鍵長按顯示選單',
+  'settings.terminal.behavior.rightClick.longPressMenu.desc': '右鍵設為貼上或選詞時，按住半秒開啟選單。不影響接管滑鼠的終端應用。',
   'settings.terminal.behavior.rightClick.fullscreenMenu': '在全螢幕應用中也顯示選單',
   'settings.terminal.behavior.rightClick.fullscreenMenu.desc':
     '即使 tmux、vim 等全螢幕應用接管了滑鼠，也顯示右鍵選單。關閉時右鍵會交給應用處理（Shift+右鍵仍可開啟選單）。',
@@ -322,12 +337,21 @@ export const zhTWTerminalMessages: Messages = {
   'settings.terminal.behavior.autoUploadClipboardImage': '貼上時自動上傳剪貼簿圖片',
   'settings.terminal.behavior.autoUploadClipboardImage.desc':
     '當剪貼簿包含圖片時，在遠端工作階段中貼上會透過 SFTP 將圖片上傳到遠端目前目錄的 .netcatty-paste-images/ 資料夾，並在終端輸入遠端路徑，而不是貼上文字。',
+  'settings.terminal.behavior.confirmMultilinePaste': '貼上多行前先詢問',
+  'settings.terminal.behavior.confirmMultilinePaste.desc':
+    '貼上多行文字時先彈出確認對話框，顯示行數和字元數、可編輯的預覽，並提供傳送 / 逐行傳送 / 取消操作。可保護不支援括號貼上的網路設備 CLI（Cisco IOS、華為 VRP、H3C Comware）。',
+  'settings.terminal.behavior.confirmMultilinePasteMinLines': '確認門檻（行數）',
+  'settings.terminal.behavior.confirmMultilinePasteMinLines.desc':
+    '貼上內容達到該行數時才彈出確認對話框。',
   'settings.terminal.behavior.shiftEnterNewline': 'Shift+Enter 傳送文字',
   'settings.terminal.behavior.shiftEnterNewline.desc':
     '在終端中按 Shift+Enter 時傳送設定的文字，而不是一般 Enter。',
   'settings.terminal.behavior.shiftEnterNewlineText': '傳送內容',
   'settings.terminal.behavior.shiftEnterNewlineText.desc':
-    '使用 \\n 表示換行，\\t 表示 Tab，\\\\ 表示反斜線。',
+    '使用 \\n 表示換行，\\t 表示 Tab，\\e 表示 ESC，\\\\ 表示反斜線。',
+  'settings.terminal.behavior.shiftEnterForceText': '在 Win32 輸入模式下也傳送文字',
+  'settings.terminal.behavior.shiftEnterForceText.desc':
+    '本機 Windows ConPTY 工作階段協商 Win32 輸入模式時，仍然傳送上面的文字。Node/Bun 寫的 CLI（Claude Code、CodeBuddy）讀不到主控台輸入記錄中的修飾鍵，需要這個開關才能區分 Shift+Enter。',
   'settings.terminal.behavior.clearWipesScrollback': '`clear` 同時清空捲動緩衝',
   'settings.terminal.behavior.clearWipesScrollback.desc':
     '`clear` 指令同時清空捲動緩衝（POSIX 預設行為）。關閉則保留歷史。',
@@ -343,6 +367,11 @@ export const zhTWTerminalMessages: Messages = {
   'settings.terminal.behavior.dynamicTabTitle.off': '關閉',
   'settings.terminal.behavior.dynamicTabTitle.agent': '僅 Agent',
   'settings.terminal.behavior.dynamicTabTitle.all': '全部工作階段',
+  'settings.terminal.behavior.tabDoubleClick': '分頁雙擊行為',
+  'settings.terminal.behavior.tabDoubleClick.desc': '選擇雙擊頂部終端分頁時要執行的動作。',
+  'settings.terminal.behavior.tabDoubleClick.duplicate': '複製工作階段（新連線）',
+  'settings.terminal.behavior.tabDoubleClick.copy': '複製分頁（重用連線）',
+  'settings.terminal.behavior.tabDoubleClick.disabled': '無動作',
   'settings.terminal.behavior.oscNotifications': 'OSC 桌面通知',
   'settings.terminal.behavior.oscNotifications.desc':
     '當程式發出 OSC 9、OSC 777 notify 或 kitty OSC 99 時顯示系統通知。Codex 等 Agent 會用它提示回合完成或等待核准。',
@@ -719,9 +748,11 @@ export const zhTWTerminalMessages: Messages = {
   'tabs.logPrefix': '日誌：',
   'tabs.logLocal': '本機',
   'tabs.copyTab': '複製分頁',
+  'tabs.duplicateSession': '複製工作階段',
   'tabs.copyTabToNewWindow': '複製分頁到新視窗',
   'tabs.copyTabToNewWindowFailed': '無法在新視窗開啟分頁',
   'tabs.closeOthers': '關閉其他分頁',
+  'tabs.closeToLeft': '關閉左側分頁',
   'tabs.closeToRight': '關閉右側分頁',
   'tabs.closeAll': '關閉所有分頁',
   'keychain.edit.labelRequired': 'Label *',
@@ -892,6 +923,9 @@ export const zhTWTerminalMessages: Messages = {
   'serial.field.lineModeDesc': '緩衝輸入，按 Enter 鍵後傳送（而不是逐字元傳送）',
   'serial.field.backspaceBehavior': '退格鍵',
   'serial.field.backspaceBehaviorDesc': '如果網路裝置不回應預設退格鍵，請改用 Ctrl+H。',
+  'serial.encoding.pendingInput': '請先提交或清空目前輸入，再切換編碼。',
+  'serial.field.byteOrientedBackspace': '按位元組退格',
+  'serial.field.byteOrientedBackspaceDesc': '傳送與字元位元組數相同的 DEL，使裝置刪除整個多位元組字元（適用於按位元組刪除的裝置）。若為逐字元刪除的行編輯器（如 Linux readline），請關閉。',
   'serial.backspace.default': '預設（DEL，0x7F）',
   'serial.backspace.ctrlH': 'Ctrl+H（BS，0x08）',
   'serial.field.charset': '字元編碼',
@@ -905,6 +939,10 @@ export const zhTWTerminalMessages: Messages = {
   'serial.field.configLabelPlaceholder': '例如 Arduino Uno',
   'serial.connectAndSave': '連線並儲存',
   'serial.edit.title': '序列埠設定',
+  'serial.field.username': '使用者名稱',
+  'serial.field.password': '密碼',
+  'serial.field.autoLoginDesc': '設定後，序列埠終端出現 Login/Password 登入提示時，會自動填入此處儲存的使用者名稱和密碼。',
+  'serial.field.clearPassword': '清除已儲存的密碼',
 
   // Keyboard Interactive Authentication (2FA/MFA)
   'keyboard.interactive.title': '需要驗證',
@@ -931,6 +969,13 @@ export const zhTWTerminalMessages: Messages = {
   // Text Editor
   'sftp.editor.wordWrap': '自動換行',
   'sftp.editor.maximize': '最大化',
+  'sftp.editor.popOut': '在編輯器視窗開啟',
+  'sftp.editor.dock': '停靠回主視窗',
+  'sftp.editor.focusWindow': '聚焦編輯器視窗',
+  'sftp.editor.close': '關閉',
+  'sftp.editor.windowTitle': '編輯器',
+  'sftp.editor.windowEmpty': '沒有開啟的檔案',
+  'sftp.editor.dockFailed': '無法把此檔案停靠回主視窗',
   'sftp.editor.unsavedTitle': '未儲存的修改',
   'sftp.editor.unsavedMessage': '{fileName} 有未儲存的修改，是否儲存後關閉？',
   'sftp.editor.discardChanges': '不儲存',

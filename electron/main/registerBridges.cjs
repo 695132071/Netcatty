@@ -459,6 +459,11 @@ function createBridgeRegistrar(context) {
     sshBridge.registerHandlers(ipcMain, { terminalWorkerManager });
     sftpBridge.registerHandlers(ipcMain, { terminalWorkerManager });
     localFsBridge.registerHandlers(ipcMain);
+    require("../bridges/localFileDragBridge.cjs").registerHandlers(ipcMain, {
+      getWindows: () => getWindowManager().getAppContentWindows?.() || [],
+      nativeImage: electronModule.nativeImage,
+      app,
+    });
     transferBridge.registerHandlers(ipcMain, { terminalWorkerManager });
     portForwardingBridge.registerHandlers(ipcMain, { terminalWorkerManager });
     terminalBridge.registerHandlers(ipcMain, { terminalWorkerManager });
@@ -783,12 +788,94 @@ function createBridgeRegistrar(context) {
         return { success: false, error: err?.message || "Failed to open terminal popup" };
       }
     });
+
+    ipcMain.handle("netcatty:window:openEditor", async (event, payload) => {
+      try {
+        const sourceWindow = BrowserWindow.fromWebContents(event.sender);
+        return await getWindowManager().openEditorWindow(electronModule, {
+          preload,
+          devServerUrl: effectiveDevServerUrl,
+          isDev,
+          appIcon: getAppIconPath(),
+          isMac,
+          electronDir,
+          sourceWindow,
+          sourceWebContents: event.sender,
+        }, payload);
+      } catch (err) {
+        console.error("[Main] Failed to open editor window:", err);
+        return { success: false, error: err?.message || "Failed to open editor window" };
+      }
+    });
+
+    ipcMain.handle("netcatty:window:focusEditor", async (_event, payload) => {
+      try {
+        return getWindowManager().focusEditorTab(electronModule, payload?.editorId);
+      } catch (err) {
+        return { success: false, error: err?.message || "Failed to focus editor window" };
+      }
+    });
+
+    ipcMain.handle("netcatty:window:closeEditorTabs", async (_event, payload) => {
+      try {
+        return await getWindowManager().closeEditorWindowTabs(electronModule, payload);
+      } catch (err) {
+        return { success: false, cancelled: true, closedIds: [], error: err?.message || "Failed to close editor tabs" };
+      }
+    });
+
+    ipcMain.handle("netcatty:editorWindow:save", async (_event, payload) => {
+      try {
+        return await getWindowManager().saveEditorWindowTab(electronModule, payload);
+      } catch (err) {
+        return { ok: false, error: err?.message || "Save failed" };
+      }
+    });
+
+    ipcMain.handle("netcatty:editorWindow:dock", async (_event, payload) => {
+      try {
+        return await getWindowManager().dockEditorTab(electronModule, payload);
+      } catch (err) {
+        return { success: false, error: err?.message || "Failed to dock editor tab" };
+      }
+    });
+
+    ipcMain.on("netcatty:editorWindow:dirty", (_event, payload) => {
+      try {
+        getWindowManager().reportEditorDirty(electronModule, payload);
+      } catch {
+        // ignore
+      }
+    });
+
+    ipcMain.on("netcatty:editorWindow:tabsClosed", (_event, payload) => {
+      try {
+        getWindowManager().reportEditorTabsClosed(electronModule, payload);
+      } catch {
+        // ignore
+      }
+    });
+
+    ipcMain.on("netcatty:editorWindow:remapSession", (_event, payload) => {
+      try {
+        getWindowManager().remapEditorSession(electronModule, payload);
+      } catch {
+        // ignore
+      }
+    });
   
     // Cloud sync master password (stored in-memory + persisted via safeStorage)
     ipcMain.handle("netcatty:cloudSync:session:setPassword", async (_event, password) => {
       cloudSyncSessionPassword = typeof password === "string" && password.length ? password : null;
       if (cloudSyncSessionPassword) {
         persistCloudSyncPassword(cloudSyncSessionPassword);
+        // Peer renderers may have observed MASTER_KEY_CONFIG before the
+        // settings renderer finished unlocking and shared this password.
+        for (const win of BrowserWindow.getAllWindows()) {
+          if (!win.isDestroyed() && !win.webContents.isDestroyed()) {
+            win.webContents.send("netcatty:cloudSync:session:passwordAvailable");
+          }
+        }
       } else {
         clearPersistedCloudSyncPassword();
       }

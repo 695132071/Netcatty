@@ -39,6 +39,160 @@ const host = (id: string, label: string, hostname = label): Host => ({
   protocol: "ssh",
 } as Host);
 
+for (const retainedStatus of [undefined, "interrupted", "failed", "paused"] as const) {
+for (const newerPause of retainedStatus === "paused" ? [false, true] : [false]) {
+for (const ownerChange of retainedStatus === "interrupted" || retainedStatus === undefined ? ["same", "active", "completed"] : ["same"]) {
+for (const completedBeforeReplacement of ownerChange === "active" ? [false, true] : [false]) {
+for (const flushBeforeReply of ownerChange === "same" || retainedStatus === undefined ? [false] : [false, true]) {
+for (const replyRejects of ownerChange !== "same" && !completedBeforeReplacement && !flushBeforeReply ? [false, true] : [false]) {
+const batchExistingIdentity = retainedStatus !== undefined;
+test(`superseded folder child settles when its completion was compacted into the parent: retained=${retainedStatus ?? "none"}, newerPause=${newerPause}, owner=${ownerChange}, flush=${flushBeforeReply}, priorComplete=${completedBeforeReplacement}, reject=${replyRejects}`, async (t) => {
+  const { sftpTransferCenterStore } = await import("../sftpTransferCenterStore");
+  const previousLocalStorage = Object.getOwnPropertyDescriptor(globalThis, "localStorage");
+  Object.defineProperty(globalThis, "localStorage", {
+    configurable: true,
+    value: { getItem: () => null, setItem: () => {}, removeItem: () => {} },
+  });
+  const originalGet = netcattyBridge.get;
+  let abort = false;
+  let running: Promise<unknown> | undefined;
+  let childId: string | undefined;
+  const parent: TransferTask = {
+    id: "superseded-compacted-folder", fileName: "folder",
+    sourcePath: "/local/folder", targetPath: "/remote/folder",
+    sourceConnectionId: "local", targetConnectionId: "expired-sftp",
+    targetHostId: "h1", direction: "upload", status: "transferring",
+    totalBytes: 1, transferredBytes: 0, speed: 0, startTime: Date.now(),
+    isDirectory: true, progressMode: "files", reconnectRequired: true,
+  };
+  t.after(async () => {
+    abort = true;
+    await running;
+    netcattyBridge.get = originalGet;
+    sftpTransferCenterStore.patchTask(parent.id, { status: "completed" });
+    sftpTransferCenterStore.dismiss(parent.id);
+    if (previousLocalStorage) Object.defineProperty(globalThis, "localStorage", previousLocalStorage);
+    else Reflect.deleteProperty(globalThis, "localStorage");
+    resetDedicatedSessionOpenGateForTests();
+  });
+  const persisted: TransferTask = {
+    ...parent, id: "retained-child", parentTaskId: parent.id, isDirectory: false,
+    sourcePath: "/local/folder/a.bin", targetPath: "/remote/folder/a.bin",
+    totalBytes: 10, sourceLastModified: 1, status: retainedStatus ?? "interrupted",
+    directoryEntryIndex: 0,
+    directoryEntryIdentity: newerPause ? createDirectoryEntryIdentity({
+      sourcePath: "/local/folder/a.bin", targetPath: "/remote/folder/a.bin", size: 10, lastModified: 1,
+    }) : "a".repeat(64),
+  };
+  const { createDedicatedResumeChildUpdateBatcher } = await import("../../app/dedicatedResumeProgress");
+  // Exercise the real large-history batching branch with one relevant retained row.
+  const childBatcher = createDedicatedResumeChildUpdateBatcher({
+    getTaskCount: () => 4096,
+    hasTask: (id) => id === persisted.id || id.startsWith("flush-peer-"),
+    // Peer rows only drive the real 512-entry flush; keep the relevant store
+    // fixture small so unrelated history maintenance cannot mask ownership.
+    upsertTasks: (updates) => sftpTransferCenterStore.upsertTasks(updates.filter((task) => !task.id.startsWith("flush-peer-"))),
+  });
+  sftpTransferCenterStore.publishOwner("compacted-owner", [parent, ...(batchExistingIdentity ? [persisted] : [])]);
+  (netcattyBridge as { get: () => unknown }).get = () => ({
+    openSftp: async () => "dedicated-sftp", closeSftp: async () => {},
+    listLocalTree: async () => [{
+      localPath: "/local/folder/a.bin", relativePath: "a.bin", type: "file", size: 10, lastModified: 1,
+    }],
+    mkdirSftp: async () => {},
+    statLocal: async () => {
+      if (newerPause) sftpTransferCenterStore.patchTask(persisted.id, { status: "paused", lifecycleEpoch: 9 });
+      return { size: 10, lastModified: 1 };
+    },
+    startStreamTransfer: async (options: {
+      transferId: string; parentTaskId?: string; directoryEntryIndex?: number; directoryEntryIdentity?: string;
+    }) => {
+      childId = options.transferId;
+      // Main-process lifecycle events carry the stream's metadata, not queued UI updates.
+      sftpTransferCenterStore.ingestBackgroundEvent({
+        type: "started", transferId: childId, lifecycleEpoch: 0,
+        parentTaskId: options.parentTaskId,
+        directoryEntryIndex: options.directoryEntryIndex,
+        directoryEntryIdentity: options.directoryEntryIdentity,
+      });
+      if (ownerChange !== "same") {
+        const current = sftpTransferCenterStore.getTask(childId)!;
+        if (completedBeforeReplacement) {
+          sftpTransferCenterStore.ingestBackgroundEvent({
+            type: "completed", transferId: childId, transferred: 10, totalBytes: 10, lifecycleEpoch: 0,
+          });
+        }
+        sftpTransferCenterStore.upsertTasks([{
+          ...current, status: "transferring", directoryEntryIdentity: "e".repeat(64), lifecycleEpoch: 1,
+        }]);
+      }
+      if (ownerChange !== "active") {
+        // A newer same-id owner completes before this older invocation rejoins.
+        sftpTransferCenterStore.ingestBackgroundEvent({
+          type: "completed", transferId: childId, transferred: 10, totalBytes: 10, lifecycleEpoch: ownerChange === "same" ? 0 : 1,
+        });
+      }
+      if (flushBeforeReply) {
+        for (let index = 0; index < 512; index += 1) {
+          childBatcher.push({ ...persisted, id: `flush-peer-${index}`, status: "transferring" });
+        }
+        if (ownerChange === "active") {
+          assert.equal(sftpTransferCenterStore.getTask(childId)?.directoryEntryIdentity, "e".repeat(64),
+            "automatic flush before the displaced reply must preserve the new owner");
+        } else assert.equal(sftpTransferCenterStore.getTask(childId), undefined,
+          "automatic flush must not recreate the compacted new owner");
+      }
+      if (replyRejects) throw new Error("old invocation transport failed");
+      return completedBeforeReplacement ? {} : { superseded: true };
+    },
+  });
+  running = resumeTransferWithDedicatedSession(parent, {
+    hosts: [host("h1", "box", "1.2.3.4")], keys: [], identities: [],
+  }, undefined, {
+    children: batchExistingIdentity ? [persisted] : [], shouldAbort: () => abort,
+    onChildSuperseded: (id) => childBatcher.discard(id),
+    flushChildUpdates: () => childBatcher.flush(),
+    onChildUpdate: (child, observation) => {
+      if (batchExistingIdentity) {
+        childBatcher.push(child, observation);
+        return true;
+      }
+      sftpTransferCenterStore.publishOwner("compacted-owner", [parent, child]);
+    },
+  });
+  const result = await Promise.race([
+    running,
+    new Promise<"still-waiting">((resolve) => setTimeout(() => resolve("still-waiting"), 450)),
+  ]);
+  if (newerPause) {
+    assert.equal(result, "still-waiting", "a later pause must still hold fresh recovery");
+    assert.equal(childId, undefined, "newer paused child must not start");
+    assert.equal(sftpTransferCenterStore.getTask(persisted.id)?.lifecycleEpoch, 9);
+    return;
+  }
+  assert.notEqual(result, "still-waiting", "completed compacted child must not leave its folder waiting forever");
+  assert.ok(childId);
+  if (ownerChange !== "same") {
+    childBatcher.flush();
+    assert.equal((result as { success: boolean }).success, false, "the displaced walk must not report success");
+    if (ownerChange === "active") {
+      assert.equal(sftpTransferCenterStore.getTask(childId)?.status, "transferring");
+      assert.equal(sftpTransferCenterStore.getTask(childId)?.directoryEntryIdentity, "e".repeat(64));
+    } else assert.equal(sftpTransferCenterStore.getTask(childId), undefined, "old waiter must not recreate a failed row");
+    return;
+  }
+  assert.equal(sftpTransferCenterStore.getTask(childId), undefined, "completed row was compacted");
+  assert.equal(sftpTransferCenterStore.getTask(parent.id)?.directoryResumeCheckpoint?.completedEntries, 1);
+  assert.notEqual(result, "still-waiting", "completed compacted child must not leave its folder waiting forever");
+  assert.equal((result as { success: boolean }).success, true);
+});
+}
+}
+}
+}
+}
+}
+
 test("resolveDirectoryResumeTargetRoot prefers staged replace path", () => {
   assert.equal(
     resolveDirectoryResumeTargetRoot({
@@ -97,10 +251,11 @@ test("persisted resume child lookup handles 50,000 retained rows in linear time"
   assert.ok(Date.now() - startedAt < 2_000, "50k retained-child lookup should stay linear");
 });
 
-test("resolveHostForTransferEndpoint prefers id then label", () => {
+test("resolveHostForTransferEndpoint requires recorded id and supports unique legacy names", () => {
   const hosts = [host("id-1", "CI-Build-01", "ci-01.example")];
   assert.equal(resolveHostForTransferEndpoint(hosts, "id-1", "other")?.id, "id-1");
-  assert.equal(resolveHostForTransferEndpoint(hosts, "missing", "CI-Build-01")?.id, "id-1");
+  assert.equal(resolveHostForTransferEndpoint(hosts, "missing", "CI-Build-01"), null);
+  assert.equal(resolveHostForTransferEndpoint(hosts, undefined, "CI-Build-01")?.id, "id-1");
   assert.equal(resolveHostForTransferEndpoint(hosts, undefined, "ci-01.example")?.id, "id-1");
   assert.equal(resolveHostForTransferEndpoint(hosts, "missing", "gone"), null);
 });
@@ -587,6 +742,67 @@ test("single-file restart resume continues from checkpoint without page callback
     assert.equal(result.success, true, result.error);
     assert.equal(startOptions?.checkpointBytes, 20);
     assert.equal(startOptions?.skipAdmission, true);
+  } finally {
+    (netcattyBridge as { get: typeof originalGet }).get = originalGet;
+    resetDedicatedSessionOpenGateForTests();
+  }
+});
+
+test("stat-less SCP download resume keeps saved progress instead of restarting", async (t) => {
+  resetDedicatedSessionOpenGateForTests();
+  const previousLocalStorage = Object.getOwnPropertyDescriptor(globalThis, "localStorage");
+  Object.defineProperty(globalThis, "localStorage", {
+    configurable: true,
+    value: { getItem: () => "2", setItem: () => {}, removeItem: () => {} },
+  });
+  t.after(() => {
+    if (previousLocalStorage) Object.defineProperty(globalThis, "localStorage", previousLocalStorage);
+    else Reflect.deleteProperty(globalThis, "localStorage");
+  });
+  const originalGet = netcattyBridge.get;
+  let startOptions: Record<string, unknown> | undefined;
+  (netcattyBridge as { get: () => unknown }).get = () => ({
+    openSftp: async () => "dedicated-sftp",
+    closeSftp: async () => {},
+    // Stat-less SCP host: size cannot be measured, so the bridge reports the
+    // placeholder 0 with sizeKnown false.
+    statSftp: async () => ({ type: "file", size: 0, lastModified: 5, sizeKnown: false }),
+    startStreamTransfer: async (options: Record<string, unknown>) => {
+      startOptions = options;
+      return { transferId: "scp-download-resume" };
+    },
+  });
+  try {
+    const result = await resumeTransferWithDedicatedSession({
+      id: "scp-download-resume",
+      fileName: "file.bin",
+      sourcePath: "/remote/file.bin",
+      targetPath: "/local/file.bin",
+      sourceConnectionId: "old-sftp",
+      sourceHostId: "h1",
+      sourceHostLabel: "box",
+      targetConnectionId: "local",
+      direction: "download",
+      status: "interrupted",
+      totalBytes: 100,
+      transferredBytes: 20,
+      checkpointBytes: 20,
+      sourceLastModified: 5,
+      speed: 0,
+      startTime: 1,
+      isDirectory: false,
+      reconnectRequired: true,
+    }, {
+      hosts: [host("h1", "box", "1.2.3.4")],
+      keys: [],
+      identities: [],
+    });
+
+    assert.equal(result.success, true, result.error);
+    // Unknown size must not misread the saved checkpoint as a shrunk source;
+    // the download resumes from byte 20 instead of silently restarting.
+    assert.equal(startOptions?.checkpointBytes, 20);
+    assert.equal(startOptions?.totalBytes, 100);
   } finally {
     (netcattyBridge as { get: typeof originalGet }).get = originalGet;
     resetDedicatedSessionOpenGateForTests();
@@ -1998,3 +2214,232 @@ test("corrupted replace-stage history cannot delete an unrelated directory", asy
     resetDedicatedSessionOpenGateForTests();
   }
 });
+
+for (const scenario of ["deleted-id", "ambiguous-legacy-label"] as const) {
+  test(`restart upload does not select a different server by ${scenario}`, async (t) => {
+    const originalGet = netcattyBridge.get;
+    t.after(() => { netcattyBridge.get = originalGet; });
+    const opened: string[] = [];
+    let uploads = 0;
+    (netcattyBridge as { get: () => unknown }).get = () => ({
+      openSftp: async (options: { hostname: string }) => { opened.push(options.hostname); return "new-channel"; },
+      closeSftp: async () => {},
+      statLocal: async () => ({ size: 100, lastModified: 123 }),
+      startStreamTransfer: async () => { uploads++; return { transferId: "wrong-host-resume" }; },
+    });
+    const hosts = scenario === "deleted-id"
+      ? [host("different-id", "production", "different.example")]
+      : [host("first-id", "production", "first.example"), host("second-id", "production", "second.example")];
+    const result = await resumeTransferWithDedicatedSession({
+      id: "wrong-host-resume", fileName: "deployment.zip",
+      sourcePath: "/fixture/deployment.zip", targetPath: "/srv/deployment.zip",
+      sourceConnectionId: "local", targetConnectionId: "right-expired",
+      targetHostId: scenario === "deleted-id" ? "deleted-original-id" : undefined,
+      targetHostLabel: "production", direction: "upload", status: "interrupted",
+      totalBytes: 100, transferredBytes: 20, checkpointBytes: 20,
+      speed: 0, startTime: 1, isDirectory: false, reconnectRequired: true,
+    }, {hosts, keys: [], identities: []});
+    assert.equal(result.success, false, "resume must stop instead of selecting another endpoint by display name");
+    assert.deepEqual(opened, [], "must not authenticate to an unproven replacement host");
+    assert.equal(uploads, 0);
+  });
+}
+
+for (const completeDuringSetup of [false, true]) {
+test(`large-history replace recovery retransfers retained completed children into its empty stage: late=${completeDuringSetup}`, async (t) => {
+  const { sftpTransferCenterStore: store } = await import("../sftpTransferCenterStore");
+  const { createDedicatedResumeChildUpdateBatcher } = await import("../../app/dedicatedResumeProgress");
+  const originalGet = netcattyBridge.get;
+  const previousLocalStorage = Object.getOwnPropertyDescriptor(globalThis, "localStorage");
+  Object.defineProperty(globalThis, "localStorage", {
+    configurable: true, value: { getItem: () => "2", setItem: () => {}, removeItem: () => {} },
+  });
+  const { createRequire } = await import("node:module");
+  const tempDirBridge = createRequire(import.meta.url)("../../../electron/bridges/tempDirBridge.cjs");
+  const root = await fs.promises.mkdtemp(`${tempDirBridge.getTempFilePath("folder-rebuild-test")}-`);
+  const finalPath = path.join(root, "final");
+  const stage = `${finalPath}.netcatty-retained-replace.part`;
+  await fs.promises.mkdir(stage);
+  await fs.promises.writeFile(path.join(stage, "b.txt"), "old contents");
+  const parent: TransferTask = {
+    id: "retained-replace", fileName: "folder", sourcePath: "/remote/folder", targetPath: finalPath,
+    stagedTargetPath: stage, replaceExistingTarget: true, sourceConnectionId: "old-sftp", targetConnectionId: "local",
+    sourceHostId: "h1", direction: "download", status: "transferring", totalBytes: 2,
+    transferredBytes: 1, speed: 0, startTime: 1, isDirectory: true, progressMode: "files", reconnectRequired: true,
+  };
+  const retained: TransferTask = {
+    ...parent, id: "retained-replace-b", parentTaskId: parent.id, isDirectory: false,
+    sourcePath: "/remote/folder/b.txt", targetPath: `${stage}/b.txt`, fileName: "b.txt",
+    status: completeDuringSetup ? "interrupted" : "completed", totalBytes: 10, transferredBytes: 10, checkpointBytes: 10,
+    sourceLastModified: 2, directoryEntryIndex: 1,
+    directoryEntryIdentity: createDirectoryEntryIdentity({
+      sourcePath: "/remote/folder/b.txt", targetPath: `${stage}/b.txt`, size: 10, lastModified: 2,
+    }),
+  };
+  store.upsertTasks([parent, retained]);
+  assert.ok(store.getTask(retained.id), "missing earlier manifest index retains the completed row");
+  const batcher = createDedicatedResumeChildUpdateBatcher({
+    getTaskCount: () => 4096,
+    hasTask: (id) => !!store.getTask(id),
+    upsertTasks: (updates) => store.upsertTasks(updates),
+  });
+  let releaseFirst!: () => void;
+  const secondDispatched = new Promise<void>((resolve) => { releaseFirst = resolve; });
+  t.after(async () => {
+    await fs.promises.rm(root, { recursive: true, force: true });
+    netcattyBridge.get = originalGet;
+    store.patchTask(parent.id, { status: "completed" });
+    store.dismiss(parent.id);
+    if (previousLocalStorage) Object.defineProperty(globalThis, "localStorage", previousLocalStorage);
+    else Reflect.deleteProperty(globalThis, "localStorage");
+    resetDedicatedSessionOpenGateForTests();
+  });
+  (netcattyBridge as { get: () => unknown }).get = () => ({
+    openSftp: async () => "dedicated-sftp", closeSftp: async () => {},
+    listSftp: async (_id: string, remotePath: string) => {
+      if (completeDuringSetup) store.patchTask(retained.id, { status: "completed", ownerId: "dedicated-resume" });
+      return remotePath === parent.sourcePath
+        ? ["a.txt", "b.txt"].map((name) => ({ name, type: "file", size: 10, lastModified: 2 })) : [];
+    },
+    mkdirLocal: async (target: string) => { await fs.promises.mkdir(target, { recursive: true }); },
+    statLocal: async (target: string) => {
+      try {
+        const stat = await fs.promises.stat(target);
+        return { type: stat.isDirectory() ? "directory" : "file", size: stat.size, lastModified: stat.mtimeMs };
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
+        throw error;
+      }
+    },
+    statSftp: async (_id: string, source: string) => {
+      if (source.endsWith("a.txt")) await secondDispatched;
+      return { type: "file", size: 10, lastModified: 2 };
+    },
+    deleteLocalFile: async (target: string) => { await fs.promises.rm(target, { recursive: true }); },
+    renameLocalFile: async (source: string, target: string) => { await fs.promises.rename(source, target); },
+    startStreamTransfer: async (options: { targetPath: string; checkpointBytes: number }) => {
+      assert.equal(options.checkpointBytes, 0, "an empty replacement stage cannot reuse byte checkpoints");
+      await fs.promises.writeFile(options.targetPath, `new ${path.basename(options.targetPath)}`);
+      return {};
+    },
+  });
+  const result = await resumeTransferWithDedicatedSession(parent, {
+    hosts: [host("h1", "box")], keys: [], identities: [],
+  }, undefined, {
+    children: [retained],
+    flushChildUpdates: () => batcher.flush(),
+    onChildUpdate: (task, observation) => {
+      batcher.push(task, observation);
+      if (task.id === retained.id && task.status === "completed") releaseFirst();
+      return true;
+    },
+    onDirectoryCheckpointUpdate: (value) => store.patchTask(parent.id, { directoryResumeCheckpoint: value }),
+  });
+  batcher.flush();
+  assert.equal(result.success, true, result.error);
+  assert.deepEqual((await fs.promises.readdir(finalPath)).sort(), ["a.txt", "b.txt"],
+    "published replacement must include the previously completed file");
+  assert.equal(await fs.promises.readFile(path.join(finalPath, "b.txt"), "utf8"), "new b.txt");
+});
+}
+
+for (const boundary of ["before-admission", "source-missing", "source-modified", "after-completion", "after-commit"] as const) {
+  test(`dedicated recovery preserves replacement ownership ${boundary}`, async (t) => {
+    const { sftpTransferCenterStore: store } = await import("../sftpTransferCenterStore");
+    const { createDedicatedResumeChildUpdateBatcher } = await import("../../app/dedicatedResumeProgress");
+    const originalGet = netcattyBridge.get;
+    const originalStorage = Object.getOwnPropertyDescriptor(globalThis, "localStorage");
+    Object.defineProperty(globalThis, "localStorage", { configurable: true, value: {
+      getItem: () => "2", setItem: () => {}, removeItem: () => {},
+    } });
+    const parent: TransferTask = {
+      id: `ownership-${boundary}`, fileName: "folder", sourcePath: "/local/folder", targetPath: "/remote/folder",
+      sourceConnectionId: "local", targetConnectionId: "old", targetHostId: "h1", direction: "upload",
+      status: "transferring", totalBytes: 2, transferredBytes: 0, speed: 0, startTime: 1,
+      isDirectory: true, progressMode: "files", reconnectRequired: true,
+    };
+    const child: TransferTask = {
+      ...parent, id: `${parent.id}-a`, parentTaskId: parent.id, isDirectory: false,
+      sourcePath: "/local/folder/a", targetPath: "/remote/folder/a", fileName: "a", totalBytes: 1,
+      status: "interrupted", directoryEntryIndex: 0, directoryEntryIdentity: "a".repeat(64), sourceLastModified: 1,
+    };
+    store.upsertTasks([parent, boundary === "before-admission"
+      ? { ...child, status: "transferring", directoryEntryIdentity: "b".repeat(64), lifecycleEpoch: 1 }
+      : child]);
+    const batch = createDedicatedResumeChildUpdateBatcher({
+      getTaskCount: () => 4096, hasTask: (id) => id === child.id || id.startsWith("peer-"),
+      upsertTasks: (rows) => store.upsertTasks(rows.filter((row) => !row.id.startsWith("peer-"))),
+    });
+    if (boundary === "before-admission") {
+      for (let n = 0; n < 511; n++) batch.push({ ...child, id: `peer-${n}` });
+    }
+    let releaseB!: () => void;
+    const bGate = new Promise<void>((resolve) => { releaseB = resolve; });
+    let timedOut = false;
+    const watchdog = setTimeout(() => { timedOut = true; releaseB(); }, 1000);
+    t.after(() => {
+      clearTimeout(watchdog);
+      releaseB();
+      batch.flush();
+      store.patchTask(parent.id, { status: "completed" });
+      store.dismiss(parent.id);
+      netcattyBridge.get = originalGet;
+      if (originalStorage) Object.defineProperty(globalThis, "localStorage", originalStorage);
+      else Reflect.deleteProperty(globalThis, "localStorage");
+      resetDedicatedSessionOpenGateForTests();
+    });
+    let starts = 0;
+    let displaced = 0;
+    let replaced = false;
+    (netcattyBridge as { get: () => unknown }).get = () => ({
+      openSftp: async () => "dedicated", closeSftp: async () => {
+        if (boundary === "after-commit") {
+          assert.equal(store.getTask(child.id), undefined, "completion must be committed before async cleanup");
+          store.upsertTasks([{ ...child, status: "transferring", directoryEntryIdentity: "b".repeat(64), lifecycleEpoch: 1 }]);
+        }
+      },
+      listLocalTree: async () => (boundary === "after-completion" ? ["a", "b"] : ["a"]).map((name) => ({
+        localPath: `/local/folder/${name}`, relativePath: name, type: "file", size: 1, lastModified: 1,
+      })),
+      mkdirSftp: async () => {}, statLocal: async () => {
+        if (boundary === "source-missing" || boundary === "source-modified") {
+          store.upsertTasks([{ ...child, status: "transferring", directoryEntryIdentity: "b".repeat(64), lifecycleEpoch: 1 }]);
+          if (boundary === "source-missing") return null;
+          return { type: "file", size: 1, lastModified: 2 };
+        }
+        return { type: "file", size: 1, lastModified: 1 };
+      },
+      startStreamTransfer: async (options: { sourcePath: string }) => {
+        starts++;
+        if (options.sourcePath.endsWith("/b")) await bGate;
+        return {};
+      },
+    });
+    const result = await resumeTransferWithDedicatedSession(parent, {
+      hosts: [host("h1", "box")], keys: [], identities: [],
+    }, undefined, {
+      children: [child],
+      onChildSuperseded: (id) => { displaced++; batch.discard(id); },
+      flushChildUpdates: () => batch.flush(),
+      onChildUpdate: (task, observation) => {
+        batch.push(task, observation);
+        if (boundary === "after-completion" && task.id === child.id && task.status === "completed" && !replaced) {
+          replaced = true;
+          queueMicrotask(() => {
+            try {
+              store.upsertTasks([{ ...task, status: "transferring", directoryEntryIdentity: "b".repeat(64), lifecycleEpoch: 1 }]);
+            } finally { releaseB(); }
+          });
+        }
+        return true;
+      },
+    });
+    batch.flush();
+    assert.equal(timedOut, false);
+    assert.equal(result.success, boundary === "after-commit", "only a committed success may precede a legitimate replacement");
+    assert.equal(store.getTask(child.id)?.directoryEntryIdentity, "b".repeat(64));
+    assert.equal(store.getTask(child.id)?.status, "transferring");
+    if (boundary !== "after-completion" && boundary !== "after-commit") assert.equal(starts, 0, "source validation and a full batch must not bypass ownership");
+    else assert.equal(displaced, boundary === "after-commit" ? 0 : 1);
+  });
+}

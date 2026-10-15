@@ -1,6 +1,8 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
+import { reconcileAutocompletePopupState } from "./autocomplete/useTerminalAutocomplete.ts";
+import type { AutocompleteState } from "./autocomplete/useTerminalAutocomplete.ts";
 import { handleTerminalAutocompleteKeyEvent } from "./autocomplete/terminalAutocompleteKeyEvent.ts";
 
 const suggestion = (text: string) => ({
@@ -348,3 +350,32 @@ test("subdir Escape does not arm Meta prefix", () => {
   assert.equal(context.escMetaPrefixUntilRef.current, 0);
 });
 
+
+for (const edited of [false, true]) {
+  test(`snippet navigation before provider refresh: edited=${edited}`, () => {
+    let runs = 0;
+    const initial: AutocompleteState = {
+      suggestions: [{
+        text: "deploy", displayText: "deploy", source: "snippet", score: 2000,
+        snippet: { id: "deploy", label: "deploy", command: "echo deploy" },
+      }],
+      selectedIndex: -1, popupVisible: true,
+      popupAnchorViewport: { left: 0, top: 0, bottom: 0 },
+      expandUpward: false, subDirPanels: [], subDirFocusLevel: -1,
+    };
+    const stateRef = { current: edited ? reconcileAutocompletePopupState(initial, "git pull xyz") : initial };
+    const { context } = createContext({
+      stateRef,
+      setState(update: AutocompleteState | ((prev: AutocompleteState) => AutocompleteState)) {
+        stateRef.current = typeof update === "function" ? update(stateRef.current) : update;
+      },
+      acceptSnippet() { runs++; return true; },
+    });
+    // An unselected snippet does not execute on direct Enter.
+    handleTerminalAutocompleteKeyEvent(keyEvent("Enter"), context);
+    assert.equal(runs, 0);
+    handleTerminalAutocompleteKeyEvent(keyEvent("ArrowDown"), context);
+    handleTerminalAutocompleteKeyEvent(keyEvent("Enter"), context);
+    assert.equal(runs, edited ? 0 : 1);
+  });
+}

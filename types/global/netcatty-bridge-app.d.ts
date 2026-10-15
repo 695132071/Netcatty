@@ -31,8 +31,8 @@ declare global {
     onUpdateError?(cb: (payload: { error: string }) => void): () => void;
     // Fired when an install was requested but blocked by unsaved editors (#1215).
     onUpdateNeedsSave?(cb: () => void): () => void;
-    onSshDeepLink?(cb: (payload: { url?: string }) => void): () => void;
-    onTelnetDeepLink?(cb: (payload: { url?: string }) => void): () => void;
+    onSshDeepLink?(cb: (payload: { url?: string; tabName?: string }) => void): () => void;
+    onTelnetDeepLink?(cb: (payload: { url?: string; tabName?: string }) => void): () => void;
     onOpenTerminalPath?(cb: (payload: { path?: string }) => void): () => void;
     /** Fired once after cold-start deep-link / open-terminal queues have been drained. */
     onColdStartIntentsSettled?(cb: () => void): () => void;
@@ -65,6 +65,12 @@ declare global {
     // System Tray / Close to Tray
     setCloseToTray?(enabled: boolean): Promise<{ success: boolean; enabled: boolean }>;
     isCloseToTray?(): Promise<{ enabled: boolean }>;
+    setShowTrayIcon?(enabled: boolean): Promise<{ success: boolean; enabled: boolean }>;
+    isShowTrayIcon?(): Promise<{ enabled: boolean }>;
+
+    // Auto Launch at system login (hidden to tray)
+    getAutoLaunch?(): Promise<{ success: boolean; enabled: boolean; supported: boolean }>;
+    setAutoLaunch?(enabled: boolean): Promise<{ success: boolean; enabled: boolean; supported: boolean }>;
 
     // App-level HTTP(S) network proxy (cloud sync / AI — not SSH ProxyJump)
     setHttpNetworkProxy?(settings: {
@@ -104,6 +110,7 @@ declare global {
     quitApp?(): Promise<{ success: boolean }>;
     jumpToSessionFromTrayPanel?(sessionId: string): Promise<{ success: boolean }>;
     connectToHostFromTrayPanel?(hostId: string): Promise<{ success: boolean }>;
+    startPortForwardFromTrayPanel?(ruleId: string): Promise<{ success: boolean; error?: string }>;
     closeSessionFromTrayPanel?(sessionId: string): Promise<{ success: boolean }>;
     onTrayPanelCloseRequest?(callback: () => void): () => void;
     onTrayPanelRefresh?(callback: () => void): () => void;

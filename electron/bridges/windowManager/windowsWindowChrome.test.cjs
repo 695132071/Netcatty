@@ -60,6 +60,7 @@ test("main/settings/tray call sites wire Windows chrome helpers", () => {
   const main = readFileSync(path.join(here, "mainWindow.cjs"), "utf8");
   const settings = readFileSync(path.join(here, "settingsWindow.cjs"), "utf8");
   const popup = readFileSync(path.join(here, "terminalPopupWindow.cjs"), "utf8");
+  const editor = readFileSync(path.join(here, "editorWindow.cjs"), "utf8");
   const tray = readFileSync(path.join(here, "../globalShortcutBridge.cjs"), "utf8");
   const css = readFileSync(path.join(here, "../../../index.css"), "utf8");
   const html = readFileSync(path.join(here, "../../../index.html"), "utf8");
@@ -69,6 +70,7 @@ test("main/settings/tray call sites wire Windows chrome helpers", () => {
     ["mainWindow", main],
     ["settingsWindow", settings],
     ["terminalPopupWindow", popup],
+    ["editorWindow", editor],
   ]) {
     assert.match(source, /require\("\.\/windowsWindowChrome\.cjs"\)/, `${label} must require chrome helpers`);
     assert.match(source, /windowsFramelessContentChromeOptions/, `${label} must use content chrome helper`);
@@ -76,7 +78,7 @@ test("main/settings/tray call sites wire Windows chrome helpers", () => {
     const requireIndex = source.indexOf('require("./windowsWindowChrome.cjs")');
     const withIndex = source.indexOf("with (ctx)");
     assert.ok(
-      requireIndex !== -1 && withIndex !== -1 && requireIndex < withIndex,
+      requireIndex !== -1 && (withIndex === -1 || requireIndex < withIndex),
       `${label}: require chrome helpers before with(ctx) so injected require cannot remount the path`,
     );
   }

@@ -37,7 +37,6 @@ import type {
   WebSearchConfig,
 } from '../../infrastructure/ai/types';
 import {
-  DEFAULT_COMMAND_BLOCKLIST,
   DEFAULT_COMMAND_TIMEOUT_SECONDS,
   DEFAULT_RESPONSE_IDLE_TIMEOUT_SECONDS,
   normalizeCommandTimeoutSeconds,
@@ -56,6 +55,7 @@ import {
 import { convertFilesToUploads } from './useFileUpload';
 import { removeProviderReferences } from './aiProviderCleanup';
 import { publishAISessionsSnapshot } from './aiSessionsStore';
+import { planSessionFork } from '../../domain/aiSessionFork';
 import {
   AI_STATE_CHANGED_DRAFTS_BY_SCOPE,
   AI_STATE_CHANGED_PANEL_VIEW_BY_SCOPE,
@@ -69,7 +69,7 @@ import {
   latestAIDraftsByScopeSnapshot,
   latestAIPanelViewByScopeSnapshot,
   latestAISessionsSnapshot,
-  pruneSessionsForStorage,
+  writeSessionsForStorage,
   setLatestAIActiveSessionMapSnapshot,
   setLatestAIDraftsByScopeSnapshot,
   setLatestAIPanelViewByScopeSnapshot,
@@ -79,10 +79,19 @@ import {
 } from './aiStateSnapshots';
 import { AI_STATE_CHANGED_EVENT, emitAIStateChanged } from './aiStateEvents';
 import {
+  persistCommandBlocklistSetting,
+  readCommandBlocklistSetting,
+} from './commandBlocklistSettings';
+import {
   handoffDissolvedWorkspaceAIScope,
   retargetWorkspaceActiveChatAfterMemberLoss,
   seedWorkspaceAIActiveSessionFromMembers,
 } from '../../domain/workspaceAiScopeHandoff';
+import {
+  buildUndoLastTurnBranch,
+  type UndoLastTurnRestoredDraft,
+} from '../../domain/aiUndoLastTurn';
+
 
 function providerPatchIsNoop(
   current: ProviderConfig,
@@ -140,9 +149,7 @@ export function useAIState() {
   );
 
   // ── Safety Settings ──
-  const [commandBlocklist, setCommandBlocklistRaw] = useState<string[]>(() =>
-    localStorageAdapter.read<string[]>(STORAGE_KEY_AI_COMMAND_BLOCKLIST) ?? [...DEFAULT_COMMAND_BLOCKLIST]
-  );
+  const [commandBlocklist, setCommandBlocklistRaw] = useState<string[]>(readCommandBlocklistSetting);
   const [commandTimeout, setCommandTimeoutRaw] = useState<number>(() =>
     normalizeCommandTimeoutSeconds(
       localStorageAdapter.readNumber(STORAGE_KEY_AI_COMMAND_TIMEOUT) ?? DEFAULT_COMMAND_TIMEOUT_SECONDS,
@@ -423,7 +430,7 @@ export function useAIState() {
 
   const setCommandBlocklist = useCallback((value: string[]) => {
     setCommandBlocklistRaw(value);
-    localStorageAdapter.write(STORAGE_KEY_AI_COMMAND_BLOCKLIST, value);
+    persistCommandBlocklistSetting(value);
     // Sync to MCP Server bridge so SDK agents also respect the blocklist
     const bridge = getAIBridge();
     bridge?.aiMcpSetCommandBlocklist?.(value);
@@ -503,12 +510,7 @@ export function useAIState() {
             setDefaultAgentIdRaw(localStorageAdapter.readString(STORAGE_KEY_AI_DEFAULT_AGENT) ?? 'catty');
             break;
           case STORAGE_KEY_AI_COMMAND_BLOCKLIST: {
-            const list = localStorageAdapter.read<string[]>(STORAGE_KEY_AI_COMMAND_BLOCKLIST);
-            if (list != null && !Array.isArray(list)) {
-              console.warn('[useAIState] Cross-window sync: AI_COMMAND_BLOCKLIST is not an array, skipping');
-              break;
-            }
-            const blocklist = list ?? [...DEFAULT_COMMAND_BLOCKLIST];
+            const blocklist = readCommandBlocklistSetting();
             setCommandBlocklistRaw(blocklist);
             getAIBridge()?.aiMcpSetCommandBlocklist?.(blocklist);
             break;
@@ -627,7 +629,7 @@ export function useAIState() {
   // ── Sync initial safety settings to MCP Server on mount ──
   useEffect(() => {
     const bridge = getAIBridge();
-    const initialBlocklist = localStorageAdapter.read<string[]>(STORAGE_KEY_AI_COMMAND_BLOCKLIST) ?? [...DEFAULT_COMMAND_BLOCKLIST];
+    const initialBlocklist = readCommandBlocklistSetting();
     bridge?.aiMcpSetCommandBlocklist?.(initialBlocklist);
     const initialTimeout = normalizeCommandTimeoutSeconds(
       localStorageAdapter.readNumber(STORAGE_KEY_AI_COMMAND_TIMEOUT) ?? DEFAULT_COMMAND_TIMEOUT_SECONDS,
@@ -650,7 +652,7 @@ export function useAIState() {
 
   // ── Session CRUD ──
   const persistSessions = useCallback((next: AISession[]) => {
-    localStorageAdapter.write(STORAGE_KEY_AI_SESSIONS, pruneSessionsForStorage(next));
+    writeSessionsForStorage(next);
   }, []);
 
   // Debounced version of persistSessions for high-frequency updates (e.g. streaming)
@@ -661,7 +663,7 @@ export function useAIState() {
     if (persistTimerRef.current) clearTimeout(persistTimerRef.current);
     persistTimerRef.current = setTimeout(() => {
       if (!mountedRef.current) return; // Skip writes after unmount
-      localStorageAdapter.write(STORAGE_KEY_AI_SESSIONS, pruneSessionsForStorage(sessionsRef.current));
+      writeSessionsForStorage(sessionsRef.current);
       persistTimerRef.current = null;
     }, 500);
   }, []);
@@ -678,6 +680,57 @@ export function useAIState() {
       }
     };
   }, [persistSessions]);
+
+  // "Fork from here": copy the conversation up to a completed assistant
+  // response into a new session and make it the scope's active chat. The
+  // original session stays untouched in history. Pure boundary validation and
+  // plan building live in domain/aiSessionFork; the fork has no original
+  // external session id or pending-turn state. Per-message replay metadata is
+  // preserved; output handles and running jobs remain owned by the source.
+  // Null is returned when the boundary is not forkable.
+  // `viewingScope` is the panel scope the fork was requested from; the branch
+  // is created there so the fork is active and visible in the very scope that
+  // is viewing it, even when the source session carries a stale scope (e.g. a
+  // terminal chat resumed in a reconnected terminal or a merged workspace).
+  const forkSessionFromMessage = useCallback(async (
+    sessionId: string,
+    messageId: string,
+    viewingScope?: Pick<AISessionScope, 'type' | 'targetId'>,
+  ): Promise<AISession | null> => {
+    const source = sessionsRef.current.find(s => s.id === sessionId);
+    if (!source) return null;
+    const plan = planSessionFork(source, messageId);
+    if (!plan.ok) return null;
+    const now = Date.now();
+    const fork: AISession = {
+      id: `ai_${now}_${Math.random().toString(36).slice(2, 8)}`,
+      title: plan.title,
+      agentId: source.agentId,
+      scope: {
+        ...source.scope,
+        // Host membership stays with the source (the messages were produced
+        // there); the scope the fork belongs to is the viewing scope.
+        ...(viewingScope ? { type: viewingScope.type, targetId: viewingScope.targetId } : {}),
+        hostIds: source.scope.hostIds ? [...source.scope.hostIds] : undefined,
+      },
+      messages: plan.messages,
+      createdAt: now,
+      updatedAt: now,
+    };
+    if (plan.contextCompaction) {
+      fork.contextCompaction = plan.contextCompaction;
+    }
+    setSessionsRaw(prev => {
+      // Keep the source alongside its branch within the existing history limit.
+      const next = [fork, { ...source, updatedAt: now }, ...prev.filter(session => session.id !== source.id)];
+      setLatestAISessionsSnapshot(next);
+      persistSessions(next);
+      return next;
+    });
+    const scopeKey = `${fork.scope.type}:${fork.scope.targetId ?? ''}`;
+    setActiveSessionId(scopeKey, fork.id);
+    return fork;
+  }, [persistSessions, setActiveSessionId]);
 
   const createSession = useCallback((scope: AISessionScope, agentId?: string): AISession => {
     const now = Date.now();
@@ -700,6 +753,40 @@ export function useAIState() {
     setActiveSessionId(scopeKey, session.id);
     return session;
   }, [defaultAgentId, persistSessions, setActiveSessionId]);
+
+  // Non-destructive "undo last turn": branch the session at the boundary
+  // before the latest user message and keep the original in history intact.
+  // Returns the new branch id plus the undone user message for the composer.
+  const undoLastTurnInSession = useCallback(async (
+    sessionId: string,
+    viewingScope?: Pick<AISessionScope, 'type' | 'targetId'>,
+  ): Promise<{
+    sessionId: string;
+    restored: UndoLastTurnRestoredDraft;
+  } | null> => {
+    const nextId = `ai_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+    const source = sessionsRef.current.find(s => s.id === sessionId);
+    if (!source) return null;
+    const result = buildUndoLastTurnBranch(source, { newId: nextId, now: Date.now() });
+    if (!result) return null;
+
+    const branched = result.session;
+    // Like Fork, Undo belongs to the panel viewing the source, which may have
+    // resumed a chat from a closed terminal or inherited it after a merge.
+    if (viewingScope) {
+      branched.scope = { ...branched.scope, ...viewingScope };
+    }
+    setSessionsRaw(prev => {
+      // Keep both recently used chats within the existing history limit.
+      const next = [branched, { ...source, updatedAt: branched.updatedAt }, ...prev.filter(session => session.id !== source.id)];
+      setLatestAISessionsSnapshot(next);
+      persistSessions(next);
+      return next;
+    });
+    const scopeKey = `${branched.scope.type}:${branched.scope.targetId ?? ''}`;
+    setActiveSessionId(scopeKey, branched.id);
+    return { sessionId: branched.id, restored: result.restored };
+  }, [persistSessions, setActiveSessionId]);
 
   const deleteSession = useCallback((sessionId: string, scopeKey?: string) => {
     cleanupDeletedAIChatSessions([sessionId]);
@@ -951,34 +1038,25 @@ export function useAIState() {
   }, []);
 
   const showDraftView = useCallback((scopeKey: string) => {
-    const currentPanelViewByScope = panelViewByScope;
-    let nextActiveSessionIdMap: Record<string, string | null> | null = null;
-    let nextPanelViewByScope: PanelViewByScope | null = null;
-    let activeSessionMapChanged = false;
-    let panelViewChanged = false;
+    const currentActiveSessionIdMap = latestAIActiveSessionMapSnapshot
+      ?? localStorageAdapter.read<Record<string, string | null>>(STORAGE_KEY_AI_ACTIVE_SESSION_MAP)
+      ?? {};
+    const next = activateDraftView(
+      currentActiveSessionIdMap,
+      panelViewByScope,
+      scopeKey,
+    );
 
-    setActiveSessionIdMapRaw((prevActiveSessionIdMap) => {
-      const next = activateDraftView(
-        prevActiveSessionIdMap,
-        currentPanelViewByScope,
-        scopeKey,
-      );
-      activeSessionMapChanged = next.activeSessionIdMap !== prevActiveSessionIdMap;
-      panelViewChanged = next.panelViewByScope !== currentPanelViewByScope;
-      nextActiveSessionIdMap = next.activeSessionIdMap;
-      nextPanelViewByScope = next.panelViewByScope;
-      return activeSessionMapChanged ? next.activeSessionIdMap : prevActiveSessionIdMap;
-    });
-
-    if (activeSessionMapChanged && nextActiveSessionIdMap) {
-      setLatestAIActiveSessionMapSnapshot(nextActiveSessionIdMap);
-      localStorageAdapter.write(STORAGE_KEY_AI_ACTIVE_SESSION_MAP, nextActiveSessionIdMap);
+    if (next.activeSessionIdMap !== currentActiveSessionIdMap) {
+      setLatestAIActiveSessionMapSnapshot(next.activeSessionIdMap);
+      localStorageAdapter.write(STORAGE_KEY_AI_ACTIVE_SESSION_MAP, next.activeSessionIdMap);
+      setActiveSessionIdMapRaw(next.activeSessionIdMap);
       emitAIStateChanged(STORAGE_KEY_AI_ACTIVE_SESSION_MAP);
     }
 
-    if (panelViewChanged && nextPanelViewByScope) {
-      setLatestAIPanelViewByScopeSnapshot(nextPanelViewByScope);
-      setPanelViewByScopeRaw(nextPanelViewByScope);
+    if (next.panelViewByScope !== panelViewByScope) {
+      setLatestAIPanelViewByScopeSnapshot(next.panelViewByScope);
+      setPanelViewByScopeRaw(next.panelViewByScope);
       emitAIStateChanged(AI_STATE_CHANGED_PANEL_VIEW_BY_SCOPE);
     }
   }, [panelViewByScope]);
@@ -1288,6 +1366,7 @@ export function useAIState() {
     addDraftFiles,
     removeDraftFile,
     createSession,
+    undoLastTurnInSession,
     deleteSession,
     deleteSessionsByTarget,
     updateSessionTitle,
@@ -1300,6 +1379,7 @@ export function useAIState() {
     seedWorkspaceActiveSessionFromMembers,
     handoffDissolvedWorkspaceScope,
     retargetWorkspaceActiveChatForMemberLoss,
+    forkSessionFromMessage,
   }), [
     providers,
     setProviders,
@@ -1348,6 +1428,7 @@ export function useAIState() {
     addDraftFiles,
     removeDraftFile,
     createSession,
+    undoLastTurnInSession,
     deleteSession,
     deleteSessionsByTarget,
     updateSessionTitle,
@@ -1360,5 +1441,6 @@ export function useAIState() {
     seedWorkspaceActiveSessionFromMembers,
     handoffDissolvedWorkspaceScope,
     retargetWorkspaceActiveChatForMemberLoss,
+    forkSessionFromMessage,
   ]);
 }

@@ -17,7 +17,7 @@ const { ALL_CAPABILITIES } = require("./catalog/index.cjs");
 test("new vault management writes use the standard permission policy", () => {
   const ids = [
     "portforward.rules.create", "portforward.rules.update", "portforward.rules.duplicate", "portforward.rules.delete",
-    "vault.note.delete", "vault.group.create", "vault.group.update", "vault.group.delete",
+    "vault.note.delete", "vault.note.import", "vault.group.create", "vault.group.update", "vault.group.delete",
   ];
   for (const id of ids) {
     const capability = ALL_CAPABILITIES.find((entry) => entry.id === id);
@@ -187,6 +187,31 @@ test("confirm mode requires approval for portforward start and host notes set", 
     params: { chatSessionId: "chat-1", hostId: "host-1" },
   });
   assert.equal(publicNotesDecision.requiresApproval, true);
+
+  const noteCreateDecision = evaluateRpcPermission({
+    rpcMethod: "vault/notes/create",
+    surface: CAPABILITY_SURFACES.GLOBAL,
+    permissionMode: PERMISSION_MODES.CONFIRM,
+    params: { chatSessionId: "chat-1", title: "Runbook", content: "# Steps" },
+  });
+  assert.equal(noteCreateDecision.requiresApproval, true);
+
+  const noteImportDecision = evaluateRpcPermission({
+    rpcMethod: "vault/notes/import",
+    surface: CAPABILITY_SURFACES.GLOBAL,
+    permissionMode: PERMISSION_MODES.CONFIRM,
+    params: { chatSessionId: "chat-1", content: "# Steps", fileName: "runbook.md" },
+  });
+  assert.equal(noteImportDecision.requiresApproval, true);
+
+  const observerImport = evaluateRpcPermission({
+    rpcMethod: "vault/notes/import",
+    surface: CAPABILITY_SURFACES.GLOBAL,
+    permissionMode: PERMISSION_MODES.OBSERVER,
+    params: { chatSessionId: "chat-1", content: "# Steps" },
+  });
+  assert.equal(observerImport.allowed, false);
+  assert.equal(observerImport.error, OBSERVER_DENY_MESSAGE);
 });
 
 test("evaluatePermissionWithGrants skips approval when a grant matches", () => {
@@ -209,6 +234,27 @@ test("evaluatePermissionWithGrants skips approval when a grant matches", () => {
 
   assert.equal(decision.allowed, true);
   assert.equal(decision.requiresApproval, false);
+});
+
+test("a server grant approves only that server's terminal and SFTP writes", () => {
+  const grants = [{
+    id: "test-server",
+    capabilityId: "*",
+    sessionPattern: "host:host-test",
+    createdAt: Date.now(),
+  }];
+  const decide = (rpcMethod, hostId, sessionId = "ssh-1") => evaluatePermissionWithGrants({
+    rpcMethod,
+    permissionMode: PERMISSION_MODES.CONFIRM,
+    params: { chatSessionId: "chat-1", sessionId, command: "rm -rf /tmp/build", path: "/tmp/build" },
+    context: { hostId },
+  }, grants);
+
+  assert.equal(decide("netcatty/exec", "host-test").requiresApproval, false);
+  assert.equal(decide("netcatty/sftp/delete", "host-test").requiresApproval, false);
+  assert.equal(decide("netcatty/exec", "host-prod").requiresApproval, true);
+  assert.equal(decide("netcatty/exec", undefined).requiresApproval, true);
+  assert.equal(decide("netcatty/exec", "host-test", "").requiresApproval, true);
 });
 
 test("evaluatePermissionWithGrants does not let a comment grant approve a multiline command", () => {

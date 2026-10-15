@@ -1,12 +1,27 @@
 import type { TerminalSession } from "../../domain/models";
+import { classifyLocalShellType } from "../../lib/localShell";
+
+type SftpReuseCandidate = Pick<
+  TerminalSession,
+  "protocol" | "moshEnabled" | "etEnabled"
+>;
 
 /** SSH (non-mosh/et) sessions that can back SFTP once the transport is up. */
-export function isTerminalSessionEligibleForSftpReuse(session: TerminalSession): boolean {
+export function isTerminalSessionEligibleForSftpReuse(session: SftpReuseCandidate): boolean {
   return (
     (session.protocol === "ssh" || session.protocol === undefined)
     && !session.moshEnabled
     && !session.etEnabled
   );
+}
+
+export function resolveSftpReuseSourceSessionId(
+  session: SftpReuseCandidate,
+  sessionId: string,
+): string | undefined {
+  return isTerminalSessionEligibleForSftpReuse(session)
+    ? sessionId
+    : undefined;
 }
 
 export function canReuseTerminalConnection(session: TerminalSession): boolean {
@@ -18,13 +33,24 @@ type CloneSessionOptions = {
   localShellType?: TerminalSession["shellType"];
   workspaceId?: string;
   inheritedCwd?: string;
+  /**
+   * When false, the clone never reuses the source's established SSH channel and
+   * instead opens a brand-new connection (fresh auth; e.g. a new bastion login).
+   * Defaults to true (reuse when possible).
+   */
+  reuseConnection?: boolean;
 };
 
 function getClonedShellType(
   session: TerminalSession,
   localShellType?: TerminalSession["shellType"],
 ): TerminalSession["shellType"] {
-  return session.protocol === "local" ? localShellType : session.shellType;
+  if (session.protocol !== "local") return session.shellType;
+  // Clones retain an explicit per-session executable, so its shell type must
+  // survive a different global default (e.g. saved CMD with WSL in Settings).
+  return session.localShell !== undefined
+    ? (session.shellType ?? classifyLocalShellType(session.localShell))
+    : localShellType;
 }
 
 function createTerminalSessionClone(
@@ -36,7 +62,8 @@ function createTerminalSessionClone(
   // pendingInitialCwd for telnet/serial/mosh/et would be dead, never-cleared
   // state (those protocols don't track cwd, so it's never consumed or cleared).
   const injectsInheritedCwd =
-    (session.protocol === "ssh" || session.protocol === undefined)
+    options.reuseConnection !== false
+    && (session.protocol === "ssh" || session.protocol === undefined)
     && !session.moshEnabled
     && !session.etEnabled;
   const clonedSession: TerminalSession = {
@@ -64,7 +91,15 @@ function createTerminalSessionClone(
     fontSizeOverride: session.fontSizeOverride,
     ...(session.ephemeralHost ? { ephemeralHost: true } : {}),
     ...(injectsInheritedCwd && options.inheritedCwd ? { pendingInitialCwd: options.inheritedCwd } : {}),
-    reuseConnectionFromSessionId: canReuseTerminalConnection(session) ? session.id : undefined,
+    // Clearing `reuseConnectionFromSessionId` only disables source-specific
+    // reuse; without an explicit fresh-connection flag the bridge would still
+    // be eligible for general endpoint/idle transport reuse (e.g. borrowing
+    // the source's live transport). Flag the clone so the starter sends
+    // `reuseTransport: false` and the session truly dials fresh.
+    ...(options.reuseConnection === false ? { requireFreshConnection: true } : {}),
+    reuseConnectionFromSessionId: options.reuseConnection === false
+      ? undefined
+      : (canReuseTerminalConnection(session) ? session.id : undefined),
   };
 
   if (options.workspaceId) {

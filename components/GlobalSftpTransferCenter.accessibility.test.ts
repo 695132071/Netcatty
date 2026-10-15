@@ -110,6 +110,9 @@ test("associates the transfer-center folder warning with every destructive Repla
     const describedBy = button.getAttribute("aria-describedby");
     assert.ok(describedBy, `${button.textContent} should expose the folder deletion warning`);
     const warning = env.document.getElementById(describedBy);
-    assert.match(warning?.textContent ?? "", /Replace deletes all destination files and sub-folders/);
+    assert.match(
+      warning?.textContent ?? "",
+      /Replace: deletes destination-only content and cannot be undone/,
+    );
   }
 });

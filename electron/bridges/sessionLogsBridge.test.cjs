@@ -642,7 +642,7 @@ test("manual session logs honor HTML format and timestamps", async () => {
     assert.match(content, /<!DOCTYPE html>/);
     assert.match(content, /HTML \/ host:22/);
     assert.doesNotMatch(content, /HTML _ host_22/);
-    assert.match(content, /\[\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\] ready/);
+    assert.match(content, /\[\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d{3}\] ready/);
   } finally {
     await sessionLogStreamManager.cleanupAll();
     fs.rmSync(directory, { recursive: true, force: true });
@@ -916,6 +916,88 @@ test("manual session log rejects renderer-supplied filePath without selection to
     assert.equal(fs.existsSync(filePath), false);
   } finally {
     await sessionLogStreamManager.cleanupAll();
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test("html wrapper adapts to light/dark browser color scheme", () => {
+  const bridge = loadBridgeWithDialog({});
+  const html = bridge.wrapTerminalHtmlContent("hello", "host-1", 0);
+  // Day palette is the default; dark applies only via prefers-color-scheme.
+  assert.match(html, /--term-default-bg:\s*#ffffff/);
+  assert.match(html, /color-scheme:\s*light dark/);
+  assert.match(html, /<meta name="color-scheme" content="light dark">/);
+  assert.match(html, /@media \(prefers-color-scheme: dark\)/);
+  assert.match(html, /--term-default-bg:\s*#1e1e1e/);
+  // Fonts remain monospace with a platform-appropriate stack.
+  assert.match(html, /font-family:[^;]*ui-monospace[^;]*monospace/);
+});
+
+test("all light-mode ANSI foregrounds remain readable on the default background", () => {
+  const { terminalDataToHtml } = loadBridgeWithDialog({});
+  let data = "";
+  for (let index = 0; index < 256; index++) data += `\x1b[38;5;${index}mcolor ${index}\x1b[0m\n`;
+  data += "\x1b[38;2;255;255;255mwhite\x1b[0m\n\x1b[38;2;255;255;0myellow\x1b[0m\n\x1b[38;2;18;52;86mdark\x1b[0m";
+  const html = terminalDataToHtml(data, "host", 0);
+  const [lightCss, darkCss] = html.split("@media");
+  const luminance = (hex) => {
+    const channels = hex.match(/[a-f0-9]{2}/gi).map((channel) => {
+      const value = parseInt(channel, 16) / 255;
+      return value <= 0.04045 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4;
+    });
+    return channels[0] * 0.2126 + channels[1] * 0.7152 + channels[2] * 0.0722;
+  };
+  const background = luminance(lightCss.match(/--term-default-bg:\s*(#[a-f0-9]{6})/i)[1]);
+  const palette = [...lightCss.matchAll(/--(ansi-\d+|term-custom-[a-f0-9]{6}):\s*(#[a-f0-9]{6})/gi)];
+  assert.equal(palette.length, 257);
+  for (const [, index, color] of palette) {
+    const foreground = luminance(color);
+    const contrast = (Math.max(background, foreground) + 0.05) / (Math.min(background, foreground) + 0.05);
+    assert.ok(contrast >= 4.5, `ANSI ${index} (${color}) contrast ${contrast.toFixed(2)} is below 4.5:1`);
+  }
+  for (const [, hex, color] of lightCss.matchAll(/--term-custom-([a-f0-9]{6}):\s*(#[a-f0-9]{6})/gi)) {
+    assert.ok(darkCss.includes(`--term-custom-${hex}: #${hex};`));
+    if (1.05 / (luminance(hex) + 0.05) >= 4.5) assert.equal(color, `#${hex}`);
+  }
+  assert.match(html, /color: var\(--term-custom-ffffff, #ffffff\)[^>]*>white/);
+});
+
+test("screen export preserves rendered rows exactly, including empty screens", async () => {
+  fs.mkdirSync(TEMP_ROOT, { recursive: true });
+  const directory = fs.mkdtempSync(path.join(TEMP_ROOT, "screen-export-"));
+  const filePath = path.join(directory, "screen.txt");
+  const { exportSessionLog } = loadBridgeWithDialog({
+    showSaveDialog: async () => ({ canceled: false, filePath }),
+  });
+  try {
+    for (const terminalData of ["  中文 😀\n\nend\n\n", ""]) {
+      const result = await exportSessionLog(null, {
+        terminalData, plainText: true, hostLabel: "screen", startTime: Date.now(), format: "txt",
+      });
+      assert.equal(result.success, true);
+      assert.equal(fs.readFileSync(filePath, "utf8"), terminalData);
+    }
+  } finally {
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test("screen export escapes HTML when the user selects an HTML filename", async () => {
+  fs.mkdirSync(TEMP_ROOT, { recursive: true });
+  const directory = fs.mkdtempSync(path.join(TEMP_ROOT, "screen-html-"));
+  const filePath = path.join(directory, "screen.html");
+  const { exportSessionLog } = loadBridgeWithDialog({
+    showSaveDialog: async () => ({ canceled: false, filePath }),
+  });
+  try {
+    await exportSessionLog(null, {
+      terminalData: "<script>alert(1)</script>\n\n", plainText: true,
+      hostLabel: "screen", startTime: Date.now(), format: "txt",
+    });
+    const html = fs.readFileSync(filePath, "utf8");
+    assert.ok(html.includes("&lt;script&gt;alert(1)&lt;/script&gt;\n\n"));
+    assert.ok(!html.includes("<script>"));
+  } finally {
     fs.rmSync(directory, { recursive: true, force: true });
   }
 });

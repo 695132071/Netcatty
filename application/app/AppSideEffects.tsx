@@ -21,11 +21,12 @@ import { getNotesSnapshot } from '../state/notesStore';
 import { useVaultAgentBridge } from '../state/useVaultAgentBridge';
 import { useWindowControls } from '../state/useWindowControls';
 import { useTerminalKeyboardFocus } from '../state/useTerminalKeyboardFocus';
-import { useEditorTabChromeList } from '../state/editorTabStore';
+import { editorTabStore, useEditorTabChromeList } from '../state/editorTabStore';
+import { installEditorWindowSourceListeners } from '../state/editorWindowClient';
+import { findEditorSftpOwnerTabId } from '../state/editorSftpOwnerRegistry';
 import {
   isPluginViewTabId,
   pluginViewTabStore,
-  resolveBatchTabCloseFocus,
   usePluginViewTabs,
 } from '../state/pluginViewTabStore';
 import {
@@ -37,13 +38,14 @@ import {
 import { isTerminalBootEpochCurrent } from '../../domain/terminalBootEpoch';
 import { useI18n } from '../i18n/I18nProvider';
 import { matchesKeyBinding } from '../../domain/models';
+import { resolveHostDefaultLocalShell } from '../../domain/localShellHost';
 import { resolveGroupDefaults, applyGroupDefaults } from '../../domain/groupConfig';
 import { upsertKnownHost } from '../../domain/knownHosts';
 import { materializeHostProxyProfile } from '../../domain/proxyProfiles';
 import { buildSshDeepLinkConnectionHost, buildSshDeepLinkEphemeralHost, buildSshDeepLinkEphemeralHostFromSaved, buildSshDeepLinkHostDraft, findSshDeepLinkHost, parseSshDeepLink } from '../../domain/sshDeepLink';
 import { buildTelnetDeepLinkConnectionHost, buildTelnetDeepLinkEphemeralHostFromSaved, buildTelnetDeepLinkOpenHost, findTelnetDeepLinkHost, materializeTelnetDeepLinkMatchHost, parseTelnetDeepLink } from '../../domain/telnetDeepLink';
 import { buildJmsDeepLinkEphemeralHost, isSupportedJmsProtocol, parseJmsDeepLink } from '../../domain/jmsDeepLink';
-import { applyEphemeralHostsUpdate, splitHostsUpdateByEphemeral } from '../../domain/ephemeralHosts';
+import { applyEphemeralHostDistroUpdate, applyEphemeralHostsUpdate, splitHostsUpdateByEphemeral } from '../../domain/ephemeralHosts';
 import { resolveHostAuth } from '../../domain/sshAuth';
 import { isEncryptedCredentialPlaceholder, stripSyncPayloadEncryptedCredentials } from '../../domain/credentials';
 import {
@@ -52,12 +54,13 @@ import {
 } from '../../domain/terminalAppearance';
 import { selectConnectionLogForTerminalDataCapture } from '../../domain/connectionLog';
 import { collectSessionIds } from '../../domain/workspace';
+import { useHostOpenSessionReuse } from '../state/useHostOpenSessionReuse';
 import type { PaneMagnificationController } from '../../domain/paneMagnification';
 import { resolveCloseIntent } from '../state/resolveCloseIntent';
 import { resolveSnippetsShortcutIntent } from '../state/resolveSnippetsShortcutIntent';
 import { isPrimaryModifierWBinding, resolveWindowCommandCloseIntent } from '../state/windowCommandClose';
 import type { SyncPayload } from '../../domain/sync';
-import { applySyncPayload, buildLocalVaultPayloadAsync, hasMeaningfulSyncData } from '../syncPayload';
+import { prepareSyncPayloadApply, buildLocalVaultPayloadAsync, hasMeaningfulSyncData } from '../syncPayload';
 import {
   applyProtectedSyncPayload,
   ensureVersionChangeBackup,
@@ -90,12 +93,17 @@ import { isScriptSnippet } from '../../domain/snippetScript.ts';
 import { collectSnippetDeleteIds } from '../../domain/snippetSelection.ts';
 import { shouldOpenLocalTerminalOnStartup, resolveStartupLandingSetting } from '../../domain/startupLanding';
 import { useAppStartupEffects } from './useAppStartupEffects';
-import { handleTrayJumpToSessionImpl, handleTrayTogglePortForwardImpl, handleTrayPanelConnectImpl, handleTrayPanelConnectRequestImpl, flushQueuedTrayPanelConnectHostsImpl, handleGlobalHotkeyKeyDownImpl, handleEscapeKeyDownImpl, handleKeyboardInteractiveSubmitImpl, handleKeyboardInteractiveCancelImpl, handlePassphraseSubmitImpl, handlePassphraseCancelImpl, handlePassphraseSkipImpl, createLocalTerminalWithCurrentShellImpl, splitSessionWithCurrentShellImpl, copySessionWithCurrentShellImpl, copyWorkspaceWithCurrentShellImpl, copySessionToNewWindowWithCurrentShellImpl, confirmIfBusyLocalTerminalImpl, closeTabsBatchImpl, executeHotkeyActionImpl, handleCreateLocalTerminalImpl, handleConnectToHostImpl, handleTerminalDataCaptureImpl, hasMultipleProtocolsImpl, handleHostConnectWithProtocolCheckImpl, handleProtocolSelectImpl, handleRootContextMenuImpl, markForwardedNativeShortcutEvent } from './AppHandlers';
+import { handleTrayJumpToSessionImpl, handleTrayTogglePortForwardImpl, handleTrayPanelConnectImpl, handleTrayPanelConnectRequestImpl, flushQueuedTrayPanelConnectHostsImpl, handleGlobalHotkeyKeyDownImpl, handleEscapeKeyDownImpl, handleKeyboardInteractiveSubmitImpl, handleKeyboardInteractiveCancelImpl, handlePassphraseSubmitImpl, handlePassphraseCancelImpl, handlePassphraseSkipImpl, createLocalTerminalWithCurrentShellImpl, splitSessionWithCurrentShellImpl, copySessionWithCurrentShellImpl, duplicateSessionWithCurrentShellImpl, copyWorkspaceWithCurrentShellImpl, copySessionToNewWindowWithCurrentShellImpl, confirmIfBusyLocalTerminalImpl, closeTabsBatchImpl, executeHotkeyActionImpl, handleCreateLocalTerminalImpl, handleConnectToHostImpl, handleTerminalDataCaptureImpl, hasMultipleProtocolsImpl, handleHostConnectWithProtocolCheckImpl, handleProtocolSelectImpl, handleRootContextMenuImpl, markForwardedNativeShortcutEvent } from './AppHandlers';
 
 type OpenSessionInNewWindowPayload = {
   title?: string;
   sourceSession?: TerminalSession;
   localShellType?: TerminalSession['shellType'];
+};
+
+type DeepLinkPayload = {
+  url?: string;
+  tabName?: string;
 };
 
 const IS_DEV = import.meta.env.DEV;
@@ -139,7 +147,6 @@ export function AppSideEffects() {
     terminalSettings,
     hotkeyScheme,
     keyBindings,
-    disableTerminalFontZoom,
     isHotkeyRecording,
     showSftpTab,
     shellOnlyTabNumberShortcuts,
@@ -147,7 +154,11 @@ export function AppSideEffects() {
     toggleWindowOpacity,
   } = settings;
 
-  useTerminalKeyboardFocus(hotkeyScheme !== 'disabled' && !disableTerminalFontZoom);
+  // Always publish terminal keyboard focus to the main process. When font zoom
+  // is disabled (or hotkeys are off) the renderer ignores the font chords, so
+  // the main process must keep handing them to the page instead of falling
+  // back to window zoom while the user is typing in a terminal (#3327).
+  useTerminalKeyboardFocus();
 
   const discoveredShells = useDiscoveredShells();
 
@@ -203,6 +214,7 @@ export function AppSideEffects() {
     addConnectionLog,
     updateConnectionLog,
     updateHostLastConnected,
+    updateHostDistro,
     importDataFromString,
     readPersistedHosts,
     groupConfigs,
@@ -249,29 +261,16 @@ export function AppSideEffects() {
     runSnippet,
     getOrderedWorkTabs,
     toggleBroadcast,
+    toggleGlobalBroadcast,
+    canUseGlobalBroadcast,
     logViews,
     closeLogView,
     copySession,
     copyWorkspace,
     createSessionFromCloneSource,
     getSessionRestoreCwd,
+    renameSessionInline,
   } = sessionState;
-
-  // Presentation-field thrash stays off Host bags (Hosts use retainStable);
-  // AppSideEffects only needs host/session maps for glue handlers and effects.
-  const handleRunSnippet = useCallback(
-    async (snippet: Snippet, targetHosts: Host[]) => {
-      if (targetHosts.length === 0) return;
-      if (isScriptSnippet(snippet)) {
-        runSnippet(snippet, targetHosts);
-        return;
-      }
-      const command = await resolveSnippetCommand(snippet);
-      if (command === null) return;
-      runSnippet(snippet, targetHosts, command);
-    },
-    [runSnippet],
-  );
 
   // Presence-only list: keystrokes must not rebuild App domains / TopTabs structure.
   const editorTabs = useEditorTabChromeList();
@@ -499,17 +498,18 @@ export function AppSideEffects() {
     (payload: SyncPayload) =>
       applyProtectedSyncPayload({
         buildPreApplyPayload: () => buildCurrentSyncPayload(),
-        applyPayload: () =>
-          applySyncPayload(payload, {
+        prepareApply: () =>
+          prepareSyncPayloadApply(payload, {
             importVaultData: importDataFromString,
             importPortForwardingRules,
             onSettingsApplied: settings.rehydrateAllFromStorage,
-          }),
+          }, { currentHosts: hosts }),
         translateProtectiveBackupFailure: (message) =>
           t('cloudSync.localBackups.protectiveBackupFailed', { message }),
       }),
     [
       buildCurrentSyncPayload,
+      hosts,
       importDataFromString,
       importPortForwardingRules,
       settings.rehydrateAllFromStorage,
@@ -521,20 +521,24 @@ export function AppSideEffects() {
     (payload: SyncPayload, commitReplica: () => Promise<void>) =>
       applyProtectedSyncPayload({
         buildPreApplyPayload: () => buildCurrentSyncPayload(),
-        applyPayload: async () => {
+        prepareApply: async () => {
           const portable = stripSyncPayloadEncryptedCredentials(payload);
-          await applySyncPayload(portable, {
+          const applyPreparedPayload = await prepareSyncPayloadApply(portable, {
             importVaultData: importDataFromString,
             importPortForwardingRules,
             onSettingsApplied: settings.rehydrateAllFromStorage,
-          });
-          await commitReplica();
+          }, { currentHosts: hosts });
+          return async () => {
+            await applyPreparedPayload();
+            await commitReplica();
+          };
         },
         translateProtectiveBackupFailure: (message) =>
           t('cloudSync.localBackups.protectiveBackupFailed', { message }),
       }),
     [
       buildCurrentSyncPayload,
+      hosts,
       importDataFromString,
       importPortForwardingRules,
       settings.rehydrateAllFromStorage,
@@ -624,6 +628,8 @@ export function AppSideEffects() {
     updateState,
     workspaces,
   });
+
+  useEffect(() => installEditorWindowSourceListeners(), []);
 
   const pendingTrayPortForwardsWhileLockedRef = useRef<Array<{ ruleId: string; start: boolean }>>([]);
 
@@ -898,6 +904,8 @@ export function AppSideEffects() {
   // array thrash does not rebuild appTerminalDomain (see domain isolation).
   const sessionsRef = useRef(sessions);
   sessionsRef.current = sessions;
+  const canUseGlobalBroadcastRef = useRef(canUseGlobalBroadcast);
+  canUseGlobalBroadcastRef.current = canUseGlobalBroadcast;
   // Logs live in connectionLogsStore — keep a ref fresh without re-rendering App.
   const connectionLogsRef = useRef(getConnectionLogsSnapshot().connectionLogs);
   useEffect(() => {
@@ -958,6 +966,8 @@ export function AppSideEffects() {
 
   const copySessionWithCurrentShell = useCallback((sessionId: string) => { return copySessionWithCurrentShellImpl(() => ({ classifyLocalShellType, copySession, discoveredShells, getSessionRestoreCwd, hostById, terminalHosts, netcattyBridge, resolveShellSetting, sessionId, sessions, terminalSettings }), sessionId); }, [copySession, terminalSettings, discoveredShells, sessions, getSessionRestoreCwd, hostById, terminalHosts]);
 
+  const duplicateSessionWithCurrentShell = useCallback((sessionId: string) => { return duplicateSessionWithCurrentShellImpl(() => ({ classifyLocalShellType, copySession, discoveredShells, getSessionRestoreCwd, hostById, terminalHosts, netcattyBridge, resolveShellSetting, sessionId, sessions, terminalSettings }), sessionId); }, [copySession, terminalSettings, discoveredShells, sessions, getSessionRestoreCwd, hostById, terminalHosts]);
+
   const copyWorkspaceWithCurrentShell = useCallback((workspaceId: string) => { return copyWorkspaceWithCurrentShellImpl(() => ({ classifyLocalShellType, collectSessionIds, copyWorkspace, discoveredShells, getSessionRestoreCwd, hostById, terminalHosts, netcattyBridge, resolveShellSetting, sessions, terminalSettings, workspaces }), workspaceId); }, [copyWorkspace, terminalSettings, discoveredShells, sessions, workspaces, getSessionRestoreCwd, hostById, terminalHosts]);
 
   const copySessionToNewWindowWithCurrentShell = useCallback((sessionId: string) => { return copySessionToNewWindowWithCurrentShellImpl(() => ({ classifyLocalShellType, discoveredShells, netcattyBridge, resolveShellSetting, sessions, terminalSettings, t, toast }), sessionId); }, [sessions, terminalSettings, discoveredShells, t]);
@@ -1006,27 +1016,18 @@ export function AppSideEffects() {
   }, [orderedTabsWithEditors]);
 
   // Close many tabs at once with a single batched busy-shell confirmation.
-  // Used by the "Close all / Close others / Close to the right" context-menu
-  // actions on tabs (#748).
+  // Used by the "Close all / Close others / Close to the left / Close to the
+  // right" context-menu actions on tabs (#748).
   const closeTabsBatch = useCallback(
-    async (targetIds: string[]) => {
-      const closingTabIds = new Set(targetIds);
-      const activeBeforeClose = activeTabStore.getActiveTabId();
-      const focusAfterClose = resolveBatchTabCloseFocus({
-        orderedTabIds: orderedTabsWithEditors,
-        closingTabIds,
-        activeTabId: activeBeforeClose,
-      });
-      const pluginIds = targetIds.filter((id) => pluginViewTabStore.getTab(id));
-      const regularIds = targetIds.filter((id) => !pluginViewTabStore.getTab(id));
-      const canClose = !regularIds.length || await closeTabsBatchImpl(
-        () => ({ closeLogView, closeSessions, closeTabsInFlightRef, closeWorkspace, confirmIfBusyLocalTerminal, logViews, sessions, targetIds: regularIds, workspaces }),
-        regularIds,
-      );
-      if (!canClose) return;
-      for (const id of pluginIds) pluginViewTabStore.close(id);
-      if (closingTabIds.has(activeBeforeClose)) activeTabStore.setActiveTabId(focusAfterClose);
-    },
+    (targetIds: string[]) => closeTabsBatchImpl(
+      () => ({
+        closeLogView, closeSessions, closeTabsInFlightRef, closeWorkspace,
+        confirmIfBusyLocalTerminal, logViews, sessions, workspaces,
+        activeTabStore, editorTabStore, pluginViewTabStore,
+        handleRequestCloseEditorTabRef, findEditorSftpOwnerTabId, orderedTabsWithEditors,
+      }),
+      targetIds,
+    ),
     [workspaces, sessions, logViews, confirmIfBusyLocalTerminal, closeWorkspace, closeSessions, closeLogView, orderedTabsWithEditors],
   );
 
@@ -1075,6 +1076,8 @@ export function AppSideEffects() {
       terminalPaneMagnificationRef,
       toEditorTabId,
       toggleBroadcast,
+      toggleGlobalBroadcast,
+      canUseGlobalBroadcast: canUseGlobalBroadcastRef.current,
       toggleScriptsSidePanelRef,
       toggleSidePanelRef,
       toggleWindowOpacity,
@@ -1091,6 +1094,7 @@ export function AppSideEffects() {
     moveFocusInWorkspace,
     toggleBroadcast,
     toggleWindowOpacity,
+    toggleGlobalBroadcast,
     toggleWorkspaceViewMode,
     confirmIfBusyLocalTerminal,
   ]);
@@ -1351,8 +1355,32 @@ export function AppSideEffects() {
           { validProxyProfileIds: proxyProfileIdSet },
         )
       : applyGroupDefaults(host, {}, { validProxyProfileIds: proxyProfileIdSet });
-    return materializeHostProxyProfile(withGroupDefaults, proxyProfiles);
-  }, [groupConfigs, proxyProfileIdSet, proxyProfiles]);
+    const effectiveHost = materializeHostProxyProfile(withGroupDefaults, proxyProfiles);
+    // Local-shell vault hosts saved with "System default shell" carry no
+    // localShell; resolve the Settings → Terminal shell here at the shared
+    // effective-host boundary so every launch path (connect, tray/dock open,
+    // workspace creation/append, tunnels) uses the configured shell instead
+    // of silently falling back to the backend OS default shell.
+    return resolveHostDefaultLocalShell(effectiveHost, {
+      discoveredShells,
+      resolveShellSetting,
+      terminalSettings,
+    });
+  }, [groupConfigs, proxyProfileIdSet, proxyProfiles, discoveredShells, terminalSettings]);
+
+  const handleRunSnippet = useCallback(
+    async (snippet: Snippet, targetHosts: Host[]) => {
+      if (targetHosts.length === 0) return;
+      if (isScriptSnippet(snippet)) {
+        runSnippet(snippet, targetHosts.map(resolveEffectiveHost));
+        return;
+      }
+      const command = await resolveSnippetCommand(snippet);
+      if (command === null) return;
+      runSnippet(snippet, targetHosts.map(resolveEffectiveHost), command);
+    },
+    [runSnippet, resolveEffectiveHost],
+  );
 
   const createWorkspaceWithEffectiveHosts = useCallback((name: string, selectedHosts: Host[]) => {
     createWorkspaceWithHosts(name, selectedHosts.map(resolveEffectiveHost));
@@ -1383,14 +1411,25 @@ export function AppSideEffects() {
     return handleConnectToHostImpl(() => ({
       addConnectionLog,
       connectToHost,
+      discoveredShells,
       host,
       identities,
       keys,
       resolveEffectiveHost: effectiveHostResolver,
       resolveHostAuth,
+      resolveShellSetting,
       systemInfoRef,
+      terminalSettings,
     }), host, hidden);
-  }, [addConnectionLog, connectToHost, resolveEffectiveHost, identities, keys]);
+  }, [addConnectionLog, connectToHost, resolveEffectiveHost, identities, keys, discoveredShells, terminalSettings]);
+
+  const handleConnectToHostWithTabName = useCallback((host: Host, tabName?: string) => {
+    const sessionId = handleConnectToHost(host);
+    if (sessionId && tabName) {
+      renameSessionInline(sessionId, tabName);
+    }
+    return sessionId;
+  }, [handleConnectToHost, renameSessionInline]);
 
   const openHostForVaultAgent = useCallback((host: Host, isExternalMcpCall: boolean) => {
     // Silent sessions only apply to actual external MCP clients (chatSessionId
@@ -1408,6 +1447,10 @@ export function AppSideEffects() {
     }
     return { ok: true as const, sessionId, host };
   }, [handleConnectToHost]);
+
+  const findExistingSessionForHostForVaultAgent = useHostOpenSessionReuse({
+    sessions, hosts, keys, identities, resolveEffectiveHost,
+  });
 
   const closeSessionForVaultAgent = useCallback((sessionId: string) => {
     if (!sessions.some((session) => session.id === sessionId)) {
@@ -1451,6 +1494,7 @@ export function AppSideEffects() {
     stopTunnel,
     stopRuleTunnels,
     openHost: openHostForVaultAgent,
+    findExistingSessionForHost: findExistingSessionForHostForVaultAgent,
     closeSession: closeSessionForVaultAgent,
     getScriptSessionMeta: (sessionId) => sessions.find((session) => session.id === sessionId),
   });
@@ -1459,15 +1503,16 @@ export function AppSideEffects() {
   // deep links until unlock so saved-credential connects cannot start behind
   // the lock screen.
   const pendingDeepLinksWhileLockedRef = useRef<Array<
-    | { kind: 'ssh'; payload: { url?: string } }
-    | { kind: 'telnet'; payload: { url?: string } }
+    | { kind: 'ssh'; payload: DeepLinkPayload }
+    | { kind: 'telnet'; payload: DeepLinkPayload }
     | { kind: 'jms'; payload: { url?: string } }
     | { kind: 'open-terminal-path'; payload: { path?: string } }
   >>([]);
 
-  const _processSshDeepLink = useEffectEvent((payload: { url?: string }) => {
+  const _processSshDeepLink = useEffectEvent((payload: DeepLinkPayload) => {
     startupLaunchIntentReceivedRef.current = true;
     const rawUrl = payload?.url || '';
+    const tabName = payload?.tabName?.trim();
     const target = parseSshDeepLink(rawUrl);
     if (!target) {
       toast.warning(t('deepLink.ssh.invalid'));
@@ -1496,25 +1541,26 @@ export function AppSideEffects() {
         ? buildSshDeepLinkEphemeralHostFromSaved(matchedEffectiveHost, target, draftOptions)
         : buildSshDeepLinkEphemeralHost(target, draftOptions);
       setEphemeralHosts((prev) => [...prev, ephemeralHost]);
-      handleConnectToHost(ephemeralHost);
+      handleConnectToHostWithTabName(ephemeralHost, tabName);
       return;
     }
 
     if (matchedEffectiveHost) {
       const originalHost = hosts.find((host) => host.id === matchedEffectiveHost.id) ?? matchedEffectiveHost;
-      handleConnectToHost(buildSshDeepLinkConnectionHost(originalHost));
+      handleConnectToHostWithTabName(buildSshDeepLinkConnectionHost(originalHost), tabName);
       return;
     }
 
-    setDeepLinkHostDraft(buildSshDeepLinkHostDraft(target, {
+    const hostDraft = buildSshDeepLinkHostDraft(target, {
       id: crypto.randomUUID(),
       now: Date.now(),
-    }));
+    });
+    setDeepLinkHostDraft(tabName ? { ...hostDraft, label: tabName } : hostDraft);
     setNavigateToSection('hosts');
     setActiveTabId('vault');
   });
 
-  const _handleSshDeepLink = useEffectEvent((payload: { url?: string }) => {
+  const _handleSshDeepLink = useEffectEvent((payload: DeepLinkPayload) => {
     if (shouldDeferExternalActionWhileAppLocked({ locked: appLockLocked })) {
       pendingDeepLinksWhileLockedRef.current.push({ kind: 'ssh', payload: payload || {} });
       return;
@@ -1531,9 +1577,10 @@ export function AppSideEffects() {
     });
   }, [isPeerSessionWindow]);
 
-  const _processTelnetDeepLink = useEffectEvent((payload: { url?: string }) => {
+  const _processTelnetDeepLink = useEffectEvent((payload: DeepLinkPayload) => {
     startupLaunchIntentReceivedRef.current = true;
     const rawUrl = payload?.url || '';
+    const tabName = payload?.tabName?.trim();
     const target = parseTelnetDeepLink(rawUrl);
     if (!target) {
       toast.warning(t('deepLink.telnet.invalid'));
@@ -1554,10 +1601,10 @@ export function AppSideEffects() {
           now: Date.now(),
         });
         setEphemeralHosts((prev) => [...prev, ephemeralHost]);
-        handleConnectToHost(ephemeralHost);
+        handleConnectToHostWithTabName(ephemeralHost, tabName);
         return;
       }
-      handleConnectToHost(buildTelnetDeepLinkConnectionHost(matchedEffectiveHost));
+      handleConnectToHostWithTabName(buildTelnetDeepLinkConnectionHost(matchedEffectiveHost), tabName);
       return;
     }
 
@@ -1566,10 +1613,10 @@ export function AppSideEffects() {
       now: Date.now(),
     });
     setEphemeralHosts((prev) => [...prev, ephemeralHost]);
-    handleConnectToHost(ephemeralHost);
+    handleConnectToHostWithTabName(ephemeralHost, tabName);
   });
 
-  const _handleTelnetDeepLink = useEffectEvent((payload: { url?: string }) => {
+  const _handleTelnetDeepLink = useEffectEvent((payload: DeepLinkPayload) => {
     if (shouldDeferExternalActionWhileAppLocked({ locked: appLockLocked })) {
       pendingDeepLinksWhileLockedRef.current.push({ kind: 'telnet', payload: payload || {} });
       return;
@@ -1750,6 +1797,14 @@ export function AppSideEffects() {
     updateHosts(vaultHosts);
   }, [ephemeralHostIds, updateHosts]);
 
+  const updateTerminalHostDistro = useCallback((hostId: string, distro: string) => {
+    if (ephemeralHostIds.has(hostId)) {
+      setEphemeralHosts((previous) => applyEphemeralHostDistroUpdate(previous, hostId, distro));
+      return;
+    }
+    updateHostDistro(hostId, distro);
+  }, [ephemeralHostIds, updateHostDistro]);
+
   // Wrapper to create serial session with logging
   const handleConnectSerial = useCallback((config: SerialConfig, options?: { charset?: string }) => {
     const { username, hostname } = systemInfoRef.current;
@@ -1872,6 +1927,7 @@ export function AppSideEffects() {
       // Terminal glue
       closeTabsBatch,
       copySessionWithCurrentShell,
+      duplicateSessionWithCurrentShell,
       copyWorkspaceWithCurrentShell,
       copySessionToNewWindowWithCurrentShell,
       createWorkspaceFromTargets: createWorkspaceFromEffectiveTargets,
@@ -1884,6 +1940,7 @@ export function AppSideEffects() {
       handleTerminalDataCapture,
       handleUpdateHostFromTerminal,
       updateTerminalHosts,
+      updateTerminalHostDistro,
       runSnippet: handleRunSnippet,
       splitSessionWithCurrentShell,
       toggleScriptsSidePanelRef,
@@ -1947,6 +2004,7 @@ export function AppSideEffects() {
     unmanageSource,
     closeTabsBatch,
     copySessionWithCurrentShell,
+    duplicateSessionWithCurrentShell,
     copyWorkspaceWithCurrentShell,
     copySessionToNewWindowWithCurrentShell,
     createWorkspaceFromEffectiveTargets,
@@ -1959,6 +2017,7 @@ export function AppSideEffects() {
     handleTerminalDataCapture,
     handleUpdateHostFromTerminal,
     updateTerminalHosts,
+    updateTerminalHostDistro,
     handleRunSnippet,
     splitSessionWithCurrentShell,
     handleEndSessionDrag,

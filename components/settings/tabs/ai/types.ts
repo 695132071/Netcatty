@@ -58,6 +58,7 @@ export interface AgentPathInfo {
   binPath?: string | null;
   version: string | null;
   available: boolean;
+  /** True when the user's Cursor Agent CLI is on PATH or logged in. */
   installed?: boolean;
   authenticated?: boolean;
   authSource?: string | null;
@@ -69,6 +70,11 @@ export interface AgentPathInfo {
   apiKeyOk?: boolean;
   /** True when @cursor/sdk platform package is importable. */
   sdkInstalled?: boolean;
+}
+
+/** User-environment Cursor Agent CLI, not Netcatty's bundled @cursor/sdk. */
+export function isCursorRuntimeInstalled(pathInfo: AgentPathInfo | null | undefined): boolean {
+  return Boolean(pathInfo?.cliBinPath || pathInfo?.cliLoginOk);
 }
 
 /** Mode-aware Cursor availability for Settings enablement. */
@@ -87,9 +93,11 @@ export function isCursorAvailableForMode(
     || pathInfo.authSource === "settings"
     || pathInfo.authSource === "CURSOR_API_KEY",
   );
+  // Missing sdkInstalled means the probe has not filled it yet. API-key mode
+  // uses Netcatty's bundled SDK and must not wait for Cursor.app.
   const sdkOk = pathInfo.sdkInstalled !== undefined
     ? Boolean(pathInfo.sdkInstalled)
-    : Boolean(pathInfo.installed);
+    : true;
   return hasKey && sdkOk;
 }
 
@@ -144,16 +152,24 @@ export interface FetchBridge {
 export interface NetcattyAiBridge {
   aiDiscoverAgents?: (options?: { refreshShellEnv?: boolean; apiKeyPresent?: boolean }) => Promise<Array<AgentPathInfo & { command: string }>>;
   aiPrewarmShellEnv?: () => Promise<{ ok: boolean; error?: string }>;
-  aiCodexGetIntegration?: (options?: { refreshShellEnv?: boolean; validateChatGptAuth?: boolean; codexPath?: string }) => Promise<CodexIntegrationStatus>;
-  aiCodexStartLogin?: (options?: { codexPath?: string }) => Promise<{ ok: boolean; session?: CodexLoginSession; error?: string }>;
+  aiCodexGetIntegration?: (options?: { refreshShellEnv?: boolean; validateChatGptAuth?: boolean; codexPath?: string; agentEnv?: Record<string, string> }) => Promise<CodexIntegrationStatus>;
+  aiCodexStartLogin?: (options?: { codexPath?: string; agentEnv?: Record<string, string> }) => Promise<{ ok: boolean; session?: CodexLoginSession; error?: string }>;
   aiCodexGetLoginSession?: (sessionId: string) => Promise<{ ok: boolean; session?: CodexLoginSession; error?: string }>;
   aiCodexCancelLogin?: (sessionId: string) => Promise<{ ok: boolean; found?: boolean; session?: CodexLoginSession; error?: string }>;
-  aiCodexLogout?: (options?: { codexPath?: string }) => Promise<{ ok: boolean; state?: CodexIntegrationState; isConnected?: boolean; rawOutput?: string; logoutOutput?: string; error?: string }>;
+  aiCodexLogout?: (options?: { codexPath?: string; agentEnv?: Record<string, string> }) => Promise<{ ok: boolean; state?: CodexIntegrationState; isConnected?: boolean; rawOutput?: string; logoutOutput?: string; error?: string }>;
   aiResolveCli?: (params: { command: string; customPath?: string; refreshShellEnv?: boolean; apiKeyPresent?: boolean }) => Promise<AgentPathInfo>;
   aiSdkAgentListModels?: (sdkBackend: string, cwd?: string, providerId?: string, chatSessionId?: string, agentEnv?: Record<string, string>, agentCommand?: string, codexRuntime?: 'sdk' | 'app-server') => Promise<{ ok: boolean; models?: Array<{ id: string; name: string; description?: string; thinkingLevels?: string[]; defaultThinkingLevel?: string }>; currentModelId?: string | null; error?: string }>;
   codexAppServerGetStatus?: (agentCommand?: string, agentEnv?: Record<string, string>) => Promise<{ ok: boolean; available: boolean; error?: string }>;
   aiUserSkillsGetStatus?: () => Promise<UserSkillsStatusResult>;
   aiUserSkillsOpenFolder?: () => Promise<UserSkillsStatusResult>;
+  aiSkillsCliGetInvocation?: () => Promise<{
+    ok: boolean;
+    skillPath?: string | null;
+    commandPrefix?: string;
+    launcherPath?: string | null;
+    usesLauncher?: boolean;
+    error?: string;
+  }>;
   openExternal?: (url: string) => Promise<void>;
   externalMcpGetStatus?: () => Promise<Record<string, unknown>>;
   externalMcpSetEnabled?: (enabled: boolean) => Promise<Record<string, unknown>>;
@@ -162,6 +178,11 @@ export interface NetcattyAiBridge {
     idleTimeoutMinutes?: number;
     sessionIdleTimeoutMinutes?: number;
   }) => Promise<Record<string, unknown>>;
+  externalMcpGetUniversalSetupPrompt?: () => Promise<{
+    ok: boolean;
+    prompt?: string;
+    error?: string | null;
+  }>;
   externalMcpCodexGetStatus?: () => Promise<Record<string, unknown>>;
   externalMcpCodexAdd?: () => Promise<Record<string, unknown>>;
   externalMcpClaudeGetStatus?: () => Promise<Record<string, unknown>>;
@@ -213,6 +234,12 @@ export const AGENT_DEFAULTS: Record<string, Omit<ExternalAgentConfig, "id" | "co
     args: [],
     icon: "grok",
     sdkBackend: "grok",
+  },
+  mimo: {
+    name: "MiMo Code",
+    args: [],
+    icon: "mimo",
+    sdkBackend: "mimo",
   },
 };
 

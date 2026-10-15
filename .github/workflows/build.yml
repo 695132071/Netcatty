@@ -40,6 +40,10 @@ on:
   pull_request:
     paths:
       - ".github/workflows/build.yml"
+      - "components/AppLockGate.tsx"
+      - "components/TrayPanel.tsx"
+      - "index.tsx"
+      - "index.css"
       - "build/**"
       - "electron-builder.config.cjs"
       - "electron/**"
@@ -72,10 +76,12 @@ on:
       - "scripts/mosh-extra-resources.cjs"
       - "scripts/nodePtyConptyPatch.cjs"
       - "scripts/patch-xterm-macos-column-selection.cjs"
+      - "scripts/patch-xterm-foreground-intense.cjs"
       - "scripts/patch-xterm-webgl-atlas.cjs"
       - "scripts/rebuildPatchedNodePty.cjs"
       - "scripts/resolve-et-bin-release.cjs"
       - "scripts/resolve-mosh-bin-release.cjs"
+      - "scripts/tray-panel-layout.live.test.cjs"
       - "scripts/verify-linux-*.sh"
       - "scripts/xterm-macos-column-selection.live.test.cjs"
       - "skills/**"
@@ -317,6 +323,15 @@ jobs:
           APPLE_APP_SPECIFIC_PASSWORD: ${{ matrix.name == 'macos' && secrets.APPLE_APP_SPECIFIC_PASSWORD || '' }}
           APPLE_TEAM_ID: ${{ matrix.name == 'macos' && secrets.APPLE_TEAM_ID || '' }}
         run: npm run ${{ matrix.pack_script }}
+
+      - name: Test tray panel layout
+        run: npm run test:tray-panel-layout
+
+      - name: Test tray panel layout at 200% scale on Windows
+        if: matrix.name == 'windows'
+        env:
+          NETCATTY_TRAY_LAYOUT_SCALE: "2"
+        run: npm run test:tray-panel-layout
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v7
@@ -681,6 +696,11 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          # Bullseye LTS ended on 2026-08-31; its security index is now frozen.
+          # Pin the final snapshot and waive expiry only for this archived source.
+          # APT still verifies its signature and every package's checksum.
+          sed -i '/ bullseye-security /d' /etc/apt/sources.list
+          printf 'deb [check-valid-until=no] http://snapshot.debian.org/archive/debian-security/20260901T000000Z/ bullseye-security main\n' >> /etc/apt/sources.list
           apt-get -o Acquire::Retries=4 update
           apt-get -o Acquire::Retries=4 install -y curl build-essential python3 git libfuse2 file rpm \
             libarchive-tools \

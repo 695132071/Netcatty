@@ -23,6 +23,7 @@ import {
   updateProxyConfigField,
 } from "../domain/proxyProfiles";
 import { hasRequiredHostAuthCredential, resolveHostAuth, resolveHostAuthMethodForPersistence } from "../domain/sshAuth";
+import { canServeAsSshJumpHost } from "../domain/terminalProtocol";
 import { customThemeStore } from "../application/state/customThemeStore";
 import {
   hasHostFontSizeOverride,
@@ -30,7 +31,7 @@ import {
   resolveHostTerminalFontSize,
   resolveHostTerminalThemeId,
 } from "../domain/terminalAppearance";
-import { EnvVar, GroupConfig, Host, Identity, ManagedSource, ProxyConfig, ProxyProfile, Snippet, SSHKey } from "../types";
+import { EnvVar, GroupConfig, Host, Identity, KnownHost, ManagedSource, ProxyConfig, ProxyProfile, Snippet, SSHKey, TerminalSettings } from "../types";
 import { DISTRO_COLORS, DISTRO_LOGOS } from "./DistroAvatar";
 import ThemeSelectPanel from "./ThemeSelectPanel";
 import {
@@ -77,6 +78,8 @@ import {
   stripBuiltInConnectionFieldsForPluginHost,
 } from "../domain/pluginConnection";
 import { PluginConnectionSection } from "./PluginConnectionSection";
+import { useHostConnectionTest } from "../application/state/useHostConnectionTest";
+import { HostConnectionTestDialog } from "./host-details/HostConnectionTestDialog";
 
 type CredentialType = "sshid" | "key" | "certificate" | "localKeyFile" | null;
 type SubPanel =
@@ -111,6 +114,9 @@ interface HostDetailsPanelProps {
   snippets?: Snippet[];
   onSnippetsChange?: (snippets: Snippet[]) => void;
   onHostsChange?: (hosts: Host[] | ((prev: Host[]) => Host[])) => void;
+  knownHosts?: KnownHost[];
+  onAddKnownHost?: (knownHost: KnownHost) => void;
+  terminalSettings?: TerminalSettings;
   className?: string;
 }
 
@@ -139,6 +145,9 @@ const HostDetailsPanel: React.FC<HostDetailsPanelPropsWithResize> = ({
   snippets = [],
   onSnippetsChange,
   onHostsChange,
+  knownHosts,
+  onAddKnownHost,
+  terminalSettings,
   className,
   resizable,
   persistWidthStorageKey,
@@ -197,6 +206,28 @@ const HostDetailsPanel: React.FC<HostDetailsPanelPropsWithResize> = ({
 
   const [sshAgentStatus, setSshAgentStatus] = useState<SshAgentStatus | null>(null);
   const [sshForwardingAgentStatus, setSshForwardingAgentStatus] = useState<SshAgentStatus | null>(null);
+
+  const [testOpen, setTestOpen] = useState(false);
+  const hostConnectionTest = useHostConnectionTest({
+    host: form,
+    hosts: allHosts,
+    keys: availableKeys,
+    identities,
+    knownHosts,
+    groupConfigs,
+    proxyProfiles,
+    terminalSettings,
+    onAddKnownHost,
+  });
+
+  const handleStartTest = () => {
+    setTestOpen(true);
+    void hostConnectionTest.startTest();
+  };
+
+  const handleCloseTest = () => {
+    setTestOpen(false);
+  };
 
   useEffect(() => {
     let cancelled = false;
@@ -719,7 +750,13 @@ const HostDetailsPanel: React.FC<HostDetailsPanelPropsWithResize> = ({
 
   const availableHostsForChain = useMemo(() => {
     const chainedIds = new Set(form.hostChain?.hostIds || []);
-    return allHosts.filter((h) => h.id !== form.id && !chainedIds.has(h.id));
+    // Chain hops are SSH ProxyJump hops; never offer local/serial/telnet/plugin
+    // entries (e.g. saved local shells) as jump hosts.
+    return allHosts.filter((h) =>
+      h.id !== form.id
+      && !chainedIds.has(h.id)
+      && canServeAsSshJumpHost(h),
+    );
   }, [allHosts, form.id, form.hostChain?.hostIds]);
 
   const chainedHosts = useMemo(() => {
@@ -1309,15 +1346,32 @@ const HostDetailsPanel: React.FC<HostDetailsPanelPropsWithResize> = ({
           </Button>
         )}
       </AsidePanelContent>
-      <AsidePanelFooter>
+      <AsidePanelFooter className="flex flex-row gap-2">
+        {!pluginProtocolActive && form.protocol !== "telnet" && (
+          <Button
+            variant="outline"
+            className="h-10 px-4"
+            onClick={handleStartTest}
+            disabled={!canSaveHost}
+          >
+            {t("hostConnectionTest.test")}
+          </Button>
+        )}
         <Button
-          className="w-full h-10"
+          className="flex-1 h-10"
           onClick={handleSubmit}
           disabled={!canSaveHost}
         >
           {t("common.save")}
         </Button>
       </AsidePanelFooter>
+      <HostConnectionTestDialog
+        open={testOpen}
+        onClose={handleCloseTest}
+        host={form}
+        keys={availableKeys}
+        test={hostConnectionTest}
+      />
     </AsidePanel>
   );
 };

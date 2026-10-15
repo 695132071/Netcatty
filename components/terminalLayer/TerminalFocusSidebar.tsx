@@ -35,6 +35,7 @@ interface TerminalFocusSidebarProps {
   onAppendHostToWorkspace?: (workspaceId: string, hostId: string) => void;
   onCloseSession: (sessionId: string) => void;
   onCopySession?: (sessionId: string) => void;
+  onDuplicateSession?: (sessionId: string) => void;
   onCopySessionToNewWindow?: (sessionId: string) => void;
   onDetachSessionFromWorkspace?: (sessionId: string) => void;
   onSetWorkspaceFocusedSession?: (workspaceId: string, sessionId: string) => void;
@@ -69,6 +70,7 @@ type WorkspaceFocusSessionRowProps = {
   onCancelRename: () => void;
   onCloseSession: (sessionId: string) => void;
   onCopySession?: (sessionId: string) => void;
+  onDuplicateSession?: (sessionId: string) => void;
   onCopySessionToNewWindow?: (sessionId: string) => void;
   onDetachSessionFromWorkspace?: (sessionId: string) => void;
   isDragging: boolean;
@@ -95,6 +97,7 @@ const WorkspaceFocusSessionRow = memo<WorkspaceFocusSessionRowProps>(({
   onCancelRename,
   onCloseSession,
   onCopySession,
+  onDuplicateSession,
   onCopySessionToNewWindow,
   onDetachSessionFromWorkspace,
   isDragging,
@@ -218,6 +221,7 @@ const WorkspaceFocusSessionRow = memo<WorkspaceFocusSessionRowProps>(({
         sessionId={session.id}
         onCloseSession={onCloseSession}
         onCopySession={onCopySession}
+        onDuplicateSession={onDuplicateSession}
         onCopySessionToNewWindow={onCopySessionToNewWindow}
         onDetachSession={onDetachSessionFromWorkspace}
         onReconnectSession={terminalReconnectRegistry.request}
@@ -243,6 +247,7 @@ const WorkspaceFocusSessionRow = memo<WorkspaceFocusSessionRowProps>(({
   && prev.onCancelRename === next.onCancelRename
   && prev.onCloseSession === next.onCloseSession
   && prev.onCopySession === next.onCopySession
+  && prev.onDuplicateSession === next.onDuplicateSession
   && prev.onCopySessionToNewWindow === next.onCopySessionToNewWindow
   && prev.onDetachSessionFromWorkspace === next.onDetachSessionFromWorkspace
   && prev.onDragStart === next.onDragStart
@@ -262,6 +267,7 @@ const TerminalFocusSidebarInner: React.FC<TerminalFocusSidebarProps> = ({
   onAppendHostToWorkspace,
   onCloseSession,
   onCopySession,
+  onDuplicateSession,
   onCopySessionToNewWindow,
   onDetachSessionFromWorkspace,
   onSetWorkspaceFocusedSession,
@@ -652,6 +658,7 @@ const TerminalFocusSidebarInner: React.FC<TerminalFocusSidebarProps> = ({
               onCancelRename={handleLocalCancelRename}
               onCloseSession={onCloseSession}
               onCopySession={onCopySession}
+              onDuplicateSession={onDuplicateSession}
               onCopySessionToNewWindow={onCopySessionToNewWindow}
               onDetachSessionFromWorkspace={onDetachSessionFromWorkspace}
               isDragging={focusSidebarDragSessionId === session.id}
@@ -685,6 +692,7 @@ function terminalFocusSidebarPropsEqual(
   if (prev.onSubmitSessionRename !== next.onSubmitSessionRename) return false;
   if (prev.onCloseSession !== next.onCloseSession) return false;
   if (prev.onCopySession !== next.onCopySession) return false;
+  if (prev.onDuplicateSession !== next.onDuplicateSession) return false;
   if (prev.onCopySessionToNewWindow !== next.onCopySessionToNewWindow) return false;
   if (prev.onDetachSessionFromWorkspace !== next.onDetachSessionFromWorkspace) return false;
   if (prev.resolvedPreviewTheme !== next.resolvedPreviewTheme) return false;

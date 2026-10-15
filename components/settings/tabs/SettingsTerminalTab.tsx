@@ -80,6 +80,10 @@ function SettingsTerminalTab(props: {
   setTerminalSidePanelAutoOpen: (enabled: boolean) => void;
   terminalSidePanelAutoOpenTab: TerminalSidePanelAutoOpenTab;
   setTerminalSidePanelAutoOpenTab: (tab: TerminalSidePanelAutoOpenTab) => void;
+  localShellSidePanelAutoOpen: boolean;
+  setLocalShellSidePanelAutoOpen: (enabled: boolean) => void;
+  localShellSidePanelAutoOpenTab: TerminalSidePanelAutoOpenTab;
+  setLocalShellSidePanelAutoOpenTab: (tab: TerminalSidePanelAutoOpenTab) => void;
   availableFonts: TerminalFont[];
   workspaceFocusStyle: 'dim' | 'border';
   setWorkspaceFocusStyle: (style: 'dim' | 'border') => void;
@@ -106,6 +110,10 @@ function SettingsTerminalTab(props: {
     setTerminalSidePanelAutoOpen,
     terminalSidePanelAutoOpenTab,
     setTerminalSidePanelAutoOpenTab,
+    localShellSidePanelAutoOpen,
+    setLocalShellSidePanelAutoOpen,
+    localShellSidePanelAutoOpenTab,
+    setLocalShellSidePanelAutoOpenTab,
     availableFonts,
     workspaceFocusStyle,
     setWorkspaceFocusStyle,
@@ -595,6 +603,17 @@ function SettingsTerminalTab(props: {
         </SettingRow>
 
         <SettingRow
+          anchorId="terminal-font-ligatures"
+          label={t("settings.terminal.font.ligatures")}
+          description={t("settings.terminal.font.ligatures.desc")}
+        >
+          <Toggle
+            checked={terminalSettings.fontLigatures}
+            onChange={(v) => updateTerminalSetting("fontLigatures", v)}
+          />
+        </SettingRow>
+
+        <SettingRow
           anchorId="terminal-font-line-padding"
           label={t("settings.terminal.font.linePadding")}
           description={t("settings.terminal.font.linePadding.desc")}
@@ -642,6 +661,28 @@ function SettingsTerminalTab(props: {
             onChange={(v) => updateTerminalSetting("cursorShape", v as CursorShape)}
             className="w-32"
           />
+        </SettingRow>
+
+        <SettingRow
+          anchorId="terminal-cursor-bar-width"
+          label={t("settings.terminal.cursor.barWidth")}
+          description={t("settings.terminal.cursor.barWidth.desc")}
+        >
+          <div className="flex items-center gap-2">
+            <input
+              type="range"
+              aria-label={t("settings.terminal.cursor.barWidth")}
+              min={1}
+              max={4}
+              step={1}
+              value={terminalSettings.cursorBarWidth}
+              onChange={(e) => updateTerminalSetting("cursorBarWidth", parseInt(e.target.value))}
+              className="w-24 accent-primary"
+            />
+            <span className="w-6 text-center text-sm text-muted-foreground">
+              {terminalSettings.cursorBarWidth}px
+            </span>
+          </div>
         </SettingRow>
 
         <SettingRow anchorId="terminal-cursor-blink" label={t("settings.terminal.cursor.blink")}>
@@ -745,6 +786,33 @@ function SettingsTerminalTab(props: {
             }))}
             onChange={(value) => setTerminalSidePanelAutoOpenTab(value as TerminalSidePanelAutoOpenTab)}
             disabled={!terminalSidePanelAutoOpen}
+            className="w-36"
+          />
+        </SettingRow>
+      </div>
+
+      <SectionHeader title={t("settings.terminal.section.localShellSidePanel")} />
+      <div className="space-y-0 divide-y divide-border rounded-lg border bg-card px-4">
+        <SettingRow
+          anchorId="terminal-local-shell-side-panel-auto-open"
+          label={t("settings.terminal.localShellSidePanel.autoOpen")}
+          description={t("settings.terminal.localShellSidePanel.autoOpen.desc")}
+        >
+          <Toggle checked={localShellSidePanelAutoOpen} onChange={setLocalShellSidePanelAutoOpen} />
+        </SettingRow>
+
+        <SettingRow
+          label={t("settings.terminal.localShellSidePanel.autoOpenPane")}
+          description={t("settings.terminal.localShellSidePanel.autoOpenPane.desc")}
+        >
+          <Select
+            value={localShellSidePanelAutoOpenTab}
+            options={TERMINAL_SIDE_PANEL_AUTO_OPEN_TABS.map((tab) => ({
+              value: tab,
+              label: t(`settings.terminal.sidePanel.pane.${tab}`),
+            }))}
+            onChange={(value) => setLocalShellSidePanelAutoOpenTab(value as TerminalSidePanelAutoOpenTab)}
+            disabled={!localShellSidePanelAutoOpen}
             className="w-36"
           />
         </SettingRow>
@@ -859,6 +927,7 @@ function SettingsTerminalTab(props: {
             )}
           </div>
         </SettingRow>
+
       </div>
 
       <SectionHeader title={t("settings.terminal.section.connection")} />

@@ -6,6 +6,15 @@ function getCursorPlatformPackageName(platform = process.platform, arch = proces
   return null;
 }
 
+// Bundled @cursor/sdk is importable in every Netcatty build. "installed" is the
+// user's Cursor Agent CLI, not that bundled package.
+function computeCursorInstallState({ sdkInstalled, cliBinPath, cliLoginOk } = {}) {
+  return {
+    sdkInstalled: Boolean(sdkInstalled),
+    installed: Boolean(cliBinPath) || Boolean(cliLoginOk),
+  };
+}
+
 async function probeCursorSdkAvailability(shellEnv, options = {}) {
   const platformPackageName = getCursorPlatformPackageName();
 
@@ -44,9 +53,15 @@ async function probeCursorSdkAvailability(shellEnv, options = {}) {
   else if (hasEnvApiKey) authSource = "CURSOR_API_KEY";
   else if (cliLoginOk) authSource = "cli-login";
 
+  const installState = computeCursorInstallState({
+    sdkInstalled,
+    cliBinPath: cliAuth.binPath,
+    cliLoginOk,
+  });
+  sdkInstalled = installState.sdkInstalled;
   // Available if either mode can run a turn (API key + SDK, or CLI login).
   const available = (apiKeyOk && sdkInstalled) || cliLoginOk;
-  const installed = sdkInstalled || Boolean(cliAuth.binPath) || cliLoginOk;
+  const installed = installState.installed;
   return {
     installed,
     sdkInstalled,
@@ -63,6 +78,14 @@ async function probeCursorSdkAvailability(shellEnv, options = {}) {
 
 function registerAgentDiscoveryHandlers(ctx) {
   with (ctx) {
+  async function getCodexAgentEnv(options) {
+    return buildSdkAgentEnv({
+      shellEnv: await getShellEnv(),
+      requestedAgentEnv: normalizeAgentEnv(options?.agentEnv),
+      withCliDiscoveryEnv,
+    });
+  }
+
   ipcMain.handle("netcatty:ai:agents:discover", async (event, options = {}) => {
     if (!validateSenderOrSettings(event)) return { ok: false, error: "Unauthorized IPC sender" };
     if (options?.refreshShellEnv) {
@@ -84,6 +107,8 @@ function registerAgentDiscoveryHandlers(ctx) {
         description: "Open source coding agent via the official OpenCode SDK", sdkBackend: "opencode", args: [] },
       { command: "grok", name: "Grok Build", icon: "grok",
         description: "xAI's Grok Build coding agent CLI", sdkBackend: "grok", args: [] },
+      { command: "mimo", name: "MiMo Code", icon: "mimo",
+        description: "Xiaomi's MiMo Code CLI, an OpenCode fork", sdkBackend: "mimo", args: [] },
     ];
 
     const shellEnv = await getShellEnv();
@@ -132,6 +157,10 @@ function registerAgentDiscoveryHandlers(ctx) {
           auth = probeCodebuddyAuth({ env: shellEnv });
         } else if (agent.command === "opencode") {
           auth = { authenticated: true, authSource: "opencode-config" };
+        } else if (agent.command === "mimo") {
+          // MiMo Code reads its own config dir (~/.config/mimocode); there is no
+          // `mimo auth` probe to gate on, so mirror the OpenCode assumption.
+          auth = { authenticated: true, authSource: "mimo-config" };
         } else if (agent.command === "grok") {
           auth = probeGrokAuth({ env: shellEnv });
         }
@@ -147,7 +176,7 @@ function registerAgentDiscoveryHandlers(ctx) {
         path: resolvedPath,
         binPath: resolvedPath,
         version: probe.version,
-        installed: true,
+        installed: agent.command === "cursor" ? Boolean(cursorSdkStatus.installed) : true,
         available: true,
         authenticated: auth.authenticated,
         authSource: auth.authSource,
@@ -205,9 +234,14 @@ function registerAgentDiscoveryHandlers(ctx) {
       const cursorPath = cursorSdkStatus.cliLoginOk
         ? (cursorSdkStatus.cliBinPath || resolvedSdkPath || "cursor")
         : (resolvedSdkPath || "cursor");
+      // Keep the SDK sentinel path when the bundled SDK is importable so
+      // API-key mode still has an identity without Cursor.app / Agent CLI.
+      const hasCursorPath = cursorSdkStatus.sdkInstalled
+        || cursorSdkStatus.installed
+        || cursorSdkStatus.available;
       return {
-        path: cursorSdkStatus.installed || cursorSdkStatus.available ? cursorPath : null,
-        binPath: cursorSdkStatus.installed || cursorSdkStatus.available ? cursorPath : null,
+        path: hasCursorPath ? cursorPath : null,
+        binPath: hasCursorPath ? cursorPath : null,
         version: cursorSdkStatus.version,
         available: cursorSdkStatus.available,
         installed: cursorSdkStatus.installed,
@@ -245,7 +279,9 @@ function registerAgentDiscoveryHandlers(ctx) {
       invalidateShellEnvCache();
     }
     try {
-      const codexCliOptions = { codexPath: options?.codexPath };
+      // Probe the same config and credentials as the managed agent's turns.
+      const effectiveEnv = await getCodexAgentEnv(options);
+      const codexCliOptions = { codexPath: options?.codexPath, env: effectiveEnv };
       const result = await runCodexCli(["login", "status"], codexCliOptions);
       const rawOutput = [result.stdout, result.stderr]
         .filter((chunk) => chunk.trim().length > 0)
@@ -255,7 +291,7 @@ function registerAgentDiscoveryHandlers(ctx) {
       let effectiveRawOutput = rawOutput;
 
       if (state === "connected_chatgpt" && options?.validateChatGptAuth === true) {
-        const validation = await validateCodexChatGptAuth({ maxAgeMs: 10000, codexPath: options?.codexPath });
+        const validation = await validateCodexChatGptAuth({ maxAgeMs: 10000, codexPath: options?.codexPath, env: effectiveEnv });
         if (!validation.ok) {
           if (isCodexAuthError(validation)) {
             try {
@@ -279,17 +315,21 @@ function registerAgentDiscoveryHandlers(ctx) {
       // functional from the CLI but would look "not_logged_in" here. Probe
       // config.toml so we can surface that as a valid ready state instead of
       // pushing the user into the ChatGPT login flow.
+      //
+      // Probe even when auth.json reports a login: provider switcher tools
+      // (cc-switch, ccs) write an API key into auth.json while config.toml's
+      // `model_provider` actually selects a third-party provider, and
+      // config.toml is what Codex uses. Keep a validated ChatGPT login as the
+      // displayed state, but still return customConfig so the chat model
+      // picker can surface the configured third-party model.
       let customConfig = null;
-      if (state !== "connected_chatgpt" && state !== "connected_api_key") {
-        try {
-          const shellEnv = await getShellEnv();
-          customConfig = readCodexCustomProviderConfig(shellEnv);
-          if (customConfig) {
-            state = "connected_custom_config";
-          }
-        } catch {
-          customConfig = null;
+      try {
+        customConfig = readCodexCustomProviderConfig(effectiveEnv);
+        if (customConfig && state !== "connected_chatgpt") {
+          state = "connected_custom_config";
         }
+      } catch {
+        customConfig = null;
       }
 
       return {
@@ -322,15 +362,20 @@ function registerAgentDiscoveryHandlers(ctx) {
     }
 
     try {
-      const shellEnv = await getShellEnv();
+      const shellEnv = await getCodexAgentEnv(options);
       const codexCliPath = requestedCodexPath
         || await resolveCliFromPathAsync("codex", shellEnv)
         || "codex";
+      const credentialHomeKey = shellEnv.CODEX_HOME?.trim()
+        || require("node:path").join(shellEnv.HOME || shellEnv.USERPROFILE || require("node:os").homedir(), ".codex");
       const existingSession = getActiveCodexLoginSession();
       if (existingSession) {
         const existingPath = existingSession.codexPath || null;
         if (existingPath && codexCliPath !== existingPath) {
           return { ok: false, error: "A Codex login is already running for a different CLI path." };
+        }
+        if (existingSession.credentialHomeKey !== credentialHomeKey) {
+          return { ok: false, error: "A Codex login is already running for a different credential home." };
         }
         return { ok: true, session: toCodexLoginSessionResponse(existingSession) };
       }
@@ -353,6 +398,7 @@ function registerAgentDiscoveryHandlers(ctx) {
         error: null,
         exitCode: null,
         codexPath: codexCliPath,
+        credentialHomeKey,
       };
 
       const stdoutDecoder = createCodexLoginOutputDecoder(session);
@@ -434,7 +480,7 @@ function registerAgentDiscoveryHandlers(ctx) {
   ipcMain.handle("netcatty:ai:codex:logout", async (event, options = {}) => {
     if (!validateSenderOrSettings(event)) return { ok: false, error: "Unauthorized IPC sender" };
     try {
-      const codexCliOptions = { codexPath: options?.codexPath };
+      const codexCliOptions = { codexPath: options?.codexPath, env: await getCodexAgentEnv(options) };
       const logoutResult = await runCodexCli(["logout"], codexCliOptions);
       invalidateCodexValidationCache();
       const statusResult = await runCodexCli(["login", "status"], codexCliOptions);
@@ -464,4 +510,4 @@ function registerAgentDiscoveryHandlers(ctx) {
   }
 }
 
-module.exports = { registerAgentDiscoveryHandlers };
+module.exports = { registerAgentDiscoveryHandlers, computeCursorInstallState };

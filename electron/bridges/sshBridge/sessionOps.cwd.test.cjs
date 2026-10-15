@@ -1,8 +1,12 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
 const { EventEmitter } = require("node:events");
+const fs = require("node:fs");
+const os = require("node:os");
+const path = require("node:path");
 
 const { createSessionOpsApi, decodeLsofFileName } = require("./sessionOps.cjs");
+const { optionsForPeerSingleChannel } = require("../../../domain/singleChannelSshBanner.shared.cjs");
 
 function quoteShellArg(value) {
   return "'" + String(value).replace(/'/g, "'\\''") + "'";
@@ -29,7 +33,7 @@ function makeApi(session, siblingSessions = [], overrides = {}) {
     sessions,
     setTimeout: overrides.setTimeout || setTimeout,
     clearTimeout: overrides.clearTimeout || clearTimeout,
-    quoteShellArg,
+    quoteShellArg: overrides.quoteShellArg || quoteShellArg,
     log: () => {},
   });
 }
@@ -123,6 +127,69 @@ test("session cwd probe decodes the marked lsof pathname", async () => {
   assert.deepEqual(result, { success: true, cwd: "/srv/中文" });
 });
 
+test("lsof cwd fallback accepts only directory records, not diagnostic names (#3237, #3493)", async (t) => {
+  let script;
+  const api = makeApi({
+    shellPid: "4242",
+    connRef: { count: 1 },
+    stream: {},
+    conn: {
+      exec(_command, callback) {
+        callback(null, makePwdStream("/srv/app", "4242"));
+      },
+    },
+  }, [], {
+    quoteShellArg(value) {
+      if (!script && value.includes("read_shell_cwd()")) script = value;
+      return quoteShellArg(value);
+    },
+  });
+  await api.getSessionPwd(null, { sessionId: "session-1" });
+  const helper = script.match(/    read_shell_cwd\(\) \{[\s\S]*?\n    \}/)?.[0];
+  assert.ok(helper, "exercise the actual remote cwd helper");
+  const { spawnSync } = require("node:child_process");
+  const fixtureRoot = fs.mkdtempSync(path.join(os.tmpdir(), "netcatty-lsof-cwd-"));
+  t.after(() => fs.rmSync(fixtureRoot, { recursive: true, force: true }));
+  const realParenthesizedPath = path.join(fixtureRoot, "release (owner: alice)");
+  const realDiagnosticShapedPath = path.join(fixtureRoot, "job (stat: ready)");
+  const realErrorShapedPath = path.join(fixtureRoot, "job (readlink: Permission denied)");
+  const realUnicodePath = path.join(fixtureRoot, "中文 (owner: alice)");
+  fs.mkdirSync(realParenthesizedPath);
+  fs.mkdirSync(realDiagnosticShapedPath);
+  fs.mkdirSync(realErrorShapedPath);
+  fs.mkdirSync(realUnicodePath);
+  for (const [output, expected] of [
+    ["p4242\nfcwd\ntunknown\nn/proc/4242/cwd (readlink: Permission denied)\n", null],
+    ["p4242\nfcwd\ntunknown\nn/proc/4242/cwd (readlink: No such file or directory)\n", null],
+    // AL2023: lsof reports the VDIR type from the fd but annotates the name
+    // when the login user cannot readlink a root-owned shell's cwd (#3493).
+    ["p683339\nfcwd\ntVDIR\nn/proc/683339/cwd (readlink: Permission denied)\n", null],
+    ["p4242\nfcwd\ntDIR\nn/proc/4242/cwd (readlink: Permission denied)\n", null],
+    ["p4242\nfcwd\ntDIR\nn/proc/4242/cwd (readlink: No such file or directory)\n", null],
+    ["p4242\nfcwd\ntDIR\nn/proc/4242/cwd (stat: Operation not permitted)\n", null],
+    ["p4242\nfcwd\ntDIR\nn/srv/app (stat: Operation not permitted)\n", null],
+    ["p4242\nfcwd\ntDIR\nn/srv/app (readlink: Permission denied)\n", null],
+    ["p4242\nfcwd\nn/proc/4242/cwd\n", null],
+    ["p4242\nfcwd\ntDIR\nn/srv/app\n", "/srv/app"],
+    ["p4242\nfcwd\ntVDIR\nn/usr/home/alice\n", "/usr/home/alice"],
+    ["p4242\nfcwd\ntDIR\nn/srv/backup (old)\n", "/srv/backup (old)"],
+    ["p4242\nfcwd\ntDIR\nn" + realParenthesizedPath + "\n", realParenthesizedPath],
+    ["p4242\nfcwd\ntDIR\nn" + realDiagnosticShapedPath + "\n", realDiagnosticShapedPath],
+    ["p4242\nfcwd\ntDIR\nn" + realErrorShapedPath + "\n", realErrorShapedPath],
+    ["p4242\nfcwd\ntDIR\nn" + realUnicodePath.replace("中文", "\\xe4\\xb8\\xad\\xe6\\x96\\x87") + "\n", realUnicodePath.replace("中文", "\\xe4\\xb8\\xad\\xe6\\x96\\x87")],
+    ["p4242\nfcwd\ntDIR\nn/tmp/\\xe4\\xb8\\xad\\xe6\\x96\\x87\n", "/tmp/\\xe4\\xb8\\xad\\xe6\\x96\\x87"],
+  ]) {
+    const result = spawnSync("sh", ["-c", `
+      readlink() { return 1; }
+      lsof() { printf '%s' "$LSOF_TEST_OUTPUT"; }
+      ${helper}
+      read_shell_cwd 4242
+    `], { encoding: "utf8", env: { ...process.env, LSOF_TEST_OUTPUT: output } });
+    assert.equal(result.status, expected === null ? 1 : 0, `${output}\n${result.stderr}`);
+    assert.equal(result.stdout, expected === null ? "" : `NETCATTY_LSOF_CWD=${expected}\n`, output);
+  }
+});
+
 test("session cwd probe closes a remote command that exceeds its timeout", async () => {
   const stream = new EventEmitter();
   stream.stderr = new EventEmitter();
@@ -209,6 +276,32 @@ test("an unshared terminal remembers the shell pid discovered by its cwd probe",
 
   assert.deepEqual(result, { success: true, cwd: "/home/alice/project" });
   assert.equal(session.shellPid, "3131");
+});
+
+test("cwd probe forces POSIX sh, captures sshd PPID, and keeps the watchdog", async () => {
+  let command = "";
+  const session = {
+    connRef: { count: 1 },
+    stream: {},
+    conn: {
+      exec(nextCommand, callback) {
+        command = nextCommand;
+        callback(null, makePwdStream("/home/alice/project", "3131"));
+      },
+    },
+  };
+  const api = makeApi(session);
+
+  const result = await api.getSessionPwd(null, { sessionId: "session-1" });
+
+  assert.deepEqual(result, { success: true, cwd: "/home/alice/project" });
+  assert.ok(command.startsWith("exec sh -c "), command.slice(0, 80));
+  assert.ok(command.includes("export NC_SSHD_PPID=$PPID"));
+  assert.ok(command.includes("( sleep 5 &&"), "cwd watchdog bound must match the 5s default timeout");
+  assert.ok(command.includes('kill -9 $nc_tree "$$"'));
+  assert.ok(command.includes(") </dev/null >/dev/null 2>&1 & nc_watchdog_pid=$!"));
+  assert.ok(command.includes('kill -9 $nc_kids "$nc_watchdog_pid"'));
+  assert.ok(command.includes('find_login_shell "${NC_SSHD_PPID:-$PPID}"'));
 });
 
 test("immediate parked reconnect does not guess cwd from an exiting shell", async () => {
@@ -752,4 +845,55 @@ test("cwd probe couples login-shell fallback to home fallback when unset", async
 
   assert.match(command, /ALLOW_HOME_FALLBACK=0/);
   assert.match(command, /ALLOW_LOGIN_FALLBACK=0/);
+});
+
+test("getSessionPwd skips extra exec when singleChannelSsh is set", async () => {
+  let execCalls = 0;
+  const api = makeApi({
+    singleChannelSsh: true, remoteSshVersion: "SSH-2.0-CLOUDBILITY-4.14",
+    stream: {},
+    conn: {
+      exec() { execCalls += 1; },
+    },
+  });
+
+  const result = await api.getSessionPwd(null, { sessionId: "session-1" });
+
+  assert.equal(result.success, false);
+  assert.match(result.error, /extra exec channels/);
+  assert.equal(execCalls, 0);
+});
+
+test("listSessionDir skips extra exec when singleChannelSsh is set", async () => {
+  let execCalls = 0;
+  const api = makeApi({
+    singleChannelSsh: true, remoteSshVersion: "SSH-2.0-CLOUDBILITY-4.14",
+    stream: {},
+    conn: {
+      exec() { execCalls += 1; },
+    },
+  });
+
+  const result = await api.listSessionDir(null, { sessionId: "session-1", path: "." });
+
+  assert.equal(result.success, false);
+  assert.match(result.error, /extra exec channels/);
+  assert.deepEqual(result.entries, []);
+  assert.equal(execCalls, 0);
+});
+
+test("getSessionPwd skips exec after the CloudLinker banner stamps the runtime capability", async () => {
+  let execCalls = 0;
+  const api = makeApi({
+    ...optionsForPeerSingleChannel({}, { _remoteVer: "CloudLinker" }),
+    remoteSshVersion: "CloudLinker",
+    stream: {},
+    conn: { exec() { execCalls += 1; } },
+  });
+
+  const result = await api.getSessionPwd(null, { sessionId: "session-1" });
+
+  assert.equal(result.success, false);
+  assert.match(result.error, /extra exec channels/);
+  assert.equal(execCalls, 0);
 });

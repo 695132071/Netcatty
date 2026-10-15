@@ -53,6 +53,19 @@ test("scripts side panel offers run-on-all-tabs for every snippet, not only auto
   assert.match(source, /openPackageDialog/);
 });
 
+test("scripts side panel snippet context menu offers copy command without running", () => {
+  // Copy must sit between the run actions and Edit, write snippet.command to
+  // the clipboard, and confirm with a toast — it never executes the command.
+  assert.match(source, /onCopyCommand=\{\(\) => handleCopySnippetCommand\(item\.snippet\)\}/);
+  assert.match(source, /onCopyCommand=\{\(\) => handleCopySnippetCommand\(item\.row\.snippet\)\}/);
+  assert.match(source, /scripts\.actions\.copyCommand'/);
+  const menu = source.match(/\{onRunParallel \? \([\s\S]*?<\/ContextMenu>/);
+  assert.ok(menu, "snippet row context menu should exist");
+  assert.match(menu[0], /onCopyCommand[\s\S]*?onClick=\{onEdit\}/);
+  assert.match(menu[0], /<Copy className="[\s\S]*?\{copyCommandLabel\}/);
+  assert.match(source, /handleCopySnippetCommand[\s\S]*?snippet\.command[\s\S]*?toast\.success/);
+});
+
 test("scripts side panel exposes create actions as inline toolbar icons", () => {
   assert.match(source, /snippets\.action\.newSnippet/);
   assert.match(source, /snippets\.action\.newPackage/);
@@ -126,12 +139,66 @@ test("scripts side panel clears pending bulk delete when the panel hides", () =>
   // pending deletes so a later re-show does not resurrect a half-dismissed prompt.
   assert.match(
     source,
-    /if\s*\(\s*!isVisible\s*\)\s*setPendingDeleteIds\(\s*null\s*\)/,
+    /if\s*\(\s*isVisible\s*\)\s*return/,
   );
+  assert.match(source, /setIsPackageDialogOpen\(\s*false\s*\)/);
+  assert.match(source, /setRenamingPackagePath\(\s*''\s*\)/);
+  assert.match(source, /setNewPackageName\(\s*''\s*\)/);
 });
 
 test("scripts side panel package dialog traps focus and exposes dialog close contract", () => {
   assert.match(source, /packageDialogRef/);
   assert.match(source, /data-dialog-close="true"/);
   assert.match(source, /isPackageDialogOpen/);
+});
+
+test("scripts side panel package rows wrap in a rename and delete context menu", () => {
+  assert.match(source, /const PackageRow = memo/);
+  assert.match(
+    source,
+    /data-pkg-path=\{row\.path\}[\s\S]*?<ContextMenu>[\s\S]*?<ContextMenuTrigger asChild>[\s\S]*?\{rowButton\}/,
+  );
+  assert.match(source, /common\.rename/);
+  assert.match(source, /vault\.deleteConfirm\.packageDesc/);
+  assert.match(source, /deleteSnippetPackage/);
+  assert.match(source, /renameSnippetPackage/);
+  assert.match(source, /SNIPPET_PACKAGE_PATH_CHANGE_EVENT/);
+  assert.match(source, /detail: \{ from: renamingPackagePath, to: result\.newPath \}/);
+  assert.match(source, /detail: \{ from: path, to: null \}/);
+  assert.match(source, /openRenamePackageDialog/);
+  assert.match(source, /requestDeletePackage/);
+});
+
+test("scripts side panel does not start a drag from a non-primary pointer", () => {
+  assert.match(source, /from '\.\/ui\/primaryOnlyDrag'/);
+  assert.match(source, /isNonPrimaryPointer/);
+  assert.match(source, /primaryOnlyDragHandlers/);
+});
+
+test("scripts side panel offers a stacked view toggle that persists the choice", () => {
+  assert.match(source, /useScriptsViewMode/);
+  const toggle = source.match(/viewStacked[\s\S]*?\{viewMode === 'stacked' \? <List size=\{14\} \/> : <LayoutGrid size=\{14\} \/>\}/);
+  assert.ok(toggle, "view toggle button should swap list / stacked icons");
+  assert.match(source, /aria-pressed=\{viewMode === 'stacked'\}/);
+  // The chosen mode persists via the shared hook so it survives app restarts.
+  assert.match(source, /useScriptsViewMode\(\)/);
+  assert.match(source, /setViewMode\(viewMode === 'stacked' \? 'list' : 'stacked'\)/);
+});
+
+test("scripts side panel stacked view renders wrap-around chips and keeps run behavior", () => {
+  const stacked = source.match(/viewMode === 'stacked' \? \([\s\S]*?\) : \(/);
+  assert.ok(stacked, "stacked branch should exist in the content area");
+  assert.match(stacked[0], /flex flex-wrap/);
+  // Chips reuse the same click handler (multi-select / run / execute) as rows.
+  assert.match(stacked[0], /onClick=\{\(\) => handleSnippetClick\(snippet\)\}/);
+  // Packages stay visible as section headers with their counts.
+  assert.match(stacked[0], /item\.row\.name/);
+  assert.match(stacked[0], /item\.countLabel/);
+  assert.match(source, /const SnippetChip = memo/);
+  // The stacked chip keeps the same context menu contract (edit / delete / run).
+  const chip = source.match(/const SnippetChip = memo[\s\S]*?SnippetChip\.displayName/);
+  assert.ok(chip, "SnippetChip component should exist");
+  assert.match(chip[0], /ContextMenuContent/);
+  assert.match(chip[0], /onRunParallel/);
+  assert.match(chip[0], /onEdit/);
 });

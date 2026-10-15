@@ -58,11 +58,25 @@ function subscribeToPtyData(ptyStream, onData) {
   throw new Error("PTY stream does not support data subscriptions");
 }
 
+// Only the end of the output can hold the idle prompt, and this check runs for
+// every PTY chunk while the retained output may be hundreds of thousands of
+// characters long. Normalising the whole text (ANSI and carriage returns) on
+// each chunk stalls the worker during a flood, so look at a tail window that is
+// comfortably larger than the prompt including the escape codes it may carry.
+const PROMPT_SUFFIX_MIN_WINDOW_CHARS = 2048;
+const PROMPT_SUFFIX_WINDOW_PER_PROMPT_CHAR = 8;
+
 function hasExpectedPromptSuffix(text, expectedPrompt) {
   if (!expectedPrompt) return false;
-  const normalizedText = stripAnsi(String(text || "")).replace(/\r/g, "");
   const normalizedPrompt = stripAnsi(String(expectedPrompt || "")).replace(/\r/g, "");
-  return !!normalizedPrompt && normalizedText.endsWith(normalizedPrompt);
+  if (!normalizedPrompt) return false;
+  const fullText = String(text || "");
+  const windowChars = Math.max(
+    PROMPT_SUFFIX_MIN_WINDOW_CHARS,
+    String(expectedPrompt).length * PROMPT_SUFFIX_WINDOW_PER_PROMPT_CHAR,
+  );
+  const tail = fullText.length > windowChars ? fullText.slice(-windowChars) : fullText;
+  return stripAnsi(tail).replace(/\r/g, "").endsWith(normalizedPrompt);
 }
 
 function escapePosixSingleQuoted(text) {
@@ -188,26 +202,96 @@ function buildPendingInputClearPrefix(shellKind) {
     case "cmd":
       return "\x1b";
     case "powershell":
-      // Escape = Windows-mode PSReadLine RevertLine (issue reporter default).
-      // Ctrl+U/Ctrl+K also fire for Emacs/Vi when those bindings exist.
-      return "\x1b\x15\x0b";
+      // Vi gg plus a counted dd removes the whole multiline buffer, including
+      // in PSReadLine 2.0 where dG is unavailable. Escape+r is Emacs
+      // RevertLine. Repeated Escape clears Windows mode, and the final
+      // i+Backspace leaves every mode on an empty editable line.
+      return "\x1bggd2147483647d\x1br\x1b\x1bi\x08";
     default:
-      return "\x15\x0b";
+      // Kill the suffix before the prefix. Canonical/no-editing terminals do
+      // not bind Ctrl+K; the trailing Ctrl+U must erase that literal byte too.
+      return "\x0b\x15";
   }
 }
 
-function buildPosixWrapperBody(command, marker) {
-  const noPager = "PAGER=cat SYSTEMD_PAGER= GIT_PAGER=cat LESS= ";
-  const commandLines = String(command || "").replace(/\r\n?/g, "\n").split("\n");
-  const cmdAssign = commandLines.length > 1
-    ? `${marker}_cmd=$(printf '%s\\n' ${commandLines.map((line) => `'${escapePosixSingleQuoted(line)}'`).join(" ")})`
-    : `${marker}_cmd='${escapePosixSingleQuoted(command)}'`;
-  return (
-    `${marker}=0; ${cmdAssign}; { printf '%s\\n' '${marker}_S'; trap ':' INT; ( ${noPager}eval "$${marker}_cmd" ); __NCMCP_rc=$?; trap - INT; printf '%s\\n' '${marker}_E:'\"$__NCMCP_rc\"; (exit $__NCMCP_rc); }`
-  );
+function bashHistoryScratchNames(marker) {
+  const suffix = String(marker || "").toLowerCase().replace(/[^a-z0-9]/g, "").slice(-12) || "dflt";
+  return { entry: `__nc_h_${suffix}`, dispatcher: `__nc_d_${suffix}` };
 }
 
-function buildWrappedCommand(command, shellKind, marker) {
+function buildBashHistoryCleanup(marker, keepDispatcher = false) {
+  // Expanded dispatcher names bypass aliases. Verify that a dispatcher really
+  // executes builtins before trusting an empty history read from a no-op function.
+  // After deletion, verify the entry is gone: a shadowed history function may
+  // delete only in a subshell. Stop as soon as the real dispatcher succeeds.
+  // Invocation-specific scratch names avoid readonly user variables. Clear the
+  // history-bearing scratch through the verified dispatcher, never plain unset.
+  const { entry, dispatcher } = bashHistoryScratchNames(marker);
+  const previous = `${entry}_prev`;
+  const unsetNames = `${entry} ${previous}${keepDispatcher ? '' : ` ${dispatcher}`}`;
+  // With cmdhist disabled each physical line is a separate history entry.
+  // Keep deleting marked tail entries only while their numbers decrease; a
+  // shadowed history function that makes no progress must fall back, not loop.
+  return [
+    `[ "\${BASH_VERSION-}" ]&&{ for ${dispatcher} in command builtin;do ${entry}=$($${dispatcher} printf x);[ "$${entry}" = x ]||continue;`,
+    `${entry}=$($${dispatcher} history 1);while :;do case "$${entry}" in *${marker}*)`,
+    `${entry}=\${${entry}#"\${${entry}%%[^[:space:]]*}"};${previous}=\${${entry}%%[[:space:]]*};$${dispatcher} history -d "$${previous}";`,
+    `${entry}=$($${dispatcher} history 1);case "$${entry}" in *${marker}*)`,
+    `${entry}=\${${entry}#"\${${entry}%%[^[:space:]]*}"};[ "\${${entry}%%[[:space:]]*}" -lt "$${previous}" ]||break;;*) break;;esac;;*) break;;esac;done;`,
+    `case "$${entry}" in *${marker}*) continue;;esac;`,
+    `$${dispatcher} unset ${unsetNames};break;done; } 2>/dev/null`,
+  ].join(` \\\n: "${marker}"; `);
+}
+
+function buildPosixWrapperBody(command, marker, startFormat, { omitBashHistoryCleanup = false } = {}) {
+  const noPager = "PAGER=cat SYSTEMD_PAGER= GIT_PAGER=cat LESS= ";
+  const commandLines = String(command || "").replace(/\r\n?/g, "\n").split("\n");
+  let cmdAssign = commandLines.length > 1
+    ? `${marker}_cmd=$(printf '%s\\n' ${commandLines.map((line) => `'${escapePosixSingleQuoted(line)}'`).join(" ")})`
+    : `${marker}_cmd='${escapePosixSingleQuoted(command)}'`;
+  if (Buffer.byteLength(cmdAssign, 'utf8') > 350) {
+    // Reserve room below BusyBox's 512-byte editor limit for the assignment,
+    // marker and continuation syntax. Write pacing cannot bypass this limit.
+    // Emit bounded quoted pieces inside one command substitution; each
+    // continuation keeps the marker visible to the terminal echo filter.
+    const writes = [];
+    for (const [index, line] of commandLines.entries()) {
+      let chunk = '';
+      let bytes = 0;
+      for (const character of line) {
+        const quoted = escapePosixSingleQuoted(character);
+        const size = Buffer.byteLength(quoted, 'utf8');
+        if (bytes + size > 300) {
+          writes.push(`printf '%s' '${chunk}'`);
+          chunk = '';
+          bytes = 0;
+        }
+        chunk += quoted;
+        bytes += size;
+      }
+      writes.push(`printf '${index < commandLines.length - 1 ? '%s\\n' : '%s'}' '${chunk}'`);
+    }
+    cmdAssign = `${marker}_cmd=$(${writes.join(`; \\\n: '${marker}'; `)})`;
+  }
+  const historyCleanup = omitBashHistoryCleanup ? [] : [buildBashHistoryCleanup(marker)];
+  // OpenWrt builds BusyBox with a 512-byte interactive line editor. Keep
+  // every physical line below that limit, even for short user commands.
+  // Emit a short standalone input marker before the shell reads any PS2
+  // continuation. A leading newline separates it from concurrent PTY echo.
+  return `${marker}=0; printf '\\n%s\\n' '${marker}_I'\n` + [
+    ` : '${marker}'; ${cmdAssign}`,
+    `{ printf '${startFormat}' '${marker}_S'; trap ':' INT; ( ${noPager}eval "$${marker}_cmd" ); __NCMCP_rc=$?; trap - INT`,
+    `printf '%s\\n' '${marker}_E:'"$__NCMCP_rc"`,
+    ...historyCleanup,
+    `(exit $__NCMCP_rc); }`,
+  ].join(`; \\\n: '${marker}'; `);
+}
+
+function buildWrappedCommand(command, shellKind, marker, separateStartMarker = false, options = {}) {
+  // A live probe leaves its completion marker unterminated to hide the next
+  // prompt. POSIX input also hides arbitrary PS2 prompts until a fresh start
+  // marker line; keep the fish behavior controlled by separateStartMarker.
+  const startFormat = separateStartMarker ? "\\n%s\\n" : "%s\\n";
   switch (shellKind) {
     case "powershell": {
       const psPager = "$env:PAGER='cat'; $env:SYSTEMD_PAGER=''; $env:GIT_PAGER='cat'; $env:LESS=''; ";
@@ -233,13 +317,13 @@ function buildWrappedCommand(command, shellKind, marker) {
         ` set ${marker} 0; function __ncmcp_int --on-signal INT; printf '%s\\n' '${marker}_E:130'; functions -e __ncmcp_int; end; ` +
         `set -l ${marker}_cmd '${escapeFishSingleQuoted(command)}'; ` +
         `begin; set -gx PAGER cat; set -gx SYSTEMD_PAGER ''; set -gx GIT_PAGER cat; set -gx LESS ''; ` +
-        `printf '%s\\n' '${marker}_S'; eval \$${marker}_cmd; set __NCMCP_rc $status; ` +
+        `printf '${startFormat}' '${marker}_S'; eval \$${marker}_cmd; set __NCMCP_rc $status; ` +
         `functions -e __ncmcp_int; printf '%s\\n' '${marker}_E:'\$__NCMCP_rc; end\n`
       );
 
     case "posix":
     default: {
-      // Single-line compound command with early marker.
+      // Compound command with an early marker on each physical line.
       //
       // Layout: __NCMCP_xxx=0; { ... MARKER_S; eval command; MARKER_E; }
       //
@@ -256,7 +340,7 @@ function buildWrappedCommand(command, shellKind, marker) {
       //    keeps shell syntax errors inside the eval call so the wrapper
       //    can still emit the end marker and return a non-zero exit code.
       //
-      // 3) Single-line { ... } is parsed fully before execution, so SIGINT
+      // 3) The complete { ... } group is parsed before execution, so SIGINT
       //    cannot cause bash to flush the end marker from the input buffer.
       //    trap ':' INT lets child processes receive SIGINT normally while
       //    preventing the shell from aborting the compound command.
@@ -282,7 +366,7 @@ function buildWrappedCommand(command, shellKind, marker) {
       // can opt in by adding `HISTCONTROL=ignoreboth` to ~/.bashrc.
       // Without that config the prefix is harmless; it just doesn't
       // suppress history recording.
-      return ` ${buildPosixWrapperBody(command, marker)}\n`;
+      return ` ${buildPosixWrapperBody(command, marker, "\\n%s\\n", options)}\n`;
     }
   }
 }
@@ -450,6 +534,8 @@ module.exports = {
   resolveEffectiveShellKind,
   buildPendingInputClearPrefix,
   buildWrappedCommand,
+  buildBashHistoryCleanup,
+  bashHistoryScratchNames,
   findEndMarker,
   normalizePtyOutput,
   appendBoundedOutput,

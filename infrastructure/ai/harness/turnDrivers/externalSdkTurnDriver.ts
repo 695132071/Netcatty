@@ -364,6 +364,16 @@ async function runExternalTurn(
             updateActiveAssistant(msg => ({ ...msg, statusText: message }));
           });
         }
+      } else if (hookEvent === 'PostCompact') {
+        // SDK 0.3.258 — history was summarised; tell the user why earlier
+        // detail is no longer present in this turn's context.
+        flushTextBeforeNonTextEvent();
+        runOrBufferUiOperation(() => {
+          updateActiveAssistant(msg => ({
+            ...msg,
+            statusText: ui.translate?.('ai.chat.contextCompacted') ?? 'Context compacted',
+          }));
+        });
       }
     },
     onElicitationCreate: (elicitationId: string, request: Record<string, unknown>) => {

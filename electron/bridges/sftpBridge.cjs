@@ -11,6 +11,7 @@ const { pipeline } = require("node:stream/promises");
 const { TextDecoder } = require("node:util");
 const { StringDecoder } = require("node:string_decoder");
 const { executeBoundedSshCommand } = require("./boundedSshExec.cjs");
+const { remoteSoftwareRequiresSingleChannel } = require("../../domain/singleChannelSshBanner.shared.cjs");
 const { openBoundedSftpChannel } = require("./boundedSftpOpen.cjs");
 const { invalidateSshTransport } = require("./sshTransportInvalidation.cjs");
 require("./boringSslDhCompat.cjs").installBoringSslDhCompat();
@@ -55,6 +56,7 @@ let sftpClients = null;
 let electronModule = null;
 let sessions = null;
 let reportOpenedSessionActivity = null;
+let reportSuppressedError = null;
 const rendererSftpSourceSessions = new Map();
 const REMOTE_DELETE_EXEC_OPEN_TIMEOUT_MS = 15_000;
 const REMOTE_DELETE_EXEC_RUN_TIMEOUT_MS = 10 * 60_000;
@@ -226,6 +228,11 @@ const getSftpChannel = async (client, options = {}) => {
   // Reopening with sshClient.sftp() would silently downgrade permissions.
   if (client.__netcattySudoMode) {
     console.warn("[SFTP] Sudo SFTP channel is unavailable; automatic recovery is disabled for sudo sessions. Please reconnect.");
+    return null;
+  }
+
+  // A second SFTP channel on a single-channel bastion drops the whole login.
+  if (client.__netcattySingleChannelSsh || client.client?.__netcattySingleChannelSsh) {
     return null;
   }
 
@@ -636,6 +643,8 @@ async function execRemoteShellCommand(sshClient, command, optionsOrSignal = null
 async function tryFastShellDirectoryDelete(client, remotePath, encoding = "utf-8", signal = null) {
   const sshClient = client?.client;
   if (!sshClient || typeof sshClient.exec !== "function") return false;
+  // Extra exec drops a single-channel bastion login. Use the SFTP walk instead.
+  if (client.__netcattySingleChannelSsh || sshClient.__netcattySingleChannelSsh) return false;
   const enc = !encoding || encoding === "auto" ? "utf-8" : encoding;
   if (enc !== "utf-8") return false;
   if (typeof remotePath !== "string" || !remotePath || remotePath === "/" || remotePath === ".") {
@@ -734,6 +743,9 @@ function init(deps) {
   reportOpenedSessionActivity = typeof deps.reportOpenedSessionActivity === "function"
     ? deps.reportOpenedSessionActivity
     : null;
+  reportSuppressedError = typeof deps.reportSuppressedError === "function"
+    ? deps.reportSuppressedError
+    : null;
   rendererSftpSourceSessions.clear();
 }
 
@@ -749,13 +761,19 @@ function ensureRemoteSftpSupport(sessionId) {
   return { session, sshClient };
 }
 
-function findRemoteSftpSourceByEndpoint(sourceSessionId, expectedEndpoint) {
+function findRemoteSftpSourceByEndpoint(sourceSessionId, expectedEndpoint, requireExactSession = false) {
   const requested = sessions?.get(sourceSessionId);
   const matchesExpectedEndpoint = (session) => {
     const actualEndpoint = session?._reuseEndpoint || session?.connRef?.endpoint;
     return Boolean(
       actualEndpoint
-      && endpointAllowsReuse(expectedEndpoint, actualEndpoint, "channel"),
+      && (endpointAllowsReuse(expectedEndpoint, actualEndpoint, "channel")
+        || (session._sftpReuseEndpoint
+          && endpointAllowsReuse({
+            ...session._sftpReuseEndpoint,
+            authFingerprint: actualEndpoint.authFingerprint,
+          }, actualEndpoint, "channel")
+          && endpointAllowsReuse(expectedEndpoint, session._sftpReuseEndpoint, "channel"))),
     );
   };
   const hasLiveSftpConnection = (session) => {
@@ -766,6 +784,8 @@ function findRemoteSftpSourceByEndpoint(sourceSessionId, expectedEndpoint) {
   if (requested && matchesExpectedEndpoint(requested) && hasLiveSftpConnection(requested)) {
     return { sessionId: sourceSessionId, session: requested, sshClient: requested.conn || requested.sshClient };
   }
+
+  if (requireExactSession) return null;
 
   // The renderer only has endpoint fields when it chooses a sourceSessionId;
   // route, proxy, credential and host-key fingerprints live in the main
@@ -1078,7 +1098,12 @@ async function hashReadableForDigest(readable, signal = null) {
   }
 }
 
-async function tryRemoteSha256Sum(sshClient, remotePath, signal = null) {
+async function tryRemoteSha256Sum(sshClient, remotePath, signal = null, owner = null) {
+  // The dedicated SFTP login already holds the only session channel.
+  // Hash the file through that SFTP stream instead of opening exec.
+  if (sshClient?.__netcattySingleChannelSsh || owner?.__netcattySingleChannelSsh) {
+    return null;
+  }
   if (!sshClient || typeof sshClient.exec !== "function") return null;
   const escapedPath = String(remotePath).replace(/'/g, "'\\''");
   try {
@@ -1109,7 +1134,7 @@ async function tryRemoteSha256Sum(sshClient, remotePath, signal = null) {
 async function computeRemoteContentDigest(client, encodedPath, remotePath, options = {}) {
   const signal = options.signal || null;
   throwIfAborted(signal);
-  const digest = await tryRemoteSha256Sum(client?.client, remotePath, signal);
+  const digest = await tryRemoteSha256Sum(client?.client, remotePath, signal, client);
   if (digest) {
     throwIfAborted(signal);
     return digest;
@@ -1789,6 +1814,7 @@ function createSessionBackedSftpClient(sessionId, sshClient, options = {}) {
     client: sshClient,
     sftp: null,
     __netcattySessionBacked: true,
+    __netcattySingleChannelSsh: !!options?.singleChannelSsh,
     __netcattySourceSessionId: options?.sourceSessionId,
     __netcattyRefHolder: refHolder,
     __netcattyDisposed: false,
@@ -1913,7 +1939,11 @@ async function openSftpForSession(_event, payload) {
   let source;
   if (payload?.expectedEndpoint) {
     const expectedEndpoint = buildConnectionReuseEndpoint(payload.expectedEndpoint);
-    source = findRemoteSftpSourceByEndpoint(sessionId, expectedEndpoint);
+    source = findRemoteSftpSourceByEndpoint(
+      sessionId,
+      expectedEndpoint,
+      payload?.requireExactSourceSession === true,
+    );
     if (!source) {
       const err = new Error("Source session SSH route does not match the requested SFTP endpoint");
       err.code = "ERR_SFTP_SOURCE_ROUTE_MISMATCH";
@@ -1924,6 +1954,16 @@ async function openSftpForSession(_event, payload) {
     source = { sessionId, ...ensureRemoteSftpSupport(sessionId) };
   }
   const { session, sshClient } = source;
+  if (
+    session.singleChannelSsh
+    || remoteSoftwareRequiresSingleChannel(session.remoteSshVersion || sshClient?._remoteVer)
+  ) {
+    const err = new Error(
+      "This host is configured for single-channel SSH. Opening SFTP on the terminal connection would disconnect it.",
+    );
+    err.code = "ERR_SFTP_SINGLE_CHANNEL_BASTION";
+    throw err;
+  }
   const actualEndpoint = session._reuseEndpoint || session.connRef?.endpoint;
   const sftpId = `${sourceSessionId}-sftp-${randomUUID()}`;
   const refHolder = { id: sftpId, __sshLeaseKind: "sftp" };
@@ -1933,6 +1973,7 @@ async function openSftpForSession(_event, payload) {
   const client = createSessionBackedSftpClient(sourceSessionId, sshClient, {
     refHolder,
     sourceSessionId,
+    singleChannelSsh: !!session.singleChannelSsh,
   });
   client.__netcattyEndpointKey = session.connRef?.endpointKey || buildEndpointKey(actualEndpoint);
   const { normalizeFileProtocol } = require("./sftpBridge/scpShell.cjs");
@@ -1986,34 +2027,11 @@ async function openSftpForSession(_event, payload) {
     }
 
     if (sudoRequested) {
-      let sftpWrapper;
-      let sudoActive = true;
-      try {
-        sftpWrapper = await connectSudoSftp(sshClient, payload?.password || "");
-      } catch (e) {
-        // Fallback: if sftp-server binary is missing (exit code 127), try the
-        // standard SFTP subsystem instead of failing completely. Mirrors openSftp
-        // (ESXi / hosts without a standalone sftp-server). Keeps the reused SSH
-        // transport so MFA is not repeated.
-        if (e?.message && e.message.includes("exit code 127")) {
-          console.warn(
-            "[SFTP] openSftpForSession sftp-server not found, falling back to standard SFTP subsystem",
-          );
-          sudoActive = false;
-          sftpWrapper = await requireSftpChannel(client, {
-            signal: payload?.abortSignal,
-            timeoutMs: payload?.timeoutMs,
-          });
-        } else {
-          throw e;
-        }
-      }
+      const sftpWrapper = await connectSudoSftp(sshClient, payload?.password || "");
       client.sftp = sftpWrapper;
       client.__netcattyFileProtocol = "sftp";
-      client.__netcattySudoMode = sudoActive;
-      if (sudoActive) {
-        sftpWrapper.on?.("close", () => client.end());
-      }
+      client.__netcattySudoMode = true;
+      sftpWrapper.on?.("close", () => client.end());
       throwIfAborted(payload?.abortSignal);
       copySftpEncodingState(payload?.encodingStateKey, sftpId);
       sftpClients.set(sftpId, client);
@@ -2032,10 +2050,14 @@ async function openSftpForSession(_event, payload) {
     }
 
     try {
-      await requireSftpChannel(client, {
+      // This is a fresh client: retain the initial channel-open error instead
+      // of passing through recovery, which replaces it with a generic error.
+      const channel = await tryOpenSftpChannel(client, {
         signal: payload?.abortSignal,
         timeoutMs: payload?.timeoutMs,
       });
+      if (!hasSftpChannelApi(channel)) throw new Error("SFTP channel unavailable");
+      client.sftp = channel;
       client.__netcattyFileProtocol = "sftp";
     } catch (sftpErr) {
       if (fileProtocol === "sftp") throw sftpErr;
@@ -2044,6 +2066,23 @@ async function openSftpForSession(_event, payload) {
         `[SFTP] openSftpForSession SFTP channel failed for ${sessionId}; falling back to SCP mode:`,
         sftpErr?.message || String(sftpErr),
       );
+      // The terminal worker has no Electron app: forward to main's logger.
+      try {
+        const source = "sftpBridge.openSftpForSession";
+        const message = `SFTP channel failed for ${sourceSessionId}; falling back to SCP mode (${fileProtocol})`;
+        if (reportSuppressedError) {
+          reportSuppressedError(source, sftpErr, message);
+        } else {
+          require("./crashLogBridge.cjs").captureDiagnostic(source, message, {
+            sessionId: sourceSessionId,
+            fileProtocol,
+            reason: sftpErr?.message || String(sftpErr),
+            reasonCode: sftpErr?.code ?? sftpErr?.level ?? undefined,
+          });
+        }
+      } catch {
+        // Diagnostic failures must not prevent the fallback.
+      }
       client.__netcattyFileProtocol = "scp";
       client.sftp = null;
       try {
@@ -2147,6 +2186,11 @@ async function acquireUploadSftpChannel(client, options = {}) {
     return { sftp, dispose: false };
   }
   const sshClient = client?.client;
+  // Same constraint as openIsolatedSftpChannel: a second subsystem drops the login.
+  if (client?.__netcattySingleChannelSsh || sshClient?.__netcattySingleChannelSsh) {
+    const shared = await requireSftpChannel(client, options);
+    return { sftp: shared, dispose: false };
+  }
   if (sshClient && typeof sshClient.sftp === "function") {
     // Prefer a disposable channel for cancel, but never fail the whole upload
     // when MaxSessions / server policy refuses another subsystem — fall back to
@@ -2366,7 +2410,28 @@ const openConnectionApi = createOpenConnectionApi({
   buildConnectionReuseEndpoint,
   resolveConnectionKeepalivePolicy,
 });
-const { connectThroughChainForSftp, connectSudoSftp, openSftp } = openConnectionApi;
+const { connectThroughChainForSftp, connectSudoSftp } = openConnectionApi;
+async function openSftp(event, options) {
+  // The main SFTP page has no explicit terminal hint. Look for the original
+  // profile of a live, temporarily authenticated terminal before dialing.
+  if (options.reuseTransport !== false) {
+    const endpoint = buildConnectionReuseEndpoint(options);
+    const source = findRemoteSftpSourceByEndpoint(options.sourceSessionId, endpoint);
+    if (source?.session._sftpReuseEndpoint) {
+      try {
+        return await openSftpForSession(event, {
+          ...options,
+          sessionId: source.sessionId,
+          expectedEndpoint: options,
+          requireExactSourceSession: true,
+        });
+      } catch {
+        // Preserve the normal fresh-connection fallback if the channel fails.
+      }
+    }
+  }
+  return openConnectionApi.openSftp(event, options);
+}
 const { createFileOpsApi } = require("./sftpBridge/fileOps.cjs");
 const fileOpsApi = createFileOpsApi({
   get sftpClients() { return sftpClients; },
@@ -2667,6 +2732,7 @@ module.exports = {
   extractSftpArchive,
   getSftpHomeDir,
   resolveEncodingForRequest,
+  _tryFastShellDirectoryDeleteForTests: tryFastShellDirectoryDelete,
   _execRemoteShellCommandForTests: execRemoteShellCommand,
   _tryRemoteSha256SumForTests: tryRemoteSha256Sum,
 };

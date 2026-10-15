@@ -301,6 +301,45 @@ test("openSftpForSession skips a mismatched source hint and reuses another sessi
   await sftpBridge.closeSftp(null, { sftpId: opened.sftpId });
 });
 
+test("strict openSftpForSession never substitutes another matching live session", async () => {
+  let alternateOpened = false;
+  const connection = {
+    sftp(callback) {
+      alternateOpened = true;
+      callback(null, createSessionChannel().channel);
+    },
+  };
+  const options = {
+    hostId: "same-host",
+    hostname: "target.example",
+    port: 22,
+    username: "alice",
+    authMethod: "password",
+    password: "target-password",
+    verifyHostKeys: false,
+  };
+  const endpoint = normalizeEndpoint(buildConnectionReuseEndpoint(options));
+  const sftpClients = new Map();
+  sftpBridge.init({
+    electronModule: { webContents: { fromId: () => null } },
+    sessions: new Map([["matching-alternate", { conn: connection, _reuseEndpoint: endpoint }]]),
+    sftpClients,
+  });
+
+  await assert.rejects(
+    sftpBridge.openSftpForSession(null, {
+      sessionId: "missing-requested-session",
+      expectedEndpoint: options,
+      requireExactSourceSession: true,
+      fileProtocol: "sftp",
+    }),
+    (error) => error?.code === "ERR_SFTP_SOURCE_ROUTE_MISMATCH",
+  );
+
+  assert.equal(alternateOpened, false);
+  assert.equal(sftpClients.size, 0);
+});
+
 test("openSftpForSession reuses the hinted session when its full route and security identity match", async () => {
   let openedChannel = false;
   const connection = {
@@ -1091,6 +1130,45 @@ test("SCP upload aborts while staged size verification is pending", async () => 
   controller.abort();
   await assert.rejects(() => upload, /cancel|abort/i);
   assert.equal(removedStage, true);
+});
+
+test("SCP upload succeeds when the remote cannot report file sizes", async () => {
+  // #3399: devices without SFTP (and without a usable stat binary) report the
+  // "?" unknown-size marker after a successful scp -t upload. The staged size
+  // verification must skip instead of failing with "Upload size mismatch ...
+  // got 0" while download on the same device works.
+  let renameCalls = 0;
+  let uploadCalls = 0;
+  const backend = {
+    async stat(remotePath) {
+      if (String(remotePath).includes(".netcatty-backup-")) {
+        const error = new Error("No such file");
+        error.code = "ENOENT";
+        throw error;
+      }
+      // Mimic parseStatRecord on a stat-less device: type/mode known, size unknown.
+      return { type: "file", isDirectory: false, isSymbolicLink: false, size: undefined };
+    },
+    async rename() {
+      renameCalls += 1;
+    },
+    async remove() {},
+  };
+  const client = {
+    __netcattyFileProtocol: "scp",
+    __netcattyScpBackend: backend,
+  };
+
+  const result = await sftpBridge.runRemoteUploadTransaction(client, "/tmp/local.bin", "/tmp/remote.bin", {
+    expectedSize: 7,
+    async uploadFile() {
+      uploadCalls += 1;
+    },
+  });
+  assert.equal(result?.staged, true);
+  assert.equal(uploadCalls, 1);
+  // Existing target moves to backup, then the stage promotes to the final path.
+  assert.equal(renameCalls, 2);
 });
 
 test("staged basenames stay within the remote NAME_MAX budget", async (t) => {

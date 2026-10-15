@@ -9,7 +9,8 @@ import {
 import type { TerminalSettings } from "../../../domain/models";
 import {
   isBareShiftEnterLineEnding,
-  resolveShiftEnterPayload,
+  resolveShiftEnterText,
+  resolveWin32ForcedShiftEnterText,
   shouldSendShiftEnterText,
 } from "./shiftEnterText";
 
@@ -19,12 +20,31 @@ export type KittyKeyboardBroadcastInput =
       event: KittyKeyboardEvent;
       fallbackToLegacy?: boolean;
       urgentInterrupt?: boolean;
+      /**
+       * Pairing identity for peers whose state is keyed by correlation id
+       * rather than the event's physical code. Defaults to the event's code
+       * so ordinary key broadcasts are unchanged.
+       */
+      keyIdentity?: string;
+    }
+  | {
+      kind: "win32";
+      data: string;
+      event: KittyKeyboardEvent;
+      fallbackToLegacy?: boolean;
+      urgentInterrupt?: boolean;
     }
   | { kind: "legacy"; data: string; keyIdentity: string; urgentInterrupt?: boolean }
   | { kind: "text"; text: string };
 
 type KittyKeyboardBroadcastDispatchOptions = {
   beforeUrgentInterrupt?: () => void;
+  /**
+   * The source session dispatched this input from an active password /
+   * sensitive prompt under the #3488 bypass. The receiving peer must keep the
+   * sensitive marker on its own writes so input interceptors stay skipped.
+   */
+  sourceSensitive?: boolean;
 };
 
 type KittyKeyboardBroadcastHandler = (
@@ -36,6 +56,9 @@ export type ResolvedKittyKeyboardBroadcastInput = {
   data: string;
   kittyEncoded: boolean;
   urgentInterrupt: boolean;
+  logicalData?: string | null;
+  /** Let the target xterm encode this event with its active Win32 mode. */
+  win32Event?: KittyKeyboardEvent;
 };
 
 export const createKittyKeyboardBroadcastForwarder = (options: {
@@ -43,12 +66,15 @@ export const createKittyKeyboardBroadcastForwarder = (options: {
   isHandlingBroadcast: () => boolean;
   isBroadcastEnabled: () => boolean;
   isSensitiveInput?: () => boolean;
+  /** True while the source session sits at an active password / sensitive prompt. */
+  isSensitivePromptSource?: () => boolean;
   getDispatcher: () => ((
     data: string,
     sourceSessionId: string,
     options: {
       kittyKeyboardInput: KittyKeyboardBroadcastInput;
       kittyKeyboardTargetSessionIds?: string[];
+      sourceSensitive?: boolean;
     },
   ) => string[] | void) | null | undefined;
 }) => {
@@ -57,6 +83,13 @@ export const createKittyKeyboardBroadcastForwarder = (options: {
     input: KittyKeyboardBroadcastInput,
     forcePairedRelease = false,
     targetSessionIds?: string[],
+    /**
+     * Source-prompt sensitivity snapshotted before the source's own local
+     * write (#3491): a submitting key such as Enter clears the live prompt
+     * flag before this dispatch runs, so the live check alone would report
+     * the payload as nonsensitive.
+     */
+    dispatchOptions?: { sourceSensitive?: boolean },
   ): { targetSessionIds: string[] } | null => {
     const currentDispatcher = options.getDispatcher();
     if (currentDispatcher) lastDispatcher = currentDispatcher;
@@ -67,8 +100,15 @@ export const createKittyKeyboardBroadcastForwarder = (options: {
       (!forcePairedRelease && !options.isBroadcastEnabled()) ||
       !dispatcher
     ) return null;
+    // Bypassed password fan-out (#3488): tag the dispatch so peer writes keep
+    // input interceptors skipped for the secret keystrokes. A pre-write
+    // snapshot wins (#3491): the local submission may have already cleared
+    // the live prompt flag by the time this dispatch runs.
+    const sourceSensitive = dispatchOptions?.sourceSensitive === true
+      || options.isSensitivePromptSource?.() === true;
     const deliveredSessionIds = dispatcher("", options.sourceSessionId, {
       kittyKeyboardInput: input,
+      ...(sourceSensitive ? { sourceSensitive: true } : {}),
       ...(targetSessionIds ? { kittyKeyboardTargetSessionIds: targetSessionIds } : {}),
     });
     return { targetSessionIds: deliveredSessionIds ?? targetSessionIds ?? [] };
@@ -78,9 +118,11 @@ export const createKittyKeyboardBroadcastForwarder = (options: {
 export const clearKittyKeyboardBroadcastPairingState = (
   encodedKeys: Set<string>,
   legacySuppressedKeys: Set<string>,
+  win32ShiftEnterTextKeys?: Set<string>,
 ): void => {
   encodedKeys.clear();
   legacySuppressedKeys.clear();
+  win32ShiftEnterTextKeys?.clear();
 };
 
 const SNAPSHOT_MODIFIERS = [
@@ -186,6 +228,10 @@ export const flushKittyKeyboardBroadcastReleases = (
     pending.delete(identity);
     forward({
       kind: "key",
+      // Keep the identity the press was recorded under so a peer whose
+      // pairing diverges from the event's physical code (e.g. a Command+Period interrupt
+      // normalized to Ctrl+C) still pairs this synthetic release (#3409).
+      keyIdentity: identity,
       event: createKittyKeyboardSyntheticRelease(
         forwardedPress.event,
         Array.from(pending.values(), (pendingPress) => pendingPress.event),
@@ -202,12 +248,34 @@ type ResolveKittyKeyboardBroadcastOptions = {
   applicationCursorMode: boolean;
   encodedKeys: Set<string>;
   legacySuppressedKeys?: Set<string>;
-  /** Target buffer: remap Shift+Enter per peer, not from the broadcast source. */
-  alternateScreen?: boolean;
+  win32InputMode?: boolean;
   shiftEnterSettings?: Pick<
     TerminalSettings,
-    "shiftEnterNewlineEnabled" | "shiftEnterNewlineText"
+    "shiftEnterNewlineEnabled" | "shiftEnterNewlineText" | "shiftEnterForceText"
   >;
+  /**
+   * Presses this Win32 target turned into its configured Shift+Enter text
+   * instead of a native record. Their paired releases are dropped so ConPTY
+   * never sees a native key-up without the matching key-down.
+   */
+  win32ShiftEnterTextKeys?: Set<string>;
+};
+
+export const resolveWin32InputLogicalData = (
+  event: KittyKeyboardEvent,
+  applicationCursorMode: boolean,
+): string | null => {
+  if (event.type === "keyup") return null;
+  if (
+    event.key === "Enter" &&
+    (event.shiftKey || event.altKey || event.ctrlKey || event.metaKey)
+  ) {
+    // The native record carries semantics that a legacy CR cannot express.
+    // Treating a modified Enter as CR would make Netcatty record a command
+    // submission even when the TUI only inserted a line break.
+    return null;
+  }
+  return encodeLegacyKeyboardEvent(event, applicationCursorMode);
 };
 
 const resolveShiftEnterBroadcastPayload = (
@@ -222,15 +290,35 @@ const resolveShiftEnterBroadcastPayload = (
   ) {
     return null;
   }
-  const payload = resolveShiftEnterPayload(options.shiftEnterSettings, {
-    alternateScreen: options.alternateScreen === true,
-  });
-  if (!payload.data) return null;
+  const data = resolveShiftEnterText(options.shiftEnterSettings);
+  if (!data) return null;
   return {
-    data: payload.data,
-    kittyEncoded: payload.kind === "key",
+    data,
+    kittyEncoded: false,
     urgentInterrupt: false,
   };
+};
+
+/**
+ * On a Win32 target, decide Shift+Enter from the target's own
+ * shiftEnterForceText setting rather than the source's, so each peer gets the
+ * input its own TUI can read. Returns undefined when the native record should
+ * be kept.
+ */
+const resolveWin32ForcedShiftEnterBroadcast = (
+  event: KittyKeyboardEvent,
+  identity: string,
+  options: ResolveKittyKeyboardBroadcastOptions,
+): ResolvedKittyKeyboardBroadcastInput | null | undefined => {
+  if (event.type === "keyup") {
+    return options.win32ShiftEnterTextKeys?.delete(identity) ? null : undefined;
+  }
+  const data = resolveWin32ForcedShiftEnterText(event, options.shiftEnterSettings);
+  if (!data) return undefined;
+  options.encodedKeys.add(identity);
+  (options.legacySuppressedKeys ?? options.encodedKeys).add(identity);
+  options.win32ShiftEnterTextKeys?.add(identity);
+  return { data, kittyEncoded: false, urgentInterrupt: false };
 };
 
 export const resolveKittyKeyboardBroadcastInput = (
@@ -255,13 +343,65 @@ export const resolveKittyKeyboardBroadcastInput = (
     };
   }
 
-  const identity = input.event.code || input.event.key;
+  if (input.kind === "win32") {
+    if (options.win32InputMode) {
+      const identity = input.event.code || input.event.key;
+      const legacySuppressedKeys = options.legacySuppressedKeys ?? options.encodedKeys;
+      if (input.event.type === "keyup") {
+        const hasPairedKeyDown = options.encodedKeys.delete(identity);
+        legacySuppressedKeys.delete(identity);
+        if (!hasPairedKeyDown) return null;
+        const forced = resolveWin32ForcedShiftEnterBroadcast(input.event, identity, options);
+        if (forced !== undefined) return forced;
+      } else {
+        const forced = resolveWin32ForcedShiftEnterBroadcast(input.event, identity, options);
+        if (forced !== undefined) return forced;
+        options.encodedKeys.add(identity);
+        legacySuppressedKeys.add(identity);
+      }
+      return {
+        data: input.data,
+        kittyEncoded: false,
+        urgentInterrupt: input.urgentInterrupt === true,
+        logicalData: resolveWin32InputLogicalData(
+          input.event,
+          options.applicationCursorMode,
+        ),
+      };
+    }
+    return resolveKittyKeyboardBroadcastInput({
+      kind: "key",
+      event: input.event,
+      fallbackToLegacy: input.fallbackToLegacy,
+      urgentInterrupt: input.urgentInterrupt,
+    }, options);
+  }
+
+  const identity = input.keyIdentity ?? (input.event.code || input.event.key);
   const legacySuppressedKeys = options.legacySuppressedKeys ?? options.encodedKeys;
   const hasPairedKeyDown = input.event.type === "keyup"
     ? options.encodedKeys.delete(identity)
     : false;
   if (input.event.type === "keyup") legacySuppressedKeys.delete(identity);
   if (input.event.type === "keyup" && !hasPairedKeyDown) return null;
+  if (options.win32InputMode) {
+    const forced = resolveWin32ForcedShiftEnterBroadcast(input.event, identity, options);
+    if (forced !== undefined) return forced;
+    if (input.event.type !== "keyup") {
+      options.encodedKeys.add(identity);
+      legacySuppressedKeys.add(identity);
+    }
+    return {
+      data: "",
+      kittyEncoded: false,
+      urgentInterrupt: false,
+      logicalData: resolveWin32InputLogicalData(
+        input.event,
+        options.applicationCursorMode,
+      ),
+      win32Event: input.event,
+    };
+  }
   const encoded = options.kittyProtocolEnabled
     ? encodeKittyKeyEvent(options.kittyMode, {
         ...input.event,
@@ -299,12 +439,23 @@ export const createKittyKeyboardBroadcastHandler = (options: {
   isConnected: () => boolean;
   isRuntimeDisposed: () => boolean;
   interruptSession?: (sessionId: string) => void;
-  writeDisposed: (sessionId: string, data: string) => void;
-  writeActive: (data: string) => void;
+  writeDisposed: (sessionId: string, data: string, writeOptions?: { sensitive?: boolean }) => void;
+  writeActive: (
+    data: string,
+    logicalData?: string | null,
+    writeOptions?: { sensitive?: boolean },
+  ) => void;
+  writeWin32Event?: (
+    event: KittyKeyboardEvent,
+    logicalData: string | null,
+    writeOptions?: { sensitive?: boolean },
+  ) => void;
 }): KittyKeyboardBroadcastHandler => (input, dispatchOptions) => {
   const sessionId = options.getSessionId();
   if (!sessionId || !options.isConnected()) return;
-  const isPairedRelease = input.kind === "key" && input.event.type === "keyup";
+  const isPairedRelease =
+    (input.kind === "key" || input.kind === "win32") &&
+    input.event.type === "keyup";
   if (!isPairedRelease && options.isSensitiveInput?.() === true) return;
   const resolved = resolveKittyKeyboardBroadcastInput(input, options.resolveOptions());
   if (!resolved) return;
@@ -313,11 +464,34 @@ export const createKittyKeyboardBroadcastHandler = (options: {
     options.interruptSession(sessionId);
     return;
   }
-  if (options.isRuntimeDisposed()) {
-    options.writeDisposed(sessionId, resolved.data);
+  // The source dispatched from a bypassed password prompt: keep the sensitive
+  // marker on the peer write even when this peer's own prompt is not (yet)
+  // classified sensitive, so input interceptors stay skipped for the secret.
+  // Computed before the Win32 branch so its write stays sensitive too.
+  const forceSensitiveWrite = dispatchOptions?.sourceSensitive === true;
+  if (resolved.win32Event) {
+    if (!options.isRuntimeDisposed()) {
+      options.writeWin32Event?.(
+        resolved.win32Event,
+        resolved.logicalData ?? null,
+        forceSensitiveWrite ? { sensitive: true } : undefined,
+      );
+    }
     return;
   }
-  options.writeActive(resolved.data);
+  if (options.isRuntimeDisposed()) {
+    options.writeDisposed(
+      sessionId,
+      resolved.data,
+      forceSensitiveWrite ? { sensitive: true } : undefined,
+    );
+    return;
+  }
+  options.writeActive(
+    resolved.data,
+    resolved.logicalData,
+    forceSensitiveWrite ? { sensitive: true } : undefined,
+  );
 };
 
 const handlers = new Map<string, KittyKeyboardBroadcastHandler>();

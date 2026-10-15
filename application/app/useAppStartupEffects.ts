@@ -181,11 +181,14 @@ export function useAppStartupEffects(ctx: StartupEffectsContext) {
           },
           {
             children,
-            onChildUpdate: (child) => {
+            onChildUpdate: (child, observation) => {
               if (acceptsResumeCallbacks) {
-                childUpdateBatcher.push({ ...child, ownerId: "dedicated-resume" });
+                childUpdateBatcher.push({ ...child, ownerId: "dedicated-resume" }, observation);
+                return true;
               }
             },
+            onChildSuperseded: (taskId) => childUpdateBatcher.discard(taskId),
+            flushChildUpdates: () => childUpdateBatcher.flush(),
             onDirectoryCheckpointUpdate: (checkpoint) => {
               if (acceptsResumeCallbacks) {
                 sftpTransferCenterStore.patchTask(task.id, {
@@ -354,6 +357,7 @@ export function useAppStartupEffects(ctx: StartupEffectsContext) {
       // exactly the same outcome.
       let hasDirty = false;
       try {
+        // Pending handoffs retain source contents; accepted handoffs clear them.
         hasDirty = editorTabStore.getTabs().some((tab) => tab.content !== tab.baselineContent);
         if (hasDirty) toast.warning(t('sftp.editor.quitBlockedByDirty'), 'SFTP');
         if (!hasDirty) {

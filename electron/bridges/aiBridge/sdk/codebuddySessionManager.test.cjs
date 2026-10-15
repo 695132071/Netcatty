@@ -227,6 +227,7 @@ test("computeOptionsFingerprint detects option changes", () => {
   const diffModel = { cwd: "/tmp", model: "glm-4", maxTurns: 10, effort: "high" };
   const diffMaxTurns = { cwd: "/tmp", model: "glm-5", maxTurns: 20, effort: "high" };
   const diffEffort = { cwd: "/tmp", model: "glm-5", maxTurns: 10, effort: "low" };
+  const diffPersistSession = { ...base, persistSession: false };
   const diffExtraArgs = {
     ...base,
     extraArgs: { "dangerously-skip-permissions": "false" },
@@ -235,6 +236,7 @@ test("computeOptionsFingerprint detects option changes", () => {
   assert.notEqual(computeOptionsFingerprint(base), computeOptionsFingerprint(diffModel));
   assert.notEqual(computeOptionsFingerprint(base), computeOptionsFingerprint(diffMaxTurns));
   assert.notEqual(computeOptionsFingerprint(base), computeOptionsFingerprint(diffEffort));
+  assert.notEqual(computeOptionsFingerprint(base), computeOptionsFingerprint(diffPersistSession));
   assert.notEqual(computeOptionsFingerprint(base), computeOptionsFingerprint(diffExtraArgs));
 });
 

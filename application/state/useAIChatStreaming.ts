@@ -31,6 +31,7 @@ import {
   type TerminalSessionInfo,
 } from '../../infrastructure/ai/aiChatStreamingSupport';
 import { useAgentCompactionUi } from './useAgentCompactionUi';
+import { useI18n } from '../i18n/I18nProvider';
 
 export { getNetcattyBridge } from '../../infrastructure/ai/aiChatStreamingSupport';
 export type { ActiveCompactionUi } from './useAgentCompactionUi';
@@ -134,6 +135,7 @@ export function useAIChatStreaming({
   updateMessageById,
   persistContextCompaction,
 }: UseAIChatStreamingParams): UseAIChatStreamingReturn {
+  const { t } = useI18n();
   const [streamingSessionIds, setStreamingSessions] = useState<Set<string>>(
     () => new Set(sharedStreamingSessionIds),
   );
@@ -195,7 +197,8 @@ export function useAIChatStreaming({
     setStreamingForScope,
     getLatestSession: (sessionId: string) => latestAISessionsSnapshot?.find(s => s.id === sessionId),
     persistContextCompaction,
-  }), [addMessageToSession, updateLastMessage, updateMessageById, reportStreamError, setStreamingForScope, persistContextCompaction]);
+    translate: t,
+  }), [addMessageToSession, updateLastMessage, updateMessageById, reportStreamError, setStreamingForScope, persistContextCompaction, t]);
 
   const sendToExternalAgent = useCallback(async (
     sessionId: string,

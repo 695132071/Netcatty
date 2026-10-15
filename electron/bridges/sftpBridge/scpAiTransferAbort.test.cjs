@@ -560,6 +560,54 @@ describe("AI/MCP SCP transfer abort on shipped download/upload entry points", ()
     assert.deepEqual(leftovers, []);
   });
 
+  it("downloadSftpToLocal cancels and clears the stage before fallback creates output", async (t) => {
+    const controller = new AbortController();
+    const payload = Buffer.from("complete-download-before-cancel");
+    const localPath = path.join(tmpDir, "cancel-before-fallback.bin");
+    fs.writeFileSync(localPath, "original");
+    let stagedPath;
+    t.after(() => { if (stagedPath) fs.rmSync(stagedPath, { force: true }); });
+    const events = [];
+    sftpClients.set("scp-pre-fallback-cancel", {
+      __netcattyFileProtocol: "scp",
+      __netcattyScpBackend: {
+        async stat() { return { type: "file", isDirectory: false, size: payload.length }; },
+        async downloadFile(_remotePath, stage) {
+          stagedPath = stage;
+          await fs.promises.writeFile(stage, payload);
+          return { fileSize: payload.length, transferred: payload.length };
+        },
+      },
+    });
+    for (const name of ["rename", "copyFile"]) {
+      const original = fs.promises[name];
+      t.after(() => { fs.promises[name] = original; });
+      fs.promises[name] = async (...args) => {
+        if (args[0] === stagedPath && String(args[1]).endsWith(".ready")) {
+          if (name === "copyFile") controller.abort();
+          throw Object.assign(new Error("injected cross-device copy refusal"), {
+            code: name === "rename" ? "EXDEV" : "ENOTSUP",
+          });
+        }
+        return original.apply(fs.promises, args);
+      };
+    }
+    await assert.rejects(() => sftpBridge.downloadSftpToLocal(null, {
+      sftpId: "scp-pre-fallback-cancel", remotePath: "/remote/file.bin", localPath,
+      abortSignal: controller.signal,
+      onTransferEvent: (channel) => events.push(channel),
+    }), (error) => {
+      assert.match(error.message, /cancel|abort/i);
+      assert.doesNotMatch(error.message, /Recovery files preserved/);
+      return true;
+    });
+    assert.ok(stagedPath);
+    assert.equal(fs.existsSync(stagedPath), false);
+    assert.equal(fs.readFileSync(localPath, "utf8"), "original");
+    assert.ok(events.includes("netcatty:transfer:cancelled"));
+    assert.equal(events.includes("netcatty:transfer:error"), false);
+  });
+
   it("downloadSftpToLocal leaves the original untouched when mode setup fails", {
     skip: process.platform === "win32",
   }, async (t) => {
@@ -582,16 +630,11 @@ describe("AI/MCP SCP transfer abort on shipped download/upload entry points", ()
     await fs.promises.writeFile(localPath, original, { mode: 0o600 });
     await fs.promises.chmod(localPath, 0o600);
 
-    const originalChmod = fs.promises.chmod;
-    fs.promises.chmod = async (filePath, mode) => {
-      if (String(filePath).includes(".netcatty-") && String(filePath).endsWith(".ready")) {
-        const error = new Error("injected chmod failure");
-        error.code = "EPERM";
-        throw error;
-      }
-      return originalChmod(filePath, mode);
-    };
-    t.after(() => { fs.promises.chmod = originalChmod; });
+    interceptPreparedChmod(t, async () => {
+      const error = new Error("injected chmod failure");
+      error.code = "EPERM";
+      throw error;
+    });
 
     await assert.rejects(
       () => sftpBridge.downloadSftpToLocal(null, {
@@ -630,18 +673,14 @@ describe("AI/MCP SCP transfer abort on shipped download/upload entry points", ()
     const original = Buffer.from("original-before-late-change");
     await fs.promises.writeFile(localPath, original, { mode: 0o600 });
 
-    const originalChmod = fs.promises.chmod;
     let releaseChmod;
     let markChmodStarted;
     const chmodStarted = new Promise((resolve) => { markChmodStarted = resolve; });
-    fs.promises.chmod = async (filePath, mode) => {
-      if (String(filePath).includes(".netcatty-") && String(filePath).endsWith(".ready")) {
-        markChmodStarted();
-        await new Promise((resolve) => { releaseChmod = resolve; });
-      }
-      return originalChmod(filePath, mode);
-    };
-    t.after(() => { fs.promises.chmod = originalChmod; });
+    interceptPreparedChmod(t, async (chmod, mode) => {
+      markChmodStarted();
+      await new Promise((resolve) => { releaseChmod = resolve; });
+      return chmod(mode);
+    });
 
     const running = sftpBridge.downloadSftpToLocal(null, {
       sftpId: "scp-late-directory",
@@ -685,18 +724,14 @@ describe("AI/MCP SCP transfer abort on shipped download/upload entry points", ()
     await fs.promises.writeFile(localPath, original, { mode: 0o600 });
     await fs.promises.chmod(localPath, 0o600);
 
-    const originalChmod = fs.promises.chmod;
     let releaseChmod;
     let markChmodStarted;
     const chmodStarted = new Promise((resolve) => { markChmodStarted = resolve; });
-    fs.promises.chmod = async (filePath, mode) => {
-      if (String(filePath).includes(".netcatty-") && String(filePath).endsWith(".ready")) {
-        markChmodStarted();
-        await new Promise((resolve) => { releaseChmod = resolve; });
-      }
-      return originalChmod(filePath, mode);
-    };
-    t.after(() => { fs.promises.chmod = originalChmod; });
+    interceptPreparedChmod(t, async (chmod, mode) => {
+      markChmodStarted();
+      await new Promise((resolve) => { releaseChmod = resolve; });
+      return chmod(mode);
+    });
 
     const running = sftpBridge.downloadSftpToLocal(null, {
       sftpId: "scp-same-mode-replacement",
@@ -755,11 +790,10 @@ describe("AI/MCP SCP transfer abort on shipped download/upload entry points", ()
       }),
       /cancel|abort/i,
     );
-    assert.equal(renameCalls >= 3, true, "the backup should be restored after cancellation");
     assert.deepEqual(fs.readFileSync(localPath), original);
   });
 
-  it("downloadSftpToLocal rolls back a published file when cancellation wins the final rename", async (t) => {
+  it("downloadSftpToLocal keeps the committed download when cancellation arrives after publication", async (t) => {
     const controller = new AbortController();
     const downloaded = Buffer.from("new-downloaded-content");
     const backend = {
@@ -778,26 +812,27 @@ describe("AI/MCP SCP transfer abort on shipped download/upload entry points", ()
     const original = Buffer.from("existing-local-content");
     fs.writeFileSync(localPath, original);
 
-    const originalRename = fs.promises.rename;
-    let renameCalls = 0;
-    fs.promises.rename = async (...args) => {
-      await originalRename(...args);
-      renameCalls += 1;
-      if (renameCalls === 3) controller.abort();
+    const originalLink = fs.promises.link;
+    let published = false;
+    fs.promises.link = async (...args) => {
+      await originalLink(...args);
+      if (path.basename(args[1]) === path.basename(localPath) && String(args[0]).endsWith(".ready")) {
+        published = true;
+        controller.abort();
+      }
     };
-    t.after(() => { fs.promises.rename = originalRename; });
+    t.after(() => { fs.promises.link = originalLink; });
 
-    await assert.rejects(
+    await assert.doesNotReject(
       () => sftpBridge.downloadSftpToLocal(null, {
         sftpId: "scp-final-rename-abort",
         remotePath: "/remote/file.bin",
         localPath,
         abortSignal: controller.signal,
       }),
-      /cancel|abort/i,
     );
-    assert.equal(renameCalls >= 4, true, "the published file should be rolled back to the backup");
-    assert.deepEqual(fs.readFileSync(localPath), original);
+    assert.equal(published, true);
+    assert.deepEqual(fs.readFileSync(localPath), downloaded);
   });
 
   it("downloadSftpToLocal reports and preserves the backup when cancellation rollback fails", async (t) => {
@@ -820,20 +855,20 @@ describe("AI/MCP SCP transfer abort on shipped download/upload entry points", ()
     fs.writeFileSync(localPath, original);
 
     const originalRename = fs.promises.rename;
-    let renameCalls = 0;
+    const originalLink = fs.promises.link;
     let backupPath = null;
     fs.promises.rename = async (...args) => {
-      renameCalls += 1;
-      if (renameCalls === 4) {
-        const error = new Error("injected backup restore failure");
-        error.code = "EIO";
-        throw error;
-      }
       await originalRename(...args);
-      if (renameCalls === 2) backupPath = args[1];
-      if (renameCalls === 3) controller.abort();
+      if (path.basename(args[0]) === path.basename(localPath) && String(args[1]).endsWith(".backup")) {
+        backupPath = args[1];
+        controller.abort();
+      }
     };
-    t.after(() => { fs.promises.rename = originalRename; });
+    fs.promises.link = async (...args) => {
+      if (String(args[0]).endsWith(".backup")) throw Object.assign(new Error("injected restore failure"), { code: "EIO" });
+      return originalLink(...args);
+    };
+    t.after(() => { fs.promises.rename = originalRename; fs.promises.link = originalLink; });
 
     await assert.rejects(
       () => sftpBridge.downloadSftpToLocal(null, {
@@ -843,7 +878,7 @@ describe("AI/MCP SCP transfer abort on shipped download/upload entry points", ()
         abortSignal: controller.signal,
       }),
       (error) => {
-        assert.match(error.message, /Could not restore the original file/);
+        assert.match(error.message, /Recovery files preserved/);
         assert.match(error.message, /Backup:/);
         assert.doesNotMatch(error.message, /^Transfer cancelled$/);
         return true;
@@ -877,11 +912,6 @@ describe("AI/MCP SCP transfer abort on shipped download/upload entry points", ()
     let backupPath = null;
     fs.promises.rename = async (...args) => {
       renameCalls += 1;
-      if (renameCalls === 3) {
-        const error = new Error("injected backup restore failure");
-        error.code = "EIO";
-        throw error;
-      }
       await originalRename(...args);
       if (renameCalls === 1) readyPath = args[1];
       if (renameCalls === 2) {
@@ -889,7 +919,12 @@ describe("AI/MCP SCP transfer abort on shipped download/upload entry points", ()
         controller.abort();
       }
     };
-    t.after(() => { fs.promises.rename = originalRename; });
+    const originalLink = fs.promises.link;
+    fs.promises.link = async (...args) => {
+      if (String(args[0]).endsWith(".backup")) throw Object.assign(new Error("injected restore failure"), { code: "EIO" });
+      return originalLink(...args);
+    };
+    t.after(() => { fs.promises.rename = originalRename; fs.promises.link = originalLink; });
 
     await assert.rejects(
       () => sftpBridge.downloadSftpToLocal(null, {
@@ -899,7 +934,7 @@ describe("AI/MCP SCP transfer abort on shipped download/upload entry points", ()
         abortSignal: controller.signal,
       }),
       (error) => {
-        assert.match(error.message, /Could not restore the original file/);
+        assert.match(error.message, /Recovery files preserved/);
         assert.match(error.message, new RegExp(readyPath.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
         assert.match(error.message, new RegExp(backupPath.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
         return true;
@@ -986,3 +1021,17 @@ describe("AI/MCP SCP transfer abort on shipped download/upload entry points", ()
     assert.match(unifiedBlock, /transferBridge\.cancelTransfer/);
   });
 });
+
+
+function interceptPreparedChmod(t, callback) {
+  const originalOpen = fs.promises.open;
+  fs.promises.open = async (filePath, ...args) => {
+    const handle = await originalOpen.call(fs.promises, filePath, ...args);
+    if (String(filePath).includes(".netcatty-") && String(filePath).endsWith(".ready") && args[0] === "r") {
+      const chmod = handle.chmod.bind(handle);
+      handle.chmod = (mode) => callback(chmod, mode);
+    }
+    return handle;
+  };
+  t.after(() => { fs.promises.open = originalOpen; });
+}

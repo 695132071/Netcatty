@@ -48,7 +48,7 @@ const VAULT_CAPABILITIES = [
     domain: "vault",
     status: CAPABILITY_STATUS.IMPLEMENTED,
     description:
-      "Open a vault host by creating a new terminal tab and starting the connection. Returns the new sessionId so you can run terminal/SFTP tools against it. Use vault_hosts_list first when you only know the label or hostname.",
+      "Open a vault host by reusing its existing session when its connection settings still match (connected or connecting, including auto-reconnecting — same sessionId, no duplicate tab). Only opens a new terminal tab when no usable session for this host exists, or when newTab is true. Inactive disconnected and restored tabs are not reused. Returns the sessionId so you can run terminal/SFTP tools against it. Use vault_hosts_list first when you only know the label or hostname.",
     // Sidebar Catty is scoped to already-open terminals/workspaces and must not
     // expand that scope mid-turn. Keep host_open for MCP / CLI / global agent.
     agentKinds: [AGENT_KINDS.GLOBAL],
@@ -128,7 +128,7 @@ const VAULT_CAPABILITIES = [
     id: "vault.host.import",
     domain: "vault",
     status: CAPABILITY_STATUS.IMPLEMENTED,
-    description: "Parse known host export file formats (PuTTY, MobaXterm, CSV, SecureCRT, ssh_config) into vault hosts. For arbitrary unstructured text, map to host objects and use vault_hosts_create instead.",
+    description: "Parse known host export file formats (PuTTY, MobaXterm, CSV, SecureCRT, FinalShell, ssh_config) into vault hosts. For arbitrary unstructured text, map to host objects and use vault_hosts_create instead.",
     policy: {
       write: true,
       sensitiveRead: false,
@@ -198,6 +198,7 @@ const VAULT_CAPABILITIES = [
       bypassesChatCancel: true,
     },
     surfaces: {
+      cli: { command: ["notes", "list"] },
       global: { rpcMethod: "vault/notes/list" },
       public: { rpcMethod: "public/vault/notes/list", mcpTool: "vault_notes_list" },
     },
@@ -206,7 +207,7 @@ const VAULT_CAPABILITIES = [
     id: "vault.note.get",
     domain: "vault",
     status: CAPABILITY_STATUS.IMPLEMENTED,
-    description: "Get a Vault → Notes entry by id (full markdown content).",
+    description: "Read or search a Vault → Notes entry by exact id, at most 6000 characters per call. Content is only the returned range, not necessarily the whole note. Follow nextOffset with expectedUpdatedAt until null for a complete read; query searches only return matching excerpts. Read every range without query before summarizing the whole note or replacing its content; never treat unread text as absent. For long notes, retain section summaries rather than repeatedly loading all ranges. If the note changed, restart.",
     policy: {
       write: false,
       sensitiveRead: false,
@@ -217,6 +218,7 @@ const VAULT_CAPABILITIES = [
       bypassesChatCancel: true,
     },
     surfaces: {
+      cli: { command: ["notes", "get"] },
       global: { rpcMethod: "vault/notes/get" },
       public: { rpcMethod: "public/vault/notes/get", mcpTool: "vault_notes_get" },
     },
@@ -236,6 +238,7 @@ const VAULT_CAPABILITIES = [
       bypassesChatCancel: false,
     },
     surfaces: {
+      cli: { command: ["notes", "create"] },
       global: { rpcMethod: "vault/notes/create" },
       public: { rpcMethod: "public/vault/notes/create", mcpTool: "vault_notes_create" },
     },
@@ -255,6 +258,7 @@ const VAULT_CAPABILITIES = [
       bypassesChatCancel: false,
     },
     surfaces: {
+      cli: { command: ["notes", "update"] },
       global: { rpcMethod: "vault/notes/update" },
       public: { rpcMethod: "public/vault/notes/update", mcpTool: "vault_notes_update" },
     },
@@ -266,8 +270,29 @@ const VAULT_CAPABILITIES = [
     description: "Delete a Vault → Notes entry by id.",
     policy: { write: true, sensitiveRead: false, longRunning: false, requiresChatSession: false, bypassesObserverBlock: false, bypassesApproval: false, bypassesChatCancel: false },
     surfaces: {
+      cli: { command: ["notes", "delete"] },
       global: { rpcMethod: "vault/notes/delete" },
       public: { rpcMethod: "public/vault/notes/delete", mcpTool: "vault_notes_delete" },
+    },
+  },
+  {
+    id: "vault.note.import",
+    domain: "vault",
+    status: CAPABILITY_STATUS.IMPLEMENTED,
+    description: "Import one or more markdown documents into Vault → Notes. Titles come from an explicit title, the first level-one heading, or the file name. NOT for adding SSH hosts.",
+    policy: {
+      write: true,
+      sensitiveRead: false,
+      longRunning: false,
+      requiresChatSession: false,
+      bypassesObserverBlock: false,
+      bypassesApproval: false,
+      bypassesChatCancel: false,
+    },
+    surfaces: {
+      cli: { command: ["notes", "import"] },
+      global: { rpcMethod: "vault/notes/import" },
+      public: { rpcMethod: "public/vault/notes/import", mcpTool: "vault_notes_import" },
     },
   },
   {

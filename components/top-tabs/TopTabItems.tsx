@@ -1,4 +1,4 @@
-import { Copy, FileCode, FileText, LayoutGrid, Minus, Server, Square, Terminal, TerminalSquare, Usb, X } from 'lucide-react';
+import { Copy, FileCode, FileText, LayoutGrid, Minus, Server, Square, SquareArrowOutUpRight, Terminal, TerminalSquare, Usb, X } from 'lucide-react';
 import React, { memo, useCallback, useEffect, useLayoutEffect, useMemo, useState } from 'react';
 import { activeTabStore, useActiveTabId, useIsTabActive } from '../../application/state/activeTabStore';
 import {
@@ -20,7 +20,7 @@ import { resolveSessionCodingCliProvider } from '../../domain/codingCliProviderM
 import type { CodingCliProvider } from '../../domain/codingCliProviders';
 import { resolveCodingCliActivityPhase, type CodingCliActivityPhase } from '../../domain/codingCliTitleParse';
 import { resolveSessionTabTitle, resolveWorkspaceTabLabel } from '../../domain/sessionTabTitle';
-import type { DynamicTabTitleMode } from '../../domain/models';
+import type { DynamicTabTitleMode, TerminalTabDoubleClickBehavior } from '../../domain/models';
 import { CodingCliProviderIcon } from '../icons/CodingCliProviderIcon';
 import { cn } from '../../lib/utils';
 import { Host, TerminalSession, Workspace } from '../../types';
@@ -86,7 +86,7 @@ const SessionTabIcon: React.FC<{
   // Local protocol → shell-specific icon if available, else OS-specific icon
   if (protocol === 'local' || host?.protocol === 'local' || (!protocol && !host)) {
     // Use shell icon from discovery when available
-    const iconId = shellIcon || host?.localShellIcon;
+    const iconId = shellIcon ?? host?.localShellIcon;
     if (iconId) {
       return (
         <img
@@ -242,9 +242,28 @@ export const formatSessionTopTabLabel = (
 };
 
 export const createTopTabCopyDoubleClickHandler = (
-  onCopySession: (sessionId: string) => void,
-  sessionId: string,
-): React.MouseEventHandler<HTMLDivElement> => () => onCopySession(sessionId);
+  onCopy: (id: string) => void,
+  id: string,
+): React.MouseEventHandler<HTMLDivElement> => () => onCopy(id);
+
+export const createTopTabSessionDoubleClickHandler = ({
+  behavior,
+  onCopySession,
+  onDuplicateSession,
+  sessionId,
+}: {
+  behavior: TerminalTabDoubleClickBehavior;
+  onCopySession: (sessionId: string) => void;
+  onDuplicateSession?: (sessionId: string) => void;
+  sessionId: string;
+}): React.MouseEventHandler<HTMLDivElement> => () => {
+  if (behavior === 'disabled') return;
+  if (behavior === 'duplicate') {
+    (onDuplicateSession ?? onCopySession)(sessionId);
+    return;
+  }
+  onCopySession(sessionId);
+};
 
 export const stopCloseButtonDoubleClickPropagation = (
   event: Pick<React.MouseEvent, 'stopPropagation'>,
@@ -293,7 +312,7 @@ export const WindowControls: React.FC = memo(() => {
   const closeControlClassName = 'window-control-btn window-control-btn--close app-no-drag';
 
   return (
-    <div className="ml-2 flex items-center h-7 overflow-visible app-no-drag">
+    <div className="ml-2 flex h-7 items-center overflow-visible app-no-drag">
       <button type="button" className={controlClassName} onClick={handleMinimize}>
         <Minus size={16} />
       </button>
@@ -559,6 +578,8 @@ interface EditorTopTabProps {
   host: Host | undefined;
   suffix: string;
   onRequestCloseEditorTab: (editorTabId: string) => void;
+  onPopOutEditorTab?: (editorTabId: string) => void;
+  onFocusEditorWindowTab?: (editorTabId: string) => void;
   isBeingDragged: boolean;
   isDraggingForReorder: boolean;
   shiftStyle: React.CSSProperties;
@@ -579,6 +600,8 @@ export const EditorTopTab: React.FC<EditorTopTabProps> = memo(({
   host,
   suffix,
   onRequestCloseEditorTab,
+  onPopOutEditorTab,
+  onFocusEditorWindowTab,
   isBeingDragged,
   isDraggingForReorder,
   shiftStyle,
@@ -592,22 +615,30 @@ export const EditorTopTab: React.FC<EditorTopTabProps> = memo(({
   tabAnimationClass,
   shortcutNumber,
 }) => {
+  const { t } = useI18n();
   const isActive = useIsTabActive(tabId);
   // Dirty is store-driven so App/TopTabs structure can stay presence-only.
   const dirty = useEditorTabDirty(editorTab.id);
+  const isDetached = editorTab.placement === "window";
   const tooltip = `${host?.label ?? editorTab.hostId}@${host?.hostname ?? ''}:${editorTab.remotePath}`;
   const FileIcon = CODE_EXTENSIONS_RE.test(editorTab.fileName) ? FileCode : FileText;
   const handleClick = useCallback(() => {
+    if (isDetached) {
+      onFocusEditorWindowTab?.(editorTab.id);
+      return;
+    }
     activeTabStore.setActiveTabId(tabId);
-  }, [tabId]);
+  }, [editorTab.id, isDetached, onFocusEditorWindowTab, tabId]);
   const handleClose = useCallback((e: React.MouseEvent) => {
     e.stopPropagation();
     onRequestCloseEditorTab(editorTab.id);
   }, [editorTab.id, onRequestCloseEditorTab]);
 
   return (
+    <ContextMenu>
     <Tooltip>
       <TooltipTrigger asChild>
+        <ContextMenuTrigger asChild>
         <div
           data-tab-id={tabId}
           data-tab-type="editor"
@@ -676,6 +707,7 @@ export const EditorTopTab: React.FC<EditorTopTabProps> = memo(({
               {editorTab.fileName}
               {suffix && <span className="ml-1 text-muted-foreground">{suffix}</span>}
             </span>
+            {isDetached && <SquareArrowOutUpRight size={11} className="shrink-0 opacity-70" />}
           </div>
           <button
             onClick={handleClose}
@@ -685,9 +717,29 @@ export const EditorTopTab: React.FC<EditorTopTabProps> = memo(({
             <X size={12} />
           </button>
         </div>
+        </ContextMenuTrigger>
       </TooltipTrigger>
       <TooltipContent>{tooltip}</TooltipContent>
     </Tooltip>
+    <ContextMenuContent className="w-48">
+      {!isDetached && onPopOutEditorTab && (
+        <ContextMenuItem onClick={() => onPopOutEditorTab(editorTab.id)}>
+          <SquareArrowOutUpRight size={14} className="mr-2" />
+          {t('sftp.editor.popOut')}
+        </ContextMenuItem>
+      )}
+      {isDetached && onFocusEditorWindowTab && (
+        <ContextMenuItem onClick={() => onFocusEditorWindowTab(editorTab.id)}>
+          <SquareArrowOutUpRight size={14} className="mr-2" />
+          {t('sftp.editor.focusWindow')}
+        </ContextMenuItem>
+      )}
+      <ContextMenuItem onClick={() => onRequestCloseEditorTab(editorTab.id)}>
+        <X size={14} className="mr-2" />
+        {t('sftp.editor.close')}
+      </ContextMenuItem>
+    </ContextMenuContent>
+    </ContextMenu>
   );
 });
 EditorTopTab.displayName = 'EditorTopTab';
@@ -708,10 +760,12 @@ interface SessionTopTabProps {
   onCloseSession: (sessionId: string, e?: React.MouseEvent) => void;
   onRenameSession: (sessionId: string) => void;
   onCopySession: (sessionId: string) => void;
+  onDuplicateSession?: (sessionId: string) => void;
   onCopySessionToNewWindow: (sessionId: string) => void;
   onEditHost?: (host: Host) => void;
   renderBulkCloseItems: RenderBulkCloseItems;
   dynamicTabTitleMode?: DynamicTabTitleMode;
+  tabDoubleClickBehavior: TerminalTabDoubleClickBehavior;
   t: TranslateFn;
   tabAnimationClass?: string;
   shortcutNumber?: number;
@@ -733,10 +787,12 @@ export const SessionTopTab: React.FC<SessionTopTabProps> = memo(({
   onCloseSession,
   onRenameSession,
   onCopySession,
+  onDuplicateSession,
   onCopySessionToNewWindow,
   onEditHost,
   renderBulkCloseItems,
   dynamicTabTitleMode,
+  tabDoubleClickBehavior,
   t,
   tabAnimationClass,
   shortcutNumber,
@@ -755,8 +811,13 @@ export const SessionTopTab: React.FC<SessionTopTabProps> = memo(({
     activeTabStore.setActiveTabId(session.id);
   }, [session.id]);
   const handleDoubleClick = useMemo(
-    () => createTopTabCopyDoubleClickHandler(onCopySession, session.id),
-    [onCopySession, session.id],
+    () => createTopTabSessionDoubleClickHandler({
+      behavior: tabDoubleClickBehavior,
+      onCopySession,
+      onDuplicateSession,
+      sessionId: session.id,
+    }),
+    [tabDoubleClickBehavior, onCopySession, onDuplicateSession, session.id],
   );
   const addressTooltip = formatSessionTopTabTooltip(session);
   const tabTitle = formatSessionTopTabLabel(session, dynamicTabTitleMode);
@@ -868,6 +929,7 @@ export const SessionTopTab: React.FC<SessionTopTabProps> = memo(({
         sessionId={session.id}
         onCloseSession={onCloseSession}
         onCopySession={onCopySession}
+        onDuplicateSession={onDuplicateSession}
         onCopySessionToNewWindow={onCopySessionToNewWindow}
         onReconnectSession={terminalReconnectRegistry.request}
         sessionStatus={session.status}

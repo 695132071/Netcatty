@@ -13,7 +13,7 @@ const path = require("node:path");
 // ── ANSI / URL regexes ──
 
 const ANSI_ESCAPE_REGEX = /\u001B\[[0-?]*[ -/]*[@-~]/g;
-const ANSI_OSC_REGEX = /\u001B\][^\u0007]*(?:\u0007|\u001B\\)/g;
+const ANSI_OSC_REGEX = /\u001B\][^\u0007]*?(?:\u0007|\u001B\\)/g;
 const URL_CANDIDATE_REGEX = /https?:\/\/[^\s]+/g;
 const WINDOWS_RUNNABLE_EXTENSIONS = [".exe", ".cmd", ".bat", ".com"];
 const MAX_PROMPT_TRACK_TAIL = 4096;
@@ -832,26 +832,97 @@ function getWindowsKnownCliPathDirs(env = process.env) {
   return dirs.filter((dir) => existsSync(dir));
 }
 
-async function readWindowsRegistryPath({ exec = execFileAsync, env = process.env } = {}) {
-  const hives = [
-    "HKCU\\Environment",
-    "HKLM\\SYSTEM\\CurrentControlSet\\Control\\Session Manager\\Environment",
-  ];
-  const parts = [];
-  for (const hive of hives) {
+// Windows appends the user PATH to the machine PATH. Keep that ordering even
+// though both registry queries run concurrently.
+const WINDOWS_PATH_HIVES = [
+  "HKLM\\SYSTEM\\CurrentControlSet\\Control\\Session Manager\\Environment",
+  "HKCU\\Environment",
+];
+
+async function readWindowsRegistryPaths({
+  exec = execFileAsync,
+  env = process.env,
+  timeoutMs = 1000,
+} = {}) {
+  return Promise.all(WINDOWS_PATH_HIVES.map(async (hive) => {
+    let timer;
     try {
-      const { stdout } = await exec("reg", ["query", hive, "/v", "Path"], {
-        encoding: "utf8",
-        timeout: 3000,
-      });
-      const raw = parseRegQueryPath(stdout);
-      if (raw) parts.push(expandWindowsEnvRefs(raw, env));
+      // The JS deadline also bounds an unresponsive process callback. The
+      // child-process timeout remains responsible for terminating reg.exe.
+      const result = await Promise.race([
+        exec("reg", ["query", hive, "/v", "Path"], {
+          encoding: "utf8",
+          timeout: timeoutMs,
+          windowsHide: true,
+        }),
+        new Promise((resolve) => {
+          timer = setTimeout(() => resolve(null), timeoutMs);
+        }),
+      ]);
+      return result ? expandWindowsEnvRefs(parseRegQueryPath(result.stdout), env) : null;
     } catch {
-      // Hive unreadable / value missing — skip and rely on other sources.
+      return null;
+    } finally {
+      clearTimeout(timer);
     }
-  }
-  return parts.join(";");
+  }));
 }
+
+async function readWindowsRegistryPath(options) {
+  return mergeWindowsPath(...await readWindowsRegistryPaths(options));
+}
+
+// Share a short-lived registry snapshot across simultaneous local terminals.
+// Cache raw values so each terminal expands references using its own env.
+function createWindowsLivePathResolver({
+  exec = execFileAsync,
+  now = Date.now,
+  ttlMs = 5000,
+  timeoutMs = 1000,
+} = {}) {
+  const cachedPaths = [null, null];
+  let refreshedAt = -Infinity;
+  let pending = null;
+
+  return async function resolveWindowsLivePath({
+    basePath,
+    env = process.env,
+    platform = process.platform,
+    knownCliDirs = getWindowsKnownCliPathDirs,
+  } = {}) {
+    if (platform !== "win32") return basePath;
+    if (!pending && now() - refreshedAt >= ttlMs) {
+      pending = readWindowsRegistryPaths({ exec, env: {}, timeoutMs })
+        .then((paths) => {
+          // A failed hive retains its last successful value; one unavailable
+          // hive must not discard the other half of a cached PATH.
+          paths.forEach((value, index) => {
+            if (value !== null) cachedPaths[index] = value;
+          });
+          refreshedAt = now();
+        })
+        .finally(() => { pending = null; });
+    }
+    if (pending) await pending;
+
+    let knownDirs = "";
+    try {
+      knownDirs = (knownCliDirs(env) || []).join(";");
+    } catch { /* Best-effort fallback only. */ }
+
+    const registryPath = expandWindowsEnvRefs(mergeWindowsPath(...cachedPaths), env);
+    if (!registryPath && !knownDirs) return basePath;
+    // Registry order reflects a fresh shell; inherited entries remain a
+    // fallback, and guessed package-manager bins must never take precedence.
+    // With no machine snapshot, retain inherited system precedence rather
+    // than accidentally promoting user directories above system binaries.
+    return cachedPaths[0] === null
+      ? mergeWindowsPath(basePath || "", registryPath, knownDirs)
+      : mergeWindowsPath(registryPath, basePath || "", knownDirs);
+  };
+}
+
+const resolveWindowsLivePath = createWindowsLivePathResolver();
 
 async function getShellEnv() {
   if (_cachedShellEnv) return _cachedShellEnv;
@@ -880,7 +951,7 @@ async function getShellEnv() {
       const knownDirs = getWindowsKnownCliPathDirs().join(path.delimiter);
       const nextEnv = {
         ...process.env,
-        PATH: mergeWindowsPath(registryPath, knownDirs, process.env.PATH || ""),
+        PATH: mergeWindowsPath(registryPath, process.env[getPathEnvKey(process.env, "win32")] || "", knownDirs),
       };
       if (generation === _shellEnvGeneration) {
         _cachedShellEnv = nextEnv;
@@ -991,10 +1062,13 @@ module.exports = {
   toUnpackedAsarPath,
   isPlausibleCliVersionOutput,
   mergeLoginShellPath,
+  getPathEnvKey,
   parseRegQueryPath,
   expandWindowsEnvRefs,
   mergeWindowsPath,
   readWindowsRegistryPath,
+  createWindowsLivePathResolver,
+  resolveWindowsLivePath,
   getShellEnv,
   invalidateShellEnvCache,
 };

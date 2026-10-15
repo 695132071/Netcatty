@@ -13,6 +13,8 @@ function createStream() {
   stream.stderr = new EventEmitter();
   stream.closed = 0;
   stream.destroyed = 0;
+  stream.signals = [];
+  stream.signal = (name) => { stream.signals.push(name); };
   stream.close = () => { stream.closed += 1; };
   stream.destroy = () => { stream.destroyed += 1; };
   return stream;
@@ -138,6 +140,9 @@ test("bounded SSH exec times out a live command and removes data listeners", asy
   assert.equal(stream.listenerCount("data"), 0);
   assert.equal(stream.stderr.listenerCount("data"), 0);
   assert.ok(stream.closed > 0 || stream.destroyed > 0);
+  // Best-effort remote kill: servers that answer "signal" channel requests
+  // stop the abandoned command instead of leaving it running (#3187).
+  assert.deepEqual(stream.signals, ["KILL"]);
 });
 
 test("bounded SSH exec caps combined stdout and stderr and terminates the stream", async () => {
@@ -190,6 +195,23 @@ test("bounded SSH exec aborts before callback and terminates a late stream", asy
   callback(null, stream);
   assert.ok(stream.closed > 0 || stream.destroyed > 0);
   assert.equal(timers.active.size, 0);
+});
+
+test("bounded SSH exec can abort a shared-channel probe without invalidating the transport", async () => {
+  let invalidations = 0;
+  const controller = new AbortController();
+  const sshClient = {
+    exec() {},
+    destroy() { invalidations += 1; },
+  };
+  const result = executeBoundedSshCommand(sshClient, "probe", {
+    signal: controller.signal,
+    invalidateTransportOnAbort: false,
+  });
+
+  controller.abort(new Error("cancelled"));
+  await assert.rejects(result, /cancelled/);
+  assert.equal(invalidations, 0);
 });
 
 test("bounded SSH exec clears its run deadline after normal completion", async () => {
@@ -265,4 +287,65 @@ test("bounded SSH exec preserves UTF-8 split across stream chunks", async () => 
   stream.emit("close", 0);
 
   assert.deepEqual(await result, { stdout: "你🙂", stderr: "", code: 0 });
+});
+
+test("bounded SSH exec settles on exit-status plus EOF and closes the channel itself", async () => {
+  const stream = createStream();
+  const timers = trackedTimerApi();
+  const sshClient = { exec(_command, next) { next(null, stream); } };
+  const result = executeBoundedSshCommand(sshClient, "relay exec", {
+    runTimeoutMs: 60_000,
+    ...timers,
+  });
+
+  // Relay-style server: output, exit-status and EOF, but the channel-close
+  // never comes — the client must hang up on its own (#3459).
+  stream.emit("data", Buffer.from("out\n"));
+  stream.stderr.emit("data", Buffer.from("err\n"));
+  stream.stderr.emit("end");
+  stream.emit("exit", 0);
+  stream.emit("end");
+
+  assert.deepEqual(await result, { stdout: "out\n", stderr: "err\n", code: 0 });
+  assert.equal(timers.active.size, 0, "run deadline must be released");
+  assert.equal(stream.listenerCount("data"), 0);
+  assert.equal(stream.listenerCount("close"), 0);
+  assert.equal(stream.listenerCount("exit"), 0);
+  assert.equal(stream.listenerCount("end"), 0);
+  assert.equal(stream.stderr.listenerCount("data"), 0);
+  // The client answered the finished command with its own CHANNEL_CLOSE
+  // instead of holding the channel open until the run timeout.
+  assert.ok(stream.closed > 0 || stream.destroyed > 0);
+  assert.deepEqual(stream.signals, ["KILL"]);
+});
+
+test("bounded SSH exec does not settle before EOF when only exit-status arrives", async () => {
+  const stream = createStream();
+  const sshClient = { exec(_command, next) { next(null, stream); } };
+  const result = executeBoundedSshCommand(sshClient, "background child", {
+    runTimeoutMs: 60_000,
+  });
+
+  // A backgrounded child can still hold the output pipe after the shell
+  // reported its exit status: completion must wait for EOF (or close).
+  stream.emit("exit", 0);
+  assert.equal(stream.listenerCount("close"), 1, "must stay subscribed until EOF");
+  assert.equal(stream.closed, 0, "must not close the channel before EOF");
+
+  stream.stderr.emit("end");
+  stream.emit("end");
+  assert.deepEqual(await result, { stdout: "", stderr: "", code: 0 });
+  assert.ok(stream.closed > 0 || stream.destroyed > 0);
+});
+
+test("bounded SSH exec still honors the channel close when no exit-status is reported", async () => {
+  const stream = createStream();
+  const sshClient = { exec(_command, next) { next(null, stream); } };
+  const result = executeBoundedSshCommand(sshClient, "weird server", {
+    runTimeoutMs: 60_000,
+  });
+
+  stream.emit("data", Buffer.from("done"));
+  stream.emit("close", 7);
+  assert.deepEqual(await result, { stdout: "done", stderr: "", code: 7 });
 });

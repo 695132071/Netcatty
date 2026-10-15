@@ -2,6 +2,7 @@ import React, { useCallback, useRef } from "react";
 import type { Host, SftpFileEntry, SftpFilenameEncoding } from "../../../domain/models";
 import { netcattyBridge } from "../../../infrastructure/services/netcattyBridge";
 import { logger } from "../../../lib/logger";
+import { unwrapSftpIpcError } from "./errors";
 import { SftpPane } from "./types";
 import {
   getFileName,
@@ -39,7 +40,6 @@ interface UseSftpPaneActionsParams {
   sftpSessionsRef: React.MutableRefObject<Map<string, string>>;
   lastConnectedHostRef: React.MutableRefObject<{ left: Host | "local" | null; right: Host | "local" | null }>;
   connectionCacheKeyMapRef: React.MutableRefObject<Map<string, string>>;
-  reconnectingRef: React.MutableRefObject<{ left: boolean; right: boolean }>;
   makeCacheKey: (connectionId: string, path: string, encoding?: SftpFilenameEncoding) => string;
   clearCacheForConnection: (connectionId: string) => void;
   listLocalFiles: (path: string) => Promise<SftpFileEntry[]>;
@@ -56,6 +56,8 @@ export type SftpNavigateOptions = {
   force?: boolean;
   tabId?: string;
   shouldApply?: () => boolean;
+  /** Restore the previous listing without showing a pane error. */
+  quiet?: boolean;
 };
 
 interface UseSftpPaneActionsResult {
@@ -98,7 +100,6 @@ export const useSftpPaneActions = ({
   sftpSessionsRef,
   lastConnectedHostRef,
   connectionCacheKeyMapRef,
-  reconnectingRef,
   makeCacheKey,
   clearCacheForConnection,
   listLocalFiles,
@@ -418,8 +419,9 @@ export const useSftpPaneActions = ({
             files: previousFiles,
             selectedFiles: previousSelection,
             filter: getSftpFilterAfterPathChangeError(clearFilterForPathChange, previousFilter, prev.filter),
-            error:
-              err instanceof Error ? err.message : "Failed to list directory",
+            error: options?.quiet
+              ? previousError
+              : unwrapSftpIpcError(err) || "Failed to list directory",
             loading: false,
           };
         });
@@ -464,8 +466,7 @@ export const useSftpPaneActions = ({
             || pane.connection.isLocal
             || (!pane.connection.isLocal && pane.connection.hostId)
           );
-          if (canReconnect && !reconnectingRef.current[side]) {
-            reconnectingRef.current[side] = true;
+          if (canReconnect) {
             updateActiveTab(side, (prev) => ({
               ...prev,
               reconnecting: true,
@@ -486,8 +487,7 @@ export const useSftpPaneActions = ({
         // when they switch back to that tab.
         if (options?.tabId) return;
         const lastHost = lastConnectedHostRef.current[side];
-        if (lastHost && !reconnectingRef.current[side]) {
-          reconnectingRef.current[side] = true;
+        if (lastHost) {
           updateActiveTab(side, (prev) => ({
             ...prev,
             reconnecting: true,
@@ -501,7 +501,7 @@ export const useSftpPaneActions = ({
         }
       }
     },
-    [getActivePane, leftTabsRef, rightTabsRef, navigateTo, updateActiveTab, lastConnectedHostRef, reconnectingRef, sftpSessionsRef],
+    [getActivePane, leftTabsRef, rightTabsRef, navigateTo, updateActiveTab, lastConnectedHostRef, sftpSessionsRef],
   );
 
   const navigateUp = useCallback(
@@ -1034,6 +1034,30 @@ export const useSftpPaneActions = ({
     [getActivePane, refresh, handleSessionError, sftpSessionsRef, isSessionError],
   );
 
+  const removeListedNames = useCallback((
+    side: "left" | "right",
+    parentPath: string,
+    names: string[],
+  ) => {
+    if (names.length === 0) return;
+    const removeSet = new Set(names);
+    updateActiveTab(side, (prev) => {
+      if (!prev.connection || prev.connection.currentPath !== parentPath) return prev;
+      const nextSelection = new Set(prev.selectedFiles);
+      for (const name of names) nextSelection.delete(name);
+      return {
+        ...prev,
+        files: prev.files.filter((file) => !removeSet.has(file.name)),
+        selectedFiles: nextSelection,
+        error: null,
+      };
+    });
+    const pane = getActivePane(side);
+    if (pane?.connection && !pane.connection.isLocal) {
+      clearCacheForConnection(pane.connection.id);
+    }
+  }, [clearCacheForConnection, getActivePane, updateActiveTab]);
+
   return {
     navigateTo,
     refresh,
@@ -1051,6 +1075,7 @@ export const useSftpPaneActions = ({
     createFileAtPath,
     deleteFiles,
     deleteFilesAtPath,
+    removeListedNames,
     renameFile,
     renameFileAtPath,
     moveEntriesToPath,

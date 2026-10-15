@@ -6,6 +6,64 @@ import {
   runDistroDetection,
 } from "./terminalDistroDetection.ts";
 
+test("runDistroDetection still probes when only a legacy host flag is set", async () => {
+  let distroProbeCalls = 0;
+  const token = registerConnectionToken("legacy-flag-session");
+
+  await runDistroDetection({
+    host: {
+      id: "bastion-1",
+      label: "Bastion",
+      hostname: "bastion.example.com",
+      username: "user",
+      singleChannelSsh: true,
+    },
+    terminalBackend: {
+      getSessionRemoteInfo: async () => ({
+        success: true,
+        remoteSshVersion: "OpenSSH_9.6",
+      }),
+      getSessionDistroInfo: async () => {
+        distroProbeCalls += 1;
+        return { success: true, stdout: 'ID="ubuntu"\n' };
+      },
+    },
+    onOsDetected: () => undefined,
+  } as never, "legacy-flag-session", token);
+
+  assert.equal(distroProbeCalls, 1);
+});
+
+test("runDistroDetection skips POSIX probes when the SSH banner is a one-channel bastion", async () => {
+  let distroProbeCalls = 0;
+  const token = registerConnectionToken("banner-session");
+
+  await runDistroDetection({
+    host: {
+      id: "bastion-banner",
+      label: "Bastion",
+      hostname: "bastion.example.com",
+      username: "user",
+    },
+    terminalBackend: {
+      getSessionRemoteInfo: async () => ({
+        success: true,
+        remoteSshVersion: "BHostSSH_7.0",
+      }),
+      getSessionDistroInfo: async () => {
+        distroProbeCalls += 1;
+        return { success: false, error: "must not probe bastion banner" };
+      },
+    },
+    onOsDetected: () => {
+      throw new Error("banner must not be classified as a distro");
+    },
+  } as never, "banner-session", token);
+
+  assert.equal(distroProbeCalls, 0);
+});
+
+
 test("runDistroDetection uses SSH banner but skips POSIX probes for manually marked network devices", async () => {
   let remoteInfoCalls = 0;
   let distroProbeCalls = 0;
@@ -105,4 +163,44 @@ test("runDistroDetection normalizes FreeBSD uname output", async () => {
   } as never, "freebsd-session", token);
 
   assert.deepEqual(detected, ["freebsd"]);
+});
+
+test("Windows OpenSSH is identified without sending POSIX probes", async () => {
+  const detected: string[] = [];
+  await runDistroDetection({
+    host: { id: 'windows', os: 'linux' },
+    terminalBackend: {
+      getSessionRemoteInfo: async () => ({ success: true, remoteSshVersion: 'SSH-2.0-OpenSSH_for_Windows_9.5' }),
+      getSessionDistroInfo: async () => { throw new Error('must not probe Windows with POSIX commands'); },
+    },
+    onOsDetected: (_id: string, distro: string) => detected.push(distro),
+  } as never, 'windows', registerConnectionToken('windows'));
+  assert.deepEqual(detected, ['windows']);
+});
+
+test("failed or unrecognized probes do not invent an operating system", async () => {
+  const detected: string[] = [];
+  await runDistroDetection({
+    host: { id: 'unknown', os: 'linux' },
+    terminalBackend: {
+      getSessionDistroInfo: async () => ({ success: true, stdout: '', stderr: 'Linux command not found' }),
+    },
+    onOsDetected: (_id: string, distro: string) => detected.push(distro),
+  } as never, 'unknown', registerConnectionToken('unknown'));
+  assert.deepEqual(detected, []);
+});
+
+test("a superseded Windows detection cannot update the newer connection", async () => {
+  const detected: string[] = [];
+  await runDistroDetection({
+    host: { id: 'windows', os: 'linux' },
+    terminalBackend: {
+      getSessionRemoteInfo: async () => {
+        registerConnectionToken('reconnected');
+        return { success: true, remoteSshVersion: 'OpenSSH_for_Windows_9.5' };
+      },
+    },
+    onOsDetected: (_id: string, distro: string) => detected.push(distro),
+  } as never, 'reconnected', registerConnectionToken('reconnected'));
+  assert.deepEqual(detected, []);
 });

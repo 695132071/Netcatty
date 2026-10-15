@@ -26,6 +26,8 @@ import {
 } from "../../domain/hostClickBehavior";
 import type { GroupNode, Host } from "../../domain/models";
 import { isPluginHostProtocol } from "../../domain/pluginConnection";
+import { OpenDualPaneSftpMenuItem } from "../host/HostTreeContextMenus";
+import { getVaultHostRowSubtitle } from "../../domain/localShellHost";
 
 type VaultHostListSectionContext = Record<string, any>;
 
@@ -597,7 +599,7 @@ export function VaultHostListSection({ ctx }: { ctx: VaultHostListSectionContext
                                         <HostNotesIndicator notes={safeHost.notes} />
                                       </div>
                                       <div className="text-[11px] text-muted-foreground font-mono truncate leading-4">
-                                        {safeHost.username}@{safeHost.hostname}
+                                        {getVaultHostRowSubtitle(safeHost, { localFallback: t('localShell.subtitle') })}
                                       </div>
                                     </div>
                                     {viewMode === "grid" && renderHostEditButton(host)}
@@ -608,6 +610,7 @@ export function VaultHostListSection({ ctx }: { ctx: VaultHostListSectionContext
                                 <ContextMenuItem onClick={() => handleHostConnect(host)}>
                                   <Plug className="mr-2 h-4 w-4" /> {t('vault.hosts.connect')}
                                 </ContextMenuItem>
+                                <OpenDualPaneSftpMenuItem host={host} />
                                 <ContextMenuItem onClick={() => handleEditHost(host)}>
                                   <Edit2 className="mr-2 h-4 w-4" /> {t('action.edit')}
                                 </ContextMenuItem>
@@ -716,7 +719,7 @@ export function VaultHostListSection({ ctx }: { ctx: VaultHostListSectionContext
                                         <HostNotesIndicator notes={safeHost.notes} />
                                       </div>
                                       <div className="text-[11px] text-muted-foreground font-mono truncate leading-4">
-                                        {safeHost.username}@{safeHost.hostname}
+                                        {getVaultHostRowSubtitle(safeHost, { localFallback: t('localShell.subtitle') })}
                                       </div>
                                     </div>
                                     {viewMode === "grid" && renderHostEditButton(host)}
@@ -727,6 +730,7 @@ export function VaultHostListSection({ ctx }: { ctx: VaultHostListSectionContext
                                 <ContextMenuItem onClick={() => handleHostConnect(host)}>
                                   <Plug className="mr-2 h-4 w-4" /> {t('vault.hosts.connect')}
                                 </ContextMenuItem>
+                                <OpenDualPaneSftpMenuItem host={host} />
                                 <ContextMenuItem onClick={() => handleEditHost(host)}>
                                   <Edit2 className="mr-2 h-4 w-4" /> {t('action.edit')}
                                 </ContextMenuItem>
@@ -890,6 +894,7 @@ export function VaultHostListSection({ ctx }: { ctx: VaultHostListSectionContext
                                 <div className="flex-1 min-w-0">
                                   <div className="text-sm font-semibold flex items-center gap-1.5 min-w-0">
                                     <span className="truncate">{node.name}</span>
+                                    <HostNotesIndicator notes={groupConfigs.find((config) => config.path === node.path)?.notes} label="Group notes" />
                                     {!isMultiSelectMode && viewMode !== "grid" && renderGroupEditButton(node.path, true)}
                                     {managedGroupPaths.has(node.path) && (
                                       <span className="inline-flex items-center gap-1 text-[10px] font-medium px-1.5 py-0.5 rounded bg-primary/15 text-primary shrink-0">
@@ -1093,7 +1098,7 @@ export function VaultHostListSection({ ctx }: { ctx: VaultHostListSectionContext
                                               <HostNotesIndicator notes={safeHost.notes} />
                                             </div>
                                             <div className="text-[11px] text-muted-foreground font-mono truncate leading-4">
-                                              {safeHost.username}@{safeHost.hostname}
+                                              {getVaultHostRowSubtitle(safeHost, { localFallback: t('localShell.subtitle') })}
                                             </div>
                                           </div>
                                           {viewMode === "grid" && renderHostEditButton(host)}
@@ -1106,6 +1111,7 @@ export function VaultHostListSection({ ctx }: { ctx: VaultHostListSectionContext
                                       >
                                         <Plug className="mr-2 h-4 w-4" /> {t('vault.hosts.connect')}
                                       </ContextMenuItem>
+                                      <OpenDualPaneSftpMenuItem host={host} />
                                       <ContextMenuItem
                                         onClick={() => handleEditHost(host)}
                                       >
@@ -1242,7 +1248,7 @@ export function VaultHostListSection({ ctx }: { ctx: VaultHostListSectionContext
                                         <HostNotesIndicator notes={safeHost.notes} />
                                       </div>
                                       <div className="text-[11px] text-muted-foreground font-mono truncate leading-4">
-                                        {safeHost.username}@{safeHost.hostname}
+                                        {getVaultHostRowSubtitle(safeHost, { localFallback: t('localShell.subtitle') })}
                                       </div>
                                     </div>
                                     {viewMode === "grid" && renderHostEditButton(host)}
@@ -1255,6 +1261,7 @@ export function VaultHostListSection({ ctx }: { ctx: VaultHostListSectionContext
                                 >
                                   <Plug className="mr-2 h-4 w-4" /> {t('vault.hosts.connect')}
                                 </ContextMenuItem>
+                                <OpenDualPaneSftpMenuItem host={host} />
                                 <ContextMenuItem
                                   onClick={() => handleEditHost(host)}
                                 >

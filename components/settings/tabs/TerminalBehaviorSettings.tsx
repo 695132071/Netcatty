@@ -1,6 +1,6 @@
 import React from "react";
 import { DEFAULT_TERMINAL_WORD_SEPARATORS } from "../../../domain/models";
-import type { DisconnectedNoticeMode, DynamicTabTitleMode, LinkModifier, MiddleClickBehavior, OscNotificationMode, RightClickBehavior, TerminalSettings } from "../../../domain/models";
+import type { DisconnectedNoticeMode, DynamicTabTitleMode, LinkModifier, MiddleClickBehavior, OscNotificationMode, RightClickBehavior, TerminalSettings, TerminalTabDoubleClickBehavior } from "../../../domain/models";
 import { Input } from "../../ui/input";
 import { Label } from "../../ui/label";
 import { SectionHeader, Select, SettingsAnchor, SettingRow, Toggle } from "../settings-ui";
@@ -29,6 +29,15 @@ export const DYNAMIC_TAB_TITLE_MODE_OPTIONS: Array<{
   { value: "off", labelKey: "settings.terminal.behavior.dynamicTabTitle.off" },
   { value: "agent", labelKey: "settings.terminal.behavior.dynamicTabTitle.agent" },
   { value: "all", labelKey: "settings.terminal.behavior.dynamicTabTitle.all" },
+];
+
+export const TAB_DOUBLE_CLICK_BEHAVIOR_OPTIONS: Array<{
+  value: TerminalTabDoubleClickBehavior;
+  labelKey: string;
+}> = [
+  { value: "duplicate", labelKey: "settings.terminal.behavior.tabDoubleClick.duplicate" },
+  { value: "copy", labelKey: "settings.terminal.behavior.tabDoubleClick.copy" },
+  { value: "disabled", labelKey: "settings.terminal.behavior.tabDoubleClick.disabled" },
 ];
 
 export const TerminalBehaviorSettings: React.FC<TerminalBehaviorSettingsProps> = ({
@@ -80,6 +89,16 @@ export const TerminalBehaviorSettings: React.FC<TerminalBehaviorSettingsProps> =
             ]}
             onChange={(v) => updateTerminalSetting("rightClickBehavior", v as RightClickBehavior)}
             className="w-36"
+          />
+        </SettingRow>
+
+        <SettingRow
+          label={t("settings.terminal.behavior.rightClick.longPressMenu")}
+          description={t("settings.terminal.behavior.rightClick.longPressMenu.desc")}
+        >
+          <Toggle
+            checked={terminalSettings.rightClickLongPressMenu ?? false}
+            onChange={(v) => updateTerminalSetting("rightClickLongPressMenu", v)}
           />
         </SettingRow>
 
@@ -162,6 +181,37 @@ export const TerminalBehaviorSettings: React.FC<TerminalBehaviorSettingsProps> =
         </SettingRow>
 
         <SettingRow
+          anchorId="terminal-confirm-multiline-paste"
+          label={t("settings.terminal.behavior.confirmMultilinePaste")}
+          description={t("settings.terminal.behavior.confirmMultilinePaste.desc")}
+        >
+          <Toggle
+            checked={terminalSettings.confirmBeforeMultilinePaste ?? false}
+            onChange={(v) => updateTerminalSetting("confirmBeforeMultilinePaste", v)}
+          />
+        </SettingRow>
+
+        <SettingRow
+          anchorId="terminal-confirm-multiline-paste-min-lines"
+          label={t("settings.terminal.behavior.confirmMultilinePasteMinLines")}
+          description={t("settings.terminal.behavior.confirmMultilinePasteMinLines.desc")}
+        >
+          <Input
+            type="number"
+            min={1}
+            max={1000}
+            value={terminalSettings.multilinePasteConfirmMinLines ?? 2}
+            onChange={(e) => {
+              const val = parseInt(e.target.value);
+              if (!isNaN(val) && val >= 1 && val <= 1000) {
+                updateTerminalSetting("multilinePasteConfirmMinLines", val);
+              }
+            }}
+            className="w-24"
+          />
+        </SettingRow>
+
+        <SettingRow
           anchorId="terminal-shift-enter-newline"
           label={t("settings.terminal.behavior.shiftEnterNewline")}
           description={t("settings.terminal.behavior.shiftEnterNewline.desc")}
@@ -179,6 +229,17 @@ export const TerminalBehaviorSettings: React.FC<TerminalBehaviorSettingsProps> =
             placeholder="\\n"
             className="w-56 font-mono"
             spellCheck={false}
+          />
+        </SettingRow>
+
+        <SettingRow
+          anchorId="terminal-shift-enter-force-text"
+          label={t("settings.terminal.behavior.shiftEnterForceText")}
+          description={t("settings.terminal.behavior.shiftEnterForceText.desc")}
+        >
+          <Toggle
+            checked={terminalSettings.shiftEnterForceText ?? false}
+            onChange={(v) => updateTerminalSetting("shiftEnterForceText", v)}
           />
         </SettingRow>
 
@@ -202,6 +263,22 @@ export const TerminalBehaviorSettings: React.FC<TerminalBehaviorSettingsProps> =
           description={t("settings.terminal.behavior.forcePromptNewLine.desc")}
         >
           <Toggle checked={terminalSettings.forcePromptNewLine ?? false} onChange={(v) => updateTerminalSetting("forcePromptNewLine", v)} />
+        </SettingRow>
+
+        <SettingRow
+          anchorId="terminal-tab-double-click"
+          label={t("settings.terminal.behavior.tabDoubleClick")}
+          description={t("settings.terminal.behavior.tabDoubleClick.desc")}
+        >
+          <Select
+            value={terminalSettings.tabDoubleClickBehavior}
+            options={TAB_DOUBLE_CLICK_BEHAVIOR_OPTIONS.map((option) => ({
+              value: option.value,
+              label: t(option.labelKey),
+            }))}
+            onChange={(v) => updateTerminalSetting("tabDoubleClickBehavior", v as TerminalTabDoubleClickBehavior)}
+            className="w-44"
+          />
         </SettingRow>
 
         <SettingRow

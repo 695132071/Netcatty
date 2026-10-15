@@ -1,3 +1,5 @@
+import { captureTerminalBroadcastInput, isTerminalBroadcastInputCurrent, markTerminalBroadcastUserInput } from "./terminal/runtime/terminalPacedBroadcast";
+import { pruneComposeBarHistory } from '../application/state/composeBarHistoryStore';
 import { FolderTree, History, MessageSquare, PanelLeft, PanelRight, Palette, X, Zap } from 'lucide-react';
 import React, { memo, startTransition, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { activeTabStore } from '../application/state/activeTabStore';
@@ -18,13 +20,16 @@ import {
 } from '../application/state/codingCliSessionSignalController';
 import { collectSessionIds } from '../domain/workspace';
 import { isPluginHostProtocol } from '../domain/pluginConnection';
+import { isSameSftpHostSelection } from '../domain/sftpTerminalIdentity';
 
 import { cn, normalizeLineEndings } from '../lib/utils';
 import { detectLocalOs } from '../lib/localShell';
 import { useStoredString } from '../application/state/useStoredString';
 import { useStoredNumber } from '../application/state/useStoredNumber';
 import { useStoredBoolean } from '../application/state/useStoredBoolean';
+import { STORAGE_KEY_TERMINAL_BROADCAST_PASSWORD_BYPASS } from '../infrastructure/config/storageKeys';
 import {
+  STORAGE_KEY_SIDE_PANEL_HEIGHT,
   STORAGE_KEY_SIDE_PANEL_WIDTH,
   STORAGE_KEY_TERMINAL_COMPOSE_BAR_OPEN,
 } from '../infrastructure/config/storageKeys';
@@ -45,6 +50,7 @@ import {
   resolveTerminalChainHosts,
   resolveTerminalSessionHost,
 } from '../domain/terminalHostResolution';
+import { useDefaultLocalShellContext } from '../lib/useDiscoveredShells';
 import { Tooltip, TooltipContent, TooltipTrigger } from './ui/tooltip';
 import { toast } from './ui/toast';
 import { useI18n } from '../application/i18n/I18nProvider';
@@ -67,6 +73,7 @@ import { ThemeSidePanel } from './terminal/ThemeSidePanel';
 import { focusTerminalSessionInput } from './terminal/focusTerminalSession';
 import { TerminalComposeBar } from './terminal/TerminalComposeBar';
 import { resolveTerminalFontSizeUpdateTarget } from './terminalLayer/terminalFontSizeUpdate';
+import { resolveTerminalBroadcastTargetIds } from '../domain/terminalBroadcast';
 import {
   AUTO_RUN_SNIPPET_LINE_DELAY_MS,
   shouldDelayAutoRunSnippetInput,
@@ -103,16 +110,23 @@ import {
 } from './terminalLayer/terminalLayerSessionRouting';
 import {
   DEFAULT_TERMINAL_SIDE_PANEL_AUTO_OPEN_TAB,
-  resolveTerminalSidePanelAutoOpen,
+  resolveSessionSidePanelAutoOpen,
 } from '../domain/terminalSidePanelAutoOpen';
 import { shouldProbeCommandCwd } from './terminalLayer/commandCwdProbe';
-import { resolvePreferredTerminalCwd, scheduleBackendCwdProbeAfterCommand } from './terminal/sftpCwd';
-import { classifyDistroId, shouldProbeSessionCwd } from '../domain/host';
+import {
+  resolvePreferredTerminalCwd,
+  scheduleBackendCwdProbeAfterCommand,
+  type RendererCwdSource,
+  type TerminalCwdChangeMeta,
+} from './terminal/sftpCwd';
+import { classifyDistroId, hostRestrictsExtraSshChannels, shouldProbeSessionCwd } from '../domain/host';
 import {
   collectSidePanelPanes,
   sidePanelLayoutHasTool,
+  type SidePanelLayout,
   type SidePanelSplitDirection,
 } from '../domain/sidePanelLayout';
+import { useWorkspaceLayoutPresetState } from '../application/state/useWorkspaceLayoutPresetState';
 import {
   isPaneMagnificationSelectionValid,
   resolvePaneMagnificationCandidate,
@@ -121,9 +135,12 @@ import {
 } from '../domain/paneMagnification';
 import { useTerminalSidePanelLayoutState } from '../application/state/useTerminalSidePanelLayoutState';
 import {
+  TERMINAL_SIDE_PANEL_MAX_HEIGHT,
   TERMINAL_SIDE_PANEL_MAX_WIDTH,
+  TERMINAL_SIDE_PANEL_MIN_HEIGHT,
   TERMINAL_SIDE_PANEL_MIN_WIDTH,
 } from '../application/state/terminalSidePanelWidth';
+import { isSidePanelDockPosition } from '../domain/sidePanelLayout';
 
 import {
   AIChatPanelsHost,
@@ -166,7 +183,7 @@ function buildScriptSessionMeta(
     connected: session.status === 'connected',
     name: session.customName || session.hostLabel || host?.label,
     hostname: host?.hostname ?? session.hostname,
-    username: host?.username ?? session.username,
+    username: session.protocol === 'local' ? session.username : host?.username ?? session.username,
   };
 }
 
@@ -234,12 +251,16 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
   onReorderWorkspaceSessions,
   onReorderTabs,
   onCopySession,
+  onDuplicateSession,
   onCopySessionToNewWindow,
   onSplitSession,
   onConnectToHost,
   onCreateLocalTerminal,
   isBroadcastEnabled,
   onToggleBroadcast,
+  isGlobalBroadcastEnabled,
+  onToggleGlobalBroadcast,
+  canUseGlobalBroadcast,
   updateHosts,
   updateSnippets,
   updateSnippetPackages,
@@ -251,6 +272,8 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
   sftpAutoOpenSidebar,
   terminalSidePanelAutoOpen = false,
   terminalSidePanelAutoOpenTab = DEFAULT_TERMINAL_SIDE_PANEL_AUTO_OPEN_TAB,
+  localShellSidePanelAutoOpen = false,
+  localShellSidePanelAutoOpenTab = 'scripts',
   sftpFollowTerminalCwd,
   setSftpFollowTerminalCwd,
   editorWordWrap,
@@ -292,6 +315,10 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
     resizeSplit: resizeSidePanelSplitForTab,
   } = useTerminalSidePanelLayoutState();
   useEffect(() => {
+    pruneComposeBarHistory(sessions.map((session) => session.id));
+  }, [sessions]);
+
+  useEffect(() => {
     setMagnifiedPane((current) => {
       if (!current) return current;
       const terminalPanes = sessions.map((session) => ({
@@ -307,6 +334,7 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
     });
   }, [sessions, sidePanelLayouts]);
   const terminalRendererCwdBySessionRef = useRef<Map<string, string>>(new Map());
+  const terminalRendererCwdSourceBySessionRef = useRef<Map<string, RendererCwdSource>>(new Map());
   const stableRef = useRef<Record<string, unknown>>({});
   const activeTabIdRef = useRef(activeTabStore.getActiveTabId());
   const activeWorkspaceRef = useRef<Workspace | undefined>(undefined);
@@ -320,6 +348,7 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
     const liveSessionIds = new Set(sessions.map((session) => session.id));
     pruneTerminalSessionRuntimeState({
       terminalRendererCwdBySessionRef,
+      terminalRendererCwdSourceBySessionRef,
       terminalOsc7SignalBySessionRef,
       cwdProbeGenerationRef,
       cwdProbeCancelersRef,
@@ -340,7 +369,7 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
   const handleTerminalCwdChange = useCallback((
     sessionId: string,
     cwd: string | null,
-    meta?: { source?: 'osc7' },
+    meta?: TerminalCwdChangeMeta,
   ) => {
     if (meta?.source === 'osc7') {
       // Bump on every OSC 7 report, even when the decoded path is unchanged.
@@ -353,23 +382,27 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
 
     const currentCwd = terminalRendererCwdBySessionRef.current.get(sessionId) ?? null;
     const nextCwd = cwd && cwd.trim().length > 0 ? cwd : null;
+    const nextCwdSource: RendererCwdSource = meta?.source ?? 'backend';
     if (currentCwd === nextCwd) {
-      // Heal store drift if ref already has this path but the store does not.
-      if (terminalCwdStore.getCwd(sessionId) !== nextCwd) {
-        terminalCwdStore.setCwd(sessionId, nextCwd);
+      if (nextCwd) {
+        terminalRendererCwdSourceBySessionRef.current.set(sessionId, nextCwdSource);
       }
+      // Heal store drift and publish provenance changes even when the path is unchanged.
+      terminalCwdStore.setCwd(sessionId, nextCwd, nextCwd ? nextCwdSource : undefined);
       return;
     }
 
     if (nextCwd) {
       terminalRendererCwdBySessionRef.current.set(sessionId, nextCwd);
+      terminalRendererCwdSourceBySessionRef.current.set(sessionId, nextCwdSource);
     } else {
       terminalRendererCwdBySessionRef.current.delete(sessionId);
+      terminalRendererCwdSourceBySessionRef.current.delete(sessionId);
     }
     onUpdateSessionRestoreCwd?.(sessionId, nextCwd);
     // External store: side-panel live snapshot subscribers update without
     // re-rendering TerminalLayerInner.
-    terminalCwdStore.setCwd(sessionId, nextCwd);
+    terminalCwdStore.setCwd(sessionId, nextCwd, nextCwd ? nextCwdSource : undefined);
   }, [onUpdateSessionRestoreCwd]);
 
   // Stable while only presentation fields (title/provider) change.
@@ -424,56 +457,195 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
   terminalSidePanelAutoOpenRef.current = terminalSidePanelAutoOpen;
   const terminalSidePanelAutoOpenTabRef = useRef(terminalSidePanelAutoOpenTab);
   terminalSidePanelAutoOpenTabRef.current = terminalSidePanelAutoOpenTab;
+  const localShellSidePanelAutoOpenRef = useRef(localShellSidePanelAutoOpen);
+  localShellSidePanelAutoOpenRef.current = localShellSidePanelAutoOpen;
+  const localShellSidePanelAutoOpenTabRef = useRef(localShellSidePanelAutoOpenTab);
+  localShellSidePanelAutoOpenTabRef.current = localShellSidePanelAutoOpenTab;
   const sftpFollowTerminalCwdRef = useRef(sftpFollowTerminalCwd);
   sftpFollowTerminalCwdRef.current = sftpFollowTerminalCwd;
 
-  const handleStatusChange = useCallback((sessionId: string, status: TerminalSession['status']) => {
+  // Destructure the stable hook callbacks: the hook returns a fresh object
+  // each render, and depending on that object would recreate the preset
+  // callbacks (and in turn handleStatusChange) on unrelated state updates,
+  // defeating the terminal pane memoization.
+  const { resolveDefaultLayoutForSession, saveWorkspaceLayoutAsDefault: persistWorkspaceLayoutAsDefault } =
+    useWorkspaceLayoutPresetState();
+
+  const applyWorkspaceLayoutPresetForSession = useCallback((session: TerminalSession, tabId: string, sftpHostOverride?: Host) => {
+    // Preset persistence and resolution live in the application layer; the
+    // component only mounts the resolved panes into its UI state.
+    const resolved = resolveDefaultLayoutForSession(session);
+    if (!resolved) return false;
+    const { layout, focusedTool, protocol: proto } = resolved;
+
+    for (const pane of collectSidePanelPanes(layout.root)) {
+      if (pane.tool === 'ai') {
+        setAiMountedTabIds((prev) => addMountedSidePanelTabId(prev, tabId));
+      } else if (pane.tool === 'scripts') {
+        setScriptsMountedTabIds((prev) => addMountedSidePanelTabId(prev, tabId));
+      } else if (pane.tool === 'theme') {
+        setThemeMountedTabIds((prev) => addMountedSidePanelTabId(prev, tabId));
+      } else if (pane.tool === 'system') {
+        setSystemMountedTabIds((prev) => addMountedSidePanelTabId(prev, tabId));
+      } else if (pane.tool === 'notes') {
+        setNotesMountedTabIds((prev) => addMountedSidePanelTabId(prev, tabId));
+      } else if (pane.tool === 'sftp') {
+        // Mirror the normal SFTP open path: a previously retained panel (kept
+        // mounted while transfers or external edits finished after close) must
+        // not keep suppressing command-triggered refreshes once the preset
+        // reopens SFTP for this tab. Mark the tab as opening first so an
+        // activity callback firing before React commits the open state still
+        // sees the panel as open instead of pruning the retained host state.
+        const cleanupTimer = sftpRetainedCleanupTimersRef.current.get(tabId);
+        if (cleanupTimer !== undefined) {
+          window.clearTimeout(cleanupTimer);
+          sftpRetainedCleanupTimersRef.current.delete(tabId);
+        }
+        sftpOpeningTabIdsRef.current.add(tabId);
+        sftpRetainedAfterCloseTabIdsRef.current.delete(tabId);
+        sftpPaneClosedTabIdsRef.current.delete(tabId);
+        setSftpHostSourceSessionForTab(prev => new Map(prev).set(tabId, session.id));
+        const host = hostsRef.current.find(h => h.id === session.hostId);
+        const hostWithOverrides: Host = host
+          ? {
+            ...host,
+            protocol: session.protocol ?? host.protocol,
+            port: session.port ?? host.port,
+            moshEnabled: session.moshEnabled ?? host.moshEnabled,
+            etEnabled: session.etEnabled ?? host.etEnabled,
+          }
+          : {
+            id: session.hostId || session.id,
+            hostname: session.hostname,
+            username: session.username,
+            port: session.port ?? 22,
+            protocol: proto,
+            label: session.customName || session.hostLabel || session.hostname,
+          } as Host;
+        setSftpHostForTab(prev => {
+          const next = new Map(prev);
+          next.set(tabId, sftpHostOverride ?? hostWithOverrides);
+          return next;
+        });
+      }
+    }
+
+    setSidePanelLayouts((prev) => {
+      const next = new Map(prev);
+      next.set(tabId, layout);
+      return next;
+    });
+    lastSidePanelTabRef.current.set(tabId, focusedTool);
+    setSidePanelOpenTabs(prev => {
+      const next = new Map(prev);
+      next.set(tabId, focusedTool);
+      return next;
+    });
+    return true;
+  }, [resolveDefaultLayoutForSession, setSidePanelLayouts, setSidePanelOpenTabs]);
+
+  const handleSaveWorkspaceLayoutAsDefault = useCallback((layout: SidePanelLayout): boolean => {
+    if (!persistWorkspaceLayoutAsDefault(layout)) {
+      toast.error(t('terminal.layer.layoutSaveFailed'));
+      return false;
+    }
+    toast.success(t('terminal.layer.layoutSavedAsDefault'));
+    return true;
+  }, [persistWorkspaceLayoutAsDefault, t]);
+
+  const handleStatusChange = useCallback((sessionId: string, status: TerminalSession['status'], sftpHostOverride?: Host) => {
     onUpdateSessionStatus(sessionId, status);
 
     if (status !== 'connected') return;
 
+    setSftpAuthHostBySessionId(prev => {
+      const next = new Map(prev);
+      if (sftpHostOverride) next.set(sessionId, sftpHostOverride);
+      else next.delete(sessionId);
+      return next;
+    });
+
     const session = sessionsRef.current.find(s => s.id === sessionId);
     if (!session) return;
-    const proto = session.protocol;
-    const sftpAvailable = proto === 'ssh' || proto === 'mosh';
-    const tabId = session.workspaceId || sessionId;
+    const workspaceId = session.workspaceId;
+    const tabId = workspaceId || sessionId;
+
+    // Within a workspace every member session maps to the same tab id, so the
+    // preset (and any auto-open host binding) must come from the workspace's
+    // focused session; otherwise whichever pane connects first would decide
+    // SFTP pruning and host selection regardless of focus.
+    let presetSession = session;
+    if (workspaceId) {
+      const focusedSessionId = workspacesRef.current.find(ws => ws.id === workspaceId)?.focusedSessionId;
+      const focusedSession = focusedSessionId
+        ? sessionsRef.current.find(s => s.id === focusedSessionId)
+        : undefined;
+      if (focusedSession) presetSession = focusedSession;
+    }
+    const proto = presetSession.protocol ?? 'ssh';
+
+    if (presetSession.id === sessionId && (sftpHostOverride || sftpHostSourceSessionForTabRef.current.get(tabId) === sessionId)) {
+      const connectedHost = sftpHostOverride ?? sessionHostsMapRef.current.get(sessionId);
+      if (connectedHost) {
+        setSftpHostForTab(prev => new Map(prev).set(tabId, connectedHost));
+      }
+      setSftpHostSourceSessionForTab(prev => {
+        if (!sftpHostOverride) return prev;
+        const next = new Map(prev);
+        next.set(tabId, sessionId);
+        return next;
+      });
+    }
 
     if (sidePanelOpenTabsRef.current.has(tabId)) return;
 
-    const sessionAutoOpenTarget = session.autoOpenSidePanel === 'sftp' && sftpAvailable ? 'sftp' : null;
-    const autoOpenTarget = sessionAutoOpenTarget ?? resolveTerminalSidePanelAutoOpen({
-      enabled: terminalSidePanelAutoOpenRef.current,
-      selectedTab: terminalSidePanelAutoOpenTabRef.current,
-      sftpAvailable,
+    const targetPanel = resolveSessionSidePanelAutoOpen({
+      session: presetSession,
+      terminalEnabled: terminalSidePanelAutoOpenRef.current,
+      terminalTab: terminalSidePanelAutoOpenTabRef.current,
+      localEnabled: localShellSidePanelAutoOpenRef.current,
+      localTab: localShellSidePanelAutoOpenTabRef.current,
+      legacySftpEnabled: sftpAutoOpenSidebarRef.current,
     });
-    const targetPanel = autoOpenTarget ?? (sftpAutoOpenSidebarRef.current && sftpAvailable ? 'sftp' : null);
-    if (!targetPanel) return;
+
+    // Explicit SFTP (JumpServer deep link / host.autoOpenSftpPanel) wins over a
+    // saved default that may omit file transfer — only when SFTP is actually
+    // available. Ordinary auto-open still yields to the saved default.
+    if (targetPanel !== "sftp") {
+      if (applyWorkspaceLayoutPresetForSession(
+        presetSession,
+        tabId,
+        presetSession.id === sessionId ? sftpHostOverride : undefined,
+      )) return;
+      if (!targetPanel) return;
+    }
 
     lastSidePanelTabRef.current.set(tabId, targetPanel);
 
     if (targetPanel === 'sftp') {
       sftpPaneClosedTabIdsRef.current.delete(tabId);
-      const host = hostsRef.current.find(h => h.id === session.hostId);
+      setSftpHostSourceSessionForTab(prev => new Map(prev).set(tabId, presetSession.id));
+      const host = hostsRef.current.find(h => h.id === presetSession.hostId);
       const hostWithOverrides: Host = host
         ? {
           ...host,
-          protocol: session.protocol ?? host.protocol,
-          port: session.port ?? host.port,
-          moshEnabled: session.moshEnabled ?? host.moshEnabled,
-          etEnabled: session.etEnabled ?? host.etEnabled,
+          protocol: presetSession.protocol ?? host.protocol,
+          port: presetSession.port ?? host.port,
+          moshEnabled: presetSession.moshEnabled ?? host.moshEnabled,
+          etEnabled: presetSession.etEnabled ?? host.etEnabled,
         }
         : {
-          id: session.hostId || sessionId,
-          hostname: session.hostname,
-          username: session.username,
-          port: session.port ?? 22,
+          id: presetSession.hostId || presetSession.id,
+          hostname: presetSession.hostname,
+          username: presetSession.username,
+          port: presetSession.port ?? 22,
           protocol: proto,
-          label: session.label || session.hostname,
+          label: presetSession.customName || presetSession.hostLabel || presetSession.hostname,
         } as Host;
 
       setSftpHostForTab(prev => {
         const next = new Map(prev);
-        next.set(tabId, hostWithOverrides);
+        next.set(tabId, presetSession.id === sessionId && sftpHostOverride ? sftpHostOverride : hostWithOverrides);
         return next;
       });
     } else if (targetPanel === 'ai') {
@@ -493,12 +665,14 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
       next.set(tabId, targetPanel);
       return next;
     });
-  }, [onUpdateSessionStatus, setSidePanelOpenTabs, sidePanelOpenTabsRef]);
+  }, [applyWorkspaceLayoutPresetForSession, onUpdateSessionStatus, setSidePanelOpenTabs, sidePanelOpenTabsRef]);
 
   const handleSessionExit = useCallback((sessionId: string, evt: TerminalSessionExitEvent) => {
     const intent = resolveTerminalSessionExitIntent(
       evt,
-      terminalSettings?.autoCloseOnExit ?? true,
+      // No terminal settings loaded yet -> do not close the tab; auto-close is
+      // opt-in via Settings -> Terminal -> Behavior (DEFAULT_TERMINAL_SETTINGS).
+      terminalSettings?.autoCloseOnExit ?? false,
     );
     if (intent.kind === "closeSession") {
       handleCloseSession(sessionId);
@@ -571,6 +745,14 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
     STORAGE_KEY_TERMINAL_COMPOSE_BAR_OPEN,
     false,
   );
+  // Opt-in "broadcast without password protection" (#3488): when enabled, the
+  // fail-closed password-prompt heuristic no longer pauses workspace broadcast.
+  const [broadcastPasswordBypass] = useStoredBoolean(
+    STORAGE_KEY_TERMINAL_BROADCAST_PASSWORD_BYPASS,
+    false,
+  );
+  const broadcastPasswordBypassRef = useRef(broadcastPasswordBypass);
+  broadcastPasswordBypassRef.current = broadcastPasswordBypass;
   const sessionsRef = useRef(sessions);
   sessionsRef.current = sessions;
   const workspacesRef = useRef(workspaces);
@@ -593,10 +775,15 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
     420,
     { min: TERMINAL_SIDE_PANEL_MIN_WIDTH, max: TERMINAL_SIDE_PANEL_MAX_WIDTH },
   );
-  const [sidePanelPosition, setSidePanelPosition] = useStoredString<'left' | 'right'>(
+  const [sidePanelPosition, setSidePanelPosition] = useStoredString<'left' | 'right' | 'bottom'>(
     'netcatty_side_panel_position',
     'left',
-    (v): v is 'left' | 'right' => v === 'left' || v === 'right',
+    isSidePanelDockPosition,
+  );
+  const [sidePanelHeight, setSidePanelHeight, persistSidePanelHeight] = useStoredNumber(
+    STORAGE_KEY_SIDE_PANEL_HEIGHT,
+    360,
+    { min: TERMINAL_SIDE_PANEL_MIN_HEIGHT, max: TERMINAL_SIDE_PANEL_MAX_HEIGHT },
   );
   // Remember the last sub-panel shown per tab so the toggle shortcut can
   // restore it after a close. Overwritten on open, never cleared on close.
@@ -605,11 +792,20 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
 
   // The host to pass to the SFTP panel - stored when the user opens SFTP
   const [sftpHostForTab, setSftpHostForTab] = useState<Map<string, Host>>(new Map());
+  const [sftpHostSourceSessionForTab, setSftpHostSourceSessionForTab] = useState<Map<string, string>>(new Map());
+  const [sftpAuthHostBySessionId, setSftpAuthHostBySessionId] = useState<Map<string, Host>>(new Map());
+  useEffect(() => {
+    setSftpAuthHostBySessionId(prev => {
+      const liveIds = new Set(sessions.map(session => session.id));
+      const next = new Map([...prev].filter(([id]) => liveIds.has(id)));
+      return next.size === prev.size ? prev : next;
+    });
+  }, [sessions]);
   const [sftpInitialLocationForTab, setSftpInitialLocationForTab] = useState<
     Map<string, { hostId: string; path: string }>
   >(new Map());
   const [sftpPendingUploadsForTab, setSftpPendingUploadsForTab] = useState<
-    Map<string, PendingSftpUpload>
+    Map<string, PendingSftpUpload[]>
   >(new Map());
   const [pendingTerminalSelectionForAI, setPendingTerminalSelectionForAI] =
     useState<PendingTerminalSelectionForAI | null>(null);
@@ -617,6 +813,8 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
   const notesOpenRequestIdRef = useRef(0);
   const sftpHostForTabRef = useRef(sftpHostForTab);
   sftpHostForTabRef.current = sftpHostForTab;
+  const sftpHostSourceSessionForTabRef = useRef(sftpHostSourceSessionForTab);
+  sftpHostSourceSessionForTabRef.current = sftpHostSourceSessionForTab;
   const sftpActiveTransfersByTabRef = useRef<Map<string, number>>(new Map());
   const sftpActiveExternalEditsByTabRef = useRef<Map<string, number>>(new Map());
   const sftpRetainedAfterCloseTabIdsRef = useRef<Set<string>>(new Set());
@@ -630,11 +828,11 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
     host: Host;
     initialPath?: string;
     pendingUploadEntries?: DropEntry[];
-    sourceSessionId?: string | null;
+    originSessionId?: string | null;
   }) => {
-    const { tabId, host, initialPath, pendingUploadEntries, sourceSessionId } = params;
+    const { tabId, host, initialPath, pendingUploadEntries, originSessionId } = params;
     const connectionKey = buildCacheKey(host.id, host.hostname, host.port, host.protocol, host.sftpSudo, host.username, host.sftpFileProtocol);
-    const memoryKey = getSftpReopenMemoryKey({ tabId, sourceSessionId });
+    const memoryKey = getSftpReopenMemoryKey({ tabId, sourceSessionId: originSessionId });
     const effectiveInitialPath = resolveSftpOpenLocation({
       hostId: host.id,
       connectionKey,
@@ -659,6 +857,12 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
     sftpPaneClosedTabIdsRef.current.delete(tabId);
     sftpOpeningTabIdsRef.current.delete(tabId);
     setSftpHostForTab(prev => {
+      if (!prev.has(tabId)) return prev;
+      const next = new Map(prev);
+      next.delete(tabId);
+      return next;
+    });
+    setSftpHostSourceSessionForTab(prev => {
       if (!prev.has(tabId)) return prev;
       const next = new Map(prev);
       next.delete(tabId);
@@ -822,17 +1026,23 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
     setIsComposeBarOpen(prev => !prev);
   }, [setIsComposeBarOpen]);
 
-  const handleOpenSftp = useCallback((host: Host, initialPath?: string, pendingUploadEntries?: DropEntry[], sourceSessionId?: string) => {
+  const handleOpenSftp = useCallback((
+    host: Host,
+    initialPath?: string,
+    pendingUploadEntries?: DropEntry[],
+    originSessionId?: string,
+    sourceSessionId?: string,
+  ) => {
     const tabId = activeTabIdRef.current;
     if (!tabId) return;
 
     // When SFTP is opened from a non-focused workspace pane (toolbar click
     // or drag-drop), switch focus first so the SFTP panel binds to the
-    // correct host.
-    if (sourceSessionId) {
+    // originating terminal.
+    if (originSessionId) {
       const ws = activeWorkspaceRef.current;
-      if (ws && ws.focusedSessionId !== sourceSessionId) {
-        onSetWorkspaceFocusedSessionRef.current?.(ws.id, sourceSessionId);
+      if (ws && ws.focusedSessionId !== originSessionId) {
+        onSetWorkspaceFocusedSessionRef.current?.(ws.id, originSessionId);
       }
     }
 
@@ -843,14 +1053,7 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
     // Compare full endpoint identity so that session-time overrides
     // (different port/protocol for the same host ID) trigger a switch
     // instead of toggling the panel closed.
-    const isSameEndpoint = currentHost
-      && currentHost.id === host.id
-      && currentHost.hostname === host.hostname
-      && currentHost.port === host.port
-      && currentHost.protocol === host.protocol
-      && currentHost.username === host.username
-      && currentHost.sftpSudo === host.sftpSudo
-      && (currentHost.sftpFileProtocol || "auto") === (host.sftpFileProtocol || "auto");
+    const isSameEndpoint = isSameSftpHostSelection(currentHost, host);
 
     const currentLayout = sidePanelLayoutsRef.current.get(tabId);
     const paneCount = currentLayout
@@ -887,13 +1090,25 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
       next.set(tabId, host);
       return next;
     });
+    setSftpHostSourceSessionForTab(prev => {
+      const next = new Map(prev);
+      if (originSessionId) next.set(tabId, originSessionId);
+      else next.delete(tabId);
+      return next;
+    });
+    if (originSessionId) {
+      const sessionHost = sessionHostsMapRef.current.get(originSessionId);
+      if (sessionHost && (host.username !== sessionHost.username || host.identityId !== sessionHost.identityId)) {
+        setSftpAuthHostBySessionId(prev => new Map(prev).set(originSessionId, host));
+      }
+    }
 
     const { connectionKey, effectiveInitialPath } = resolveSftpOpenTarget({
       tabId,
       host,
       initialPath,
       pendingUploadEntries,
-      sourceSessionId,
+      originSessionId,
     });
 
     setSftpInitialLocationForTab(prev => {
@@ -907,31 +1122,47 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
     });
 
     setSftpPendingUploadsForTab(prev => {
-      const next = new Map(prev);
       if (!pendingUploadEntries?.length) {
-        // Clear any stale pending upload when opening without new files.
-        next.delete(tabId);
-      } else {
-        next.set(tabId, {
+        // Opening the panel without new files must not discard drops that are
+        // still queued and waiting to upload; leave the queue untouched.
+        // Stale entries are cancelled by the panel itself (with a toast) when
+        // their host/connection no longer matches.
+        return prev;
+      }
+      const next = new Map(prev);
+      // Queue the drop behind any earlier pending request for this tab so a
+      // second drop that arrives before the first has started uploading
+      // cannot silently discard the first batch.
+      const queue = prev.get(tabId) ?? [];
+      next.set(tabId, [
+        ...queue,
+        {
           requestId: crypto.randomUUID(),
           hostId: host.id,
           connectionKey,
+          originSessionId,
+          sourceSessionId,
           targetPath: initialPath,
           entries: pendingUploadEntries,
-        });
-      }
+        },
+      ]);
       return next;
     });
   }, [closeTerminalSidePanelTab, resolveSftpOpenTarget, setSidePanelOpenTabs, sidePanelLayoutsRef, sidePanelOpenTabsRef]);
 
   const handlePendingUploadHandled = useCallback((tabId: string, requestId: string) => {
     setSftpPendingUploadsForTab(prev => {
-      const current = prev.get(tabId);
-      if (!current || current.requestId !== requestId) {
-        return prev;
-      }
+      const queue = prev.get(tabId);
+      if (!queue?.length) return prev;
+      const index = queue.findIndex(item => item.requestId === requestId);
+      if (index === -1) return prev;
       const next = new Map(prev);
-      next.delete(tabId);
+      const remaining = queue.filter((_, itemIndex) => itemIndex !== index);
+      if (remaining.length) {
+        next.set(tabId, remaining);
+      } else {
+        next.delete(tabId);
+      }
       return next;
     });
   }, []);
@@ -965,14 +1196,16 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
     () => new Set(proxyProfiles.map((profile) => profile.id)),
     [proxyProfiles],
   );
+  const defaultLocalShell = useDefaultLocalShellContext(terminalSettings);
   const effectiveHosts = useMemo(
     () => hosts.map((host) => resolveEffectiveTerminalHost({
       host,
       groupConfigs,
       proxyProfiles,
       validProxyProfileIds: proxyProfileIdSet,
+      defaultLocalShell,
     })),
-    [groupConfigs, hosts, proxyProfileIdSet, proxyProfiles],
+    [groupConfigs, hosts, proxyProfileIdSet, proxyProfiles, defaultLocalShell],
   );
 
   // Pre-compute fallback hosts to avoid creating new objects on every render
@@ -985,11 +1218,12 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
         groupConfigs,
         proxyProfiles,
         localOs: detectLocalOs(navigator.userAgent || navigator.platform),
+        defaultLocalShell,
       });
       map.set(session.id, applySessionFontSizeToHost(hostForSession, session));
     }
     return map;
-  }, [sessions, hosts, groupConfigs, proxyProfiles]);
+  }, [sessions, hosts, groupConfigs, proxyProfiles, defaultLocalShell]);
   const resolvedSessionHostIds = useMemo(() => {
     const ids = new Set<string>();
     for (const session of sessions) {
@@ -1015,34 +1249,53 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
   const sessionHostsMapRef = useRef(sessionHostsMap);
   sessionHostsMapRef.current = sessionHostsMap;
 
-  // Handle broadcast input - write to all other sessions in the source workspace.
+  // Resolve the active broadcast mode, then write to its target sessions.
   const handleBroadcastInput = useCallback((
     data: string,
     sourceSessionId: string,
     options?: TerminalBroadcastInputOptions,
   ) => {
-    const directTargetIds = options?.kittyKeyboardTargetSessionIds;
-    const sourceSession = directTargetIds
-      ? undefined
-      : sessionsRef.current.find((session) => session.id === sourceSessionId);
-    const workspaceId = sourceSession?.workspaceId;
-    if (!directTargetIds && !workspaceId) return [];
-    const directTargetSet = directTargetIds ? new Set(directTargetIds) : null;
+    const paced = options?.pacedBroadcast;
+    // Opt-in #3488 bypass: when enabled, sensitive-prompt targets stay in the
+    // fan-out instead of being silently dropped here.
+    const passwordBypass = broadcastPasswordBypassRef.current === true;
+    if (paced && !options?.preparePacedBroadcast) {
+      if (!paced.targets || (!passwordBypass && isTerminalSensitiveInputActive(sourceSessionId))) return [];
+      paced.targets = paced.targets.filter(target => isTerminalBroadcastInputCurrent(target)
+        && (passwordBypass || !isTerminalSensitiveInputActive(target.sessionId)));
+    }
+    const targetSessionIds = resolveTerminalBroadcastTargetIds({
+      sessions: sessionsRef.current,
+      sourceSessionId,
+      globalBroadcastEnabled: isGlobalBroadcastEnabled,
+      directTargetSessionIds: options?.kittyKeyboardTargetSessionIds,
+    }).filter(id => !paced?.targets || paced.targets.some(target => target.sessionId === id));
+    if (options?.preparePacedBroadcast && paced) {
+      paced.targets = targetSessionIds.filter(id => passwordBypass || !isTerminalSensitiveInputActive(id)).map(id => {
+        markTerminalBroadcastUserInput(id);
+        terminalBackend.interruptSession(id, undefined, { cancelPendingWritesOnly: true });
+        return captureTerminalBroadcastInput(id);
+      });
+      return paced.targets.map(target => target.sessionId);
+    }
+    if (targetSessionIds.length === 0) return [];
+
+    const targetSessionIdSet = new Set(targetSessionIds);
     const deliveredSessionIds: string[] = [];
 
     for (const session of sessionsRef.current) {
-      if (directTargetSet) {
-        if (!directTargetSet.has(session.id)) continue;
-      } else if (session.workspaceId !== workspaceId || session.id === sourceSessionId) {
-        continue;
-      }
+      if (!targetSessionIdSet.has(session.id)) continue;
       if (!canUseDirectSessionWriteFallback(session)) continue;
+      if (!paced && (options?.automated !== true || options.lineDelayMs)) markTerminalBroadcastUserInput(session.id);
 
       if (options?.kittyKeyboardInput) {
         dispatchKittyKeyboardBroadcastInput(session.id, options.kittyKeyboardInput, {
           beforeUrgentInterrupt: () => {
             broadcastInterruptPrioritizersRef.current.get(session.id)?.();
           },
+          // Bypassed password fan-out (#3488): the receiver forces sensitive
+          // writes so its input interceptors stay skipped for the secret.
+          ...(options?.sourceSensitive === true ? { sourceSensitive: true } : {}),
         });
         deliveredSessionIds.push(session.id);
         continue;
@@ -1053,6 +1306,7 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
         && isPluginHostProtocol(session.protocol)
         && terminalBackend.signalPluginConnection) {
         broadcastInterruptPrioritizersRef.current.get(session.id)?.();
+        terminalBackend.interruptSession(session.id, undefined, { cancelPendingWritesOnly: true });
         void terminalBackend.signalPluginConnection(session.id, "interrupt").catch(() => {
           terminalBackend.interruptSession(session.id);
         });
@@ -1064,16 +1318,21 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
         terminalBackend.interruptSession(session.id);
         continue;
       }
-      if (isTerminalSensitiveInputActive(session.id)) continue;
+      if (!passwordBypass && isTerminalSensitiveInputActive(session.id)) continue;
       terminalBackend.writeToSession(session.id, data, {
-        automated: true,
-        sensitive: false,
+        automated: options?.automated === true,
+        // Retain the source-sensitive marker (bypassed password fan-out, #3488)
+        // so peer input interceptors stay skipped for the secret payload. A
+        // target that is itself awaiting a secret keeps its classification:
+        // bypassing the fan-out pause must not downgrade its own sensitive
+        // state (#3491).
+        sensitive: options?.sourceSensitive === true || isTerminalSensitiveInputActive(session.id),
         ...(lineDelayMs ? { lineDelayMs } : {}),
       });
       deliveredSessionIds.push(session.id);
     }
     return deliveredSessionIds;
-  }, [terminalBackend]);
+  }, [terminalBackend, isGlobalBroadcastEnabled]);
 
   const handleCommandSubmitted = useCallback((command: string, _hostId: string, _hostLabel: string, sessionId: string) => {
     codingCliSignalController.handleCommandSubmitted(sessionId, command);
@@ -1090,6 +1349,7 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
       visibleSftpHost,
       sessionHost,
       globalSftpFollowTerminalCwd: sftpFollowTerminalCwdRef.current,
+      restrictExtraSshChannels: hostRestrictsExtraSshChannels(sessionHost),
     })) return;
 
     const osc7SignalAtCommand = terminalOsc7SignalBySessionRef.current.get(sessionId) ?? 0;
@@ -1105,20 +1365,21 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
         if (cwdProbeGenerationRef.current.get(sessionId) !== probeGeneration) return false;
         const host = sessionHostsMapRef.current.get(sessionId);
         if (!host) return false;
-        const detectedDeviceClass = classifyDistroId(host.distro);
-        const isNetworkDevice =
-          host.deviceType === 'network' || detectedDeviceClass === 'network-device';
+        const hostDeviceClass = classifyDistroId(host.distro);
+        const hostIsNetworkDevice =
+          host.deviceType === 'network' || hostDeviceClass === 'network-device';
         const info = await terminalBackend.getSessionRemoteInfo?.(sessionId);
         return shouldProbeSessionCwd({
-          isNetworkDevice,
+          isNetworkDevice: hostIsNetworkDevice,
           remoteSshVersion: info?.remoteSshVersion,
+          restrictExtraSshChannels: hostRestrictsExtraSshChannels(host),
         });
       },
       onProbedCwd: (cwd) => {
         if (cwdProbeGenerationRef.current.get(sessionId) !== probeGeneration) return;
         const existing = terminalRendererCwdBySessionRef.current.get(sessionId);
         if (existing === cwd) return;
-        handleTerminalCwdChange(sessionId, cwd);
+        handleTerminalCwdChange(sessionId, cwd, { source: 'backend-strict' });
       },
     });
     cwdProbeCancelersRef.current.set(sessionId, cancelProbe);
@@ -1131,6 +1392,7 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
   useEffect(() => () => {
     pruneTerminalSessionRuntimeState({
       terminalRendererCwdBySessionRef,
+      terminalRendererCwdSourceBySessionRef,
       terminalOsc7SignalBySessionRef,
       cwdProbeGenerationRef,
       cwdProbeCancelersRef,
@@ -1262,6 +1524,9 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
   onToggleBroadcastRef.current = onToggleBroadcast;
   const workspaceBroadcastHandlersRef = useRef<Map<string, () => void>>(new Map());
 
+  const onToggleGlobalBroadcastRef = useRef(onToggleGlobalBroadcast);
+  onToggleGlobalBroadcastRef.current = onToggleGlobalBroadcast;
+
   const mountedSftpTabIds = useMemo(
     () => Array.from(sftpHostForTab.keys()),
     [sftpHostForTab],
@@ -1312,14 +1577,23 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
   const getTerminalCwd = useCallback(async (options?: {
     preferFreshBackend?: boolean;
     allowRendererFallback?: boolean;
+    requireActiveShellCwd?: boolean;
   }): Promise<string | null> => {
     const sessionId = getActiveTerminalSessionId();
+    const host = sessionId ? sessionHostsMapRef.current.get(sessionId) : undefined;
+    const skipBackendPwd = hostRestrictsExtraSshChannels(host);
     return resolvePreferredTerminalCwd({
       rendererCwd: sessionId ? terminalRendererCwdBySessionRef.current.get(sessionId) : undefined,
+      rendererCwdSource: sessionId
+        ? terminalRendererCwdSourceBySessionRef.current.get(sessionId)
+        : undefined,
       sessionId,
-      getSessionPwd: (id, options) => terminalBackend.getSessionPwd(id, options),
-      preferFreshBackend: options?.preferFreshBackend,
+      getSessionPwd: skipBackendPwd
+        ? async () => ({ success: false })
+        : (id, pwdOptions) => terminalBackend.getSessionPwd(id, pwdOptions),
+      preferFreshBackend: skipBackendPwd ? false : options?.preferFreshBackend,
       allowRendererFallback: options?.allowRendererFallback,
+      requireActiveShellCwd: options?.requireActiveShellCwd,
     });
   }, [getActiveTerminalSessionId, terminalBackend]);
 
@@ -1382,20 +1656,39 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
       sftpPaneClosedTabIdsRef.current.delete(tabId);
     }
 
+    if (tab === 'sftp') {
+      const sourceSessionId = getActiveTerminalSessionId();
+      const sessionHost = sourceSessionId ? sessionHostsMapRef.current.get(sourceSessionId) : undefined;
+      const authHost = sourceSessionId ? sftpAuthHostBySessionId.get(sourceSessionId) : undefined;
+      const storedHost = sftpHostForTabRef.current.get(tabId);
+      if (sourceSessionId && sessionHost && authHost
+        && (!storedHost || sftpHostSourceSessionForTabRef.current.has(tabId)
+          || (storedHost.id === sessionHost.id
+            && storedHost.hostname === sessionHost.hostname
+            && (storedHost.port || 22) === (sessionHost.port || 22)))) {
+        setSftpHostForTab(prev => new Map(prev).set(tabId, authHost));
+        setSftpHostSourceSessionForTab(prev => new Map(prev).set(tabId, sourceSessionId));
+      }
+    }
+
     // If switching to SFTP and no host is stored yet, resolve it
     if (tab === 'sftp' && !sftpHostForTabRef.current.has(tabId)) {
-      const host = resolveSftpHostForTab(tabId);
+      const sourceSessionId = getActiveTerminalSessionId();
+      const host = (sourceSessionId && sftpAuthHostBySessionId.get(sourceSessionId))
+        ?? resolveSftpHostForTab(tabId);
       if (!host) return;
+      if (sourceSessionId) {
+        setSftpHostSourceSessionForTab(prev => new Map(prev).set(tabId, sourceSessionId));
+      }
       setSftpHostForTab(prev => {
         const next = new Map(prev);
         next.set(tabId, host);
         return next;
       });
-      const sourceSessionId = getActiveTerminalSessionId();
       const { effectiveInitialPath } = resolveSftpOpenTarget({
         tabId,
         host,
-        sourceSessionId,
+        originSessionId: sourceSessionId,
       });
       setSftpInitialLocationForTab(prev => {
         const next = new Map(prev);
@@ -1413,7 +1706,7 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
     // explicitly closes the now-idle panel, preserving the completed history.
     markSidePanelSubTabOpened(tabId, tab);
     return true;
-  }, [getActiveTerminalSessionId, markSidePanelSubTabOpened, resolveSftpHostForTab, resolveSftpOpenTarget]);
+  }, [getActiveTerminalSessionId, markSidePanelSubTabOpened, resolveSftpHostForTab, resolveSftpOpenTarget, sftpAuthHostBySessionId]);
 
   // Switch only the focused pane. If the tool is already open elsewhere in
   // the tree, the domain helper focuses that pane instead of duplicating it.
@@ -1868,6 +2161,7 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
         await runAutomationScript({
           snippet,
           sessionId,
+          initiatedBy: 'user',
           sessionMeta: buildScriptSessionMeta(sessionId, sessionsRef.current, hosts),
         });
       } catch (err) {
@@ -1893,6 +2187,7 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
       await runAutomationScript({
         snippet,
         sessionId,
+        initiatedBy: 'user',
         sessionMeta: buildScriptSessionMeta(sessionId, sessionsRef.current, hosts),
       });
     } catch (err) {
@@ -1978,6 +2273,7 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
         await runAutomationScript({
           snippet,
           sessionId,
+          initiatedBy: 'user',
           sessionMeta: buildScriptSessionMeta(sessionId, sessionsRef.current, hosts),
         });
       } catch (err) {
@@ -2047,6 +2343,7 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
       const runOnSession = (sid: string) => runAutomationScript({
         snippet,
         sessionId: sid,
+        initiatedBy: 'user',
         sessionMeta: buildScriptSessionMeta(sid, sessionsRef.current, hosts),
       });
       if (mode === 'sequential') {
@@ -2092,29 +2389,60 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
     toast.info(t('scripts.recording.started'));
   }, [getActiveTerminalSessionId, t]);
 
-  const handleComposeSend = useCallback((text: string) => {
+  const handleComposeSend = useCallback(async (text: string) => {
     const activeWorkspace = activeWorkspaceRef.current;
-    if (!activeWorkspace) return;
+    if (!activeWorkspace) return false;
+    let recordHistory = false;
+    // Any recipient at a sensitive prompt turns the fan-out into a secret
+    // delivery: the payload is that peer's password/MFA input and must not be
+    // recallable from compose history, even if the focused session itself is
+    // non-sensitive.
+    let anyRecipientSensitive = false;
+    const pendingSends: Promise<boolean>[] = [];
     const payload = text + '\r';
     const broadcastEnabled = isBroadcastEnabled?.(activeWorkspace.id);
     const focusedSessionId = activeWorkspace.focusedSessionId;
+    const broadcastPasswordBypass = broadcastPasswordBypassRef.current;
     const focusedSensitive = focusedSessionId
       ? isTerminalSensitiveInputActive(focusedSessionId)
       : false;
 
-    if (broadcastEnabled && !focusedSensitive) {
+    if (broadcastEnabled && (broadcastPasswordBypass || !focusedSensitive)) {
       const allSessionIds = sessionsRef.current
         .filter((session) => session.workspaceId === activeWorkspace.id)
         .map((session) => session.id);
       for (const sid of allSessionIds) {
-        if (isTerminalSensitiveInputActive(sid)) continue;
+        const recipientSensitive = isTerminalSensitiveInputActive(sid);
+        if (!broadcastPasswordBypass && recipientSensitive) continue;
         const executor = snippetExecutorsRef.current.get(sid);
         if (executor) {
-          executor(text, false, { broadcast: false });
+          pendingSends.push(Promise.resolve(executor(text, false, {
+            broadcast: false,
+            // Preserve both prompt snapshots across an asynchronous wake: the
+            // peer may clear its prompt classification before the actual write.
+            ...(focusedSensitive || recipientSensitive ? { sensitive: true } : {}),
+          })).then(
+            (sent) => {
+              // A lagging peer can reach its password prompt by delivery time;
+              // anything it receives there is its secret input, so mark the
+              // whole fan-out as history-ineligible.
+              if (sent && (recipientSensitive || isTerminalSensitiveInputActive(sid))) anyRecipientSensitive = true;
+              return sent && (broadcastPasswordBypass || !isTerminalSensitiveInputActive(sid));
+            },
+          ));
         } else {
           const session = sessionsRef.current.find((candidate) => candidate.id === sid);
           if (!session || !canUseDirectSessionWriteFallback(session)) continue;
-          terminalBackend.writeToSession(sid, payload, { sensitive: false });
+          // Keep the source-sensitive marker when the #3488 bypass let a
+          // password-prompt payload through, so interceptors stay skipped.
+          // A non-sensitive focused pane can still fan into a sensitive peer
+          // (its password/MFA input): mark the peer's write sensitive too,
+          // like the broadcast dispatcher does for its executor writes.
+          terminalBackend.writeToSession(sid, payload, {
+            sensitive: focusedSensitive || recipientSensitive,
+          });
+          if (recipientSensitive) anyRecipientSensitive = true;
+          recordHistory = recordHistory || session.status === 'connected';
         }
       }
     } else {
@@ -2126,16 +2454,28 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
       if (targetId) {
         const executor = snippetExecutorsRef.current.get(targetId);
         if (executor) {
-          executor(text, false);
+          const sensitive = isTerminalSensitiveInputActive(targetId);
+          pendingSends.push(Promise.resolve(executor(text, false)).then(
+            (sent) => sent && !sensitive && !isTerminalSensitiveInputActive(targetId),
+          ));
         } else {
           const session = sessionsRef.current.find((candidate) => candidate.id === targetId);
-          if (!session || !canUseDirectSessionWriteFallback(session)) return;
+          if (!session || !canUseDirectSessionWriteFallback(session)) return false;
+          recordHistory = session.status === 'connected' && !isTerminalSensitiveInputActive(targetId);
           terminalBackend.writeToSession(targetId, payload, {
             sensitive: isTerminalSensitiveInputActive(targetId),
           });
         }
       }
     }
+    const results = await Promise.allSettled(pendingSends);
+    const delivered = recordHistory || results.some((result) => result.status === 'fulfilled' && result.value);
+    // A bypassed send typed at a sensitive prompt (#3488), or delivered into
+    // any recipient's sensitive prompt, was delivered but must not be
+    // recallable from compose history via ArrowUp, so report no history
+    // eligibility for it.
+    if (focusedSensitive || anyRecipientSensitive) return false;
+    return delivered;
   }, [isBroadcastEnabled, terminalBackend]);
 
   const sessionLogConfig = useMemo(
@@ -2223,6 +2563,7 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
     handleSftpActiveExternalEditsChange,
     handleSftpInitialLocationApplied,
     persistSidePanelWidth,
+    persistSidePanelHeight,
     handleSnippetClickForFocusedSession,
     handleSnippetFromPanel,
     handleRunScriptFromPanel,
@@ -2258,6 +2599,8 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
     restoreTerminalCwd,
     identities,
     isBroadcastEnabled,
+    isGlobalBroadcastEnabled,
+    canUseGlobalBroadcast,
     isComposeBarOpen,
     keyBindings,
     keys,
@@ -2279,6 +2622,7 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
     onReorderWorkspaceSessions,
     onReorderTabs,
     onCopySession,
+    onDuplicateSession,
     onCopySessionToNewWindow,
     onRequestAddToWorkspace,
     onAppendHostToWorkspace,
@@ -2293,6 +2637,7 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
     onSplitSession,
     onSplitSessionRef,
     onToggleBroadcastRef,
+    onToggleGlobalBroadcastRef,
     onToggleWorkspaceViewMode,
     onToggleWorkspaceViewModeRef,
     onUpdateHost,
@@ -2332,20 +2677,26 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
     setSidePanelOpenTabs,
     setSidePanelLayouts,
     setSidePanelWidth,
+    setSidePanelHeight,
     setSftpFollowTerminalCwd,
     setSftpHostForTab,
+    setSftpHostSourceSessionForTab,
     setSftpInitialLocationForTab,
+    onSaveWorkspaceLayoutAsDefault: handleSaveWorkspaceLayoutAsDefault,
     setSftpPendingUploadsForTab,
     showHostTreeSidebar,
     sidePanelOpenTabs,
     sidePanelLayouts,
     sidePanelPosition,
     sidePanelWidth,
+    sidePanelHeight,
     sftpAutoSync,
     sftpDefaultViewMode,
     sftpDoubleClickBehavior,
     sftpFollowTerminalCwd,
     sftpHostForTab,
+    sftpHostSourceSessionForTab,
+    sftpAuthHostBySessionId,
     sftpInitialLocationForTab,
     sftpPendingUploadsForTab,
     sftpPaneClosedTabIdsRef,
@@ -2370,6 +2721,7 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
     TerminalPanesHost,
     terminalFontFamilyId,
     terminalRendererCwdBySessionRef,
+    terminalRendererCwdSourceBySessionRef,
     terminalSettings,
     terminalTheme,
     terminalThemeId,

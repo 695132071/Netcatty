@@ -12,6 +12,7 @@ import type {
   AIToolIntegrationMode,
   ExternalAgentConfig,
 } from './types';
+import { isCodebuddySessionPersistenceSupported } from './types';
 import { getExternalAgentSdkBackend, getManualAgentCommand } from './managedAgents';
 import { encodeSdkSessionIdentity } from './harness/sdkSessionIdentity';
 import { mapSdkStreamEventToAgentEvents } from './harness/agentEventAdapter';
@@ -96,6 +97,18 @@ export type SdkAgentSteerResult =
 interface StreamEvent {
   type: string;
   [key: string]: unknown;
+}
+
+function getCodebuddySdkOptions(config: ExternalAgentConfig): ExternalAgentConfig['codebuddyOptions'] {
+  const options = config.codebuddyOptions;
+  if (!options || options.persistSession !== false) return options;
+  if (isCodebuddySessionPersistenceSupported(config.cliVersion)) return options;
+
+  // The SDK translates false to --no-session-persistence. Do not send that
+  // flag to an older or unprobed CLI; undefined preserves its default behavior.
+  const supportedOptions = { ...options };
+  delete supportedOptions.persistSession;
+  return Object.keys(supportedOptions).length > 0 ? supportedOptions : undefined;
 }
 
 export interface FileAttachment {
@@ -353,7 +366,7 @@ export async function runSdkAgentTurn(
     agentCommand,
     sdkBackend === 'codex' ? (config.codexRuntime ?? 'sdk') : undefined,
     permissionMode,
-    sdkBackend === 'codebuddy' ? config.codebuddyOptions : undefined,
+    sdkBackend === 'codebuddy' ? getCodebuddySdkOptions(config) : undefined,
   ).then((result) => {
     if (result?.ok === false) {
       settle(() => {

@@ -572,3 +572,103 @@ test("mergeSyncPayloads treats missing optional arrays as legacy payloads, not d
   assert.deepEqual(result.payload.portForwardingRules, [rule]);
   assert.deepEqual(result.payload.groupConfigs, [{ path: "prod", username: "root" }]);
 });
+
+const hostWithTelemetry = (lastConnectedAt?: number) => ({
+  id: "host-1",
+  label: "prod",
+  hostname: "prod.example.com",
+  username: "root",
+  tags: [],
+  os: "linux" as const,
+  protocol: "ssh" as const,
+  ...(lastConnectedAt === undefined ? {} : { lastConnectedAt }),
+});
+
+test("mergeSyncPayloads normalizes lastConnectedAt across base and remote so sanitized local does not shadow remote edits", () => {
+  // Legacy base + old-device remote still carry the legacy telemetry field;
+  // the upgraded local payload strips it. A remote edit to the same host
+  // must not be classified as a local-modified conflict and overwritten.
+  const base = payload({
+    hosts: [hostWithTelemetry(1_000)],
+  });
+  // Local is otherwise unchanged — it only lost the telemetry field to the
+  // new sanitize-on-build behavior.
+  const local = payload({
+    hosts: [hostWithTelemetry()],
+  });
+  const remote = payload({
+    hosts: [{ ...hostWithTelemetry(1_000), label: "prod-renamed-by-remote" }],
+  });
+
+  const result = mergeSyncPayloads(base, local, remote);
+
+  // Remote edit survives: the telemetry-only local delta must not classify
+  // this host as locally modified and shadow the remote rename.
+  assert.equal(result.payload.hosts[0]?.label, "prod-renamed-by-remote");
+  assert.equal(result.summary.modified.local, 0);
+  assert.equal(result.summary.modified.remote, 1);
+});
+
+test("mergeSyncPayloads keeps host telemetry off merged payloads", () => {
+  const base = payload({ hosts: [hostWithTelemetry(1_000)] });
+
+  const unchanged = mergeSyncPayloads(
+    base,
+    payload({ hosts: [hostWithTelemetry(2_000)] }),
+    payload({ hosts: [hostWithTelemetry(1_000)] }),
+  );
+  assert.equal(unchanged.payload.hosts[0]?.lastConnectedAt, undefined);
+  assert.equal(unchanged.summary.modified.local, 0);
+});
+
+test("group notes sync edits and clearing without dropping connection settings", () => {
+  const config = { path: "Project", notes: "# VPN\nOld instructions", username: "admin" };
+  const base = payload({ customGroups: ["Project"], groupConfigs: [config] });
+  const edited = payload({ customGroups: ["Project"], groupConfigs: [{ ...config, notes: "# VPN\nNew instructions" }] });
+  const merged = mergeSyncPayloads(base, base, edited).payload;
+  assert.equal(merged.groupConfigs?.[0].notes, "# VPN\nNew instructions");
+  assert.equal(merged.groupConfigs?.[0].username, "admin");
+  const cleared = payload({ customGroups: ["Project"], groupConfigs: [{ path: "Project", username: "admin" }] });
+  assert.equal(mergeSyncPayloads(merged, merged, cleared).payload.groupConfigs?.[0].notes, undefined);
+});
+
+test("mergeSyncPayloads does not glue a local migration marker onto a legacy auto-close true", () => {
+  const merged = mergeSyncPayloads(
+    null,
+    payload({
+      settings: {
+        autoCloseOnExitDefaultMigrated: true,
+        terminalSettings: { autoCloseOnExit: false, scrollback: 3000 },
+      },
+    }),
+    payload({
+      settings: {
+        terminalSettings: { autoCloseOnExit: true, scrollback: 3000 },
+      },
+    }),
+  ).payload.settings;
+
+  assert.equal(merged?.terminalSettings?.autoCloseOnExit, false);
+  assert.equal(merged?.terminalSettings?.scrollback, 3000);
+});
+
+test("mergeSyncPayloads keeps an explicit auto-close opt-in from a migrated peer", () => {
+  const merged = mergeSyncPayloads(
+    null,
+    payload({
+      settings: {
+        autoCloseOnExitDefaultMigrated: true,
+        terminalSettings: { autoCloseOnExit: false },
+      },
+    }),
+    payload({
+      settings: {
+        autoCloseOnExitDefaultMigrated: true,
+        terminalSettings: { autoCloseOnExit: true },
+      },
+    }),
+  ).payload.settings;
+
+  assert.equal(merged?.autoCloseOnExitDefaultMigrated, true);
+  assert.equal(merged?.terminalSettings?.autoCloseOnExit, true);
+});

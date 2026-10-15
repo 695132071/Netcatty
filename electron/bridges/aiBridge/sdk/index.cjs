@@ -18,6 +18,7 @@ const codebuddy = require("./codebuddyDriver.cjs");
 const opencode = require("./opencodeDriver.cjs");
 const grok = require("./grokDriver.cjs");
 const grokAcp = require("./grokAcpDriver.cjs");
+const mimo = require("./mimoDriver.cjs");
 const { codebuddySessionManager } = require("./codebuddySessionManager.cjs");
 
 function hasCodebuddyQueryOnlyOptions(options) {
@@ -75,7 +76,9 @@ const DRIVER_REGISTRY = {
         signal: ctx.signal,
       });
     },
-    // codex-sdk exposes no model catalog; the UI falls back to curated presets.
+    // codex-sdk exposes no model catalog. sdkStreamHandlers falls back to the
+    // App Server runtime's live `model/list` when this returns empty (#3496);
+    // curated presets remain the last resort in the renderer.
     async listModels() { return []; },
   },
   copilot: {
@@ -186,7 +189,7 @@ const DRIVER_REGISTRY = {
         resume: ctx.resumeSessionId,
         pathToCodebuddyCode: ctx.binPath,
         toolIntegrationMode: ctx.toolIntegrationMode,
-        // SDK 0.3.230 options
+        // SDK 0.3.258 options
         systemPrompt: ctx.systemPrompt,
         effort: ctx.effort,
         maxTurns: ctx.maxTurns,
@@ -198,6 +201,7 @@ const DRIVER_REGISTRY = {
         enableFileCheckpointing: ctx.enableFileCheckpointing,
         traceId: ctx.traceId,
         parentSpanId: ctx.parentSpanId,
+        persistSession: ctx.persistSession,
         hooks: codebuddy.buildCodebuddyHooks(ctx.emitter, {
           toolIntegrationMode: ctx.toolIntegrationMode,
           additionalHooks: ctx.hooks,
@@ -239,6 +243,9 @@ const DRIVER_REGISTRY = {
           agents: options.agents,
           thinking: options.thinking,
           effort: options.effort,
+          // SessionOptions gained persistSession in SDK 0.3.258; without this the
+          // V2 path would silently drop the setting (query() already forwards it).
+          persistSession: options.persistSession,
         };
         const v2Result = await codebuddySessionManager.runTurn({
           sessionKey,
@@ -383,6 +390,42 @@ const DRIVER_REGISTRY = {
         currentModelId: grok.resolveGrokCatalogCurrentModelId(models, currentModelId),
         models,
       };
+    },
+  },
+  // MiMo Code is an OpenCode fork, so this mirrors the opencode entry above.
+  // The driver runs `mimo serve` itself instead of `@mimo-ai/sdk`'s
+  // createOpencode(), which cannot parse MiMo's readiness banner; see
+  // mimoDriver.cjs for the details.
+  mimo: {
+    async runTurn(ctx) {
+      return mimo.runMimoTurn({
+        prompt: ctx.prompt,
+        systemPrompt: ctx.systemPrompt,
+        attachments: ctx.attachments,
+        cwd: ctx.cwd,
+        model: ctx.model,
+        env: ctx.env,
+        binPath: ctx.binPath,
+        injectedMcpServers: ctx.injectedMcpServers,
+        toolIntegrationMode: ctx.toolIntegrationMode,
+        skillsPathAllowlist: ctx.skillsPathAllowlist,
+        permissionMode: ctx.permissionMode,
+        chatSessionId: ctx.chatSessionId,
+        requestApprovalFromRenderer: ctx.requestApprovalFromRenderer,
+        clearPendingApprovals: ctx.clearPendingApprovals,
+        resumeSessionId: ctx.resumeSessionId,
+        emitter: ctx.emitter,
+        abortController: ctx.abortController,
+      });
+    },
+    async listModels(ctx) {
+      return mimo.listMimoModels({
+        env: ctx.env,
+        binPath: ctx.binPath,
+        cwd: ctx.cwd,
+        abortController: ctx.abortController,
+        signal: ctx.abortController?.signal || ctx.signal,
+      });
     },
   },
 };

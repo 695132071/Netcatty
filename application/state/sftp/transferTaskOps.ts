@@ -71,21 +71,24 @@ export function useSftpTransferTaskOps({
     const bridge = netcattyBridge.get();
     const cancelTransferAtBackend = bridge?.cancelTransfer;
     const cancelCompressedUpload = bridge?.cancelCompressedUpload;
-    if (!cancelTransferAtBackend && !cancelCompressedUpload) return;
+    if (!cancelTransferAtBackend && !cancelCompressedUpload) return [];
 
-    await Promise.all(
-      Array.from(idsToCancel).map(async (id) => {
+    const failed: string[] = [];
+    const ids = [...idsToCancel];
+    for (let offset = 0; offset < ids.length; offset += 32) {
+      await Promise.all(ids.slice(offset, offset + 32).map(async (id) => {
         const candidate = currentTransfers.find((task) => task.id === id);
         const compressed = candidate?.controlKind === "compressed-upload";
-        const operation = compressed
-          ? cancelCompressedUpload?.(id)
-          : cancelTransferAtBackend?.(id);
-        const results = operation ? await Promise.allSettled([operation]) : [];
-        if (results.some((result) => result.status === "rejected")) {
-          logger.warn("Failed to cancel one or more transfer backends");
+        try {
+          const result = await (compressed ? cancelCompressedUpload?.(id) : cancelTransferAtBackend?.(id));
+          if (result && result.success === false) failed.push(id);
+        } catch {
+          failed.push(id);
         }
-      }),
-    );
+      }));
+    }
+    if (failed.length > 0) logger.warn("Failed to cancel one or more transfer backends");
+    return failed;
   }, [activeChildIdsRef, cancelledTasksRef, transfersRef]);
 
   const markBatchStopped = useCallback(

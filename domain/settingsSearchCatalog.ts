@@ -251,11 +251,20 @@ export const SETTINGS_SEARCH_CATALOG: readonly SettingsSearchEntry[] = [
     labelKey: "settings.terminal.font.emulationType",
     sectionKey: "settings.terminal.section.font",
   },
+
   {
     id: "terminal-cursor-style",
     tab: "terminal",
     labelKey: "settings.terminal.cursor.style",
     sectionKey: "settings.terminal.section.cursor",
+  },
+  {
+    id: "terminal-cursor-bar-width",
+    tab: "terminal",
+    labelKey: "settings.terminal.cursor.barWidth",
+    descriptionKey: "settings.terminal.cursor.barWidth.desc",
+    sectionKey: "settings.terminal.section.cursor",
+    keywords: ["bar cursor", "cursor width", "vi", "vim", "竖线光标", "光标粗细"],
   },
   {
     id: "terminal-cursor-blink",
@@ -365,10 +374,24 @@ export const SETTINGS_SEARCH_CATALOG: readonly SettingsSearchEntry[] = [
     sectionKey: "settings.terminal.section.behavior",
   },
   {
+    id: "terminal-confirm-multiline-paste",
+    tab: "terminal",
+    labelKey: "settings.terminal.behavior.confirmMultilinePaste",
+    descriptionKey: "settings.terminal.behavior.confirmMultilinePaste.desc",
+    sectionKey: "settings.terminal.section.behavior",
+  },
+  {
     id: "terminal-shift-enter-newline",
     tab: "terminal",
     labelKey: "settings.terminal.behavior.shiftEnterNewline",
     descriptionKey: "settings.terminal.behavior.shiftEnterNewline.desc",
+    sectionKey: "settings.terminal.section.behavior",
+  },
+  {
+    id: "terminal-shift-enter-force-text",
+    tab: "terminal",
+    labelKey: "settings.terminal.behavior.shiftEnterForceText",
+    descriptionKey: "settings.terminal.behavior.shiftEnterForceText.desc",
     sectionKey: "settings.terminal.section.behavior",
   },
   {
@@ -377,6 +400,14 @@ export const SETTINGS_SEARCH_CATALOG: readonly SettingsSearchEntry[] = [
     labelKey: "settings.terminal.behavior.clearWipesScrollback",
     descriptionKey: "settings.terminal.behavior.clearWipesScrollback.desc",
     sectionKey: "settings.terminal.section.behavior",
+  },
+  {
+    id: "terminal-tab-double-click",
+    tab: "terminal",
+    labelKey: "settings.terminal.behavior.tabDoubleClick",
+    descriptionKey: "settings.terminal.behavior.tabDoubleClick.desc",
+    sectionKey: "settings.terminal.section.behavior",
+    keywords: ["tab", "double click", "复制会话", "双击"],
   },
   {
     id: "terminal-dynamic-tab-title",
@@ -811,6 +842,14 @@ export const SETTINGS_SEARCH_CATALOG: readonly SettingsSearchEntry[] = [
     sectionKey: "settings.update.title",
   },
   {
+    id: "system-auto-launch",
+    tab: "system",
+    labelKey: "settings.autoLaunch.enabled",
+    descriptionKey: "settings.autoLaunch.enabledDesc",
+    sectionKey: "settings.autoLaunch.title",
+    keywords: ["startup", "login", "autostart", "boot", "开机", "自启动", "开机启动"],
+  },
+  {
     id: "system-network-proxy-mode",
     tab: "system",
     labelKey: "settings.system.networkProxy.mode",
@@ -920,6 +959,13 @@ export const SETTINGS_SEARCH_CATALOG: readonly SettingsSearchEntry[] = [
     tab: "system",
     labelKey: "settings.globalHotkey.closeToTray",
     descriptionKey: "settings.globalHotkey.closeToTrayDesc",
+    sectionKey: "settings.globalHotkey.title",
+  },
+  {
+    id: "system-show-tray-icon",
+    tab: "system",
+    labelKey: "settings.globalHotkey.showTrayIcon",
+    descriptionKey: "settings.globalHotkey.showTrayIconDesc",
     sectionKey: "settings.globalHotkey.title",
   },
 

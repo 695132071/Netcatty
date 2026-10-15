@@ -55,7 +55,7 @@ const {
   _resetAlgorithmSupportCacheForTests,
 } = require("./sshAlgorithms.cjs");
 const { enableSshNoDelay, enableTcpNoDelay } = require("./tcpNoDelay.cjs");
-const { createTcpConnectLatencyProbe } = require("./tcpConnectLatency.cjs");
+const { createSshPingLatencyProbe } = require("./sshBridge/sshPingLatency.cjs");
 const {
   configureTerminalSessionDataEmitter,
 } = require("./emitTerminalSessionData.cjs");
@@ -66,6 +66,7 @@ const PREFERRED_KEY_NAMES = ["id_ed25519", "id_ecdsa", "id_rsa"];
 const SSH_KEY_PATTERN = /^id_[\w-]+$/;
 const {
   createStartSessionApi,
+  cancelTestConnection,
   resolveSshConnectionTimeouts,
 } = require("./sshBridge/startSession.cjs");
 const { ensureMacLocalNetworkAccess, attachMacLocalNetworkProbeResult } = require("./macLocalNetworkAccess.cjs");
@@ -812,7 +813,12 @@ async function connectThroughChain(event, options, jumpHosts, targetHost, target
           }
           resolve();
         });
-        conn.once('error', (err) => {
+        conn.on('error', (err) => {
+          // ssh2 continues to the next auth method after agent errors.
+          if (err.level === 'agent') {
+            console.log(`[Chain] Hop ${i + 1} non-fatal agent auth error (will try next method):`, err.message);
+            return;
+          }
           if (settled) return;
           settled = true;
           clearAuthReadyTimer();
@@ -1362,6 +1368,31 @@ async function startSSHSessionWrapper(event, options) {
 }
 
 /**
+ * Headless "test connection" for the host editor. Establishes a fresh SSH
+ * connection through the same dial/auth/host-key/jump-host/proxy machinery as
+ * a terminal session (`startSSHSession`), reports success the moment
+ * authentication completes, and tears down without ever opening a shell.
+ * Connection reuse and retry wrappers are deliberately skipped so a test is
+ * always an honest fresh dial. The renderer consumes `netcatty:test:result`
+ * plus the shared `netcatty:chain:progress` / host-key / keyboard-interactive
+ * channels.
+ */
+async function testConnection(event, options) {
+  const payload = options && typeof options === "object" ? options : {};
+  const sessionId = payload.sessionId || require("node:crypto").randomUUID();
+  // Same macOS Local Network preflight as terminal starts (#2663 / #2673):
+  // trigger the TCC prompt from the main process and carry the resolved
+  // first-hop address so private-LAN / split-DNS failures get annotated.
+  const probeResult = await ensureMacLocalNetworkAccess(payload);
+  return startSSHSession(event, {
+    ...attachMacLocalNetworkProbeResult(payload, probeResult),
+    sessionId,
+    testMode: true,
+    reuseTransport: false,
+  });
+}
+
+/**
  * Get current working directory from an active SSH session
  * This sends 'pwd' to the existing shell stream and captures the output
  * using unique markers to identify the command output boundaries
@@ -1395,7 +1426,7 @@ const { ensureMoshStatsConnection, ensureEtStatsConnection } = createMoshStatsCo
 });
 
 const { createSessionOpsApi } = require("./sshBridge/sessionOps.cjs");
-const measureTcpConnectLatency = createTcpConnectLatencyProbe({ net });
+const measureSshPingLatency = createSshPingLatencyProbe();
 const sessionOpsApi = createSessionOpsApi({
   get sessions() { return sessions; },
   get electronModule() { return electronModule; },
@@ -1403,7 +1434,7 @@ const sessionOpsApi = createSessionOpsApi({
   getSessionDecoder, resetSessionDecoders, sessionEncodings, normalizeTerminalEncoding,
   safeSend,
   quoteShellArg, log, ensureMoshStatsConnection, ensureEtStatsConnection,
-  measureTcpConnectLatency,
+  measureSshPingLatency,
   execOnEtSession: (...args) => require("./terminalBridge.cjs").execOnEtSession(...args),
   getServerStats: undefined,
 });
@@ -1517,6 +1548,8 @@ function registerHandlers(ipcMain, options = {}) {
     hostKeyVerifier.registerHandler(ipcMain);
   }
   ipcMain.handle("netcatty:key:generate", generateKeyPair);
+  ipcMain.handle("netcatty:test-connection", testConnection);
+  ipcMain.handle("netcatty:test-connection:cancel", (_event, sessionId) => cancelTestConnection(sessionId));
   ipcMain.handle("netcatty:sshDebugLog:info", getSshDebugLogInfo);
   ipcMain.handle("netcatty:sshDebugLog:openDir", openSshDebugLogDir);
   ipcMain.handle("netcatty:ssh:check-agent", async (_event, options = {}) => {

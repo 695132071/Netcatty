@@ -49,6 +49,7 @@ export interface TurnUiCallbacks {
     sessionId: string,
     compaction: import('../../types').AISessionContextCompaction,
   ) => void;
+  translate?: (key: string) => string;
 }
 
 export interface CattyTurnContext {

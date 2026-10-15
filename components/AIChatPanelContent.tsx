@@ -1,5 +1,5 @@
 import React, { type Dispatch, type SetStateAction } from 'react';
-import { History, Plus } from 'lucide-react';
+import { History, Plus, Undo2 } from 'lucide-react';
 import type { AIPermissionMode, AISession, ChatMessage, DiscoveredAgent, ExternalAgentConfig, AgentModelPreset, ProviderConfig, UploadedFile } from '../infrastructure/ai/types';
 import type { Host, VaultNote } from '../types';
 import type { UserSkillOption } from './ai/userSkillsState';
@@ -47,6 +47,8 @@ interface AIChatPanelContentProps {
   activeSessionId: string | null;
   handleSelectSession: (sessionId: string) => void;
   handleDeleteSession: (event: React.MouseEvent, sessionId: string) => void;
+  /** Fork the conversation up to a completed assistant response into a new session. */
+  onForkFromMessage?: (messageId: string) => void;
   messages: ChatMessage[];
   isStreaming: boolean;
   activeCompaction?: import('../application/state/useAgentCompactionUi').ActiveCompactionUi | null;
@@ -55,6 +57,9 @@ interface AIChatPanelContentProps {
   setInputValue: (value: string) => void;
   handleSend: () => void;
   handleCompact: () => void;
+  /** Undo last turn is offered at a safe boundary (never mid-tool / mid-compaction). */
+  canUndoLastTurn?: boolean;
+  handleUndoLastTurn?: () => void;
   canCompact?: boolean;
   handleSteer: () => void;
   handleStop: () => void;
@@ -66,7 +71,13 @@ interface AIChatPanelContentProps {
   providerDisplayName?: string;
   modelDisplayName?: string;
   modelCatalogWarning?: string;
+  /** Live SDK model catalog is loading (no built-in presets to show yet). */
+  modelCatalogLoading?: boolean;
+  /** Retry a failed SDK model catalog load from the warning banner. */
+  handleModelCatalogRetry?: () => void;
   agentModelPresets: AgentModelPreset[];
+  /** Suppress the composer picker's "use custom model" action (locked model). */
+  allowCustomModelEntry?: boolean;
   selectedAgentModel: string;
   handleAgentModelSelect: (modelId: string) => void;
   cattyConfiguredProviders: ProviderConfig[];
@@ -88,6 +99,8 @@ interface AIChatPanelContentProps {
   setGlobalPermissionMode?: (mode: AIPermissionMode) => void;
   notes?: VaultNote[];
   hosts?: Host[];
+  /** Mention Note: attach a Vault → Notes entry as inline context. */
+  onMentionNote?: (note: VaultNote) => void;
   onOpenVaultNote?: (noteId: string) => void;
   onOpenVaultHost?: (hostId: string) => void;
   onOpenVaultSection?: (section: 'notes' | 'hosts') => void;
@@ -116,6 +129,7 @@ export const AIChatPanelContent: React.FC<AIChatPanelContentProps> = ({
   activeSessionId,
   handleSelectSession,
   handleDeleteSession,
+  onForkFromMessage,
   messages,
   isStreaming,
   activeCompaction = null,
@@ -124,9 +138,12 @@ export const AIChatPanelContent: React.FC<AIChatPanelContentProps> = ({
   setInputValue,
   handleSend,
   handleCompact,
+  canUndoLastTurn = false,
+  handleUndoLastTurn,
   canCompact = false,
   handleSteer,
   handleStop,
+  handleModelCatalogRetry,
   canSteer,
   isSteering,
   steerWarning,
@@ -135,7 +152,9 @@ export const AIChatPanelContent: React.FC<AIChatPanelContentProps> = ({
   providerDisplayName,
   modelDisplayName,
   modelCatalogWarning,
+  modelCatalogLoading = false,
   agentModelPresets,
+  allowCustomModelEntry = true,
   selectedAgentModel,
   handleAgentModelSelect,
   cattyConfiguredProviders,
@@ -157,6 +176,7 @@ export const AIChatPanelContent: React.FC<AIChatPanelContentProps> = ({
   setGlobalPermissionMode,
   notes = [],
   hosts = [],
+  onMentionNote,
   onOpenVaultNote,
   onOpenVaultHost,
   onOpenVaultSection,
@@ -220,6 +240,23 @@ export const AIChatPanelContent: React.FC<AIChatPanelContentProps> = ({
               onManageAgents={handleOpenSettings}
             />
             <div className="flex items-center gap-0.5">
+              {handleUndoLastTurn && (
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="h-6 w-6 rounded-md text-muted-foreground/62 hover:bg-white/[0.05] hover:text-foreground"
+                      aria-label={t('ai.chat.undoLastTurn')}
+                      disabled={sending || isStreaming || !canUndoLastTurn}
+                      onClick={handleUndoLastTurn}
+                    >
+                      <Undo2 size={12} />
+                    </Button>
+                  </TooltipTrigger>
+                  <TooltipContent>{t('ai.chat.undoLastTurn')}</TooltipContent>
+                </Tooltip>
+              )}
               <ConversationExport
                 session={activeSession}
                 onExport={handleExport}
@@ -279,6 +316,8 @@ export const AIChatPanelContent: React.FC<AIChatPanelContentProps> = ({
                 isStreaming={isStreaming}
                 activeSessionId={activeSessionId}
                 activeCompaction={activeCompaction}
+                contextCompaction={activeSession?.contextCompaction}
+                onForkFromMessage={onForkFromMessage}
                 notes={notes}
                 hosts={hosts}
                 onOpenVaultNote={onOpenVaultNote}
@@ -329,8 +368,20 @@ export const AIChatPanelContent: React.FC<AIChatPanelContentProps> = ({
                     {steerWarning}
                   </div>
                 ) : modelCatalogWarning ? (
-                  <div role="status" className="mx-3 mb-1.5 rounded-md border border-amber-500/25 bg-amber-500/10 px-2.5 py-1.5 text-[11px] leading-4 text-amber-600 dark:text-amber-400">
-                    {modelCatalogWarning}
+                  <div role="status" className="mx-3 mb-1.5 flex items-center gap-2 rounded-md border border-amber-500/25 bg-amber-500/10 px-2.5 py-1.5 text-[11px] leading-4 text-amber-600 dark:text-amber-400">
+                    <span className="min-w-0 flex-1">{modelCatalogWarning}</span>
+                    {handleModelCatalogRetry && (
+                      <button
+                        onClick={handleModelCatalogRetry}
+                        className="shrink-0 rounded px-1.5 py-0.5 text-[11px] font-medium text-amber-600 underline-offset-2 transition-colors hover:bg-amber-500/10 hover:text-amber-500 hover:underline cursor-pointer dark:text-amber-400 dark:hover:text-amber-300"
+                      >
+                        {t('ai.chat.modelCatalogRetry')}
+                      </button>
+                    )}
+                  </div>
+                ) : modelCatalogLoading ? (
+                  <div role="status" className="mx-3 mb-1.5 rounded-md bg-muted/40 px-2.5 py-1.5 text-[11px] leading-4 text-muted-foreground/70">
+                    {t('ai.chat.loadingModels')}
                   </div>
                 ) : null}
                 <ChatInput
@@ -351,6 +402,8 @@ export const AIChatPanelContent: React.FC<AIChatPanelContentProps> = ({
                   modelName={modelDisplayName}
                   agentName={currentAgentId === 'catty' ? 'Catty Agent' : externalAgents.find(a => a.id === currentAgentId)?.name}
                   modelPresets={agentModelPresets}
+                  modelCatalogLoading={modelCatalogLoading}
+                  allowCustomModelEntry={allowCustomModelEntry}
                   selectedModelId={selectedAgentModel}
                   onModelSelect={handleAgentModelSelect}
                   providerSwitcher={providerSwitcher}
@@ -361,6 +414,8 @@ export const AIChatPanelContent: React.FC<AIChatPanelContentProps> = ({
                   onAddFiles={addFiles}
                   onRemoveFile={removeFile}
                   hosts={mentionHosts}
+                  notes={notes}
+                  onMentionNote={onMentionNote}
                   selectedUserSkills={selectedUserSkills}
                   userSkills={userSkillOptions}
                   quickMessages={quickMessages}

@@ -1,4 +1,6 @@
 /* eslint-disable no-undef */
+const { existsSync } = require("node:fs");
+
 function registerProviderHandlers(ctx) {
   with (ctx) {
   ipcMain.handle("netcatty:ai:user-skills:status", async (event) => {
@@ -31,6 +33,22 @@ function registerProviderHandlers(ctx) {
     try {
       const { context, status } = await buildUserSkillsContext(electronModule?.app, prompt, selectedSkillSlugs);
       return { ok: true, context, status: toPublicUserSkillsStatus(status) };
+    } catch (err) {
+      return { ok: false, error: err?.message || String(err) };
+    }
+  });
+
+  ipcMain.handle("netcatty:ai:skills-cli:invocation", async (event) => {
+    if (!validateSenderOrSettings(event)) return { ok: false, error: "Unauthorized IPC sender" };
+    try {
+      const invocation = getSkillsCliInvocation();
+      return {
+        ok: true,
+        skillPath: existsSync(NETCATTY_TOOL_SKILL_PATH) ? NETCATTY_TOOL_SKILL_PATH : null,
+        commandPrefix: invocation.commandPrefix,
+        launcherPath: invocation.launcherPath,
+        usesLauncher: invocation.usesLauncher,
+      };
     } catch (err) {
       return { ok: false, error: err?.message || String(err) };
     }

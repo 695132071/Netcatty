@@ -18,7 +18,7 @@ export type ExternalMcpMode = 'temporary' | 'persistent';
 const DEFAULT_EXTERNAL_MCP_IDLE_TIMEOUT_MINUTES = 10;
 const MIN_EXTERNAL_MCP_IDLE_TIMEOUT_MINUTES = 1;
 const MAX_EXTERNAL_MCP_IDLE_TIMEOUT_MINUTES = 24 * 60;
-const DEFAULT_SESSION_IDLE_TIMEOUT_MINUTES = 30;
+const DEFAULT_SESSION_IDLE_TIMEOUT_MINUTES = 480;
 /** Keep top-bar / settings switch state aligned with runtime auto-disable. */
 export const EXTERNAL_MCP_RUNTIME_STATUS_POLL_MS = 3000;
 
@@ -364,7 +364,12 @@ export function useExternalMcpToggleState() {
     // the main-process External MCP lifecycle.
     if (isPeerSessionWindow) return;
     externalMcpEnableGeneration += 1;
-    void netcattyBridge.get()?.externalMcpSetEnabled?.(nextEnabled);
+    // Re-emit after the lifecycle IPC settles so consumers that refetch runtime
+    // status (e.g. Tool Access guidance) do not act on the pre-IPC storage
+    // event, which can still observe the previous enabled state.
+    void Promise.resolve(netcattyBridge.get()?.externalMcpSetEnabled?.(nextEnabled)).finally(() => {
+      emitAIStateChanged(STORAGE_KEY_AI_EXTERNAL_MCP_ENABLED);
+    });
   }, [isPeerSessionWindow, persistEnabled]);
 
   useEffect(() => {

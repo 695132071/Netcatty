@@ -83,12 +83,13 @@ const TOOL_INPUT_FIELDS = Object.freeze({
   "vault.host.list": {},
   "vault.host.open": {
     hostId: { type: "string", description: "Vault host ID to open. Use vault_hosts_list / host_get to resolve id from label or hostname." },
+    newTab: { type: "string", optional: true, description: "true or false. Force a brand-new tab even when a session for this host already exists. Default false — reuse the existing session." },
   },
   "vault.hosts.create": {
     hosts: {
       type: "string",
       description:
-        "JSON array of host objects you extracted from the user's text. Each object: hostname (required; host/ip aliases accepted), label (name alias accepted), port, username, password, keyPath or keypath (local private-key file path), passphrase (saved passphrase for that key path), group, tags (array or comma-separated string), notes (Host Details remarks — NOT Vault sidebar Notes), protocol (ssh|telnet|local).",
+        "JSON array of host objects you extracted from the user's text. Each object: hostname (required; host/ip aliases accepted), label (name alias accepted), port, username, password, keyPath or keypath (local private-key file path), passphrase (saved passphrase for that key path), group, tags (array or comma-separated string), notes (Host Details remarks — NOT Vault sidebar Notes), protocol (ssh|telnet|local), os (linux|windows|macos).",
     },
     dryRun: {
       type: "string",
@@ -119,6 +120,7 @@ const TOOL_INPUT_FIELDS = Object.freeze({
     tags: { type: "string", optional: true, description: "JSON array or comma-separated tag names. Empty string clears tags." },
     notes: { type: "string", optional: true, description: "Host Details remarks. Empty string clears notes." },
     protocol: { type: "string", optional: true, description: "New protocol: ssh, telnet, local, or serial." },
+    os: { type: "string", optional: true, description: "Operating system override: auto (default), linux, windows, macos, freebsd, or unknown. Use auto to use detected system information; network device mode is separate." },
     identityId: { type: "string", optional: true, description: "Reusable identity ID from vault_identities_list. Empty string detaches the identity." },
     jumpHostIds: { type: "string", optional: true, description: "JSON array of vault host IDs in jump order. Empty array clears the chain." },
     proxyProfileId: { type: "string", optional: true, description: "Reusable proxy ID from vault_proxy_profiles_list. Empty string clears it." },
@@ -129,7 +131,7 @@ const TOOL_INPUT_FIELDS = Object.freeze({
     moshServerPath: { type: "string", optional: true, description: "Optional mosh-server path." },
     etEnabled: { type: "string", optional: true, description: "true or false." },
     etPort: { type: "number", optional: true, description: "Eternal Terminal server port." },
-    serialConfig: { type: "string", optional: true, description: "JSON object for serial connections: path, baudRate, and optional dataBits, stopBits, parity, flowControl, localEcho, lineMode, backspaceBehavior (default or ctrl-h). Existing backspaceBehavior is preserved when omitted." },
+    serialConfig: { type: "string", optional: true, description: "JSON object for serial connections: path, baudRate, and optional dataBits, stopBits, parity, flowControl, localEcho, lineMode, backspaceBehavior (default or ctrl-h), byteOrientedBackspace (boolean, default false; enable only for devices that delete bytes rather than characters). Existing backspaceBehavior and byteOrientedBackspace are preserved when omitted." },
   },
   "vault.host.delete": {
     hostId: { type: "string", description: "Vault host ID from vault_hosts_list." },
@@ -137,7 +139,7 @@ const TOOL_INPUT_FIELDS = Object.freeze({
   "vault.host.import": {
     format: {
       type: "string",
-      description: "Import format: csv, putty, mobaxterm, securecrt, ssh_config, or auto to detect from text.",
+      description: "Import format: csv, putty, mobaxterm, securecrt, finalshell, ssh_config, or auto to detect from text.",
     },
     text: { type: "string", description: "Exported host data text to import." },
     dryRun: {
@@ -166,10 +168,14 @@ const TOOL_INPUT_FIELDS = Object.freeze({
   "vault.note.list": {},
   "vault.note.get": {
     noteId: { type: "string", description: "Vault note ID from vault_notes_list." },
+    offset: { type: "number", optional: true, description: "Zero-based UTF-16 offset; default 0. Continue with returned nextOffset." },
+    maxChars: { type: "number", optional: true, description: "Maximum excerpt length in UTF-16 units, at least 2; default and hard cap 6000." },
+    query: { type: "string", optional: true, description: "Optional case-sensitive literal search, 1-200 UTF-16 units. Returns an excerpt starting at the next match at/after offset; matchOffset=null means no match. Keep query when continuing search." },
+    expectedUpdatedAt: { type: "number", optional: true, description: "Pass note.updatedAt from the first read on subsequent reads to detect changes; restart if it changed." },
   },
   "vault.note.create": {
     title: { type: "string", description: "Note title shown in Vault → Notes." },
-    content: { type: "string", description: "Markdown note body." },
+    content: { type: "string", allowEmpty: true, description: "Markdown note body. An empty string creates an empty note." },
     group: { type: "string", optional: true, description: "Optional folder path (e.g. infra/prod)." },
     linkedHostIds: { type: "string", optional: true, description: "Optional JSON array of vault host IDs to link." },
     tags: { type: "string", optional: true, description: "Optional JSON array of tag strings." },
@@ -177,13 +183,37 @@ const TOOL_INPUT_FIELDS = Object.freeze({
   "vault.note.update": {
     noteId: { type: "string", description: "Vault note ID to update." },
     title: { type: "string", optional: true, description: "New title." },
-    content: { type: "string", optional: true, description: "New markdown body." },
-    group: { type: "string", optional: true, description: "New folder path." },
+    content: { type: "string", optional: true, allowEmpty: true, description: "New markdown body. An empty string clears the body." },
+    group: { type: "string", optional: true, allowEmpty: true, description: "New folder path. An empty string clears the folder." },
     linkedHostIds: { type: "string", optional: true, description: "Optional JSON array of vault host IDs to link." },
     tags: { type: "string", optional: true, description: "Optional JSON array of tag strings." },
   },
   "vault.note.delete": {
     noteId: { type: "string", description: "Vault note ID to delete." },
+  },
+  "vault.note.import": {
+    content: {
+      type: "string",
+      optional: true,
+      allowEmpty: true,
+      description: "Markdown body for a single document. An empty string is valid. Omit when documents is set.",
+    },
+    fileName: {
+      type: "string",
+      optional: true,
+      description: "Source file name for a single document, such as runbook.md. Used when the body has no heading.",
+    },
+    title: {
+      type: "string",
+      optional: true,
+      description: "Optional title override for a single document. Otherwise the first level-one heading or file name is used.",
+    },
+    documents: {
+      type: "string",
+      optional: true,
+      description: "JSON array of {fileName, content, title?} for a batch import. Do not combine with content.",
+    },
+    group: { type: "string", optional: true, description: "Optional folder path applied to every imported note." },
   },
   "vault.identity.list": {},
   "vault.proxyProfile.list": {},
@@ -322,6 +352,7 @@ const TOOL_INPUT_FIELDS = Object.freeze({
     remotePort: { type: "number", optional: true, description: "Required except for dynamic forwarding." },
     hostId: { type: "string", description: "Vault host ID used for the tunnel." },
     autoStart: { type: "string", optional: true, description: "true or false." },
+    autoReconnect: { type: "string", optional: true, description: "true or false. Reconnect automatically after unexpected disconnects." },
   },
   "portforward.rules.update": {
     ruleId: { type: "string", description: "Port forwarding rule ID." },
@@ -333,6 +364,7 @@ const TOOL_INPUT_FIELDS = Object.freeze({
     remotePort: { type: "number", optional: true, description: "Remote port." },
     hostId: { type: "string", optional: true, description: "Vault host ID used for the tunnel." },
     autoStart: { type: "string", optional: true, description: "true or false." },
+    autoReconnect: { type: "string", optional: true, description: "true or false. Reconnect automatically after unexpected disconnects." },
   },
   "portforward.rules.duplicate": {
     ruleId: { type: "string", description: "Port forwarding rule ID to copy." },
@@ -376,10 +408,12 @@ const TOOL_INPUT_FIELDS = Object.freeze({
 
 /** Long-form model guidance appended to terminal tool descriptions from catalog. */
 const MODEL_DESCRIPTION_HINTS = Object.freeze({
+  "session.environment":
+    "Call this first for any task involving a live Netcatty terminal, remote server, SSH session, SFTP path, or terminal tab. Select the target by label or hostname, then pass its sessionId to terminal and SFTP tools. Call it again after the user opens, closes, or renames a session.",
   "terminal.execute":
-    "Use only for commands expected to finish within about 60 seconds. For long-running commands use terminal_start and terminal_poll. Commands run in an isolated subshell of the visible terminal: the user sees the output live, but shell state such as cd, export, or set does not persist between calls — use absolute paths or combine cd with the command (cd /path && cmd).",
+    "Use this instead of the local shell when the command is intended for a Netcatty terminal or remote host. Call get_environment first to resolve the sessionId. Use only for commands expected to finish within about 60 seconds. For long-running commands use terminal_start and terminal_poll. Commands run in an isolated subshell of the visible terminal: the user sees the output live, but shell state such as cd, export, or set does not persist between calls — use absolute paths or combine cd with the command (cd /path && cmd).",
   "terminal.start":
-    "Prefer for builds, scans, log-following, or anything likely to exceed about 2 minutes. Shell state such as cd or export does not persist between calls — combine cd with the command.",
+    "Use this instead of the local shell for long-running commands on a Netcatty terminal or remote host. Call get_environment first to resolve the sessionId. Prefer for builds, scans, log-following, or anything likely to exceed about 2 minutes. Shell state such as cd or export does not persist between calls — combine cd with the command.",
   "terminal.poll":
     "Wait at least about 30 seconds between polls unless output justifies checking sooner.",
   "vault.host.notes.get":
@@ -387,9 +421,11 @@ const MODEL_DESCRIPTION_HINTS = Object.freeze({
   "vault.host.notes.set":
     "Host metadata notes on a saved host — not Vault → Notes sidebar entries. Prefer vault_notes_create/update when the user wants vault notes they can open in the Notes sidebar.",
   "vault.host.open":
-    "Opens a terminal tab for a saved vault host (same as clicking the host in Netcatty). Connection may still be establishing when the tool returns — use get_environment or wait briefly before terminal_execute if needed. Call session_close with the returned sessionId when the task is finished. Auth prompts (passphrase / keyboard-interactive) still require the user in the Netcatty UI.",
+    "Reuse-first: if this hostId already has a connected or connecting session with matching connection settings (including one auto-reconnecting after a drop, which keeps the same sessionId), that sessionId is returned and no new tab is opened — retry terminal_execute against it rather than reopening the host. Open a new tab only when get_environment shows no session for the host, when the task truly needs a parallel connection, or with newTab true. Call session_close when finished only for a newly opened session (reused is not true). A reused session keeps its original owner; do not close it as task cleanup. Disconnected or restored tabs needing user action are not reused. Connection may still be establishing when the tool returns — use get_environment or wait briefly before terminal_execute if needed. Auth prompts (passphrase / keyboard-interactive) still require the user in the Netcatty UI.",
+  "vault.host.list":
+    "Use when the user names a saved Netcatty host but get_environment has no matching live session. Resolve the hostId here, call host_open, then call get_environment to obtain the new sessionId.",
   "vault.host.import":
-    "Only for text in known export formats (PuTTY reg, MobaXterm ini, CSV template, SecureCRT, ssh_config). If attached host text is unknown or auto-detection fails, use read_attachment content, extract fields yourself, and call vault_hosts_create.",
+    "Only for text in known export formats (PuTTY reg, MobaXterm ini, CSV template, SecureCRT, FinalShell JSON, ssh_config). If attached host text is unknown or auto-detection fails, use read_attachment content, extract fields yourself, and call vault_hosts_create.",
   "vault.hosts.create":
     "Use when the user wants to add/create a host in Vault → Hosts (创建主机、SSH 连接凭据). NOT for Vault → Notes sidebar docs. Put SSH password in password, or a local private-key file path in keyPath. If that key is encrypted and the user supplied its passphrase, put it in passphrase so later connections do not prompt. Put long remarks/admin tables in host notes. Never fall back to vault_notes_create if this fails.",
   "vault.host.update":
@@ -400,8 +436,10 @@ const MODEL_DESCRIPTION_HINTS = Object.freeze({
     "Use ONLY when the user wants markdown documentation in Vault → Notes sidebar (保险箱笔记). Do NOT use when the user asked to create/add a host — use vault_hosts_create instead.",
   "vault.note.update":
     "Update an existing Vault → Notes entry (visible in the vault notes sidebar).",
+  "vault.note.import":
+    "Import generated or attached markdown into Vault → Notes. Use content plus fileName for one document, or documents for a batch. This creates notes; it does not add SSH hosts. Confirm mode asks the user to approve the import.",
   "vault.snippets.run":
-    "Text snippets (kind=snippet) paste shell commands with optional {{variables}}. Scripts (kind=script) run via nct JavaScript runtime — use scripts_run for script-only workflows.",
+    "Text snippets (kind=snippet) paste shell commands with optional named placeholders written with two curly braces on each side. Scripts (kind=script) run via nct JavaScript runtime — use scripts_run for script-only workflows.",
   "vault.snippets.create":
     "Create vault snippets (shell text) or scripts (kind=script, nct JavaScript). For multi-step terminal automation use kind=script and call scripts_reference.",
   "vault.scripts.run":

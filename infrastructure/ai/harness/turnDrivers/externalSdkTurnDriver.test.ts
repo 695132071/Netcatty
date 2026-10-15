@@ -103,6 +103,7 @@ test('plan updates replace the same activity across tool message boundaries', as
           status: 'completed',
           items: [{ text: 'Run command', completed: true }],
         });
+        onEvent?.({ type: 'hook', hookEvent: 'PostCompact' });
         onDone?.();
       });
       return { ok: true };
@@ -135,6 +136,7 @@ test('plan updates replace the same activity across tool message boundaries', as
     reportStreamError: () => {},
     setStreamingForScope: () => {},
     getLatestSession: () => session,
+    translate: (key) => key === 'ai.chat.contextCompacted' ? 'Context compacted (localized)' : key,
   };
   const agentConfig: ExternalAgentConfig = {
     id: 'codex',
@@ -183,6 +185,10 @@ test('plan updates replace the same activity across tool message boundaries', as
   assert.deepEqual(planActivities[0].type === 'plan_update' ? planActivities[0].items : [], [
     { text: 'Run command', completed: true },
   ]);
+  assert.equal(
+    session.messages.findLast(message => message.role === 'assistant')?.statusText,
+    'Context compacted (localized)',
+  );
 });
 
 test('accepted steering persists a user bubble and routes buffered output to a continuation', async () => {

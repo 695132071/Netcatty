@@ -6,6 +6,7 @@ const {
   buildCodebuddyCanUseTool,
   buildCodebuddyPromptInput,
   codebuddyBuiltinTools,
+  listCodebuddyModels,
   mapCodebuddyModels,
   runCodebuddyTurn,
   translateCodebuddyMessage,
@@ -426,7 +427,7 @@ test("mapCodebuddyModels maps model ids and drops invalid entries", () => {
       id: "glm-5.1",
       name: "GLM-5.1",
       description: undefined,
-      thinkingLevels: ["low", "medium", "high", "xhigh"],
+      thinkingLevels: ["minimal", "low", "medium", "high", "xhigh", "max"],
       defaultThinkingLevel: "medium",
       encodeDefaultThinking: false,
     },
@@ -434,7 +435,7 @@ test("mapCodebuddyModels maps model ids and drops invalid entries", () => {
       id: "cb-1",
       name: "CodeBuddy 1",
       description: "default",
-      thinkingLevels: ["low", "medium", "high", "xhigh"],
+      thinkingLevels: ["minimal", "low", "medium", "high", "xhigh", "max"],
       defaultThinkingLevel: "medium",
       encodeDefaultThinking: false,
     },
@@ -442,7 +443,7 @@ test("mapCodebuddyModels maps model ids and drops invalid entries", () => {
       id: "cb-2",
       name: "CodeBuddy 2",
       description: undefined,
-      thinkingLevels: ["low", "medium", "high", "xhigh"],
+      thinkingLevels: ["minimal", "low", "medium", "high", "xhigh", "max"],
       defaultThinkingLevel: "medium",
       encodeDefaultThinking: false,
     },
@@ -450,11 +451,77 @@ test("mapCodebuddyModels maps model ids and drops invalid entries", () => {
   assert.deepEqual(mapCodebuddyModels(null), []);
 });
 
+test("mapCodebuddyModels honours model-declared effort capabilities", () => {
+  const [declared, fallback] = mapCodebuddyModels([
+    {
+      id: "glm-5.1",
+      name: "GLM-5.1",
+      reasoning: { supportedEfforts: ["high", "low"], defaultEffort: "high" },
+    },
+    { id: "cb-1", name: "CodeBuddy 1" },
+  ]);
+  // Declared levels are kept and re-ordered to the canonical union order; the
+  // declared default wins over the generic "medium" fallback.
+  assert.deepEqual(declared.thinkingLevels, ["low", "high"]);
+  assert.equal(declared.defaultThinkingLevel, "high");
+  // No declaration → the full Effort union with the medium default.
+  assert.deepEqual(fallback.thinkingLevels, ["minimal", "low", "medium", "high", "xhigh", "max"]);
+  assert.equal(fallback.defaultThinkingLevel, "medium");
+});
+
+test("mapCodebuddyModels ignores unusable effort declarations", () => {
+  const models = mapCodebuddyModels([
+    { id: "m1", reasoning: { supportedEfforts: ["turbo"] } },
+    { id: "m2", reasoning: { supportedEfforts: [] } },
+    { id: "m3", reasoning: "garbage" },
+  ]);
+  for (const model of models) {
+    assert.deepEqual(model.thinkingLevels, ["minimal", "low", "medium", "high", "xhigh", "max"]);
+    assert.equal(model.defaultThinkingLevel, "medium");
+  }
+});
+
+test("mapCodebuddyModels picks a usable default when the declaration omits medium", () => {
+  const [model] = mapCodebuddyModels([
+    { id: "m1", reasoning: { supportedEfforts: ["max", "minimal"], defaultEffort: "bogus" } },
+  ]);
+  assert.deepEqual(model.thinkingLevels, ["minimal", "max"]);
+  // Unusable declared default + medium absent → fall back to the lowest level.
+  assert.equal(model.defaultThinkingLevel, "minimal");
+});
+
+test("listCodebuddyModels uses V2 raw model capabilities when available", async () => {
+  let closed = false;
+  const models = await listCodebuddyModels({
+    pathToCodebuddyCode: "/usr/local/bin/codebuddy",
+    env: { CODEBUDDY_ENV: "test" },
+    createSessionFn: (options) => {
+      assert.equal(options.pathToCodebuddyCode, "/usr/local/bin/codebuddy");
+      assert.deepEqual(options.env, { CODEBUDDY_ENV: "test" });
+      return {
+        async getAvailableModelsRaw() {
+          return [{
+            value: "glm-5.1",
+            displayName: "GLM-5.1",
+            reasoning: { supportedEfforts: ["high", "low"], defaultEffort: "high" },
+          }];
+        },
+        close() { closed = true; },
+      };
+    },
+  });
+
+  assert.equal(closed, true);
+  assert.equal(models[0].id, "glm-5.1");
+  assert.deepEqual(models[0].thinkingLevels, ["low", "high"]);
+  assert.equal(models[0].defaultThinkingLevel, "high");
+});
+
 // ---------------------------------------------------------------------------
-// SDK 0.3.230 options
+// SDK 0.3.258 options
 // ---------------------------------------------------------------------------
 
-test("buildCodebuddyQueryOptions passes SDK 0.3.230 options", () => {
+test("buildCodebuddyQueryOptions passes SDK 0.3.258 options", () => {
   const opts = buildCodebuddyQueryOptions({
     cwd: "/tmp",
     env: {},
@@ -569,6 +636,7 @@ test("buildCodebuddyHooks returns hook matchers that emit events", async () => {
   assert.ok(Array.isArray(hooks.PostToolUseFailure));
   assert.ok(Array.isArray(hooks.SessionEnd));
   assert.ok(Array.isArray(hooks.Notification));
+  assert.ok(Array.isArray(hooks.PostCompact));
 
   // Invoke PreToolUse hook callback
   const preHook = hooks.PreToolUse[0].hooks[0];
@@ -581,6 +649,23 @@ test("buildCodebuddyHooks returns hook matchers that emit events", async () => {
   assert.equal(events.length, 1);
   assert.equal(events[0].ev.hookEvent, "PreToolUse");
   assert.equal(events[0].ev.toolName, "Bash");
+});
+
+test("buildCodebuddyHooks forwards PostCompact with the compaction summary", async () => {
+  const { events, emitter } = collector();
+  emitter.emitEvent = (ev) => events.push({ k: "event", ev });
+  const hooks = buildCodebuddyHooks(emitter);
+  const postCompact = hooks.PostCompact[0].hooks[0];
+
+  const result = await postCompact(
+    { hook_event_name: "PostCompact", trigger: "auto", compact_summary: "summarised history" },
+    undefined,
+    { signal: new AbortController().signal },
+  );
+  assert.deepEqual(result, { continue: true });
+  assert.equal(events[0].ev.hookEvent, "PostCompact");
+  assert.equal(events[0].ev.trigger, "auto");
+  assert.equal(events[0].ev.compactSummary, "summarised history");
 });
 
 test("buildCodebuddyHooks blocks non-Netcatty Bash commands in skills mode", async () => {
@@ -603,7 +688,8 @@ test("buildCodebuddyHooks blocks non-Netcatty Bash commands in skills mode", asy
       decision: "block",
       reason:
         "Only Netcatty CLI commands are allowed in Skills mode. " +
-        "Use the netcatty-tool-cli command prefix provided by the host.",
+        "Use the netcatty-tool-cli command prefix provided by the host. " +
+        "Do not pass --chat-session or override NETCATTY_CLI_CHAT_SESSION_ID; the host already bound this process.",
     },
   );
   assert.deepEqual(
@@ -611,7 +697,7 @@ test("buildCodebuddyHooks blocks non-Netcatty Bash commands in skills mode", asy
       {
         tool_name: "Bash",
         tool_input: {
-          command: "netcatty-tool-cli session --session s1 --chat-session c1 --json",
+          command: "netcatty-tool-cli session --session s1 --json",
         },
         tool_use_id: "tu-cli",
       },
@@ -619,6 +705,34 @@ test("buildCodebuddyHooks blocks non-Netcatty Bash commands in skills mode", asy
       { signal: new AbortController().signal },
     ),
     { continue: true },
+  );
+  assert.equal(
+    (await preHook(
+      {
+        tool_name: "Bash",
+        tool_input: {
+          command: "netcatty-tool-cli session --session s1 --chat-session c1 --json",
+        },
+        tool_use_id: "tu-legacy",
+      },
+      "tu-legacy",
+      { signal: new AbortController().signal },
+    )).decision,
+    "block",
+  );
+  assert.equal(
+    (await preHook(
+      {
+        tool_name: "Bash",
+        tool_input: {
+          command: "NETCATTY_CLI_CHAT_SESSION_ID=other netcatty-tool-cli env --json",
+        },
+        tool_use_id: "tu-env-override",
+      },
+      "tu-env-override",
+      { signal: new AbortController().signal },
+    )).decision,
+    "block",
   );
   assert.equal(
     (await preHook(

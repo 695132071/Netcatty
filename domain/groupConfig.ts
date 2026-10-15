@@ -15,9 +15,13 @@ export function sanitizeGroupConfig(config: GroupConfig): GroupConfig {
     && !migrated.identityFileId
     && !migrated.identityFilePaths?.length;
 
-  return hasLegacyPasswordOnlyCredentials
-    ? { ...migrated, authMethod: 'password' }
+  const next = hasLegacyPasswordOnlyCredentials
+    ? { ...migrated, authMethod: 'password' as const }
     : migrated;
+  if (!Object.prototype.hasOwnProperty.call(next, 'singleChannelSsh')) return next;
+  const cleaned = { ...next };
+  delete (cleaned as { singleChannelSsh?: unknown }).singleChannelSsh;
+  return cleaned;
 }
 
 export interface ApplyGroupDefaultsOptions {
@@ -116,7 +120,7 @@ export function resolveGroupDefaults(
         ) {
           continue;
         }
-        if (key !== 'path' && value !== undefined) {
+        if (key !== 'path' && key !== 'notes' && value !== undefined) {
           if (key === 'proxyProfileId') {
             delete merged.proxyConfig;
           }
@@ -172,6 +176,25 @@ const SSH_CREDENTIAL_KEYS = new Set<keyof GroupConfig>([
   'identityFilePaths',
 ]);
 
+// SSH transport/input settings the local-shell editor does not expose: input
+// remapping (backspace), Mosh/Eternal-Terminal transports, and SSH-only
+// algorithm/agent/chain flags. A local shell never runs through SSH, so these
+// defaults would either remap local PTY input (`backspaceBehavior`,
+// createXTermRuntime) or make flag-first consumers report a purely local
+// session as Mosh/ET — with no way to override them in the local editor.
+const SSH_ONLY_TRANSPORT_KEYS = new Set<keyof GroupConfig>([
+  'agentForwarding',
+  'legacyAlgorithms',
+  'skipEcdsaHostKey',
+  'algorithms',
+  'hostChain',
+  'moshEnabled',
+  'moshServerPath',
+  'etEnabled',
+  'etPort',
+  'backspaceBehavior',
+]);
+
 /**
  * Apply group defaults to a host. Only fills in fields the host doesn't already have.
  * Returns a new host object — does NOT mutate the original.
@@ -206,9 +229,28 @@ export function applyGroupDefaults(
     host.telnetPassword !== undefined ||
     primaryTelnetHasManualSharedCredentials
   );
+  // Serial hosts: username/password on a serial host are the auto-login
+  // credentials (#3417) sent to whatever device answers on the port. Group
+  // defaults are SSH credentials — never inherit them into a serial host, or
+  // connecting a serial editor with blank credential fields would transmit the
+  // group's SSH password to anything that prints a login prompt.
+  const isSerialHost = host.protocol === 'serial';
+
+  // Local-shell hosts run on the user's own machine. Group defaults are
+  // SSH/remote-oriented: the SSH credential bundle and a saved startup
+  // command were written for the group's remote hosts and must never be
+  // inherited into a local shell, or clicking a local entry would
+  // type/execute that command on the local machine — and "Copy Credentials"
+  // on a local shell would copy an unrelated remote password. `deviceType`
+  // is equally remote-only: a saved "network" device type would make a
+  // local CMD/PowerShell/POSIX shell be treated as a network-device CLI
+  // (no normal autocomplete, network semantics for AI/command execution).
+  const isLocalShellHost = host.protocol === 'local';
 
   for (const key of INHERITABLE_KEYS) {
     if (shouldSkipGroupSshCredentialBundle && SSH_CREDENTIAL_KEYS.has(key)) continue;
+    if (isSerialHost && SSH_CREDENTIAL_KEYS.has(key)) continue;
+    if (isLocalShellHost && (SSH_CREDENTIAL_KEYS.has(key) || SSH_ONLY_TRANSPORT_KEYS.has(key) || key === 'startupCommand' || key === 'deviceType')) continue;
     if (key === 'password' && effective.savePassword === false) continue;
     if (key === 'telnetIdentityId' && hostHasManualTelnetCredentials) continue;
     if (key === 'proxyProfileId') {

@@ -7,7 +7,9 @@ import {
   CloudUpload,
   Loader2,
   Maximize2,
+  PanelLeft,
   Search,
+  SquareArrowOutUpRight,
   WrapText,
   X,
 } from 'lucide-react';
@@ -93,8 +95,8 @@ export interface TextEditorPaneProps {
   saveError: string | null;
   hotkeyScheme: HotkeyScheme;
   keyBindings: KeyBinding[];
-  /** Layout mode — affects header chrome (modal shows close+maximize; tab-form only shows content controls since tab has its own close). */
-  chrome: 'modal' | 'tab';
+  /** Layout mode — modal has close+maximize+popout; tab has popout; window has dock. */
+  chrome: 'modal' | 'tab' | 'window';
   /** Optional secondary label shown next to the filename in muted text — used by the tab form to display `host:remotePath`. */
   subtitle?: string;
   onContentChange: (content: string, viewState: Monaco.editor.ICodeEditorViewState | null) => void;
@@ -103,7 +105,18 @@ export interface TextEditorPaneProps {
   onSave: () => void;
   onRequestClose?: () => void;   // modal only
   onPromoteToTab?: () => void;   // modal only — omit to hide the maximize button
+  onPopOut?: () => void;         // modal/tab — open in the dedicated editor window
+  onDockToMain?: () => void;     // window chrome — dock current tab back to the main window
   initialViewState?: Monaco.editor.ICodeEditorViewState | null;
+}
+
+/** Monaco commands share a window-level resolver; bind each to its owning editor. */
+export function registerTextEditorCommand(
+  editor: Pick<Monaco.editor.IStandaloneCodeEditor, 'addCommand' | 'getId'>,
+  keybinding: number,
+  handler: Monaco.editor.ICommandHandler,
+): string | null {
+  return editor.addCommand(keybinding, handler, `editorId == '${editor.getId()}'`);
 }
 
 export const isTextEditorReadOnly = ({ saving }: { saving: boolean }): boolean => saving;
@@ -174,6 +187,8 @@ const TextEditorPaneInner: React.FC<TextEditorPaneProps> = ({
   onSave,
   onRequestClose,
   onPromoteToTab,
+  onPopOut,
+  onDockToMain,
   initialViewState,
 }) => {
   const { t } = useI18n();
@@ -284,7 +299,7 @@ const TextEditorPaneInner: React.FC<TextEditorPaneProps> = ({
     if (initialViewState) editor.restoreViewState(initialViewState);
 
     // Add save shortcut - use ref to avoid stale closure
-    editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS, () => {
+    registerTextEditorCommand(editor, monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS, () => {
       handleSaveRef.current();
     });
 
@@ -292,20 +307,20 @@ const TextEditorPaneInner: React.FC<TextEditorPaneProps> = ({
     // Pane's root div also tries to handle this, but Monaco's internal
     // key-event dispatcher fires first for focused editor keystrokes, so
     // registering the command here is the reliable path.
-    editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyW, () => {
+    registerTextEditorCommand(editor, monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyW, () => {
       if (!closeTabCommandWEnabledRef.current) return;
       handleCloseRef.current?.();
     });
 
     // Add find shortcut (Ctrl+F / Cmd+F)
-    editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyF, () => {
+    registerTextEditorCommand(editor, monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyF, () => {
       // Trigger Monaco's built-in find widget
       editor.trigger('keyboard', 'actions.find', null);
     });
 
     // Fallback paste path for Electron environments where Monaco paste can fail.
     // When focus is in the find/replace widget, paste into that input instead of the body.
-    editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyV, () => {
+    registerTextEditorCommand(editor, monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyV, () => {
       void pasteForMonacoEditorCommand({
         activeElement: document.activeElement,
         readClipboardText: () => readClipboardTextRef.current(),
@@ -437,6 +452,42 @@ const TextEditorPaneInner: React.FC<TextEditorPaneProps> = ({
                 onPromoteToTab={onPromoteToTab}
                 title={t('sftp.editor.maximize')}
               />
+            )}
+
+            {onPopOut && (
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="h-6 w-6"
+                    onClick={onPopOut}
+                    disabled={saving}
+                    aria-label={t('sftp.editor.popOut')}
+                  >
+                    <SquareArrowOutUpRight size={13} />
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent>{t('sftp.editor.popOut')}</TooltipContent>
+              </Tooltip>
+            )}
+
+            {chrome === 'window' && onDockToMain && (
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="h-6 w-6"
+                    onClick={onDockToMain}
+                    disabled={saving}
+                    aria-label={t('sftp.editor.dock')}
+                  >
+                    <PanelLeft size={13} />
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent>{t('sftp.editor.dock')}</TooltipContent>
+              </Tooltip>
             )}
 
             {/* Close button — modal chrome only */}

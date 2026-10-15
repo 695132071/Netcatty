@@ -2,6 +2,7 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 const { EventEmitter } = require("node:events");
 const Module = require("node:module");
+const { abortPendingBoot } = require("./sessionBootEpoch.cjs");
 
 const sshConnectionPool = require("./sshConnectionPool.cjs");
 const {
@@ -19,11 +20,17 @@ const {
 // Load sshBridge with a mocked ssh2 module so we can observe whether a *new*
 // SSH client is constructed (a fresh connection) versus an existing connection
 // being reused for a new shell channel (issue #1204).
-function loadBridgeWithMockedSsh2(t, { connectReady = false, remoteVer = "OpenSSH_9.0" } = {}) {
+function loadBridgeWithMockedSsh2(t, {
+  connectReady = false,
+  remoteVer = "OpenSSH_9.0",
+  trackShellPids = false,
+  beforeShellPidScanResult,
+} = {}) {
   const bridgePath = require.resolve("./sshBridge.cjs");
   const authHelperPath = require.resolve("./sshAuthHelper.cjs");
   const originalLoad = Module._load;
   let clientConstructCount = 0;
+  const clients = [];
 
   class MockSSHClient extends EventEmitter {
     constructor() {
@@ -35,7 +42,9 @@ function loadBridgeWithMockedSsh2(t, { connectReady = false, remoteVer = "OpenSS
       };
       this._remoteVer = remoteVer;
       this.openedShells = [];
+      this.lastShellOptions = null;
       this.ended = 0;
+      clients.push(this);
     }
     connect() {
       clientConstructCount += 1;
@@ -53,8 +62,26 @@ function loadBridgeWithMockedSsh2(t, { connectReady = false, remoteVer = "OpenSS
     }
     end() { this.ended += 1; }
     destroy() {}
-    exec(_command, callback) { callback?.(new Error("exec unavailable")); }
-    shell(_pty, _options, callback) {
+    exec(_command, callback) {
+      if (!trackShellPids) {
+        callback?.(new Error("exec unavailable"));
+        return;
+      }
+      const stream = new EventEmitter();
+      stream.stderr = new EventEmitter();
+      stream.close = () => {};
+      const pids = this.openedShells
+        .map((_shell, index) => `${(index + 1) * 111} 1`)
+        .join("\n");
+      setImmediate(() => {
+        beforeShellPidScanResult?.();
+        stream.emit("data", Buffer.from(`${pids}\n__NETCATTY_SHELL_SCAN_COMPLETE__\n`));
+        stream.emit("close", 0);
+      });
+      callback(null, stream);
+    }
+    shell(_pty, options, callback) {
+      this.lastShellOptions = options;
       const stream = makeStream();
       this.openedShells.push(stream);
       setImmediate(() => callback(null, stream));
@@ -110,13 +137,20 @@ function loadBridgeWithMockedSsh2(t, { connectReady = false, remoteVer = "OpenSS
     Module._load = originalLoad;
   });
 
-  return { bridge, getClientConstructCount: () => clientConstructCount };
+  return {
+    bridge,
+    getClientConstructCount: () => clientConstructCount,
+    getClients: () => clients,
+  };
 }
 
-test("simultaneous normal opens of the same host make one physical SSH dial", async (t) => {
+test("simultaneous normal opens identify both shells before sharing one SSH connection", async (t) => {
   resetSshTransportRegistryForTests({ defaultIdleTtlMs: 0 });
   t.after(() => resetSshTransportRegistryForTests({ defaultIdleTtlMs: 0 }));
-  const { bridge, getClientConstructCount } = loadBridgeWithMockedSsh2(t, { connectReady: true });
+  const { bridge, getClientConstructCount } = loadBridgeWithMockedSsh2(t, {
+    connectReady: true,
+    trackShellPids: true,
+  });
   const sessions = new Map();
   const start = registerStartHandler(bridge, sessions);
   const options = {
@@ -139,6 +173,70 @@ test("simultaneous normal opens of the same host make one physical SSH dial", as
   assert.equal(getClientConstructCount(), 1);
   assert.equal(sessions.get("normal-1").conn, sessions.get("normal-2").conn);
   assert.equal(sessions.get("normal-1").connRef.count, 2);
+  assert.equal(sessions.get("normal-1").shellPid, "111");
+  assert.equal(sessions.get("normal-2").shellPid, "222");
+});
+
+test("simultaneous normal opens use separate connections when shell identity is unavailable", async (t) => {
+  resetSshTransportRegistryForTests({ defaultIdleTtlMs: 0 });
+  t.after(() => resetSshTransportRegistryForTests({ defaultIdleTtlMs: 0 }));
+  const { bridge, getClientConstructCount } = loadBridgeWithMockedSsh2(t, {
+    connectReady: true,
+  });
+  const sessions = new Map();
+  const start = registerStartHandler(bridge, sessions);
+  const options = {
+    hostname: "10.0.0.54",
+    username: "alice",
+    port: 22,
+    authMethod: "password",
+    password: "secret",
+    useSshAgent: false,
+    verifyHostKeys: false,
+  };
+
+  await Promise.all([
+    start({ sender: makeSender() }, { ...options, sessionId: "normal-1" }),
+    start({ sender: makeSender() }, { ...options, sessionId: "normal-2" }),
+  ]);
+
+  assert.equal(getClientConstructCount(), 2);
+  assert.notEqual(sessions.get("normal-1").conn, sessions.get("normal-2").conn);
+});
+
+test("simultaneous normal opens do not trust a replacement session after identity discovery", async (t) => {
+  resetSshTransportRegistryForTests({ defaultIdleTtlMs: 0 });
+  t.after(() => resetSshTransportRegistryForTests({ defaultIdleTtlMs: 0 }));
+  const sessions = new Map();
+  let replaced = false;
+  const { bridge, getClientConstructCount } = loadBridgeWithMockedSsh2(t, {
+    connectReady: true,
+    trackShellPids: true,
+    beforeShellPidScanResult: () => {
+      if (replaced) return;
+      replaced = true;
+      const original = sessions.get("normal-1");
+      sessions.set("normal-1", { ...original, shellPid: "999" });
+    },
+  });
+  const start = registerStartHandler(bridge, sessions);
+  const options = {
+    hostname: "10.0.0.55",
+    username: "alice",
+    port: 22,
+    authMethod: "password",
+    password: "secret",
+    useSshAgent: false,
+    verifyHostKeys: false,
+  };
+
+  await Promise.all([
+    start({ sender: makeSender() }, { ...options, sessionId: "normal-1" }),
+    start({ sender: makeSender() }, { ...options, sessionId: "normal-2" }),
+  ]);
+
+  assert.equal(getClientConstructCount(), 2);
+  assert.notEqual(sessions.get("normal-1").conn, sessions.get("normal-2").conn);
 });
 
 test("reuseTransport false makes simultaneous same-host opens dial independently", async (t) => {
@@ -692,10 +790,12 @@ function makeSourceSession(conn, endpoint) {
     zmodemSentry: { cancel() {} },
     hostname: endpoint.hostname,
     username: endpoint.username,
+    singleChannelSsh: endpoint.singleChannelSsh === true,
     _reuseEndpoint: {
       hostname: endpoint.hostname,
       port: endpoint.port || 22,
       username: endpoint.username,
+      ...(endpoint.singleChannelSsh ? { singleChannelSsh: true } : {}),
       ...(Array.isArray(endpoint.jumpHosts) ? { jumpHosts: endpoint.jumpHosts } : {}),
     },
   };
@@ -1302,6 +1402,316 @@ test("Copy Tab retries bastion channelOpen too offen before falling back", async
   assert.equal(getConnectionReuseFallbackEvents(sender).length, 0);
 });
 
+test("Copy Tab keeps reusing when a bastion rate limit outlasts the legacy retry burst", async (t) => {
+  const { bridge, getClientConstructCount } = loadBridgeWithMockedSsh2(t);
+  const sessions = new Map();
+  const sourceConn = makeReusableConn();
+  let shellAttempts = 0;
+  sourceConn.shell = (_opts, _shellOpts, cb) => {
+    shellAttempts += 1;
+    if (shellAttempts <= 4) {
+      setImmediate(() => cb(new Error("(SSH) Channel open failure: channelOpen too offen type=session")));
+      return;
+    }
+    const stream = makeStream();
+    sourceConn.openedShells.push(stream);
+    setImmediate(() => cb(null, stream));
+  };
+  sessions.set("source", makeSourceSession(sourceConn, {
+    hostname: "bastion.example",
+    username: "alice",
+  }));
+
+  const start = registerStartHandler(bridge, sessions);
+  const sender = makeSender();
+  const result = await start(
+    { sender },
+    {
+      sessionId: "copy",
+      hostname: "bastion.example",
+      username: "alice",
+      sourceSessionId: "source",
+      sshChannelOpenRateLimitBackoffMs: 1,
+    },
+  );
+
+  assert.equal(result.sessionId, "copy");
+  assert.equal(shellAttempts, 5);
+  assert.equal(getClientConstructCount(), 0);
+  assert.equal(sourceConn.openedShells.length, 1);
+  assert.equal(getConnectionReuseFallbackEvents(sender).length, 0);
+});
+
+test("ordinary parked reuse keeps the legacy retry bound", async (t) => {
+  const { bridge, getClientConstructCount } = loadBridgeWithMockedSsh2(t);
+  const sessions = new Map();
+  const sourceConn = makeReusableConn();
+  let shellAttempts = 0;
+  sourceConn.shell = (_opts, _shellOpts, cb) => {
+    shellAttempts += 1;
+    setImmediate(() => cb(new Error("(SSH) Channel open failure: channelOpen too offen type=session")));
+  };
+  sessions.set("source", makeSourceSession(sourceConn, {
+    hostname: "bastion.example",
+    username: "alice",
+  }));
+
+  const start = registerStartHandler(bridge, sessions);
+  await assert.rejects(
+    start(
+      { sender: makeSender() },
+      {
+        sessionId: "ordinary",
+        hostname: "bastion.example",
+        username: "alice",
+        sshChannelOpenRateLimitBackoffMs: 1,
+      },
+    ),
+    /unexpected fresh connect/,
+  );
+
+  // The ordinary path can try the same live transport through its parked and
+  // coordinated-reuse stages. Each stage keeps the legacy four-attempt bound.
+  assert.equal(shellAttempts, 8);
+  assert.equal(getClientConstructCount(), 1);
+});
+
+test("cancelling Copy Tab during rate-limit backoff stops retries and keeps the source alive", async (t) => {
+  const { bridge, getClientConstructCount } = loadBridgeWithMockedSsh2(t);
+  const sessions = new Map();
+  const sourceConn = makeReusableConn();
+  let shellAttempts = 0;
+  sourceConn.shell = (_opts, _shellOpts, cb) => {
+    shellAttempts += 1;
+    setImmediate(() => {
+      cb(new Error("(SSH) Channel open failure: channelOpen too offen type=session"));
+      setImmediate(() => abortPendingBoot("copy", 1));
+    });
+  };
+  const source = makeSourceSession(sourceConn, {
+    hostname: "bastion.example",
+    username: "alice",
+  });
+  sessions.set("source", source);
+
+  const start = registerStartHandler(bridge, sessions);
+  await assert.rejects(
+    start(
+      { sender: makeSender() },
+      {
+        sessionId: "copy",
+        hostname: "bastion.example",
+        username: "alice",
+        sourceSessionId: "source",
+        bootEpoch: 1,
+        sshChannelOpenRateLimitBackoffMs: 50,
+      },
+    ),
+    /aborted/,
+  );
+  await new Promise((resolve) => setTimeout(resolve, 75));
+
+  assert.equal(shellAttempts, 1);
+  assert.equal(getClientConstructCount(), 0);
+  assert.equal(sourceConn.ended, 0);
+  assert.equal(source.connRef.count, 1);
+});
+
+test("cancelling Copy Tab during reused-shell liveness does not register a stale session", async (t) => {
+  const { bridge, getClientConstructCount } = loadBridgeWithMockedSsh2(t);
+  const sessions = new Map();
+  const sourceConn = makeReusableConn();
+  sourceConn._remoteVer = "CustomBastion_1.0";
+  let openedStream = null;
+  sourceConn.shell = (_opts, _shellOpts, cb) => {
+    openedStream = makeStream();
+    sourceConn.openedShells.push(openedStream);
+    setImmediate(() => {
+      cb(null, openedStream);
+      setTimeout(() => abortPendingBoot("copy", 1), 5);
+    });
+  };
+  const source = makeSourceSession(sourceConn, {
+    hostname: "bastion.example",
+    username: "alice",
+  });
+  source.connRef.pendingShellReconnectRisk = {
+    oldShellPids: [],
+    hasUnknownOldShell: true,
+  };
+  sessions.set("source", source);
+
+  const start = registerStartHandler(bridge, sessions);
+  await assert.rejects(
+    start(
+      { sender: makeSender() },
+      {
+        sessionId: "copy",
+        hostname: "bastion.example",
+        username: "alice",
+        sourceSessionId: "source",
+        bootEpoch: 1,
+        sshReusedShellLivenessMs: 100,
+      },
+    ),
+    /aborted/,
+  );
+
+  assert.equal(getClientConstructCount(), 0);
+  assert.equal(sessions.has("copy"), false);
+  assert.equal(openedStream.closed, true);
+  assert.equal(sourceConn.ended, 0);
+  assert.equal(source.connRef.count, 1);
+});
+
+test("cancelling ordinary parked reuse does not start a fresh login", async (t) => {
+  const { bridge, getClientConstructCount } = loadBridgeWithMockedSsh2(t);
+  const sessions = new Map();
+  const sourceConn = makeReusableConn();
+  let shellAttempts = 0;
+  sourceConn.shell = (_opts, _shellOpts, cb) => {
+    shellAttempts += 1;
+    setImmediate(() => {
+      cb(new Error("(SSH) Channel open failure: channelOpen too offen type=session"));
+      setImmediate(() => abortPendingBoot("ordinary", 1));
+    });
+  };
+  const source = makeSourceSession(sourceConn, {
+    hostname: "bastion.example",
+    username: "alice",
+  });
+  sessions.set("source", source);
+
+  const start = registerStartHandler(bridge, sessions);
+  await assert.rejects(
+    start(
+      { sender: makeSender() },
+      {
+        sessionId: "ordinary",
+        hostname: "bastion.example",
+        username: "alice",
+        bootEpoch: 1,
+        sshChannelOpenRateLimitBackoffMs: 50,
+      },
+    ),
+    /aborted/,
+  );
+
+  assert.equal(shellAttempts, 1);
+  assert.equal(getClientConstructCount(), 0);
+  assert.equal(sourceConn.ended, 0);
+  assert.equal(source.connRef.count, 1);
+});
+
+test("an abandoned Copy Tab open blocks overlapping reuse until the raw callback settles", async (t) => {
+  const { bridge, getClientConstructCount } = loadBridgeWithMockedSsh2(t);
+  const sessions = new Map();
+  const sourceConn = makeDeferredShellConn();
+  const source = makeSourceSession(sourceConn, {
+    hostname: "bastion.example",
+    username: "alice",
+  });
+  sessions.set("source", source);
+  const start = registerStartHandler(bridge, sessions);
+
+  const firstStart = start(
+    { sender: makeSender() },
+    {
+      sessionId: "copy-1",
+      hostname: "bastion.example",
+      username: "alice",
+      sourceSessionId: "source",
+      bootEpoch: 1,
+    },
+  );
+  for (let attempt = 0; attempt < 20 && sourceConn._pending.length === 0; attempt += 1) {
+    await new Promise((resolve) => setImmediate(resolve));
+  }
+  assert.equal(sourceConn._pending.length, 1);
+  abortPendingBoot("copy-1", 1);
+  await assert.rejects(firstStart, /aborted/);
+  assert.equal(source.connRef.pendingAbandonedShellOpens, 1);
+  assert.equal(sourceConn._pending.length, 1);
+
+  await assert.rejects(
+    start(
+      { sender: makeSender() },
+      {
+        sessionId: "copy-2",
+        hostname: "bastion.example",
+        username: "alice",
+        sourceSessionId: "source",
+        bootEpoch: 1,
+      },
+    ),
+    /unexpected fresh connect/,
+  );
+  assert.equal(sourceConn._pending.length, 1, "second copy must not overlap the abandoned open");
+
+  sourceConn.flushShell();
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(source.connRef.pendingAbandonedShellOpens, undefined);
+
+  const thirdStart = start(
+    { sender: makeSender() },
+    {
+      sessionId: "copy-3",
+      hostname: "bastion.example",
+      username: "alice",
+      sourceSessionId: "source",
+      bootEpoch: 1,
+      skipShellPidDiscovery: true,
+    },
+  );
+  for (let attempt = 0; attempt < 20 && sourceConn._pending.length === 0; attempt += 1) {
+    await new Promise((resolve) => setImmediate(resolve));
+  }
+  assert.equal(sourceConn._pending.length, 1);
+  sourceConn.flushShell();
+  const result = await thirdStart;
+
+  assert.equal(result.sessionId, "copy-3");
+  assert.equal(getClientConstructCount(), 1);
+  assert.equal(sourceConn.ended, 0);
+});
+
+test("a shared connection error during Copy Tab backoff stops queued retries", async (t) => {
+  const { bridge, getClientConstructCount } = loadBridgeWithMockedSsh2(t);
+  const sessions = new Map();
+  const sourceConn = makeReusableConn();
+  let shellAttempts = 0;
+  sourceConn.shell = (_opts, _shellOpts, cb) => {
+    shellAttempts += 1;
+    setImmediate(() => {
+      cb(new Error("(SSH) Channel open failure: channelOpen too offen type=session"));
+      setImmediate(() => sourceConn.emit("error", new Error("transport lost")));
+    });
+  };
+  sessions.set("source", makeSourceSession(sourceConn, {
+    hostname: "bastion.example",
+    username: "alice",
+  }));
+
+  const start = registerStartHandler(bridge, sessions);
+  await assert.rejects(
+    start(
+      { sender: makeSender() },
+      {
+        sessionId: "copy",
+        hostname: "bastion.example",
+        username: "alice",
+        sourceSessionId: "source",
+        sshChannelOpenRateLimitBackoffMs: 50,
+      },
+    ),
+    /unexpected fresh connect/,
+  );
+  await new Promise((resolve) => setTimeout(resolve, 75));
+
+  assert.equal(shellAttempts, 1);
+  assert.equal(getClientConstructCount(), 1);
+});
+
 test("Copy Tab opens the shell before PID discovery so bastion rate limits do not burn the session slot", async (t) => {
   const { bridge, getClientConstructCount } = loadBridgeWithMockedSsh2(t);
   const sessions = new Map();
@@ -1783,3 +2193,312 @@ test("falls back to a fresh connection when the source is gone", async (t) => {
     [{ sessionId: "copy", sourceSessionId: "missing-source" }],
   );
 });
+
+test("one-channel bastion banners stamp the runtime flag and dial Copy Tab separately", async (t) => {
+  const banners = ["CLOUDBILITY-4.14", "SSH-2.0-BHostSSH_7.0", "TERM-SSHD"];
+  for (const remoteVer of banners) {
+    resetSshTransportRegistryForTests({ defaultIdleTtlMs: 0 });
+    const { bridge, getClientConstructCount, getClients } = loadBridgeWithMockedSsh2(t, {
+      connectReady: true,
+      remoteVer,
+    });
+    const sessions = new Map();
+    const start = registerStartHandler(bridge, sessions);
+    const options = {
+      hostname: "bastion.example",
+      username: "alice",
+      port: 22,
+      authMethod: "password",
+      password: "secret",
+      useSshAgent: false,
+      verifyHostKeys: false,
+    };
+
+    await start({ sender: makeSender() }, { ...options, sessionId: "first" });
+    const first = sessions.get("first");
+    const firstClient = getClients()[0];
+    assert.equal(first.singleChannelSsh, true, remoteVer);
+    assert.equal(first._reuseEndpoint.singleChannelSsh, true, remoteVer);
+    assert.equal(first.connRef.endpoint.singleChannelSsh, true, remoteVer);
+    assert.equal(first.connRef.allowIdlePark, false, remoteVer);
+    assert.equal(firstClient.lastShellOptions.env, undefined, remoteVer);
+    assert.equal(firstClient.openedShells.length, 1, remoteVer);
+
+    await start({ sender: makeSender() }, {
+      ...options,
+      sessionId: "copy",
+      sourceSessionId: "first",
+    });
+    assert.equal(getClientConstructCount(), 2, remoteVer);
+    assert.equal(firstClient.openedShells.length, 1, remoteVer);
+    assert.notEqual(sessions.get("copy").conn, first.conn, remoteVer);
+    assert.equal(sessions.get("copy").singleChannelSsh, true, remoteVer);
+  }
+});
+
+test("OpenSSH and JumpServer banners do not stamp single-channel mode", async (t) => {
+  for (const remoteVer of ["OpenSSH_9.6", "JumpServer"]) {
+    resetSshTransportRegistryForTests({ defaultIdleTtlMs: 0 });
+    const { bridge, getClientConstructCount, getClients } = loadBridgeWithMockedSsh2(t, {
+      connectReady: true,
+      remoteVer,
+    });
+    const sessions = new Map();
+    const start = registerStartHandler(bridge, sessions);
+    const options = {
+      hostname: "shell.example",
+      username: "alice",
+      port: 22,
+      authMethod: "password",
+      password: "secret",
+      useSshAgent: false,
+      verifyHostKeys: false,
+    };
+
+    await start({ sender: makeSender() }, { ...options, sessionId: "first" });
+    const first = sessions.get("first");
+    assert.equal(first.singleChannelSsh, false, remoteVer);
+    assert.equal(first.connRef.endpoint.singleChannelSsh, false, remoteVer);
+    assert.equal(getClients()[0].lastShellOptions.env.COLORTERM, "truecolor", remoteVer);
+
+    await start({ sender: makeSender() }, {
+      ...options,
+      sessionId: "copy",
+      sourceSessionId: "first",
+      skipShellPidDiscovery: true,
+    });
+    assert.equal(getClientConstructCount(), 1, remoteVer);
+    assert.equal(sessions.get("copy").conn, first.conn, remoteVer);
+    assert.equal(sessions.get("copy").singleChannelSsh, false, remoteVer);
+  }
+});
+
+test("single-channel Copy Tab dials separately and keeps the original shell", async (t) => {
+  const { bridge, getClientConstructCount } = loadBridgeWithMockedSsh2(t, { connectReady: true });
+  const sessions = new Map();
+  const sourceConn = makeReusableConn();
+  const openShell = sourceConn.shell;
+  sourceConn.shell = (...args) => {
+    sourceConn._sock.destroyed = true;
+    sourceConn.emit("close");
+    return openShell.apply(sourceConn, args);
+  };
+  const source = makeSourceSession(sourceConn, {
+    hostname: "10.0.0.1",
+    username: "alice",
+    singleChannelSsh: true,
+  });
+  const originalStream = source.stream;
+  sessions.set("source", source);
+
+  const start = registerStartHandler(bridge, sessions);
+  const result = await start(
+    { sender: makeSender() },
+    {
+      sessionId: "copy",
+      hostname: "10.0.0.1",
+      username: "alice",
+      port: 22,
+      authMethod: "password",
+      password: "secret",
+      useSshAgent: false,
+      verifyHostKeys: false,
+      singleChannelSsh: true,
+      sourceSessionId: "source",
+    },
+  );
+
+  assert.equal(result.sessionId, "copy");
+  assert.equal(getClientConstructCount(), 1);
+  assert.equal(sourceConn.openedShells.length, 0);
+  assert.equal(sourceConn._sock.destroyed, false);
+  assert.equal(originalStream.closed, false);
+  assert.equal(source.connRef.endpoint.singleChannelSsh, true);
+  assert.equal(source.connRef.allowIdlePark, false);
+  assert.notEqual(sessions.get("copy").conn, sourceConn);
+  assert.equal(sessions.get("source").conn, sourceConn);
+});
+
+function waitForExitDeliveries() {
+  // finalizeClose runs after the paced output buffer flushes on the next
+  // event-loop turns; give both queue turns and timers a chance to run.
+  return new Promise((resolve) => setTimeout(resolve, 50));
+}
+
+function getExitPayloads(sender) {
+  return sender.sent
+    .filter((m) => m.channel === "netcatty:exit")
+    .map((m) => m.payload);
+}
+
+test("a channel closed without exit-status or exit-signal reports no exit code (#3591)", async (t) => {
+  const { bridge } = loadBridgeWithMockedSsh2(t, { connectReady: true });
+  const sessions = new Map();
+  const start = registerStartHandler(bridge, sessions);
+  const sender = makeSender();
+  const options = {
+    hostname: "bastion.example",
+    username: "alice",
+    port: 22,
+    authMethod: "password",
+    password: "secret",
+    useSshAgent: false,
+    verifyHostKeys: false,
+  };
+
+  await start({ sender }, { ...options, sessionId: "no-status-close" });
+  const stream = sessions.get("no-status-close").stream;
+
+  // Bastions/gateways built on stacks like golang.org/x/crypto/ssh close the
+  // session channel without ever sending exit-status or exit-signal, so ssh2
+  // never emits stream "exit".
+  stream.emit("close");
+  await waitForExitDeliveries();
+
+  const exits = getExitPayloads(sender);
+  assert.equal(exits.length, 1);
+  assert.equal(exits[0].reason, "closed");
+  assert.equal(exits[0].exitCode, undefined, "the sentinel 0 must not be reported as a real exit code");
+  assert.equal(exits[0].remoteClosedWithoutExitStatus, true);
+});
+
+test("a real exit-status still reports its numeric exit code", async (t) => {
+  const { bridge } = loadBridgeWithMockedSsh2(t, { connectReady: true });
+  const sessions = new Map();
+  const start = registerStartHandler(bridge, sessions);
+  const sender = makeSender();
+  const options = {
+    hostname: "10.0.0.50",
+    username: "alice",
+    port: 22,
+    authMethod: "password",
+    password: "secret",
+    useSshAgent: false,
+    verifyHostKeys: false,
+  };
+
+  await start({ sender }, { ...options, sessionId: "clean-exit" });
+  const stream = sessions.get("clean-exit").stream;
+
+  stream.emit("exit", 0);
+  stream.emit("close");
+  await waitForExitDeliveries();
+
+  const exits = getExitPayloads(sender);
+  assert.equal(exits.length, 1);
+  assert.equal(exits[0].reason, "exited");
+  assert.equal(exits[0].exitCode, 0);
+  assert.equal(exits[0].remoteClosedWithoutExitStatus, undefined);
+});
+
+test("an exit-signal with no code does not fabricate an exit code 0", async (t) => {
+  const { bridge } = loadBridgeWithMockedSsh2(t, { connectReady: true });
+  const sessions = new Map();
+  const start = registerStartHandler(bridge, sessions);
+  const sender = makeSender();
+  const options = {
+    hostname: "10.0.0.50",
+    username: "alice",
+    port: 22,
+    authMethod: "password",
+    password: "secret",
+    useSshAgent: false,
+    verifyHostKeys: false,
+  };
+
+  await start({ sender }, { ...options, sessionId: "signal-exit" });
+  const stream = sessions.get("signal-exit").stream;
+
+  stream.emit("exit", undefined, "SIGUSR2");
+  stream.emit("close");
+  await waitForExitDeliveries();
+
+  const exits = getExitPayloads(sender);
+  assert.equal(exits.length, 1);
+  assert.equal(exits[0].reason, "signaled");
+  assert.equal(exits[0].exitSignal, "SIGUSR2");
+  assert.equal(exits[0].exitCode, undefined);
+  assert.equal(exits[0].remoteClosedWithoutExitStatus, undefined, "the remote did report a signal");
+});
+
+test("a connection close after an exit-signal stays an administrative disconnect", async (t) => {
+  const { bridge } = loadBridgeWithMockedSsh2(t, { connectReady: true });
+  const sessions = new Map();
+  const start = registerStartHandler(bridge, sessions);
+  const sender = makeSender();
+  const options = {
+    hostname: "10.0.0.50",
+    username: "alice",
+    port: 22,
+    authMethod: "password",
+    password: "secret",
+    useSshAgent: false,
+    verifyHostKeys: false,
+  };
+
+  await start({ sender }, { ...options, sessionId: "signal-then-conn-close" });
+  const session = sessions.get("signal-then-conn-close");
+
+  // ssh2 can emit conn "close" before the channel's paced finalize. The
+  // signal recorded on "exit" must still win over a generic transport close.
+  session.stream.emit("exit", null, "SIGHUP");
+  session.conn.emit("close");
+  await waitForExitDeliveries();
+
+  const exits = getExitPayloads(sender);
+  assert.equal(exits.length, 1);
+  assert.equal(exits[0].reason, "signaled");
+  assert.equal(exits[0].exitSignal, "SIGHUP");
+  assert.equal(exits[0].exitCode, undefined);
+});
+
+test("a connection close without an exit-signal stays a transport close", async (t) => {
+  const { bridge } = loadBridgeWithMockedSsh2(t, { connectReady: true });
+  const sessions = new Map();
+  const start = registerStartHandler(bridge, sessions);
+  const sender = makeSender();
+  const options = {
+    hostname: "10.0.0.50",
+    username: "alice",
+    port: 22,
+    authMethod: "password",
+    password: "secret",
+    useSshAgent: false,
+    verifyHostKeys: false,
+  };
+
+  await start({ sender }, { ...options, sessionId: "transport-conn-close" });
+  sessions.get("transport-conn-close").conn.emit("close");
+  await waitForExitDeliveries();
+
+  const exits = getExitPayloads(sender);
+  assert.equal(exits.length, 1);
+  assert.equal(exits[0].reason, "closed");
+  assert.equal(exits[0].exitCode, undefined);
+  assert.equal(exits[0].remoteClosedWithoutExitStatus, true);
+  assert.equal(exits[0].exitSignal, undefined);
+});
+
+for (const exitCode of [0, 7]) {
+  test(`connection close preserves reported shell status ${exitCode} before channel finalization`, async (t) => {
+    const { bridge } = loadBridgeWithMockedSsh2(t, { connectReady: true });
+    const sessions = new Map();
+    const start = registerStartHandler(bridge, sessions);
+    const sender = makeSender();
+    const sessionId = `status-then-conn-close-${exitCode}`;
+    await start({ sender }, {
+      hostname: "10.0.0.50", username: "alice", port: 22,
+      authMethod: "password", password: "secret",
+      useSshAgent: false, verifyHostKeys: false, sessionId,
+    });
+    const session = sessions.get(sessionId);
+    session.stream.emit("exit", exitCode);
+    session.conn.emit("close");
+    await waitForExitDeliveries();
+    const exits = getExitPayloads(sender);
+    assert.equal(exits.length, 1);
+    assert.equal(exits[0].reason, "exited");
+    assert.equal(exits[0].exitCode, exitCode);
+    assert.equal(exits[0].remoteClosedWithoutExitStatus, undefined);
+  });
+}

@@ -1,9 +1,14 @@
 import type { Snippet } from "./models";
+import { getSnippetPackageAncestors } from "./snippetPackage.ts";
 import { normalizeVaultOrder } from "./vaultOrder";
 import { normalizeGroupTargetPaths } from "./hostGroupPathMutations";
 
 export const SNIPPET_EXPORT_KIND = "netcatty.snippets" as const;
-export const SNIPPET_EXPORT_VERSION = 2 as const;
+// Version 3 introduced the portable all-hosts scope (targetsAllHosts); older
+// releases silently drop that field when they accept a version-2 payload, so
+// new exports advertise 3 while imports still accept versions 1 and 2.
+export const SNIPPET_EXPORT_VERSION = 3 as const;
+export const SNIPPET_EXPORT_VERSION_PREVIOUS = 2 as const;
 export const SNIPPET_EXPORT_VERSION_LEGACY = 1 as const;
 
 export type SnippetImportConflictAction = "skip" | "overwrite";
@@ -14,6 +19,7 @@ export type SnippetExportItem = {
   tags?: string[];
   package?: string;
   targetGroups?: string[];
+  targetsAllHosts?: boolean;
   shortkey?: string;
   noAutoRun?: boolean;
   multiLineRunMode?: Snippet["multiLineRunMode"];
@@ -26,7 +32,10 @@ export type SnippetExportItem = {
 
 export type SnippetExportPayload = {
   kind: typeof SNIPPET_EXPORT_KIND;
-  version: typeof SNIPPET_EXPORT_VERSION | typeof SNIPPET_EXPORT_VERSION_LEGACY;
+  version:
+    | typeof SNIPPET_EXPORT_VERSION
+    | typeof SNIPPET_EXPORT_VERSION_PREVIOUS
+    | typeof SNIPPET_EXPORT_VERSION_LEGACY;
   exportedAt: string;
   snippetPackages: string[];
   snippets: SnippetExportItem[];
@@ -61,17 +70,6 @@ const uniqueStrings = (values: unknown[]): string[] => {
   return result;
 };
 
-const getPackageAncestors = (path: string): string[] => {
-  const normalized = path.trim().replace(/\/+$/g, "");
-  if (!normalized) return [];
-  const isAbsolute = normalized.startsWith("/");
-  const parts = normalized.split("/").filter(Boolean);
-  return parts.map((_, index) => {
-    const joined = parts.slice(0, index + 1).join("/");
-    return isAbsolute ? `/${joined}` : joined;
-  });
-};
-
 export const collectSnippetPackagePaths = (
   snippets: Pick<SnippetExportItem, "package">[],
   snippetPackages: string[] = [],
@@ -80,7 +78,7 @@ export const collectSnippetPackagePaths = (
   snippets.forEach((snippet) => {
     const packagePath = snippet.package?.trim();
     if (!packagePath) return;
-    getPackageAncestors(packagePath).forEach((path) => referenced.add(path));
+    getSnippetPackageAncestors(packagePath).forEach((path) => referenced.add(path));
   });
 
   const ordered = uniqueStrings([
@@ -93,17 +91,25 @@ export const collectSnippetPackagePaths = (
 const mergeSnippetPackagePaths = (...groups: string[][]): string[] => {
   const paths: string[] = [];
   groups.flat().forEach((path) => {
-    getPackageAncestors(path).forEach((ancestor) => paths.push(ancestor));
+    getSnippetPackageAncestors(path).forEach((ancestor) => paths.push(ancestor));
   });
   return uniqueStrings(paths);
 };
 
+/**
+ * Concrete host-id bindings (targets) are intentionally omitted for portability;
+ * the portable all-hosts scope rides along and suppresses group scope on import.
+ */
 const toExportItem = (snippet: Snippet): SnippetExportItem => ({
   label: snippet.label,
   command: snippet.command,
   tags: Array.isArray(snippet.tags) ? [...snippet.tags] : [],
   package: snippet.package || "",
-  ...(snippet.targetGroups !== undefined ? { targetGroups: [...snippet.targetGroups] } : {}),
+  ...(snippet.targetsAllHosts
+    ? { targetsAllHosts: true }
+    : snippet.targetGroups !== undefined
+      ? { targetGroups: [...snippet.targetGroups] }
+      : {}),
   ...(snippet.shortkey ? { shortkey: snippet.shortkey } : {}),
   ...(snippet.noAutoRun ? { noAutoRun: snippet.noAutoRun } : {}),
   ...(snippet.multiLineRunMode ? { multiLineRunMode: snippet.multiLineRunMode } : {}),
@@ -144,6 +150,8 @@ const sanitizeImportItem = (value: unknown): SnippetExportItem | null => {
   const label = typeof value.label === "string" && value.label.trim()
     ? value.label.trim()
     : fallbackLabel(value.command);
+  // "Apply to all hosts" is a portable scope; when set it wins over group scope.
+  const targetsAllHosts = value.targetsAllHosts === true;
   return {
     label,
     command: value.command,
@@ -151,11 +159,14 @@ const sanitizeImportItem = (value: unknown): SnippetExportItem | null => {
       ? uniqueStrings(value.tags)
       : [],
     package: typeof value.package === "string" ? value.package.trim() : "",
-    targetGroups: Array.isArray(value.targetGroups)
-      ? normalizeGroupTargetPaths(value.targetGroups.filter(
-          (entry): entry is string => typeof entry === "string",
-        ))
-      : undefined,
+    targetGroups: targetsAllHosts
+      ? undefined
+      : Array.isArray(value.targetGroups)
+        ? normalizeGroupTargetPaths(value.targetGroups.filter(
+            (entry): entry is string => typeof entry === "string",
+          ))
+        : undefined,
+    targetsAllHosts: targetsAllHosts || undefined,
     shortkey: typeof value.shortkey === "string" && value.shortkey.trim()
       ? value.shortkey.trim()
       : undefined,
@@ -184,7 +195,11 @@ const parseSnippetImportObject = (parsed: Record<string, unknown>): SnippetExpor
   if (parsed.kind !== SNIPPET_EXPORT_KIND) {
     throw new Error("Unsupported snippet import file.");
   }
-  if (version !== SNIPPET_EXPORT_VERSION && version !== SNIPPET_EXPORT_VERSION_LEGACY) {
+  if (
+    version !== SNIPPET_EXPORT_VERSION &&
+    version !== SNIPPET_EXPORT_VERSION_PREVIOUS &&
+    version !== SNIPPET_EXPORT_VERSION_LEGACY
+  ) {
     throw new Error("Unsupported snippet import file.");
   }
   if (!Array.isArray(parsed.snippets)) {
@@ -197,7 +212,12 @@ const parseSnippetImportObject = (parsed: Record<string, unknown>): SnippetExpor
 
   return {
     kind: SNIPPET_EXPORT_KIND,
-    version: version === SNIPPET_EXPORT_VERSION ? SNIPPET_EXPORT_VERSION : SNIPPET_EXPORT_VERSION_LEGACY,
+    version:
+      version === SNIPPET_EXPORT_VERSION
+        ? SNIPPET_EXPORT_VERSION
+        : version === SNIPPET_EXPORT_VERSION_PREVIOUS
+          ? SNIPPET_EXPORT_VERSION_PREVIOUS
+          : SNIPPET_EXPORT_VERSION_LEGACY,
     exportedAt: typeof parsed.exportedAt === "string" ? parsed.exportedAt : "",
     snippetPackages: collectSnippetPackagePaths(
       snippets,
@@ -254,8 +274,13 @@ const toImportedSnippet = (item: SnippetExportItem, id: string, order?: number):
   command: item.command,
   tags: item.tags || [],
   package: item.package || "",
+  // Host-id bindings are never imported; the all-hosts flag wins over group scope.
   targets: [],
-  ...(item.targetGroups !== undefined ? { targetGroups: [...item.targetGroups] } : {}),
+  ...(item.targetsAllHosts
+    ? { targetsAllHosts: true }
+    : item.targetGroups !== undefined
+      ? { targetGroups: [...item.targetGroups] }
+      : {}),
   ...(item.shortkey ? { shortkey: item.shortkey } : {}),
   ...(item.noAutoRun ? { noAutoRun: item.noAutoRun } : {}),
   ...(item.multiLineRunMode ? { multiLineRunMode: item.multiLineRunMode } : {}),

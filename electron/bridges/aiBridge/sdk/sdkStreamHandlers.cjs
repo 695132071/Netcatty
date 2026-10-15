@@ -13,6 +13,7 @@ const { CodexAppServerRuntime } = require("../codexAppServer/runtime.cjs");
 const { probeCodexAppServer } = require("../codexAppServer/probe.cjs");
 const { codebuddySessionManager } = require("./codebuddySessionManager.cjs");
 const codebuddyDriver = require("./codebuddyDriver.cjs");
+const { OPENCODE_SERVER_START_TIMEOUT_MS } = require("./opencodeDriver.cjs");
 
 const VALID_BACKENDS = new Set(listBackends());
 
@@ -79,10 +80,23 @@ const SDK_MODEL_CACHE_ENV_KEYS = [
   "HOME",
   "USERPROFILE",
   "XDG_CONFIG_HOME",
+  "CODEX_HOME",
+  "CLAUDE_CONFIG_DIR",
+  "ANTHROPIC_API_KEY",
+  "ANTHROPIC_AUTH_TOKEN",
+  "CLAUDE_CODE_OAUTH_TOKEN",
   "OPENCODE_BIN",
   "OPENCODE_CONFIG",
   "OPENCODE_CONFIG_DIR",
   "OPENCODE_CONFIG_CONTENT",
+  "MIMOCODE_HOME",
+  "MIMOCODE_BIN",
+  "MIMOCODE_BIN_PATH",
+  "MIMOCODE_CONFIG",
+  "MIMOCODE_CONFIG_DIR",
+  "MIMOCODE_MIMO_ONLY",
+  "XDG_DATA_HOME",
+  "XDG_CACHE_HOME",
   "CLAUDE_CODE_EXECUTABLE",
   "CODEBUDDY_CODE_PATH",
   "CURSOR_API_KEY",
@@ -139,13 +153,54 @@ function normalizeSdkListModelsResult(raw) {
   return { currentModelId, models };
 }
 
+/**
+ * Fetch a runtime model catalog for one SDK backend. For Codex on the default
+ * `sdk` runtime, the codex-sdk exposes no model catalog (its driver always
+ * returns []), so fall back to the App Server runtime's live `model/list`
+ * catalog — otherwise the picker stays pinned to build-time curated presets
+ * and cannot follow the installed CLI (#3496).
+ */
+async function fetchSdkModelCatalog({
+  backendKey,
+  codexRuntime,
+  driver,
+  binPath,
+  env,
+  abortController,
+  cursorAuthMode,
+  cursorCliBinPath,
+  codexAppServerRuntime: appServerRuntime,
+}) {
+  let raw;
+  if (codexRuntime === "app-server") {
+    raw = await appServerRuntime.listModels({ binPath, env });
+  } else {
+    raw = await driver.listModels({
+      binPath,
+      env,
+      abortController,
+      cursorAuthMode: backendKey === "cursor" ? cursorAuthMode : undefined,
+      cursorCliBinPath: backendKey === "cursor" ? cursorCliBinPath : undefined,
+    });
+    const sdkCatalog = normalizeSdkListModelsResult(raw);
+    if (backendKey === "codex" && sdkCatalog.models.length === 0 && !sdkCatalog.currentModelId) {
+      raw = await appServerRuntime.listModels({ binPath, env });
+    }
+  }
+  const { currentModelId, models } = normalizeSdkListModelsResult(raw);
+  if (models.length === 0 && !currentModelId) {
+    throw new Error("The live model catalog returned no models");
+  }
+  return raw;
+}
+
 function resolveSdkPromptPlacement({
   backendKey,
   turnPrompt,
   contextualPrompt,
   systemContext,
 }) {
-  const supportsSystemContext = backendKey === "opencode" || backendKey === "codebuddy";
+  const supportsSystemContext = backendKey === "opencode" || backendKey === "mimo" || backendKey === "codebuddy";
   return {
     prompt: supportsSystemContext ? turnPrompt : contextualPrompt,
     systemPrompt: supportsSystemContext ? systemContext : undefined,
@@ -387,6 +442,11 @@ function resolveSdkBackendBinPath({
     const rawPath = configuredEnvPath || resolveCliFromPath(backendKey, shellEnv) || undefined;
     return rawPath ? resolveRealCliPath(rawPath, realpath) : undefined;
   }
+  if (backendKey === "mimo") {
+    const configuredEnvPath = normalizeCliPathForPlatform?.(env?.MIMOCODE_BIN || env?.MIMOCODE_BIN_PATH);
+    const rawPath = configuredEnvPath || resolveCliFromPath(backendKey, shellEnv) || undefined;
+    return rawPath ? resolveRealCliPath(rawPath, realpath) : undefined;
+  }
   return resolveSdkBinPath?.(backendKey, shellEnv) || undefined;
 }
 
@@ -490,6 +550,9 @@ function shouldReplaySdkHistory({
 }
 
 function registerSdkStreamHandlers(ctx) {
+  const injectCliEnv = typeof ctx.withCliDiscoveryEnv === "function"
+    ? ctx.withCliDiscoveryEnv
+    : (env) => env;
   with (ctx) {
     // chatSessionId -> { sessionId } for resume; controller per requestId.
     const sdkActiveStreams = new Map(); // requestId -> AbortController
@@ -520,10 +583,10 @@ function registerSdkStreamHandlers(ctx) {
           model, existingSessionId, toolIntegrationMode,
           defaultTargetSession, userSkillsContext, agentEnv: requestedAgentEnv, agentCommand,
           codexRuntime: requestedCodexRuntime, permissionMode,
-          // SDK 0.3.230 advanced options (passed from renderer via sdkAgentAdapter)
+          // SDK 0.3.258 advanced options (passed from renderer via sdkAgentAdapter)
           effort, maxTurns, maxBudgetUsd, fallbackModel,
           sandbox, agents, outputFormat, enableFileCheckpointing,
-          traceId, parentSpanId,
+          traceId, parentSpanId, persistSession,
         } = payload;
 
         const backendKey = resolveBackendKey(sdkBackend);
@@ -571,7 +634,7 @@ function registerSdkStreamHandlers(ctx) {
           let env = buildSdkAgentEnv({
             shellEnv,
             requestedAgentEnv: normalizedAgentEnv,
-            withCliDiscoveryEnv,
+            withCliDiscoveryEnv: (agentEnv) => injectCliEnv(agentEnv, chatSessionId),
             normalizeClaudeCodeExecutableEnv: normalizeClaudeCodeExecutableEnvForSdk,
           });
           if (cursorAuthMode === "cli-login") {
@@ -736,7 +799,7 @@ function registerSdkStreamHandlers(ctx) {
               }
             },
           };
-          const skillsPathAllowlist = effectiveMode === "skills" && backendKey === "opencode"
+          const skillsPathAllowlist = effectiveMode === "skills" && (backendKey === "opencode" || backendKey === "mimo")
             ? buildNetcattySkillsOpenCodePathAllowlist({
               launcherPath: NETCATTY_TOOL_LAUNCHER_PATH,
               cliScriptPath: NETCATTY_TOOL_CLI_PATH,
@@ -790,7 +853,8 @@ function registerSdkStreamHandlers(ctx) {
             // when the CLI hits a security restriction, route the decision
             // through the renderer approval UI instead of throwing an error.
             requestApprovalFromRenderer: mcpServerBridge.requestApprovalFromRenderer,
-            // SDK 0.3.230 advanced options
+            clearPendingApprovals: mcpServerBridge.clearPendingApprovals,
+            // SDK 0.3.258 advanced options
             effort: effort || undefined,
             maxTurns: maxTurns || undefined,
             maxBudgetUsd: maxBudgetUsd || undefined,
@@ -801,6 +865,7 @@ function registerSdkStreamHandlers(ctx) {
             enableFileCheckpointing: enableFileCheckpointing != null ? enableFileCheckpointing : undefined,
             traceId: traceId || undefined,
             parentSpanId: parentSpanId || undefined,
+            persistSession: persistSession != null ? persistSession : undefined,
           };
           const result = codexRuntime === "app-server"
             ? await codexAppServerRuntime.runTurn(commonTurnContext)
@@ -884,9 +949,10 @@ function registerSdkStreamHandlers(ctx) {
         const codexRuntime = backendKey === "codex" && requestedCodexRuntime === "app-server"
           ? "app-server"
           : "sdk";
-        // claude/copilot/opencode enumerate models via the SDK; codex has no
-        // catalog (its driver returns []), so the renderer falls back to curated
-        // presets. Cache + in-flight coalescing avoid spawn storms (#2184).
+        // claude/copilot/opencode enumerate models via the SDK; codex's sdk
+        // driver returns [] and falls back to the App Server catalog (see
+        // fetchSdkModelCatalog). Cache + in-flight coalescing avoid spawn
+        // storms (#2184).
         const cacheKey = buildSdkModelCacheKey(
           backendKey,
           cursorAuthMode === "cli-login" ? (cursorCliBinPath || binPath) : binPath,
@@ -906,16 +972,22 @@ function registerSdkStreamHandlers(ctx) {
           const abortController = new AbortController();
           try {
             const raw = await withTimeout(
-              codexRuntime === "app-server"
-                ? codexAppServerRuntime.listModels({ binPath, env })
-                : driver.listModels({
-                  binPath,
-                  env,
-                  abortController,
-                  cursorAuthMode: backendKey === "cursor" ? cursorAuthMode : undefined,
-                  cursorCliBinPath: backendKey === "cursor" ? cursorCliBinPath : undefined,
-                }),
-              MODEL_LIST_TIMEOUT_MS,
+              fetchSdkModelCatalog({
+                backendKey,
+                codexRuntime,
+                driver,
+                binPath,
+                env,
+                abortController,
+                cursorAuthMode: backendKey === "cursor" ? cursorAuthMode : undefined,
+                cursorCliBinPath: backendKey === "cursor" ? cursorCliBinPath : undefined,
+                codexAppServerRuntime,
+              }),
+              // Include OpenCode cold startup in this single cancellable
+              // catalog budget, then allow the normal provider-query budget.
+              backendKey === "opencode"
+                ? OPENCODE_SERVER_START_TIMEOUT_MS + MODEL_LIST_TIMEOUT_MS
+                : MODEL_LIST_TIMEOUT_MS,
               abortController,
             );
             const { currentModelId, models } = normalizeSdkListModelsResult(raw);
@@ -934,7 +1006,7 @@ function registerSdkStreamHandlers(ctx) {
               ok: true,
               currentModelId: null,
               models: [],
-              warning: codexRuntime === "app-server" ? (err?.message || String(err)) : undefined,
+              warning: err?.message || String(err),
             };
           }
         })();
@@ -954,9 +1026,7 @@ function registerSdkStreamHandlers(ctx) {
           ok: true,
           currentModelId: null,
           models: [],
-          warning: backendKey === "codex" && requestedCodexRuntime === "app-server"
-            ? (err?.message || String(err))
-            : undefined,
+          warning: err?.message || String(err),
         };
       }
     });
@@ -976,7 +1046,7 @@ function registerSdkStreamHandlers(ctx) {
       const runtime = sdkRequestRuntimes.get(requestId);
       if (!runtime) return { status: "busy" };
 
-      // SDK 0.3.230 Session.send() resets the active message stream, so it
+      // SDK 0.3.258 Session.send() resets the active message stream, so it
       // cannot safely implement mid-turn steering.
       if (runtime.backendKey === "codebuddy") {
         return { status: "unsupported" };
@@ -1093,7 +1163,7 @@ function registerSdkStreamHandlers(ctx) {
       }
     });
 
-    // --- CodeBuddy SDK 0.3.230 IPC handlers ---
+    // --- CodeBuddy SDK 0.3.258 IPC handlers ---
 
     ipcMain.handle("netcatty:ai:sdk-agent:mcp-status", async (event, payload) => {
       if (!validateSender(event)) return { ok: false, error: "Unauthorized IPC sender" };
@@ -1229,6 +1299,7 @@ module.exports = {
   expireSiblingCursorCliModeSessions,
   expireSiblingGrokRuntimeSessions,
   shouldCacheSdkRuntimeModels,
+  fetchSdkModelCatalog,
   normalizeHistoryMessages,
   formatSdkHistoryReplaySection,
   buildSdkTurnPrompt,

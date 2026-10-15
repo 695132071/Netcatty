@@ -9,9 +9,11 @@ import type {
   AIPanelView,
   AgentModelPreset,
   AISessionScope,
+  UploadedFile,
   DiscoveredAgent,
   ExternalAgentConfig,
 } from '../infrastructure/ai/types';
+import type { VaultNote } from '../domain/models';
 import type { ExecutorContext } from '../infrastructure/ai/cattyAgent/executor';
 import {
   filterAgentModelPresetsForCliVersion,
@@ -20,6 +22,15 @@ import {
   resolveAgentModelSelection,
 } from '../infrastructure/ai/types';
 import { getExternalAgentSdkBackend, getManualAgentCommand, matchesManagedAgentConfig } from '../infrastructure/ai/managedAgents';
+import {
+  appendComposerCustomModelPresets,
+  resolveComposerCustomModelIds,
+} from '../infrastructure/ai/composerPicker';
+import {
+  readComposerModelPrefs,
+  subscribeComposerModelPrefs,
+} from '../infrastructure/ai/composerModelPrefs';
+import { toast } from './ui/toast';
 import { useAgentDiscovery } from '../application/state/useAgentDiscovery';
 import {
   getReadyUserSkillOptions,
@@ -42,9 +53,10 @@ import { draftsByScopeEqualIgnoringComposerText, selectDraftForAgentSwitch } fro
 import { sanitizeContextWindow } from '../infrastructure/ai/contextCompaction';
 import {
   buildPromptWithTerminalSelectionAttachments,
-  isTerminalSelectionAttachment,
+  isInlineTextAttachment,
 } from '../application/state/terminalSelectionAttachment';
-import type { CodexIntegrationStatus } from './settings/tabs/ai/types';
+import { createVaultNoteAttachment, isVaultNoteAttachment, vaultNoteReferencesFit } from '../application/state/vaultNoteAttachment';
+import { useCodexConfigModel } from '../application/state/useCodexConfigModel';
 import {
   useAIChatStreaming,
   getNetcattyBridge,
@@ -53,6 +65,7 @@ import {
 } from '../application/state/useAIChatStreaming';
 import { getScopedHistorySessions } from './ai/scopedHistorySessions';
 import { resolveInheritedAIActiveSessionId } from '../domain/aiWorkspaceScopeInherit';
+import { resolveUndoLastTurnBoundary } from '../domain/aiUndoLastTurn';
 import { aiSessionIdSetEqual, exactScopeAISessionsEqual } from '../domain/aiSessionsForScope';
 import { buildExternalAgentHistoryMessagesForBridge } from './ai/externalAgentHistory';
 import { canSendWithAgent, findEnabledExternalAgent } from './ai/agentSendEligibility';
@@ -257,6 +270,7 @@ const AIChatSidePanelActive: React.FC<AIChatSidePanelProps> = ({
   addDraftFiles,
   removeDraftFile,
   createSession,
+  undoLastTurnInSession,
   deleteSession,
   updateSessionTitle,
   updateSessionExternalSessionId,
@@ -264,6 +278,7 @@ const AIChatSidePanelActive: React.FC<AIChatSidePanelProps> = ({
   updateLastMessage,
   updateMessageById,
   persistContextCompaction,
+  forkSessionFromMessage,
   providers,
   activeProviderId,
   activeModelId,
@@ -307,8 +322,17 @@ const AIChatSidePanelActive: React.FC<AIChatSidePanelProps> = ({
 
   const [showHistory, setShowHistory] = useState(false);
   const [isSending, setIsSending] = useState(false);
-  const [runtimeAgentModelPresets, setRuntimeAgentModelPresets] = useState<Record<string, AgentModelPreset[]>>({});
-  const [runtimeModelWarnings, setRuntimeModelWarnings] = useState<Record<string, string>>({});
+  // Undo-last-turn is still
+  // running. Unlike the send flow this is not reflected in `isSending`, so it
+  // is tracked separately to block sends until the branch settles: a turn
+  // submitted meanwhile would run against the (soon hidden) source session.
+  const [isUndoingLastTurn, setIsUndoingLastTurn] = useState(false);
+  const [runtimeAgentModelPresets, setRuntimeAgentModelPresets] = useState<Record<string, { cacheKey: string; models: AgentModelPreset[] }>>({});
+  const [runtimeModelWarnings, setRuntimeModelWarnings] = useState<Record<string, { cacheKey: string; message: string }>>({});
+  // Tracks SDK runtime model catalogs currently loading (per agent scope):
+  // while an OpenCode catalog is pending we must not flash the built-in
+  // OPENCODE_MODEL_PRESETS for providers the user never configured (#3584).
+  const [runtimeModelLoading, setRuntimeModelLoading] = useState<Record<string, { cacheKey: string }>>({});
   const [steerWarnings, setSteerWarnings] = useState<Record<string, SteerWarning>>({});
   const [steeringSessionId, setSteeringSessionId] = useState<string | null>(null);
   const [userSkillOptions, setUserSkillOptions] = useState<UserSkillOption[]>([]);
@@ -374,9 +398,10 @@ const AIChatSidePanelActive: React.FC<AIChatSidePanelProps> = ({
         scopeHostIds,
         activeTerminalSessionIds,
         workspaceMemberTerminalIds,
+        activeSessionIdMap,
       ),
     ),
-    [sessions, scopeType, scopeTargetId, scopeHostIds, activeTerminalSessionIds, workspaceMemberTerminalIds],
+    [sessions, scopeType, scopeTargetId, scopeHostIds, activeTerminalSessionIds, workspaceMemberTerminalIds, activeSessionIdMap],
   );
 
   const explicitPanelView = panelViewByScope[scopeKey];
@@ -596,6 +621,42 @@ const AIChatSidePanelActive: React.FC<AIChatSidePanelProps> = ({
     removeDraftFile(scopeKey, currentAgentId, fileId);
   }, [removeDraftFile, scopeKey, currentAgentId]);
 
+  // External turns keep the tools from launch; changed settings cannot enable note reads mid-turn.
+  const canMentionNotes = currentAgentId === 'catty' || (toolIntegrationMode === 'mcp' && !isStreaming);
+  const validateNoteMentions = useCallback((attachments: UploadedFile[]) => {
+    if (!canMentionNotes && attachments.some(isVaultNoteAttachment)) {
+      toast.warning(t('ai.chat.mentionNoteUnavailable'));
+      return false;
+    }
+    if (!vaultNoteReferencesFit(attachments)) {
+      toast.warning(t('ai.chat.mentionNoteTooMany'));
+      return false;
+    }
+    return true;
+  }, [canMentionNotes, t]);
+
+  /** Mention Note: attach a Vault → Notes entry as inline context for the next send. */
+  const mentionNote = useCallback((note: VaultNote) => {
+    if (!canMentionNotes) return;
+    const upload = createVaultNoteAttachment({ id: note.id, title: note.title.trim() || t('ai.chat.untitledNote') });
+    if (!upload) {
+      toast.error(t('ai.chat.mentionNoteInvalid', {
+        title: String(note.title || '').trim() || t('ai.chat.untitledNote'),
+      }));
+      return;
+    }
+    const existing = currentDraftRef.current?.attachments ?? [];
+    if (!validateNoteMentions([...existing.filter((file) => file.vaultNoteId !== upload.vaultNoteId), upload])) return;
+    enterScopeDraftMode(currentAgentId, panelViewRef.current.mode === 'session');
+    updateDraft(scopeKey, currentAgentId, (current) => ({
+      ...current,
+      attachments: [
+        ...current.attachments.filter((file) => file.vaultNoteId !== upload.vaultNoteId),
+        upload,
+      ],
+    }));
+  }, [canMentionNotes, validateNoteMentions, updateDraft, currentAgentId, enterScopeDraftMode, scopeKey, t]);
+
   useEffect(() => {
     if (isVisible) return undefined;
     flushDraftText();
@@ -768,6 +829,83 @@ const AIChatSidePanelActive: React.FC<AIChatSidePanelProps> = ({
     && Boolean(effectiveActiveProvider)
     && Boolean(effectiveActiveModelId.trim());
 
+  // Undo last turn: offered only at a safe boundary (never inside a compacted
+  // prefix, never between an assistant tool call and its result).
+  const canUndoLastTurn = useMemo(() => Boolean(
+    activeSession
+    && !isStreaming
+    && resolveUndoLastTurnBoundary(
+      activeSession.messages,
+      activeSession.contextCompaction?.compactedMessageCount ?? 0,
+    ) != null,
+  ), [activeSession, isStreaming]);
+
+  const undoInFlightRef = useRef(false);
+  const handleUndoLastTurn = useCallback(async () => {
+    const sessionId = activeSessionRef.current?.id;
+    if (!sessionId || !undoLastTurnInSession) return;
+    if (isStreaming || isAIChatSessionStreaming(sessionId)) return;
+    // Serialize: while a branch is still being created, `canUndoLastTurn` stays stale, so a quick second
+    // click must not start a parallel undo of the same session — that would
+    // publish duplicate branches and restore the same prompt twice.
+    if (undoInFlightRef.current) return;
+    undoInFlightRef.current = true;
+    setIsUndoingLastTurn(true);
+    try {
+      const result = await undoLastTurnInSession(sessionId, {
+        type: scopeType,
+        targetId: scopeTargetId,
+      });
+      if (!result) return;
+
+      ensureScopeDraft(currentAgentId);
+      // Text typed since the last flush lives only in the live composer buffer
+      // (pendingComposerTextRef/currentDraftRef), not in the persisted draft;
+      // merge from the live buffer so it is not lost, then drop the pending
+      // buffer so the later flushDraftText() cannot overwrite the merged text.
+      const liveDraft = currentDraftRef.current;
+      updateScopeDraft(currentAgentId, (draft) => {
+        const liveText = liveDraft?.text ?? draft.text;
+        const liveSkillSlugs = liveDraft?.selectedUserSkillSlugs ?? draft.selectedUserSkillSlugs;
+        return {
+          ...draft,
+          // Keep anything the user is still typing; the undone prompt goes first.
+          text: liveText.trim()
+            ? `${result.restored.text}\n\n${liveText}`
+            : result.restored.text,
+          attachments: [
+            ...result.restored.attachments,
+            ...(liveDraft?.attachments ?? draft.attachments),
+          ],
+          // The undone turn was selected with these pills; keep any pills the
+          // user picked since the send on top of them.
+          selectedUserSkillSlugs: [
+            ...result.restored.selectedUserSkillSlugs,
+            ...liveSkillSlugs.filter((slug) => !result.restored.selectedUserSkillSlugs.includes(slug)),
+          ],
+        };
+      });
+      discardPendingComposerText();
+      showScopeSessionView(result.sessionId);
+      // Tool side effects live outside the conversation and cannot be rolled back.
+      toast.info(t('ai.chat.undoLastTurnNotice'));
+    } finally {
+      undoInFlightRef.current = false;
+      setIsUndoingLastTurn(false);
+    }
+  }, [
+    discardPendingComposerText,
+    ensureScopeDraft,
+    isStreaming,
+    showScopeSessionView,
+    t,
+    undoLastTurnInSession,
+    updateScopeDraft,
+    currentAgentId,
+    scopeType,
+    scopeTargetId,
+  ]);
+
   const providersRef = useRef(providers);
   providersRef.current = providers;
 
@@ -802,38 +940,33 @@ const AIChatSidePanelActive: React.FC<AIChatSidePanelProps> = ({
     [currentAgentConfig],
   );
 
-  const [codexConfigModel, setCodexConfigModel] = useState<string | null>(null);
-  const [codexCustomConfigResolved, setCodexCustomConfigResolved] = useState(false);
-  useEffect(() => {
-    if (!isVisible) return;
-    setCodexCustomConfigResolved(false);
-    if (!isCodexManagedAgent) {
-      setCodexConfigModel(null);
-      return;
-    }
-    const bridge = getNetcattyBridge();
-    if (!bridge?.aiCodexGetIntegration) return;
-    let cancelled = false;
-    void Promise.resolve(
-      bridge.aiCodexGetIntegration({ codexPath: getManualAgentCommand(currentAgentConfig) }) as Promise<CodexIntegrationStatus>,
-    ).then((info) => {
-      if (cancelled) return;
-      const hasCustom = info?.state === 'connected_custom_config';
-      setCodexConfigModel(info?.customConfig?.model ?? null);
-      setCodexCustomConfigResolved(hasCustom);
-    }).catch(() => {
-      if (!cancelled) {
-        setCodexConfigModel(null);
-        setCodexCustomConfigResolved(false);
-      }
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, [isVisible, isCodexManagedAgent, currentAgentId, currentAgentConfig]);
+  const {
+    model: codexConfigModel,
+    loadModel: loadCodexConfigModel,
+    isPending: isCodexConfigModelPending,
+  } = useCodexConfigModel(
+    currentAgentConfig, isVisible,
+  );
 
   const agentModelMapRef = useRef(agentModelMap);
   agentModelMapRef.current = agentModelMap;
+
+  // Manual model ids typed in the composer picker are recorded in composer
+  // prefs (per agent scope). Re-render when they change so custom picks stay
+  // visible and accepted as stored selections (#3534).
+  const [composerCustomModelsVersion, setComposerCustomModelsVersion] = useState(0);
+  useEffect(() => subscribeComposerModelPrefs(() => {
+    setComposerCustomModelsVersion((version) => version + 1);
+  }), []);
+  const collectCustomModelIds = useCallback((agentId: string, presets: AgentModelPreset[]) => {
+    // Touch the version so pref writes recreate this callback and invalidate
+    // memos that read custom ids.
+    void composerCustomModelsVersion;
+    return resolveComposerCustomModelIds({
+      prefs: readComposerModelPrefs(agentId),
+      presets,
+    });
+  }, [composerCustomModelsVersion]);
 
   const buildExternalAgentRuntimeModelTarget = useCallback((agent: ExternalAgentConfig | undefined): SdkRuntimeModelTarget | null => {
     if (!agent) return null;
@@ -859,14 +992,20 @@ const AIChatSidePanelActive: React.FC<AIChatSidePanelProps> = ({
   externalAgentsRef.current = externalAgents;
 
   const applySdkRuntimeModelCatalog = useCallback((
-    agentId: string,
+    target: SdkRuntimeModelTarget,
     catalog: SdkRuntimeModelCatalog,
     options: { adoptCurrentModel?: boolean } = {},
   ) => {
-    const agent = externalAgentsRef.current.find((item) => item.id === agentId);
-    const runtimePresets = mergeFallbackThinkingLevels(
+    const agent = externalAgentsRef.current.find((item) => item.id === target.agentId);
+    if (buildExternalAgentRuntimeModelTarget(agent)?.cacheKey !== target.cacheKey) return;
+    const agentId = target.agentId;
+    const catalogPresets = mergeFallbackThinkingLevels(
       normalizeSdkRuntimeModelPresets(catalog.models, catalog.currentModelId),
       getAgentModelPresets(agent?.command, getExternalAgentSdkBackend(agent)),
+    );
+    const runtimePresets = appendComposerCustomModelPresets(
+      catalogPresets,
+      collectCustomModelIds(agentId, catalogPresets),
     );
     const storedModelId = agentModelMapRef.current[agentId];
     if (runtimePresets.length === 0) {
@@ -877,11 +1016,20 @@ const AIChatSidePanelActive: React.FC<AIChatSidePanelProps> = ({
       });
     } else {
       setRuntimeAgentModelPresets((prev) => (
-        agentModelPresetsShallowEqual(prev[agentId], runtimePresets)
+        prev[agentId]?.cacheKey === target.cacheKey
+          && agentModelPresetsShallowEqual(prev[agentId].models, runtimePresets)
           ? prev
-          : { ...prev, [agentId]: runtimePresets }
+          : { ...prev, [agentId]: { cacheKey: target.cacheKey, models: runtimePresets } }
       ));
     }
+    // Another path (e.g. send preflight) applied the catalog before the
+    // deferred idle callback scheduled in the visibility effect: clear its
+    // stale pending flag so the composer stops claiming models are loading.
+    setRuntimeModelLoading((prev) => {
+      if (!prev[agentId] || prev[agentId].cacheKey !== target.cacheKey) return prev;
+      const { [agentId]: _removed, ...rest } = prev;
+      return rest;
+    });
 
     const normalizedStoredModelId = normalizeStoredAgentModelSelection(
       storedModelId,
@@ -899,7 +1047,7 @@ const AIChatSidePanelActive: React.FC<AIChatSidePanelProps> = ({
     ) {
       setAgentModel(agentId, catalog.currentModelId);
     }
-  }, [setAgentModel]);
+  }, [setAgentModel, setRuntimeModelLoading, buildExternalAgentRuntimeModelTarget, collectCustomModelIds]);
 
   const loadSdkRuntimeModelCatalog = useCallback((
     target: SdkRuntimeModelTarget,
@@ -924,10 +1072,15 @@ const AIChatSidePanelActive: React.FC<AIChatSidePanelProps> = ({
           throw new Error(result?.error || 'Failed to load SDK agent models');
         }
         setRuntimeModelWarnings((current) => {
+          const agent = externalAgentsRef.current.find((item) => item.id === target.agentId);
+          if (buildExternalAgentRuntimeModelTarget(agent)?.cacheKey !== target.cacheKey) return current;
           const next = { ...current };
-          if (result.warning && target.codexRuntime === 'app-server') {
-            next[target.agentId] = t('ai.codex.appServer.modelCatalogWarning');
-            console.warn('[AIChatSidePanel] Codex App Server model catalog unavailable:', result.warning);
+          if (result.warning) {
+            next[target.agentId] = {
+              cacheKey: target.cacheKey,
+              message: t('ai.chat.modelCatalogWarning'),
+            };
+            console.warn('[AIChatSidePanel] SDK model catalog unavailable:', result.warning);
           } else {
             delete next[target.agentId];
           }
@@ -940,18 +1093,20 @@ const AIChatSidePanelActive: React.FC<AIChatSidePanelProps> = ({
       },
       { force: options.force },
     ).catch((err) => {
-      if (target.codexRuntime === 'app-server') {
-        setRuntimeModelWarnings((current) => ({
+      setRuntimeModelWarnings((current) => {
+        const agent = externalAgentsRef.current.find((item) => item.id === target.agentId);
+        if (buildExternalAgentRuntimeModelTarget(agent)?.cacheKey !== target.cacheKey) return current;
+        return {
           ...current,
-          [target.agentId]: t('ai.codex.appServer.modelCatalogWarning'),
-        }));
-      }
+          [target.agentId]: { cacheKey: target.cacheKey, message: t('ai.chat.modelCatalogWarning') },
+        };
+      });
       if (options.logErrors !== false) {
         console.warn('[AIChatSidePanel] Failed to load SDK agent models:', err);
       }
       return null;
     });
-  }, [t]);
+  }, [t, buildExternalAgentRuntimeModelTarget]);
 
   useEffect(() => {
     if (!isVisible) return;
@@ -963,7 +1118,7 @@ const AIChatSidePanelActive: React.FC<AIChatSidePanelProps> = ({
 
     const cached = sdkRuntimeModelCache.read(target.cacheKey);
     if (cached) {
-      applySdkRuntimeModelCatalog(target.agentId, cached);
+      applySdkRuntimeModelCatalog(target, cached);
     }
 
     // Respect renderer TTL / in-flight coalescing for all SDK agents including
@@ -971,17 +1126,46 @@ const AIChatSidePanelActive: React.FC<AIChatSidePanelProps> = ({
     // even when the user never selected OpenCode (#2184). Manual refresh still
     // passes force via the model selector path. Defer the network refresh so
     // expand → first type does not wait on CLI model listing.
+    const clearRuntimeModelLoading = () => {
+      setRuntimeModelLoading((prev) => {
+        if (!prev[target.agentId] || prev[target.agentId].cacheKey !== target.cacheKey) return prev;
+        const { [target.agentId]: _removed, ...rest } = prev;
+        return rest;
+      });
+    };
     let cancelled = false;
+    let idleFired = false;
+    // Mark the catalog pending as soon as the refresh is scheduled: otherwise
+    // `runtimeModelLoading` stays false for the whole idle delay (and longer
+    // while the composer stays focused), so the built-in OPENCODE_MODEL_PRESETS
+    // remain selectable the entire time (#3584). Only do this on a cache miss:
+    // when a cached catalog was already applied above, the runtime presets are
+    // available, so a pending flag would keep the composer banner/picker in the
+    // "loading" state indefinitely while the idle callback is deferred.
+    if (!cached) {
+      setRuntimeModelLoading((prev) => (
+        prev[target.agentId]?.cacheKey === target.cacheKey ? prev : { ...prev, [target.agentId]: { cacheKey: target.cacheKey } }
+      ));
+    }
     const cancelIdle = scheduleWhenAiComposerIdle(() => {
+      idleFired = true;
       void loadSdkRuntimeModelCatalog(target).then((catalog) => {
         if (cancelled || !catalog) return;
-        applySdkRuntimeModelCatalog(target.agentId, catalog, { adoptCurrentModel: true });
+        applySdkRuntimeModelCatalog(target, catalog, { adoptCurrentModel: true });
+      }).finally(() => {
+        // Always clear, even after cancellation: a stale flag would keep the
+        // composer in the loading state forever.
+        clearRuntimeModelLoading();
       });
     });
 
     return () => {
       cancelled = true;
       cancelIdle();
+      // If the idle callback never fired, the load never started and nothing
+      // would clear the pending flag — do it here. In-flight loads clear their
+      // own flag in `.finally`, so leave them alone.
+      if (!idleFired) clearRuntimeModelLoading();
     };
   }, [
     isVisible,
@@ -994,34 +1178,68 @@ const AIChatSidePanelActive: React.FC<AIChatSidePanelProps> = ({
 
   const isCodexAppServer = isCodexManagedAgent && currentAgentConfig?.codexRuntime === 'app-server';
   const canSteerCurrentTurn = Boolean(activeSessionId && isStreaming && isCodexAppServer);
-  const hasCodexCustomConfig = codexCustomConfigResolved && isCodexManagedAgent && !isCodexAppServer;
+  const hasCodexCustomConfig = Boolean(codexConfigModel) && isCodexManagedAgent;
+  // `codexConfigModel` is null both while the config probe is pending and when
+  // the managed Codex config has no locked model. Keep the manual-entry action
+  // hidden until the probe resolves so a pick made in the interim can't be
+  // silently overridden by the config model on send (#3535).
+  const allowCustomModelEntry = !isCodexManagedAgent
+    || (!isCodexConfigModelPending && !hasCodexCustomConfig);
 
   const agentModelPresets = useMemo(() => {
-    const runtimePresets = runtimeAgentModelPresets[currentAgentId];
-    if (hasCodexCustomConfig) {
-      if (runtimePresets) {
-        return runtimePresets;
-      }
-      if (codexConfigModel) {
-        return [{ id: codexConfigModel, name: codexConfigModel }];
-      }
-      return [];
+    const target = buildExternalAgentRuntimeModelTarget(currentAgentConfig);
+    const runtimeEntry = runtimeAgentModelPresets[currentAgentId];
+    const runtimePresets = runtimeEntry && target && runtimeEntry.cacheKey === target.cacheKey
+      ? runtimeEntry.models
+      : undefined;
+    if (hasCodexCustomConfig && codexConfigModel) {
+      return [{ id: codexConfigModel, name: codexConfigModel }];
     }
-    if (runtimePresets) return runtimePresets;
+    if (runtimePresets) {
+      return appendComposerCustomModelPresets(
+        runtimePresets,
+        collectCustomModelIds(currentAgentId, runtimePresets),
+      );
+    }
+    // While an OpenCode catalog load is pending, do not flash the built-in
+    // OPENCODE_MODEL_PRESETS: they enumerate well-known gateway providers the
+    // user may never have configured, so for a few seconds every switch looks
+    // like a broken default model (#3584). Show only the user's own custom
+    // model ids until the live catalog resolves (or a retryable warning
+    // appears in the composer banner).
+    if (
+      target
+      && getExternalAgentSdkBackend(currentAgentConfig) === 'opencode'
+      && runtimeModelLoading[currentAgentId]?.cacheKey === target.cacheKey
+    ) {
+      return appendComposerCustomModelPresets(
+        [],
+        collectCustomModelIds(currentAgentId, []),
+      );
+    }
     const presets = getAgentModelPresets(
       currentAgentConfig?.command,
       getExternalAgentSdkBackend(currentAgentConfig),
     );
     // BYO Codex CLI: hide GPT-5.6 when CLI < 0.144.0 (stored probe or discovery).
     const cliVersion = resolveAgentCliVersion(currentAgentConfig, discoveredAgents);
-    return filterAgentModelPresetsForCliVersion(presets, cliVersion);
+    const filteredPresets = filterAgentModelPresetsForCliVersion(presets, cliVersion);
+    // Manual model ids typed in the composer (#3534) stay selectable even when
+    // the CLI catalog does not list them yet.
+    return appendComposerCustomModelPresets(
+      filteredPresets,
+      collectCustomModelIds(currentAgentId, filteredPresets),
+    );
   }, [
     currentAgentConfig,
     currentAgentId,
     runtimeAgentModelPresets,
+    runtimeModelLoading,
+    buildExternalAgentRuntimeModelTarget,
     hasCodexCustomConfig,
     codexConfigModel,
     discoveredAgents,
+    collectCustomModelIds,
   ]);
 
   const selectedAgentModel = useMemo(() => {
@@ -1044,13 +1262,38 @@ const AIChatSidePanelActive: React.FC<AIChatSidePanelProps> = ({
 
   const inputAgentId = activeSession?.agentId ?? currentDraft?.agentId ?? currentAgentId;
   const canSendCurrentAgent = useMemo(
-    () => !isSending && canSendWithAgent(inputAgentId, externalAgents),
-    [inputAgentId, externalAgents, isSending],
+    () => !isSending && !isUndoingLastTurn && canSendWithAgent(inputAgentId, externalAgents),
+    [inputAgentId, externalAgents, isSending, isUndoingLastTurn],
   );
 
   const handleAgentModelSelect = useCallback((modelId: string) => {
     setAgentModel(currentAgentId, modelId);
   }, [currentAgentId, setAgentModel]);
+
+  // Retry a failed SDK runtime model catalog load (composer warning banner).
+  // Failures are never cached, so a forced refresh re-queries the CLI/daemon.
+  const handleRetrySdkModelCatalog = useCallback(() => {
+    const target = buildExternalAgentRuntimeModelTarget(currentAgentConfig);
+    if (!target) return;
+    setRuntimeModelLoading((prev) => (
+      prev[target.agentId]?.cacheKey === target.cacheKey ? prev : { ...prev, [target.agentId]: { cacheKey: target.cacheKey } }
+    ));
+    void loadSdkRuntimeModelCatalog(target, { force: true }).then((catalog) => {
+      if (!catalog) return;
+      applySdkRuntimeModelCatalog(target, catalog, { adoptCurrentModel: true });
+    }).finally(() => {
+      setRuntimeModelLoading((prev) => {
+        if (!prev[target.agentId] || prev[target.agentId].cacheKey !== target.cacheKey) return prev;
+        const { [target.agentId]: _removed, ...rest } = prev;
+        return rest;
+      });
+    });
+  }, [
+    currentAgentConfig,
+    buildExternalAgentRuntimeModelTarget,
+    loadSdkRuntimeModelCatalog,
+    applySdkRuntimeModelCatalog,
+  ]);
 
   const selectedCattyThinking = agentThinkingMap.catty;
   const handleCattyThinkingSelect = useCallback((level: string) => {
@@ -1140,6 +1383,7 @@ const AIChatSidePanelActive: React.FC<AIChatSidePanelProps> = ({
     const draft = currentDraftRef.current;
     const currentPanelView = panelViewRef.current;
     const currentSessionView = activeSessionRef.current;
+    if (!validateNoteMentions(draft?.attachments ?? [])) return;
     const trimmed = draft?.text.trim() ?? '';
     const sendScopeKey = scopeKey;
     const attachments = (draft?.attachments ?? []).map((file) => ({
@@ -1148,18 +1392,31 @@ const AIChatSidePanelActive: React.FC<AIChatSidePanelProps> = ({
       filename: file.filename,
       filePath: file.filePath,
       terminalSelection: file.terminalSelection,
+      vaultNoteId: file.vaultNoteId,
+      vaultNoteTitle: file.vaultNoteTitle,
       previewText: file.previewText,
       lineCount: file.lineCount,
     }));
-    const hasTerminalSelectionAttachments = attachments.some(isTerminalSelectionAttachment);
-    if ((!trimmed && !hasTerminalSelectionAttachments) || isStreaming) return;
+    const hasInlineTextAttachments = attachments.some(isInlineTextAttachment);
+    if ((!trimmed && !hasInlineTextAttachments) || isStreaming) return;
+    // While undo-last-turn is creating the branch, the target is still the source; a
+    // turn submitted now would run in the soon-hidden source session, so
+    // block it until the branch settles.
+    if (isUndoingLastTurn) return;
+    // Note-only sends (empty text + a mentioned note) still need a usable
+    // session title: fall back to the first mentioned note's title so these
+    // conversations don't all show up as "Untitled" in history.
+    const noteOnlyTitle = attachments.find(
+      (attachment) => isVaultNoteAttachment(attachment) && attachment.vaultNoteTitle,
+    )?.vaultNoteTitle ?? '';
+    const titleText = trimmed || noteOnlyTitle.trim();
     const sendAgentId = currentSessionView?.agentId ?? draft?.agentId ?? currentAgentId;
     const agentConfig = sendAgentId !== 'catty' ? findEnabledExternalAgent(externalAgents, sendAgentId) : undefined;
     if (sendAgentId !== 'catty' && !agentConfig) return;
 
     const selectedSkillSlugs = draft?.selectedUserSkillSlugs ?? [];
     const modelPrompt = buildPromptWithTerminalSelectionAttachments(trimmed, attachments);
-    const modelAttachments = attachments.filter((attachment) => !isTerminalSelectionAttachment(attachment));
+    const modelAttachments = attachments.filter((attachment) => !isInlineTextAttachment(attachment));
     const isDraftMode = currentPanelView.mode === 'draft';
 
     flushDraftText();
@@ -1185,19 +1442,26 @@ const AIChatSidePanelActive: React.FC<AIChatSidePanelProps> = ({
       if (sendBridge?.aiSyncWebSearch) {
         await sendBridge.aiSyncWebSearch(webSearchConfig?.apiHost || null, webSearchConfig?.apiKey || null);
       }
-      let sendSelectedAgentModel = selectedAgentModel;
-      if (currentAgentConfig && shouldLoadSdkRuntimeModels(currentAgentConfig)) {
+      // A quick send must await the same config probe as the picker. Its model
+      // also takes precedence over App Server's built-in model catalog.
+      const configModel = await loadCodexConfigModel();
+      let sendSelectedAgentModel = configModel ?? selectedAgentModel;
+      if (!configModel && currentAgentConfig && shouldLoadSdkRuntimeModels(currentAgentConfig)) {
         const runtimeTarget = buildExternalAgentRuntimeModelTarget(currentAgentConfig);
         if (runtimeTarget) {
           const catalog = await loadSdkRuntimeModelCatalog(runtimeTarget);
           if (catalog) {
-            applySdkRuntimeModelCatalog(runtimeTarget.agentId, catalog, { adoptCurrentModel: true });
-            const runtimePresets = mergeFallbackThinkingLevels(
+            applySdkRuntimeModelCatalog(runtimeTarget, catalog, { adoptCurrentModel: true });
+            const catalogPresets = mergeFallbackThinkingLevels(
               normalizeSdkRuntimeModelPresets(catalog.models, catalog.currentModelId),
               getAgentModelPresets(
                 currentAgentConfig.command,
                 getExternalAgentSdkBackend(currentAgentConfig),
               ),
+            );
+            const runtimePresets = appendComposerCustomModelPresets(
+              catalogPresets,
+              collectCustomModelIds(sendAgentId, catalogPresets),
             );
             const storedModelId = agentModelMapRef.current[sendAgentId];
             if (
@@ -1263,6 +1527,7 @@ const AIChatSidePanelActive: React.FC<AIChatSidePanelProps> = ({
         addMessageToSession(sessionId, {
           id: generateId(), role: 'user', content: trimmed,
           ...(attachments.length > 0 ? { attachments } : {}),
+          ...(selectedSkillSlugs.length > 0 ? { selectedUserSkillSlugs: selectedSkillSlugs } : {}),
           timestamp: Date.now(),
         });
         addMessageToSession(sessionId, { id: generateId(), role: 'assistant', content: t('ai.chat.noProvider'), timestamp: Date.now() });
@@ -1277,6 +1542,7 @@ const AIChatSidePanelActive: React.FC<AIChatSidePanelProps> = ({
         addMessageToSession(sessionId, {
           id: generateId(), role: 'user', content: trimmed,
           ...(attachments.length > 0 ? { attachments } : {}),
+          ...(selectedSkillSlugs.length > 0 ? { selectedUserSkillSlugs: selectedSkillSlugs } : {}),
           timestamp: Date.now(),
         });
         addMessageToSession(sessionId, { id: generateId(), role: 'assistant', content: t('ai.chat.noProviderModel'), timestamp: Date.now() });
@@ -1290,6 +1556,8 @@ const AIChatSidePanelActive: React.FC<AIChatSidePanelProps> = ({
       addMessageToSession(sessionId, {
         id: generateId(), role: 'user', content: trimmed,
         ...(attachments.length > 0 ? { attachments } : {}),
+        // Kept on the user message so undo last turn can restore the pills.
+        ...(selectedSkillSlugs.length > 0 ? { selectedUserSkillSlugs: selectedSkillSlugs } : {}),
         timestamp: Date.now(),
       });
       clearScopeDraft({ keepPendingText: keepPendingAfterSend() });
@@ -1336,7 +1604,7 @@ const AIChatSidePanelActive: React.FC<AIChatSidePanelProps> = ({
         updateLastMessage(sessionId, msg => msg.statusText ? { ...msg, statusText: '' } : msg);
         setStreamingForScope(sessionId, false);
         abortControllersRef.current.delete(sessionId);
-        autoTitleSession(sessionId, trimmed);
+        autoTitleSession(sessionId, titleText);
       } else {
         const toolScope = {
           type: scopeType,
@@ -1359,7 +1627,7 @@ const AIChatSidePanelActive: React.FC<AIChatSidePanelProps> = ({
           getExecutorContext: () => buildExecutorContextForScope(toolScope),
           autoTitleSession,
           selectedUserSkillSlugs: selectedSkillSlugs,
-          titleText: trimmed,
+          titleText,
         }, modelAttachments.length > 0 ? modelAttachments : undefined);
       }
     } finally {
@@ -1370,7 +1638,8 @@ const AIChatSidePanelActive: React.FC<AIChatSidePanelProps> = ({
       }
     }
   }, [
-    isStreaming, activeProvider, effectiveActiveProvider, effectiveActiveModelId, selectedCattyThinking, scopeKey, currentAgentId,
+    validateNoteMentions, loadCodexConfigModel,
+    isStreaming, isUndoingLastTurn, activeProvider, effectiveActiveProvider, effectiveActiveModelId, selectedCattyThinking, scopeKey, currentAgentId,
     activeModelId, externalAgents,
     createSession, addMessageToSession, updateMessageById, updateLastMessage,
     setStreamingForScope,
@@ -1380,7 +1649,7 @@ const AIChatSidePanelActive: React.FC<AIChatSidePanelProps> = ({
     toolIntegrationMode,
     clearScopeDraft, showScopeSessionView, setActiveSessionId,
     flushDraftText, currentAgentConfig, buildExternalAgentRuntimeModelTarget,
-    loadSdkRuntimeModelCatalog, applySdkRuntimeModelCatalog,
+    loadSdkRuntimeModelCatalog, applySdkRuntimeModelCatalog, collectCustomModelIds,
   ]);
 
   const handleCompact = useCallback(async () => {
@@ -1466,6 +1735,7 @@ const AIChatSidePanelActive: React.FC<AIChatSidePanelProps> = ({
     const draft = currentDraftRef.current;
     if (!sessionId || !draft || steeringSessionId || !canSteerCurrentTurn) return;
 
+    if (!validateNoteMentions(draft.attachments)) return;
     const trimmed = draft.text.trim();
     const attachments = draft.attachments.map((file) => ({
       base64Data: file.base64Data,
@@ -1473,15 +1743,17 @@ const AIChatSidePanelActive: React.FC<AIChatSidePanelProps> = ({
       filename: file.filename,
       filePath: file.filePath,
       terminalSelection: file.terminalSelection,
+      vaultNoteId: file.vaultNoteId,
+      vaultNoteTitle: file.vaultNoteTitle,
       previewText: file.previewText,
       lineCount: file.lineCount,
     }));
-    const hasTerminalSelectionAttachments = attachments.some(isTerminalSelectionAttachment);
-    if (!trimmed && !hasTerminalSelectionAttachments) return;
+    const hasInlineTextAttachments = attachments.some(isInlineTextAttachment);
+    if (!trimmed && !hasInlineTextAttachments) return;
 
     const userMessageId = generateId();
     const modelPrompt = buildPromptWithTerminalSelectionAttachments(trimmed, attachments);
-    const modelAttachments = attachments.filter((attachment) => !isTerminalSelectionAttachment(attachment));
+    const modelAttachments = attachments.filter((attachment) => !isInlineTextAttachment(attachment));
     setSteerWarnings(current => {
       const next = { ...current };
       delete next[sessionId];
@@ -1510,7 +1782,8 @@ const AIChatSidePanelActive: React.FC<AIChatSidePanelProps> = ({
     } finally {
       setSteeringSessionId(current => current === sessionId ? null : current);
     }
-  }, [canSteerCurrentTurn, clearScopeDraft, steerExternalAgent, steeringSessionId]);
+  }, [
+    validateNoteMentions, canSteerCurrentTurn, clearScopeDraft, steerExternalAgent, steeringSessionId]);
 
   const stopStreamingForSession = useCallback(async (sessionId: string) => {
     const controller = abortControllersRef.current.get(sessionId);
@@ -1587,6 +1860,36 @@ const AIChatSidePanelActive: React.FC<AIChatSidePanelProps> = ({
     [setActiveSessionId, showScopeSessionView],
   );
 
+  // "Fork from here": copy the viewed conversation up to a completed assistant
+  // response into a new session, switch to it, and confirm via toast. The
+  // original stays in history. Boundary validation is re-run by the state
+  // hook; a null result means the fork was refused (already hidden in the UI).
+  // This panel's scope is passed so the branch is created in the scope viewing
+  // it, even when the source session's own scope went stale (e.g. a terminal
+  // chat resumed after reconnecting under a new terminal id).
+  const handleForkFromMessage = useCallback(async (messageId: string) => {
+    const sourceSessionId = activeSessionRef.current?.id ?? activeSessionId;
+    if (!sourceSessionId) return;
+    // Reject a double-click while the new session is being selected so one
+    // interaction cannot create two forks.
+    if (!tryBeginSendForKey(`fork:${sourceSessionId}`)) return;
+    try {
+      const fork = await forkSessionFromMessage?.(sourceSessionId, messageId, {
+        type: scopeType,
+        targetId: scopeTargetId,
+      });
+      if (!fork) return;
+      applyHistorySessionSelection(fork.id, {
+        showSessionView: showScopeSessionView,
+        setActiveSessionId,
+        closeHistory: () => setShowHistory(false),
+      });
+      toast.success(t('ai.chat.forkCreated'));
+    } finally {
+      endSendForKey(`fork:${sourceSessionId}`);
+    }
+  }, [activeSessionId, forkSessionFromMessage, scopeTargetId, scopeType, setActiveSessionId, showScopeSessionView, t]);
+
   const handleDeleteSession = useCallback(
     async (e: React.MouseEvent, sessionId: string) => {
       e.stopPropagation();
@@ -1654,7 +1957,7 @@ const AIChatSidePanelActive: React.FC<AIChatSidePanelProps> = ({
       >
       <AIChatPanelContent
         parked={!isVisible}
-        sending={isSending}
+        sending={isSending || isUndoingLastTurn}
         t={t}
         currentAgentId={currentAgentId}
         externalAgents={externalAgents}
@@ -1673,6 +1976,7 @@ const AIChatSidePanelActive: React.FC<AIChatSidePanelProps> = ({
         activeSessionId={activeSessionId}
         handleSelectSession={handleSelectSession}
         handleDeleteSession={handleDeleteSession}
+        onForkFromMessage={handleForkFromMessage}
         messages={messages}
         isStreaming={isStreaming}
         activeCompaction={
@@ -1684,6 +1988,8 @@ const AIChatSidePanelActive: React.FC<AIChatSidePanelProps> = ({
         setInputValue={setInputValue}
         handleSend={handleSend}
         handleCompact={handleCompact}
+        canUndoLastTurn={canUndoLastTurn}
+        handleUndoLastTurn={undoLastTurnInSession ? handleUndoLastTurn : undefined}
         handleSteer={handleSteer}
         handleStop={handleStop}
         canSteer={canSteerCurrentTurn}
@@ -1693,8 +1999,19 @@ const AIChatSidePanelActive: React.FC<AIChatSidePanelProps> = ({
         canSendCurrentAgent={canSendCurrentAgent}
         providerDisplayName={providerDisplayName}
         modelDisplayName={modelDisplayName}
-        modelCatalogWarning={runtimeModelWarnings[currentAgentId]}
+        modelCatalogWarning={runtimeModelWarnings[currentAgentId]
+          && runtimeModelWarnings[currentAgentId].cacheKey === buildExternalAgentRuntimeModelTarget(currentAgentConfig)?.cacheKey
+          ? runtimeModelWarnings[currentAgentId].message
+          : undefined}
+        modelCatalogLoading={
+          getExternalAgentSdkBackend(currentAgentConfig) === 'opencode'
+          && runtimeModelLoading[currentAgentId]?.cacheKey === buildExternalAgentRuntimeModelTarget(currentAgentConfig)?.cacheKey
+        }
+        handleModelCatalogRetry={handleRetrySdkModelCatalog}
         agentModelPresets={agentModelPresets}
+        // A managed Codex config's `model` field overrides every selection on
+        // send, so the manual-entry action would be a silent no-op.
+        allowCustomModelEntry={allowCustomModelEntry}
         selectedAgentModel={selectedAgentModel}
         handleAgentModelSelect={handleAgentModelSelect}
         cattyConfiguredProviders={cattyConfiguredProviders}
@@ -1706,6 +2023,7 @@ const AIChatSidePanelActive: React.FC<AIChatSidePanelProps> = ({
         files={files}
         addFiles={addFiles}
         removeFile={removeFile}
+        onMentionNote={canMentionNotes ? mentionNote : undefined}
         terminalSessions={terminalSessions}
         selectedUserSkills={selectedUserSkills}
         userSkillOptions={userSkillOptions}
@@ -1749,6 +2067,7 @@ const AI_CHAT_SIDE_PANEL_AI_STATE_KEYS = [
   'updateLastMessage',
   'updateMessageById',
   'persistContextCompaction',
+  'forkSessionFromMessage',
   'providers',
   'activeProviderId',
   'activeModelId',
@@ -1850,6 +2169,7 @@ export function aiChatSidePanelPropsAreEqual(
         props.scopeHostIds,
         activeTerminalSessionIds,
         workspaceMemberTerminalIds,
+        props.activeSessionIdMap,
       ).map((session) => session.id),
     );
     return resolveInheritedAIActiveSessionId({

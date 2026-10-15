@@ -1,5 +1,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
+import { createRequire } from 'node:module';
+import { fitLargeToolResultForModel } from './harness/toolResultFitting';
 import type { GroupConfig, Host, ManagedSource, PortForwardingRule, ProxyProfile, Snippet, VaultNote } from '../../domain/models';
 import { handleVaultAgentOp, runSerializedVaultAgentRequest, type VaultAgentApiDeps } from './vaultAgentBridgeClient';
 
@@ -111,7 +113,7 @@ function createDeps(
     },
     updateNotes: (nextNotes) => {
       base.updateNotes(nextNotes);
-      overrides.updateNotes?.(nextNotes);
+      return overrides.updateNotes?.(nextNotes);
     },
     updateSnippets: (snippetUpdate) => {
       base.updateSnippets(snippetUpdate);
@@ -137,6 +139,46 @@ function createDeps(
 }
 
 describe('handleVaultAgentOp vault notes', () => {
+  it('bounds both Catty and MCP reads through the real service and forwards continuation/search parameters', async () => {
+    const require = createRequire(import.meta.url);
+    const { createVaultService } = require('../../electron/capabilities/services/vaultService.cjs');
+    const { registerMcpTools } = require('../../electron/capabilities/codegen/mcpToolRegistry.cjs');
+    const content = Array.from({ length: 10_000 }, (_, i) => `line ${i}: example text\n`).join('');
+    const deps = createDeps({ notes: [{ id: 'note-1', title: 'Long', content, createdAt: 1, updatedAt: 2 }] });
+    const service = createVaultService({ invokeVaultAgent: (op: string, params: Record<string, unknown>) => handleVaultAgentOp(op, params, deps) });
+    type Result = { note: { content: string }; nextOffset: number | null; matchOffset?: number };
+    const handlers = new Map<string, (params: Record<string, unknown>) => Promise<{ content: Array<{ text: string }> }>>();
+    registerMcpTools({ tool: (...args: unknown[]) => handlers.set(args[0] as string, args.at(-1) as NonNullable<ReturnType<typeof handlers.get>>) }, {
+      rpcCall: (_method: string, params: Record<string, unknown>) => service.getNote(params),
+      scopeParams: {}, guardWriteOperation: () => null, catalogDescription: (_name: string, description: string) => description,
+    });
+    const get = handlers.get('vault_notes_get')!;
+    let offset: number | null = 0;
+    let collected = '';
+    while (offset !== null) {
+      const params = { noteId: 'note-1', offset, maxChars: 9000, expectedUpdatedAt: 2 };
+      const raw = await service.getNote(params);
+      const catty = fitLargeToolResultForModel({ result: raw, capabilityId: 'vault.note.get' });
+      const mcp = JSON.parse((await get(params)).content[0].text) as Result;
+      assert.deepEqual(catty, mcp);
+      assert.ok(mcp.note.content.length <= 6000);
+      collected += mcp.note.content;
+      offset = mcp.nextOffset;
+    }
+    assert.equal(collected, content);
+    const found = JSON.parse((await get({ noteId: 'note-1', query: 'line 9999:', maxChars: 20 })).content[0].text) as Result;
+    assert.equal(found.matchOffset, content.indexOf('line 9999:'));
+    assert.equal(found.note.content.length, 20);
+    assert.equal((await service.getNote({ noteId: 'note-1', expectedUpdatedAt: 1 })).ok, false);
+    assert.equal((await service.getNote({ noteId: 'missing' })).ok, false);
+    const importedId = 'x'.repeat(201);
+    deps.updateNotes([{ id: importedId, title: 'Imported', content, createdAt: 1, updatedAt: 2 }]);
+    const imported = await service.getNote({ noteId: importedId });
+    assert.equal(imported.ok, true);
+    assert.equal(imported.note.id, importedId);
+    assert.equal(imported.note.content.length, 6000);
+  });
+
   it('note.create persists to updateNotes and returns the new note', async () => {
     const updated: VaultNote[][] = [];
     const deps = createDeps({
@@ -218,6 +260,76 @@ describe('handleVaultAgentOp vault notes', () => {
 
     assert.equal(result.ok, true);
     assert.deepEqual(deps.getNotes().map((note) => note.id), ['note-2']);
+  });
+
+  it('note.import appends generated markdown and keeps the explicit title', async () => {
+    const deps = createDeps({
+      notes: [{ id: 'note-1', title: 'Existing', content: 'keep', createdAt: 1, updatedAt: 1 }],
+    });
+
+    const result = await handleVaultAgentOp('note.import', {
+      fileName: 'runbook.md',
+      title: 'Deploy runbook',
+      content: '# Heading\n\n1. Connect',
+      group: 'ops',
+    }, deps);
+
+    assert.equal(result.ok, true);
+    assert.equal((result as { importedCount?: number }).importedCount, 1);
+    const imported = (result as { notes?: Array<{ title: string; group?: string; contentLength: number }> }).notes;
+    assert.equal(imported?.[0]?.title, 'Deploy runbook');
+    assert.equal(imported?.[0]?.group, 'ops');
+    assert.equal(imported?.[0]?.contentLength, '# Heading\n\n1. Connect'.length);
+    assert.equal('content' in (imported?.[0] ?? {}), false);
+    assert.equal(deps.getNotes().length, 2);
+    assert.equal(deps.getNotes()[0]?.title, 'Existing');
+    assert.equal(deps.getNotes().find((note) => note.title === 'Deploy runbook')?.content, '# Heading\n\n1. Connect');
+  });
+
+  it('note writes report a storage failure instead of claiming success', async () => {
+    const note = { id: 'note-1', title: 'Existing', content: 'old', createdAt: 1, updatedAt: 1 };
+    for (const [op, params] of [
+      ['note.create', { title: 'New', content: 'body' }],
+      ['note.update', { noteId: 'note-1', content: 'new' }],
+      ['note.delete', { noteId: 'note-1' }],
+      ['note.import', { fileName: 'runbook.md', content: '# Runbook' }],
+    ] as const) {
+      const result = await handleVaultAgentOp(op, params, createDeps({
+        notes: [note],
+        updateNotes: () => false,
+      }));
+      assert.equal(result.ok, false, `${op} must not claim the write was saved`);
+      assert.match(String(result.error), /could not be saved/i);
+    }
+  });
+
+  it('note.import summaries omit every imported document body', async () => {
+    const body = 'x'.repeat(40);
+    const result = await handleVaultAgentOp('note.import', {
+      documents: JSON.stringify([
+        { fileName: 'a.md', content: body, title: 'A' },
+        { fileName: 'b.md', content: body, title: 'B' },
+      ]),
+    }, createDeps({ notes: [] }));
+
+    assert.equal(result.ok, true);
+    const notes = (result as { notes?: Array<Record<string, unknown>> }).notes ?? [];
+    assert.equal(notes.length, 2);
+    for (const note of notes) {
+      assert.equal('content' in note, false);
+      assert.equal(note.contentLength, body.length);
+    }
+  });
+
+  it('note.import rejects a batch mixed with a single content body', async () => {
+    const deps = createDeps({ notes: [] });
+    const result = await handleVaultAgentOp('note.import', {
+      content: '# One',
+      documents: JSON.stringify([{ fileName: 'two.md', content: '# Two' }]),
+    }, deps);
+    assert.equal(result.ok, false);
+    assert.match(String((result as { error?: string }).error), /not both/);
+    assert.equal(deps.getNotes().length, 0);
   });
 
   it('sequential note.create calls accumulate instead of overwriting prior notes', async () => {
@@ -358,6 +470,134 @@ describe('handleVaultAgentOp vault hosts', () => {
     await handleVaultAgentOp('host.open', { hostId: 'host-open-3', chatSessionId: '__external_mcp__' }, deps);
 
     assert.equal(receivedIsExternalMcpCall, true);
+  });
+
+  it('host.open registers saved-host identity immediately but not for a temporary host', async (t) => {
+    const { netcattyBridge } = await import('../services/netcattyBridge');
+    const merged: Array<{ sessions: Array<{ savedHostId?: string }>; scope: string }> = [];
+    t.mock.method(netcattyBridge, 'get', () => ({
+      aiMcpMergeSessions: async (sessions: Array<{ savedHostId?: string }>, scope: string) => {
+        merged.push({ sessions, scope });
+      },
+    } as unknown as NetcattyBridge));
+    const saved = { id: 'saved-host', label: 'Saved', hostname: 'saved.example', port: 22 } as Host;
+    const temporary = { id: 'temporary-host', label: 'Temporary', hostname: 'temp.example', port: 22, ephemeral: true } as Host;
+    const serial = { id: 'serial-host', label: 'Serial', hostname: 'ttyUSB0', protocol: 'serial' } as Host;
+    const deps = createDeps({ hosts: [saved, temporary, serial] });
+
+    await handleVaultAgentOp('host.open', { hostId: saved.id, chatSessionId: '__external_mcp__' }, deps);
+    await handleVaultAgentOp('host.open', { hostId: temporary.id, chatSessionId: '__external_mcp__' }, deps);
+    await handleVaultAgentOp('host.open', { hostId: serial.id, chatSessionId: '__external_mcp__' }, deps);
+
+    assert.deepEqual(merged.map(({ sessions, scope }) => ({ savedHostId: sessions[0]?.savedHostId, scope })), [
+      { savedHostId: saved.id, scope: '__external_mcp__' },
+      { savedHostId: undefined, scope: '__external_mcp__' },
+      { savedHostId: undefined, scope: '__external_mcp__' },
+    ]);
+  });
+
+  it('host.open reuses an existing session for the same host instead of opening a new tab', async (t) => {
+    const { netcattyBridge } = await import('../services/netcattyBridge');
+    const merged: Array<{ sessions: Array<{ sessionId: string; connected?: boolean }>; scope: string }> = [];
+    t.mock.method(netcattyBridge, 'get', () => ({
+      aiMcpMergeSessions: async (
+        sessions: Array<{ sessionId: string; connected?: boolean }>,
+        scope: string,
+      ) => {
+        merged.push({ sessions, scope });
+      },
+    } as unknown as NetcattyBridge));
+    const host: Host = {
+      id: 'host-reuse-1',
+      label: 'edge',
+      hostname: 'edge.example.com',
+      username: 'ops',
+      port: 22,
+    };
+    let openHostCalls = 0;
+    const deps = createDeps({
+      hosts: [host],
+      openHost: (hostToOpen: Host) => {
+        openHostCalls += 1;
+        return { ok: true, sessionId: `session-${hostToOpen.id}`, host: hostToOpen };
+      },
+      findExistingSessionForHost: (hostId: string) => hostId === host.id
+        ? { sessionId: 'session-existing-1', connected: false }
+        : undefined,
+    });
+
+    const result = await handleVaultAgentOp(
+      'host.open',
+      { hostId: host.id, chatSessionId: '__external_mcp__' },
+      deps,
+    );
+
+    assert.equal(result.ok, true);
+    assert.equal((result as { sessionId?: string }).sessionId, 'session-existing-1');
+    assert.equal((result as { reused?: boolean }).reused, true);
+    assert.equal((result as { status?: string }).status, 'reconnecting');
+    assert.equal(openHostCalls, 0, 'must not open a duplicate tab');
+    // The reused session is re-registered in the MCP scope with its live
+    // reconnecting state so terminal_execute can target it immediately.
+    assert.deepEqual(merged.map(({ sessions, scope }) => ({ scope, connected: sessions[0]?.connected })), [
+      { scope: '__external_mcp__', connected: false },
+    ]);
+  });
+
+  it('host.open reuse reports a connected session as connected', async () => {
+    const host: Host = { id: 'host-reuse-2', label: 'edge', hostname: 'edge.example.com' };
+    let openHostCalls = 0;
+    const deps = createDeps({
+      hosts: [host],
+      openHost: (hostToOpen: Host) => {
+        openHostCalls += 1;
+        return { ok: true, sessionId: `session-${hostToOpen.id}`, host: hostToOpen };
+      },
+      findExistingSessionForHost: (hostId: string) => hostId === host.id
+        ? { sessionId: 'session-existing-2', connected: true }
+        : undefined,
+    });
+
+    const result = await handleVaultAgentOp('host.open', { hostId: host.id }, deps);
+
+    assert.equal(result.ok, true);
+    assert.equal((result as { sessionId?: string }).sessionId, 'session-existing-2');
+    assert.equal((result as { status?: string }).status, 'connected');
+    assert.equal((result as { connected?: boolean }).connected, true);
+    assert.equal(openHostCalls, 0);
+  });
+
+  it('host.open newTab forces a fresh session even when one exists', async () => {
+    const host: Host = { id: 'host-reuse-3', label: 'edge', hostname: 'edge.example.com' };
+    const deps = createDeps({
+      hosts: [host],
+      findExistingSessionForHost: () => ({ sessionId: 'session-existing-3', connected: true }),
+    });
+
+    const result = await handleVaultAgentOp(
+      'host.open',
+      { hostId: host.id, newTab: 'true' },
+      deps,
+    );
+
+    assert.equal(result.ok, true);
+    assert.equal((result as { sessionId?: string }).sessionId, 'session-host-reuse-3');
+    assert.equal((result as { status?: string }).status, 'connecting');
+  });
+
+  it('host.open still opens a new tab when no session exists for the host', async () => {
+    const host: Host = { id: 'host-reuse-4', label: 'edge', hostname: 'edge.example.com' };
+    const deps = createDeps({
+      hosts: [host],
+      findExistingSessionForHost: () => undefined,
+    });
+
+    const result = await handleVaultAgentOp('host.open', { hostId: host.id }, deps);
+
+    assert.equal(result.ok, true);
+    assert.equal((result as { sessionId?: string }).sessionId, 'session-host-reuse-4');
+    assert.equal((result as { reused?: boolean }).reused, undefined);
+    assert.equal((result as { status?: string }).status, 'connecting');
   });
 
   it('host.open does not treat a missing chatSessionId as an external MCP call', async () => {
@@ -632,6 +872,30 @@ describe('handleVaultAgentOp vault hosts', () => {
     assert.equal(deps.getHosts()[0]?.username, 'root');
     assert.deepEqual(deps.getHosts()[0]?.tags, ['keep']);
     assert.ok(deps.getCustomGroups().includes('prod'));
+  });
+
+  it('host.update can set the host operating system for AI-facing metadata', async () => {
+    const deps = createDeps({
+      hosts: [{
+        id: 'host-1',
+        label: 'windows box',
+        hostname: '10.0.0.5',
+        username: 'root',
+        port: 22,
+        tags: [],
+        os: 'linux',
+      }],
+      customGroups: [],
+    });
+
+    const result = await handleVaultAgentOp(
+      'host.update',
+      { hostId: 'host-1', os: 'windows' },
+      deps,
+    );
+
+    assert.equal(result.ok, true);
+    assert.equal(deps.getHosts()[0]?.os, 'windows');
   });
 
   it('host.update saves a passphrase for the host key path without returning it', async () => {
@@ -2075,4 +2339,64 @@ describe('runSerializedVaultAgentRequest', () => {
     assert.deepEqual(results, [1, 2]);
     assert.equal(value, 2);
   });
+});
+
+describe('terminal.readContext', () => {
+  it('uses the registered bounded reader, preserving script snapshots and cleanup', async () => {
+    const { registerScreenSnapshotProvider, captureScreenSnapshot } = await import('../scripts/screenSnapshotRegistry');
+    const { buildTerminalContextReadResult } = await import('../../domain/terminalContextRead');
+    const snapshot = { rows: 2, cols: 80, currentRow: 1, lines: ['visible', 'prompt'] };
+    const lines = Array.from({ length: 500 }, (_, i) => `line ${i}`);
+    const dispose = registerScreenSnapshotProvider('read-test', () => snapshot, async (request) =>
+      buildTerminalContextReadResult({ ...request, fullText: lines.join('\n'), source: 'snapshot' }));
+    try {
+      assert.deepEqual(captureScreenSnapshot('read-test'), snapshot);
+      const result = await handleVaultAgentOp('terminal.readContext', {
+        sessionId: 'read-test', range: 'tail', maxLines: 100000,
+      }, createDeps());
+      assert.equal(result.ok, true);
+      assert.equal(result.returnedLines, 300);
+      assert.equal(result.startLine, 200);
+      assert.equal(result.source, 'snapshot');
+      const selected = await handleVaultAgentOp('terminal.readContext', {
+        sessionId: 'read-test', range: 'lines', startLine: 10, maxLines: 2,
+      }, createDeps());
+      assert.equal(selected.content, 'line 10\nline 11');
+    } finally {
+      dispose();
+    }
+    assert.equal((await handleVaultAgentOp('terminal.readContext', { sessionId: 'read-test' }, createDeps())).ok, false);
+  });
+});
+
+it('popup bridge reads its local screen without installing a vault handler', async (t) => {
+  const { setupVaultAgentBridge, registerVaultAgentHandler } = await import('./vaultAgentBridgeClient');
+  const { netcattyBridge } = await import('../services/netcattyBridge');
+  const { registerScreenSnapshotProvider } = await import('../scripts/screenSnapshotRegistry');
+  const { buildTerminalContextReadResult } = await import('../../domain/terminalContextRead');
+  let listener: Parameters<NetcattyBridge['onVaultAgentRequest']>[0];
+  const responses: Record<string, unknown>[] = [];
+  let unsubscribed = false;
+  const stub = {
+    onVaultAgentRequest: (callback: typeof listener) => {
+      listener = callback;
+      return () => { unsubscribed = true; };
+    },
+    respondVaultAgent: async (_id: string, result: Record<string, unknown>) => { responses.push(result); },
+  };
+  t.mock.method(netcattyBridge, 'get', () => stub as unknown as NetcattyBridge);
+  registerVaultAgentHandler(null);
+  const unregister = registerScreenSnapshotProvider('popup', () => ({ rows: 1, cols: 80, currentRow: 0, lines: ['screen'] }), async (request) =>
+    buildTerminalContextReadResult({ ...request, fullText: 'popup output', source: 'live' }));
+  const dispose = setupVaultAgentBridge();
+  try {
+    await listener!({ requestId: 'read', op: 'terminal.readContext', params: { sessionId: 'popup' } });
+    assert.equal(responses[0].content, 'popup output');
+    await listener!({ requestId: 'vault', op: 'host.list', params: {} });
+    assert.equal(responses[1].ok, false);
+  } finally {
+    dispose();
+    unregister();
+  }
+  assert.equal(unsubscribed, true);
 });

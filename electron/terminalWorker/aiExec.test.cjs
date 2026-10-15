@@ -2,9 +2,14 @@
 
 const assert = require("node:assert/strict");
 const { EventEmitter } = require("node:events");
+const { Duplex } = require("node:stream");
 const test = require("node:test");
+const { setRendererFlowPaused, clearSessionFlowState } = require("../bridges/terminalFlowAck.cjs");
 
-const { registerWorkerAiExecHandlers } = require("./aiExec.cjs");
+const {
+  createWorkerAiJobStartHandler,
+  registerWorkerAiExecHandlers,
+} = require("./aiExec.cjs");
 const { PROBE_OUTPUT_MARKER } = require("../bridges/ai/sessionShellKind.cjs");
 
 class FakePty extends EventEmitter {
@@ -15,6 +20,12 @@ class FakePty extends EventEmitter {
 
   write(data) {
     this.writes.push(String(data));
+    const input = this.writes.join("");
+    if (!this.probeReplied && input.includes("command sh -c") && input.endsWith("_Q'\n")) {
+      this.probeReplied = true;
+      const marker = input.match(/(__NCMCP_[A-Za-z0-9_]+__)/)[1];
+      queueMicrotask(() => this.emit("data", `${marker}_P:\n${marker}_Q`));
+    }
   }
 }
 
@@ -45,9 +56,19 @@ function createFakeEvent() {
   };
 }
 
-function extractMarker(writes) {
-  const wrapper = writes.find((entry) => entry.includes("__NCMCP_"));
-  assert.ok(wrapper, "expected wrapped command to be written to the PTY");
+async function waitForWrapper(writes) {
+  const deadline = Date.now() + 5000;
+  while (Date.now() < deadline) {
+    const input = writes.join("");
+    const wrapper = input.slice(input.lastIndexOf("\x0b\x15"));
+    if (wrapper.includes("_cmd") && wrapper.includes("_E:") && wrapper.endsWith("\n") && !wrapper.endsWith("\\\n")) return wrapper;
+    await new Promise(resolve => setTimeout(resolve, 10));
+  }
+  assert.fail("expected complete wrapped command to be written to the PTY");
+}
+
+async function extractMarker(writes) {
+  const wrapper = await waitForWrapper(writes);
   const match = wrapper.match(/(__NCMCP_[A-Za-z0-9_]+__)/);
   assert.ok(match, "expected command wrapper to contain an MCP marker");
   return match[1];
@@ -56,6 +77,58 @@ function extractMarker(writes) {
 function nextTick() {
   return new Promise((resolve) => setImmediate(resolve));
 }
+
+test("worker job stop receives cancellation output while renderer flow is paused", async () => {
+  class PausablePty extends Duplex {
+    constructor() { super(); this.writes = []; }
+    _read() {}
+    _write(chunk, _encoding, done) {
+      const text = chunk.toString();
+      this.writes.push(text);
+      if (text === "\x03") {
+        this.push(`${this.marker}_E:130\r\nroot@test:~# `);
+      } else {
+        const input = this.writes.join("");
+        if (!this.probeReplied && input.includes("command sh -c") && input.endsWith("_Q'\n")) {
+          this.probeReplied = true;
+          this.marker = input.match(/(__NCMCP_[A-Za-z0-9_]+__)/)[1];
+          this.push(`${this.marker}_P:\n${this.marker}_Q`);
+        }
+      }
+      done();
+    }
+  }
+  const pty = new PausablePty();
+  const session = { protocol: "ssh", stream: pty, shellKind: "posix" };
+  const ipcMain = createFakeIpcMain();
+  registerWorkerAiExecHandlers(ipcMain, { sessions: new Map([["ssh-paused", session]]) });
+  const event = createFakeEvent();
+  const started = await ipcMain.handlers.get("netcatty:ai:jobStart")(event, {
+    sessionId: "ssh-paused", command: "sleep 60", chatSessionId: "chat-paused",
+  });
+  const marker = await extractMarker(pty.writes);
+  pty.push(`${marker}_S\r\nstarted\r\n`);
+  await nextTick();
+  setRendererFlowPaused(session, true);
+  assert.equal(pty.isPaused(), true);
+  try {
+    await ipcMain.handlers.get("netcatty:ai:jobStop")(event, {
+      jobId: started.jobId, chatSessionId: "chat-paused",
+    });
+    await nextTick();
+    const polled = await ipcMain.handlers.get("netcatty:ai:jobPoll")(event, {
+      jobId: started.jobId, chatSessionId: "chat-paused",
+    });
+    assert.equal(polled.status, "cancelled");
+    assert.equal(polled.completed, true);
+    assert.equal(polled.error, "Cancelled");
+    assert.equal(pty.writes.filter(data => data === "\x03").length, 1);
+  } finally {
+    clearSessionFlowState(session);
+    await nextTick();
+    pty.destroy();
+  }
+});
 
 function createShellProbeConn(stdout = `${PROBE_OUTPUT_MARKER}/usr/bin/fish\n`) {
   const conn = {
@@ -126,6 +199,7 @@ test("worker AI background jobs start, poll, stop, and block overlapping exec", 
   assert.equal(started.command, "npm test");
   assert.equal(started.status, "running");
   assert.equal(started.outputMode, "foreground-mirrored");
+  const marker = await extractMarker(pty.writes);
   assert.deepEqual(event.rendererMessages, [
     {
       channel: "netcatty:data",
@@ -135,9 +209,14 @@ test("worker AI background jobs start, poll, stop, and block overlapping exec", 
         syntheticEcho: true,
       },
     },
+    {
+      channel: "netcatty:data",
+      payload: {
+        sessionId: "ssh-1",
+        data: `${marker}_I\n`,
+      },
+    },
   ]);
-
-  const marker = extractMarker(pty.writes);
   pty.emit("data", `${marker}_S\r\nready\r\n`);
   await nextTick();
 
@@ -200,7 +279,7 @@ test("worker chat cancellation stops matching background jobs", async () => {
     chatSessionId: "chat-1",
     commandTimeoutMs: 5000,
   });
-  const marker = extractMarker(pty.writes);
+  const marker = await extractMarker(pty.writes);
   pty.emit("data", `${marker}_S\r\nrunning\r\n`);
   await nextTick();
 
@@ -254,11 +333,11 @@ test("worker background job probes unset remote shellKind before wrapping", asyn
   // Login fish is a soft hint (not pinned); wrapper should be fish-native.
   assert.equal(sessions.get("ssh-fish").shellKind, undefined);
   assert.equal(sessions.get("ssh-fish")._loginShellKind, "fish");
-  const wrapper = pty.writes.find((entry) => entry.includes("__NCMCP_"));
+  const wrapper = await waitForWrapper(pty.writes);
   assert.match(wrapper, /set -l __NCMCP_.*_cmd/);
   assert.doesNotMatch(wrapper, / sh -c '/);
 
-  const marker = extractMarker(pty.writes);
+  const marker = await extractMarker(pty.writes);
   pty.emit("data", `${marker}_S\r\n${marker}_E:0\r\n`);
   await nextTick();
 });
@@ -298,7 +377,7 @@ test("worker background job reserves the session while shellKind probe is pendin
   const first = await firstStart;
   assert.equal(first.ok, true);
 
-  const marker = extractMarker(pty.writes);
+  const marker = await extractMarker(pty.writes);
   pty.emit("data", `${marker}_S\r\n${marker}_E:0\r\n`);
   await nextTick();
 });
@@ -339,8 +418,177 @@ test("worker chat cancel during shellKind probe aborts job start before PTY writ
   assert.equal(started.ok, false);
   assert.equal(started.error, "Cancelled");
   assert.equal(
-    pty.writes.filter((entry) => entry.includes("__NCMCP_")).length,
+    pty.writes.filter((entry) => entry.includes("__NCMCP_") && !entry.includes("command sh -c")).length,
     0,
     "cancelled pending start must not type a wrapper into the PTY",
   );
 });
+
+test("worker exec keeps shell-selected defaults: powershell frees $(), dangerous PS commands blocked", async () => {
+  const pty = new FakePty();
+  const sessions = new Map([
+    ["ps-1", {
+      protocol: "ssh",
+      stream: pty,
+      shellKind: "",
+      remoteSshVersion: "OpenSSH_for_Windows_9.5",
+      lastIdlePrompt: "custom% ",
+      _promptTrackTail: "custom prompt\r\ncustom% ",
+      _shellKindExecProbe: async () => (
+        "DefaultShell    REG_SZ    C:\\Program Files\\PowerShell\\7\\pwsh.exe\r\n"
+      ),
+    }],
+  ]);
+  const ipcMain = createFakeIpcMain();
+  registerWorkerAiExecHandlers(ipcMain, { sessions });
+  const event = createFakeEvent();
+  const exec = ipcMain.handlers.get("netcatty:ai:exec");
+
+  // PowerShell subexpression syntax on a PowerShell session is legal: the
+  // command must pass the worker blocklist and reach the PTY wrapper.
+  const allowedPromise = exec(event, {
+    sessionId: "ps-1",
+    command: 'Write-Host "now: $(Get-Date)"',
+    chatSessionId: "chat-ps",
+    commandTimeoutMs: 300,
+  });
+  await nextTick();
+  assert.ok(
+    pty.writes.some((entry) => entry.includes("__NCMCP_") && !entry.includes("command sh -c")),
+    "expected the unblocked command to reach the PTY",
+  );
+  await allowedPromise.catch(() => {});
+
+  // PowerShell-native destructive commands are blocked by the new group.
+  const blocked = await exec(event, {
+    sessionId: "ps-1",
+    command: "Remove-Item -Recurse -Force C:\\important",
+    chatSessionId: "chat-ps",
+    commandTimeoutMs: 5000,
+  });
+  assert.equal(blocked.ok, false);
+  assert.match(blocked.error, /Command blocked by safety policy/);
+  assert.equal(blocked.error.includes("Remove-Item"), true);
+});
+
+test("worker exec honors an explicitly empty configured blocklist", async () => {
+  const pty = new FakePty();
+  const sessions = new Map([
+    ["posix-no-blocklist", {
+      protocol: "ssh",
+      stream: pty,
+      shellKind: "posix",
+    }],
+  ]);
+  const ipcMain = createFakeIpcMain();
+  registerWorkerAiExecHandlers(ipcMain, { sessions });
+
+  const execution = ipcMain.handlers.get("netcatty:ai:exec")(createFakeEvent(), {
+    sessionId: "posix-no-blocklist",
+    command: "rm -rf /tmp/test-only",
+    chatSessionId: "chat-no-blocklist",
+    commandTimeoutMs: 300,
+    commandBlocklist: [],
+  });
+  await nextTick();
+
+  assert.ok(
+    pty.writes.some((entry) => entry.includes("__NCMCP_") && !entry.includes("command sh -c")),
+    "disabled defaults must allow the command to reach the PTY wrapper",
+  );
+  await execution.catch(() => {});
+});
+
+test("worker background job probes before blocking a first PowerShell command", async () => {
+  const pty = new FakePty();
+  const sessions = new Map([
+    ["ps-danger-first", {
+      protocol: "ssh",
+      stream: pty,
+      shellKind: "",
+      remoteSshVersion: "OpenSSH_for_Windows_9.5",
+      lastIdlePrompt: "custom% ",
+      _promptTrackTail: "custom prompt\r\ncustom% ",
+      _shellKindExecProbe: async () => (
+        "DefaultShell    REG_SZ    C:\\Program Files\\PowerShell\\7\\pwsh.exe\r\n"
+      ),
+    }],
+  ]);
+  const backgroundJobs = new Map();
+  const activeSessionJobs = new Map();
+  const start = createWorkerAiJobStartHandler({
+    sessions,
+    backgroundJobs,
+    activeSessionJobs,
+  });
+
+  const result = await start(createFakeEvent(), {
+    sessionId: "ps-danger-first",
+    command: "Remove-Item -Recurse -Force C:\\important",
+    chatSessionId: "chat-ps-danger",
+  });
+
+  assert.equal(result.ok, false);
+  assert.match(result.error, /Command blocked by safety policy/);
+  assert.equal(pty.writes.length, 0);
+  assert.equal(backgroundJobs.size, 0);
+  assert.equal(activeSessionJobs.size, 0);
+});
+
+test("worker exec on an unclassified posix session still blocks command substitution", async () => {
+  const pty = new FakePty();
+  const sessions = new Map([
+    ["ssh-posix", {
+      protocol: "ssh",
+      stream: pty,
+      shellKind: "posix",
+    }],
+  ]);
+  const ipcMain = createFakeIpcMain();
+  registerWorkerAiExecHandlers(ipcMain, { sessions });
+  const event = createFakeEvent();
+
+  const blocked = await ipcMain.handlers.get("netcatty:ai:exec")(event, {
+    sessionId: "ssh-posix",
+    command: "echo $(whoami)",
+    chatSessionId: "chat-posix",
+    commandTimeoutMs: 5000,
+  });
+
+  assert.equal(blocked.ok, false);
+  assert.match(blocked.error, /Command blocked by safety policy/);
+  assert.equal(
+    pty.writes.filter((entry) => entry.includes("__NCMCP_") && !entry.includes("command sh -c")).length,
+    0,
+    "blocked commands must not reach the PTY",
+  );
+});
+
+test("single-channel worker exec does not open an exec channel or send line-kill keys", async () => {
+  let execCalls = 0;
+  const pty = new FakePty();
+  const sessions = new Map([["ssh-single", {
+    protocol: "ssh",
+    singleChannelSsh: true,
+    remoteSshVersion: "CLOUDBILITY-4.14",
+    stream: pty,
+    shellKind: "",
+    conn: { exec() { execCalls += 1; throw new Error("exec channel"); } },
+  }]]);
+  const ipcMain = createFakeIpcMain();
+  registerWorkerAiExecHandlers(ipcMain, { sessions });
+  const execution = ipcMain.handlers.get("netcatty:ai:exec")(createFakeEvent(), {
+    sessionId: "ssh-single",
+    command: "uname -a",
+    chatSessionId: "chat-single",
+    commandTimeoutMs: 300,
+  });
+  await new Promise((resolve) => setTimeout(resolve, 80));
+  assert.equal(execCalls, 0);
+  const input = pty.writes.join("");
+  assert.equal(input.includes("\u0015"), false);
+  assert.equal(input.includes("\u000b"), false);
+  assert.ok(input.length > 0);
+  await execution.catch(() => {});
+});
+

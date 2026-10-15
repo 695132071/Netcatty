@@ -1,6 +1,8 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
+import { runInNewContext } from "node:vm";
+import { resolveRestoreCwdIntent } from "../../domain/sessionRestore.ts";
 
 import {
   getInitialTerminalStatus,
@@ -10,6 +12,34 @@ import {
   shouldStartTerminalBackend,
 } from "./restoredSessionGate.ts";
 import { setVaultInitialized } from "../../application/state/vaultInitStore.ts";
+
+test("Terminal restore preparation honors fresh login while preserving ordinary and local cwd restore", () => {
+  const source = readFileSync(new URL("../Terminal.tsx", import.meta.url), "utf8");
+  const start = source.indexOf("const prepareRestoredReconnect = useCallback");
+  const end = source.indexOf("// Set only once the inherited", start);
+  assert.ok(start >= 0 && end > start);
+  for (const protocol of ["ssh", undefined, "local"] as const) {
+    for (const requireFreshConnection of [false, true]) {
+      const restoreCwdIntentRef: { current: { command: string } | null } = { current: null };
+      runInNewContext(`${source.slice(start, end)}\nprepareRestoredReconnect();`, {
+        useCallback: (fn: () => void) => fn,
+        shouldSuppressHostStartupCommandOnReconnect,
+        resolveRestoreCwdIntent,
+        suppressHostStartupCommandRef: { current: false },
+        restoreCwdIntentRef,
+        restoreState: "restored-disconnected",
+        restoreTerminalCwd: true,
+        host: { protocol },
+        shellType: "posix",
+        lastCwd: "/srv/old-target",
+        isNetworkDevice: false,
+        requireFreshConnection,
+      });
+      if (requireFreshConnection && protocol !== "local") assert.equal(restoreCwdIntentRef.current, null);
+      else assert.equal(restoreCwdIntentRef.current?.command, "cd -- '/srv/old-target'");
+    }
+  }
+});
 
 test("restored disconnected sessions initialize as connecting", () => {
   assert.equal(

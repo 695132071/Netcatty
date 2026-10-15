@@ -1,7 +1,7 @@
 import type { TerminalProps } from './terminalHelpers';
 
 const themeFingerprint = (theme: TerminalProps['terminalTheme'] | undefined): string => (
-  theme?.colors ? `${theme.id}:${theme.colors.background}:${theme.colors.foreground}:${theme.colors.cursor}` : ''
+  theme?.colors ? `${theme.id}:${theme.colors.background}:${theme.colors.foreground}:${theme.colors.foregroundIntense ?? ''}:${theme.colors.cursor}` : ''
 );
 
 export const terminalPropsAreEqual = (
@@ -47,6 +47,7 @@ export const terminalPropsAreEqual = (
   && prev.pendingScriptId === next.pendingScriptId
   && prev.pendingScript === next.pendingScript
   && prev.reuseConnectionFromSessionId === next.reuseConnectionFromSessionId
+  && prev.requireFreshConnection === next.requireFreshConnection
   && prev.attachExistingSession === next.attachExistingSession
   && prev.serialConfig === next.serialConfig
   && prev.hotkeyScheme === next.hotkeyScheme

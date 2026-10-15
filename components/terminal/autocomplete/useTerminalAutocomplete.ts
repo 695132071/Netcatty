@@ -27,12 +27,14 @@ import {
   shouldPreferRemoteShellCwd,
 } from "./remotePathCompleter";
 import { decideGhostSuggestion } from "./ghostSuggestionPolicy";
+import { isWindowsShellLineInput, shouldWriteAutocompleteLivePreview } from "./livePreviewSequence";
 import {
   areSubDirPanelsEqual,
   areSuggestionsEqual,
-  resolveAutocompleteAnchorInViewport,
+  nextAutocompletePopupAnchorViewport,
   resolveAutocompleteCursorCell,
   resolveAutocompleteCwdWithSource,
+  resolveAutocompletePopupAnchorInViewport,
   resolvePreservedSuggestionIndex,
 } from "./terminalAutocompleteLayout";
 import { handleTerminalAutocompleteInput } from "./terminalAutocompleteInput";
@@ -142,8 +144,8 @@ function isSubsequence(query: string, target: string): boolean {
 
 /**
  * Remove history rows that no longer match the edited input while a debounced
- * provider refresh is pending. Other sources keep their provider-specific
- * matching semantics (snippet search, plugin replacement, etc.).
+ * provider refresh is pending. Snippets must be re-queried for the new input
+ * before they can be selected or executed. Other sources retain their matching.
  */
 export function reconcileAutocompletePopupState(
   prev: AutocompleteState,
@@ -156,6 +158,7 @@ export function reconcileAutocompletePopupState(
   const inputContext = parseCommandLine(input);
   const allowFuzzyHistory = input.length >= 2 && inputContext.wordIndex === 0;
   const suggestions = prev.suggestions.filter((suggestion) => {
+    if (suggestion.source === "snippet") return false;
     if (suggestion.source !== "history") return true;
     const text = suggestion.text.toLowerCase();
     if (suggestion.historyMatch === "path-argument") {
@@ -237,6 +240,11 @@ interface UseTerminalAutocompleteOptions {
     input: string,
     options: HostCompletionProviderOptions,
   ) => Promise<CompletionSuggestion[]>;
+  /**
+   * Vendor bastion / network-device CLI. Live-preview PTY rewrites (Ctrl-U)
+   * disconnect these sessions, so the popup stays and preview writes no-op (#1193).
+   */
+  isNetworkDevice?: boolean;
 }
 
 export interface TerminalAutocompleteHandle {
@@ -276,6 +284,7 @@ export function useTerminalAutocomplete(
     onAcceptSnippet,
     sensitiveInputActiveRef,
     provideCompletions,
+    isNetworkDevice = false,
   } = options;
   const rawSettings: AutocompleteSettings = {
     ...DEFAULT_AUTOCOMPLETE_SETTINGS,
@@ -291,6 +300,7 @@ export function useTerminalAutocomplete(
   const settings: AutocompleteSettings = {
     ...rawSettings,
     showGhostText: rawSettings.showPopupMenu ? false : rawSettings.showGhostText,
+    livePreview: shouldWriteAutocompleteLivePreview(rawSettings.livePreview, isNetworkDevice),
   };
 
   // Use refs for values accessed in callbacks to avoid stale closures
@@ -312,6 +322,8 @@ export function useTerminalAutocomplete(
   sessionIdRef.current = sessionId;
   const protocolRef = useRef(protocol);
   protocolRef.current = protocol;
+  const isNetworkDeviceRef = useRef(isNetworkDevice);
+  isNetworkDeviceRef.current = isNetworkDevice;
   const getCwdRef = useRef(getCwd);
   getCwdRef.current = getCwd;
   const provideCompletionsRef = useRef(provideCompletions ?? getCompletions);
@@ -492,6 +504,9 @@ export function useTerminalAutocomplete(
   }, []);
 
   const repositionPopup = useCallback(() => {
+    // Skip the React setter entirely while the popup is closed so a line-feed
+    // burst cannot stall the renderer (#3204).
+    if (!stateRef.current.popupVisible || stateRef.current.suggestions.length === 0) return;
     const term = termRef.current;
     if (!term) return;
 
@@ -514,30 +529,33 @@ export function useTerminalAutocomplete(
           column: term.buffer.active.cursorX,
           row: term.buffer.active.cursorY,
         };
-      const anchor = resolveAutocompleteAnchorInViewport(
+      // Pin to the wrapped command start after wrap/scroll so the popup
+      // follows the first physical line instead of covering it (#3061).
+      const anchor = resolveAutocompletePopupAnchorInViewport(
         term,
         containerRef.current,
         prev.suggestions.length,
         cursorCell.column,
         cursorCell.row,
       );
+      const nextAnchor = nextAutocompletePopupAnchorViewport(
+        prev.popupAnchorViewport,
+        prev.expandUpward,
+        anchor,
+      );
+      if (!nextAnchor) return prev;
 
-      // Force a re-render even when the relative cursor cell hasn't changed.
-      // The terminal container may have moved in the viewport after a fit/resize.
       return {
         ...prev,
-        popupAnchorViewport: {
-          left: anchor.anchorLeft,
-          top: anchor.anchorTop,
-          bottom: anchor.anchorBottom,
-        },
-        expandUpward: anchor.expandUpward,
+        popupAnchorViewport: nextAnchor.viewport,
+        expandUpward: nextAnchor.expandUpward,
       };
     });
   }, [containerRef, termRef]);
 
   /** Fetch directory listing via IPC. */
   const fetchDirEntries = useCallback(async (dirPath: string): Promise<SubDirEntry[]> => {
+    if (isNetworkDeviceRef.current) return [];
     return listDirectoryEntries(dirPath, {
       sessionId: sessionIdRef.current,
       protocol: protocolRef.current,
@@ -708,6 +726,10 @@ export function useTerminalAutocomplete(
    * (no clearState). Used for live-preview while navigating sub-dir panels (#1005).
    */
   const renderSubDirPath = useCallback((level: number, entry: SubDirEntry) => {
+    if (!shouldWriteAutocompleteLivePreview(
+      settingsRef.current.livePreview,
+      isNetworkDeviceRef.current,
+    )) return;
     const s = stateRef.current;
     const term = termRef.current;
     if (!term) return;
@@ -1031,7 +1053,7 @@ export function useTerminalAutocomplete(
         if (!options?.preserveSelection) {
           previewActiveRef.current = false;
         }
-        const anchor = resolveAutocompleteAnchorInViewport(
+        const anchor = resolveAutocompletePopupAnchorInViewport(
           term,
           containerRef.current,
           completions.length,
@@ -1139,6 +1161,7 @@ export function useTerminalAutocomplete(
         historyScope: settingsRef.current.historyScope,
         sessionId: sessionIdRef.current,
         protocol: protocolRef.current,
+        skipPathCompletion: isNetworkDeviceRef.current,
         cwd: cwdResolution.cwd,
         cwdSource: cwdResolution.source,
         snippets: snippetsRef.current,
@@ -1250,7 +1273,10 @@ export function useTerminalAutocomplete(
    * live-preview, #1005). `index < 0` restores the user's typed baseline.
    */
   const renderPreviewSelection = useCallback((index: number) => {
-    if (!settingsRef.current.livePreview) return;
+    if (!shouldWriteAutocompleteLivePreview(
+      settingsRef.current.livePreview,
+      isNetworkDeviceRef.current,
+    )) return;
     const s = stateRef.current;
     const term = termRef.current;
     if (!term) return;
@@ -1300,7 +1326,7 @@ export function useTerminalAutocomplete(
       );
       if (line !== null && line.length > 0) {
         if (!settingsRef.current.allowLineReplacement) return false;
-        const clearSequence = hostOsRef.current === "windows"
+        const clearSequence = isWindowsShellLineInput(hostOsRef.current, prompt.promptText)
           ? "\b".repeat(line.length)
           : "\x15"; // Ctrl+U (readline kill-line)
         writeToTerminal(clearSequence);

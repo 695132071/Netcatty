@@ -1,6 +1,6 @@
 "use strict";
 
-const { CAPABILITY_STATUS, CAPABILITY_SURFACES } = require("../../capabilities/constants.cjs");
+const { CAPABILITY_STATUS, CAPABILITY_SURFACES, PERMISSION_MODES } = require("../../capabilities/constants.cjs");
 const { getCapabilityByRpcMethod } = require("../../capabilities/registry.cjs");
 const { getMcpToolNameForRpcMethod } = require("../../capabilities/adapters/mcpAdapter.cjs");
 const { createVaultService } = require("../../capabilities/services/vaultService.cjs");
@@ -24,6 +24,7 @@ const SERVICE_BINDINGS = Object.freeze({
   "vault.note.create": { domain: "vault", method: "createNote" },
   "vault.note.update": { domain: "vault", method: "updateNote" },
   "vault.note.delete": { domain: "vault", method: "deleteNote" },
+  "vault.note.import": { domain: "vault", method: "importNotes" },
   "vault.identity.list": { domain: "vault", method: "listIdentities" },
   "vault.proxyProfile.list": { domain: "vault", method: "listProxyProfiles" },
   "vault.group.list": { domain: "vault", method: "listGroups" },
@@ -105,7 +106,7 @@ function createCapabilityRpcDispatcher(deps) {
     session: sessionService,
   };
 
-  return async function dispatchCapabilityRpc(rpcMethod, params = {}) {
+  return async function dispatchCapabilityRpc(rpcMethod, params = {}, approvalContext = {}) {
     if (typeof rpcMethod !== "string" || rpcMethod.startsWith("netcatty/")) {
       return UNROUTED;
     }
@@ -129,6 +130,33 @@ function createCapabilityRpcDispatcher(deps) {
       return UNROUTED;
     }
 
+    // Only session.close executes against params.sessionId. host.open instead
+    // targets its requested vault host; other vault/script operations must not
+    // borrow an unrelated session's host grant.
+    let approvalTarget = capability.id === "session.close"
+      ? (deps.getApprovalTarget?.(params) || null)
+      : null;
+    if (capability.id === "vault.host.open" && deps.permissionMode === PERMISSION_MODES.CONFIRM) {
+      const requestedHostId = typeof params?.hostId === "string" ? params.hostId.trim() : "";
+      let lookup = null;
+      if (requestedHostId) {
+        try {
+          lookup = await vaultService.getHost({ hostId: requestedHostId });
+        } catch {
+          // The metadata lookup is best-effort; without it, approval cannot
+          // offer a persistent host grant.
+        }
+      }
+      const host = lookup?.host?.id === requestedHostId ? lookup.host : null;
+      approvalTarget = {
+        sessionId: "",
+        hostId: host && host.ephemeral !== true && host.protocol !== "serial" && host.protocol !== "local"
+          ? requestedHostId
+          : "",
+        label: host?.label || host?.hostname || requestedHostId,
+        hostname: host?.hostname || "",
+      };
+    }
     const permission = evaluatePermissionWithGrants({
       rpcMethod,
       surface,
@@ -136,6 +164,7 @@ function createCapabilityRpcDispatcher(deps) {
       params,
       context: {
         chatSessionCancelled: isChatSessionCancelled(params?.chatSessionId),
+        hostId: approvalTarget?.hostId,
       },
     }, deps.permissionGrantsSnapshot);
 
@@ -143,10 +172,15 @@ function createCapabilityRpcDispatcher(deps) {
       return { ok: false, error: permission.error };
     }
 
-    if (permission.requiresApproval) {
+    if (permission.requiresApproval && !deps.hasSessionApproval?.(approvalContext.externalSocket)) {
       const { chatSessionId, ...toolArgs } = params || {};
-      const toolName = getMcpToolNameForRpcMethod(rpcMethod, surface) || capability.id;
-      const approved = await requestApprovalFromRenderer(toolName, toolArgs, chatSessionId);
+      const toolName = getMcpToolNameForRpcMethod(rpcMethod, surface)
+        || capability.surfaces?.[CAPABILITY_SURFACES.PUBLIC]?.mcpTool
+        || capability.id;
+      const approved = await requestApprovalFromRenderer(toolName, toolArgs, chatSessionId, {
+        ...approvalContext,
+        target: approvalTarget,
+      });
       if (!approved) {
         return { ok: false, error: USER_DENIED_MESSAGE };
       }

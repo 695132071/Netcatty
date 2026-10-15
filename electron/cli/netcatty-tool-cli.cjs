@@ -5,6 +5,12 @@ const path = require("node:path");
 
 const { connectClient, createError } = require("./netcattyRpcClient.cjs");
 const {
+  bindChatSessionId,
+  describeMissingChatSession,
+  describeRemovedChatSessionFlag,
+  isRemovedChatSessionFlag,
+} = require("./cliChatSession.cjs");
+const {
   buildCatalogCliParams,
   formatCliHelpLines,
   getCliRpcMethod,
@@ -12,6 +18,13 @@ const {
 } = require("../capabilities/adapters/cliAdapter.cjs");
 const { getCapabilityByCliCommand } = require("../capabilities/registry.cjs");
 const { CAPABILITY_STATUS } = require("../capabilities/constants.cjs");
+
+// Keep piped note data below the TCP bridge's 10 MiB receive limit, allowing
+// room for JSON escaping and the RPC envelope.
+const MAX_NOTE_STDIN_BYTES = 4 * 1024 * 1024;
+const MAX_NOTE_ATTACHMENT_BYTES = 1024 * 1024;
+const MAX_NOTE_RPC_BYTES = 8 * 1024 * 1024;
+const MAX_NOTE_IMPORT_CHARS = 512_000;
 
 function printHelp() {
   const catalogLines = formatCliHelpLines().join("\n");
@@ -21,24 +34,29 @@ function printHelp() {
     catalogLines + "\n\n" +
     "Examples:\n" +
     "  netcatty-tool-cli status --json\n" +
-    "  netcatty-tool-cli env --chat-session ai_123 --json\n" +
-    "  netcatty-tool-cli attachment list --chat-session ai_123 --json\n" +
-    "  netcatty-tool-cli attachment read --filename hosts.csv --chat-session ai_123 --json\n" +
-    "  netcatty-tool-cli session --session sess_123 --json --chat-session ai_123\n" +
-    "  netcatty-tool-cli exec --session sess_123 --chat-session ai_123 --json -- \"pwd\"\n" +
+    "  netcatty-tool-cli env --json\n" +
+    "  netcatty-tool-cli attachment list --json\n" +
+    "  netcatty-tool-cli attachment read --filename hosts.csv --json\n" +
+    "  netcatty-tool-cli session --session sess_123 --json\n" +
+    "  netcatty-tool-cli exec --session sess_123 --json -- \"pwd\"\n" +
     "  netcatty-tool-cli vault host get --host-id host_123 --json\n" +
     "  netcatty-tool-cli vault host open --host-id host_123 --json\n" +
-    "  netcatty-tool-cli snippets run --snippet-id snip_1 --session sess_123 --chat-session ai_123 --json\n" +
+    "  netcatty-tool-cli snippets run --snippet-id snip_1 --session sess_123 --json\n" +
+    "  netcatty-tool-cli notes import --attachment-index 0 --json\n" +
     "  netcatty-tool-cli portforward rules list --json\n\n" +
     "Notes:\n" +
     "  - Start the Netcatty desktop app before using this CLI.\n" +
     "  - This CLI is intended as an internal Skills + CLI transport, not a general customer-facing shell tool.\n" +
-    "  - `env` and `session` always require --chat-session <id>.\n" +
-    "  - `exec` always requires both --session <id> and --chat-session <id>.\n" +
-    "  - `job-start` always requires both --session <id> and --chat-session <id>.\n" +
-    "  - `job-poll` and `job-stop` always require both --job <id> and --chat-session <id>.\n" +
-    "  - Every `sftp <op>` always requires both --session <id> and --chat-session <id>, and only works on connected SSH-backed sessions.\n" +
-    "  - Vault/portforward/snippet commands use catalog-driven dispatch; see `capabilities --json` for the full list.\n" +
+    "  - Host-launched agents receive NETCATTY_CLI_CHAT_SESSION_ID in the environment. There is no --chat-session flag.\n" +
+    "  - `env` and `session` require NETCATTY_CLI_CHAT_SESSION_ID.\n" +
+    "  - `exec` always requires --session <id>, plus NETCATTY_CLI_CHAT_SESSION_ID.\n" +
+    "  - `job-start` always requires --session <id>, plus NETCATTY_CLI_CHAT_SESSION_ID.\n" +
+    "  - `job-poll` and `job-stop` always require --job <id>, plus NETCATTY_CLI_CHAT_SESSION_ID.\n" +
+    "  - Every `sftp <op>` always requires --session <id>, plus NETCATTY_CLI_CHAT_SESSION_ID, and only works on connected SSH-backed sessions.\n" +
+    "  - Vault/portforward/snippet/notes commands use catalog-driven dispatch; see `capabilities --json` for the full list.\n" +
+    "  - notes create, update, delete, and import change Vault notes and require user approval in confirm mode.\n" +
+    "  - Use --attachment-index from attachment list for attached Markdown. Pipe generated note text through --content-stdin (or --documents-stdin for a batch). Never interpolate note text into a shell command.\n" +
+    "  - notes create requires a body via --content-stdin or an explicit --content (including an empty string). notes update --content \"\" clears the body and --group \"\" clears the folder; omitting those flags keeps the current values. notes import accepts --content \"\".\n" +
     "  - After `--`, pass exactly one shell-ready command string. Preserve quoting inside that one argument.\n" +
     "  - `cancel` stops in-flight execs, session-backed SFTP transfers, and running jobs for that chat session, then blocks further execs until `resume`.\n",
   );
@@ -72,6 +90,9 @@ function parseArgs(argv) {
     oldRemotePath: null,
     newRemotePath: null,
     content: null,
+    contentStdin: false,
+    documentsStdin: false,
+    attachmentIndex: null,
     mode: null,
     encoding: null,
     hostId: null,
@@ -80,6 +101,16 @@ function parseArgs(argv) {
     scriptId: null,
     ruleId: null,
     notes: null,
+    noteId: null,
+    title: null,
+    group: null,
+    linkedHostIds: null,
+    tags: null,
+    maxChars: null,
+    query: null,
+    expectedUpdatedAt: null,
+    fileName: null,
+    documents: null,
     variables: null,
     targetGroups: null,
     multiLineRunMode: null,
@@ -97,10 +128,8 @@ function parseArgs(argv) {
       opts.json = true;
       continue;
     }
-    if (arg === "--chat-session") {
-      opts.chatSessionId = readFlagValue(args, i + 1);
-      i += 1;
-      continue;
+    if (isRemovedChatSessionFlag(arg)) {
+      throw createError("INVALID_ARGUMENT", describeRemovedChatSessionFlag());
     }
     if (arg === "--scope-session") {
       const value = readFlagValue(args, i + 1);
@@ -146,6 +175,19 @@ function parseArgs(argv) {
     }
     if (arg === "--content") {
       opts.content = readFlagValue(args, i + 1);
+      i += 1;
+      continue;
+    }
+    if (arg === "--content-stdin") {
+      opts.contentStdin = true;
+      continue;
+    }
+    if (arg === "--documents-stdin") {
+      opts.documentsStdin = true;
+      continue;
+    }
+    if (arg === "--attachment-index") {
+      opts.attachmentIndex = readFlagValue(args, i + 1);
       i += 1;
       continue;
     }
@@ -204,10 +246,158 @@ function parseArgs(argv) {
       i += 1;
       continue;
     }
+    if (arg === "--note-id") {
+      opts.noteId = readFlagValue(args, i + 1);
+      i += 1;
+      continue;
+    }
+    if (arg === "--title") {
+      opts.title = readFlagValue(args, i + 1);
+      i += 1;
+      continue;
+    }
+    if (arg === "--group") {
+      opts.group = readFlagValue(args, i + 1);
+      i += 1;
+      continue;
+    }
+    if (arg === "--linked-host-ids") {
+      opts.linkedHostIds = readFlagValue(args, i + 1);
+      i += 1;
+      continue;
+    }
+    if (arg === "--tags") {
+      opts.tags = readFlagValue(args, i + 1);
+      i += 1;
+      continue;
+    }
+    if (arg === "--max-chars") {
+      const value = readFlagValue(args, i + 1);
+      opts.maxChars = value == null ? null : Number(value);
+      i += 1;
+      continue;
+    }
+    if (arg === "--query") {
+      opts.query = readFlagValue(args, i + 1);
+      i += 1;
+      continue;
+    }
+    if (arg === "--expected-updated-at") {
+      const value = readFlagValue(args, i + 1);
+      opts.expectedUpdatedAt = value == null ? null : Number(value);
+      i += 1;
+      continue;
+    }
+    if (arg === "--file-name") {
+      opts.fileName = readFlagValue(args, i + 1);
+      i += 1;
+      continue;
+    }
+    if (arg === "--documents") {
+      opts.documents = readFlagValue(args, i + 1);
+      i += 1;
+      continue;
+    }
     positionals.push(arg);
   }
 
   return { positionals, opts };
+}
+
+async function readNoteInputFromStdin(positionals, opts, input = process.stdin) {
+  if (!opts.contentStdin && !opts.documentsStdin) return;
+  const command = positionals.join(" ");
+  if (opts.contentStdin && opts.documentsStdin) {
+    throw createError("INVALID_ARGUMENT", "Choose only one of --content-stdin and --documents-stdin.");
+  }
+  if (opts.contentStdin && !["notes create", "notes update", "notes import"].includes(command)) {
+    throw createError("INVALID_ARGUMENT", "--content-stdin is only supported for notes create, update, and import.");
+  }
+  if (opts.documentsStdin && command !== "notes import") {
+    throw createError("INVALID_ARGUMENT", "--documents-stdin is only supported for notes import.");
+  }
+  if (opts.content != null || opts.documents != null) {
+    throw createError("INVALID_ARGUMENT", "Do not combine stdin note input with --content or --documents.");
+  }
+  if (opts.attachmentIndex != null) {
+    throw createError("INVALID_ARGUMENT", "Do not combine stdin note input with --attachment-index.");
+  }
+  if (input.isTTY) {
+    throw createError("INVALID_ARGUMENT", "Pipe note data to standard input when using a stdin flag.");
+  }
+
+  const chunks = [];
+  let byteCount = 0;
+  for await (const chunk of input) {
+    const bytes = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+    byteCount += bytes.length;
+    if (byteCount > MAX_NOTE_STDIN_BYTES) {
+      throw createError("INVALID_ARGUMENT", "Piped note data exceeds the 4 MiB CLI limit.");
+    }
+    chunks.push(bytes);
+  }
+  try {
+    const value = new TextDecoder("utf-8", { fatal: true }).decode(Buffer.concat(chunks));
+    if (opts.contentStdin) opts.content = value;
+    else opts.documents = value;
+  } catch {
+    throw createError("INVALID_ARGUMENT", "Piped note data must be valid UTF-8.");
+  }
+}
+
+async function readNoteFromAttachment(client, opts) {
+  if (opts.attachmentIndex == null) return;
+  if (opts.content != null || opts.documents != null || opts.contentStdin || opts.documentsStdin) {
+    throw createError("INVALID_ARGUMENT", "Do not combine --attachment-index with other note content flags.");
+  }
+  if (!/^\d+$/.test(opts.attachmentIndex)) {
+    throw createError("INVALID_ARGUMENT", "--attachment-index must be a non-negative integer from attachment list.");
+  }
+  requireChatSession(opts, "notes import --attachment-index");
+  const listed = await client.call("netcatty/listAttachments", { chatSessionId: opts.chatSessionId });
+  if (!listed?.ok) {
+    throw createError("ATTACHMENT_READ_FAILED", listed?.error || "Could not list chat attachments.");
+  }
+  const attachment = listed?.attachments?.[Number(opts.attachmentIndex)];
+  if (!attachment || !/\.(md|markdown)$/i.test(attachment.filename || "")) {
+    throw createError("INVALID_ARGUMENT", "The selected attachment must be a registered Markdown file.");
+  }
+  if (attachment.sizeBytes > MAX_NOTE_ATTACHMENT_BYTES) {
+    throw createError("INVALID_ARGUMENT", "The selected Markdown file exceeds the 1 MiB attachment limit.");
+  }
+  const read = await client.call("netcatty/readAttachment", {
+    chatSessionId: opts.chatSessionId,
+    maxBytes: MAX_NOTE_ATTACHMENT_BYTES,
+    ...(attachment.filePath ? { filePath: attachment.filePath } : { filename: attachment.filename }),
+  });
+  if (!read?.ok || typeof read.text !== "string") {
+    throw createError("ATTACHMENT_READ_FAILED", read?.error || "The selected Markdown attachment could not be read.");
+  }
+  if (Buffer.byteLength(read.text, "utf8") > MAX_NOTE_ATTACHMENT_BYTES) {
+    throw createError("INVALID_ARGUMENT", "The selected Markdown file exceeds the 1 MiB attachment limit.");
+  }
+  opts.fileName = read.filename;
+  opts.content = read.text;
+}
+
+function validateNoteImportSize(params) {
+  if (typeof params.content === "string" && params.content.length > MAX_NOTE_IMPORT_CHARS) {
+    throw createError("INVALID_ARGUMENT", "A Markdown document exceeds the 512,000 character import limit.");
+  }
+  if (params.documents != null) {
+    let documents;
+    try {
+      documents = JSON.parse(params.documents);
+    } catch {
+      throw createError("INVALID_ARGUMENT", "--documents must be valid JSON.");
+    }
+    if (!Array.isArray(documents)) {
+      throw createError("INVALID_ARGUMENT", "--documents must be a JSON array.");
+    }
+    if (documents.some((entry) => typeof entry?.content === "string" && entry.content.length > MAX_NOTE_IMPORT_CHARS)) {
+      throw createError("INVALID_ARGUMENT", "A Markdown document exceeds the 512,000 character import limit.");
+    }
+  }
 }
 
 function formatEnvText(ctx) {
@@ -378,6 +568,16 @@ function getSingleCommandOrThrow(opts, commandName) {
   return opts.command[0];
 }
 
+function requireChatSession(opts, commandLabel) {
+  if (opts.chatSessionId) return opts.chatSessionId;
+  throw createError("INVALID_ARGUMENT", describeMissingChatSession(commandLabel));
+}
+
+function bindHostChatSession(opts, env = process.env) {
+  opts.chatSessionId = bindChatSessionId(env);
+  return opts.chatSessionId;
+}
+
 function ensureBridgeCallOk(result, defaultCode, defaultMessage) {
   if (!result || result.ok !== false) {
     return result;
@@ -388,36 +588,38 @@ function ensureBridgeCallOk(result, defaultCode, defaultMessage) {
 }
 
 async function run() {
-  const { positionals, opts } = parseArgs(process.argv);
-  const [command, subcommand] = positionals;
-
-  if (!command || command === "help" || command === "--help" || command === "-h") {
-    printHelp();
-    process.exit(0);
-  }
-
-  if (command === "capabilities") {
-    const hasStatusFlag = process.argv.includes("--status");
-    const statusArg = hasStatusFlag
-      ? process.argv[process.argv.indexOf("--status") + 1]
-      : CAPABILITY_STATUS.IMPLEMENTED;
-    const status = statusArg === "all" ? null : statusArg;
-    const payload = {
-      ok: true,
-      capabilities: listCliCapabilities(
-        hasStatusFlag && statusArg === "all"
-          ? { status: null }
-          : { status },
-      ),
-    };
-    process.stdout.write(opts.json
-      ? `${JSON.stringify(payload, null, 2)}\n`
-      : `${payload.capabilities.map((entry) => entry.command.join(" ")).join("\n")}\n`);
-    return;
-  }
-
   let client = null;
   try {
+    const { positionals, opts } = parseArgs(process.argv);
+    const [command, subcommand] = positionals;
+
+    if (!command || command === "help" || command === "--help" || command === "-h") {
+      printHelp();
+      return;
+    }
+
+    if (command === "capabilities") {
+      const hasStatusFlag = process.argv.includes("--status");
+      const statusArg = hasStatusFlag
+        ? process.argv[process.argv.indexOf("--status") + 1]
+        : CAPABILITY_STATUS.IMPLEMENTED;
+      const status = statusArg === "all" ? null : statusArg;
+      const payload = {
+        ok: true,
+        capabilities: listCliCapabilities(
+          hasStatusFlag && statusArg === "all"
+            ? { status: null }
+            : { status },
+        ),
+      };
+      process.stdout.write(opts.json
+        ? `${JSON.stringify(payload, null, 2)}\n`
+        : `${payload.capabilities.map((entry) => entry.command.join(" ")).join("\n")}\n`);
+      return;
+    }
+
+    await readNoteInputFromStdin(positionals, opts);
+    bindHostChatSession(opts);
     client = await connectClient();
 
     if (command === "status") {
@@ -428,9 +630,7 @@ async function run() {
     }
 
     if (command === "env") {
-      if (!opts.chatSessionId) {
-        throw createError("INVALID_ARGUMENT", "Missing required --chat-session <id> for env.");
-      }
+      requireChatSession(opts, "env");
       const params = buildScopeParams(opts);
       const result = await client.call("netcatty/getContext", params);
       const output = opts.json ? JSON.stringify({ ok: true, ...result }, null, 2) : formatEnvText(result);
@@ -439,9 +639,7 @@ async function run() {
     }
 
     if (command === "session") {
-      if (!opts.chatSessionId) {
-        throw createError("INVALID_ARGUMENT", "Missing required --chat-session <id> for session.");
-      }
+      requireChatSession(opts, "session");
       const host = await resolveTargetHost(client, opts);
       const payload = { ok: true, host };
       const output = opts.json ? JSON.stringify(payload, null, 2) : formatSessionText(host);
@@ -450,9 +648,7 @@ async function run() {
     }
 
     if (command === "exec") {
-      if (!opts.chatSessionId) {
-        throw createError("INVALID_ARGUMENT", "Missing required --chat-session <id> for exec.");
-      }
+      requireChatSession(opts, "exec");
       const shellCommand = getSingleCommandOrThrow(opts, "exec");
       const host = await resolveTargetHost(client, opts);
       const rpcParams = {
@@ -475,9 +671,7 @@ async function run() {
     }
 
     if (command === "job-start") {
-      if (!opts.chatSessionId) {
-        throw createError("INVALID_ARGUMENT", "Missing required --chat-session <id> for job-start.");
-      }
+      requireChatSession(opts, "job-start");
       const shellCommand = getSingleCommandOrThrow(opts, "job-start");
       const host = await resolveTargetHost(client, opts);
       const result = await client.call("netcatty/jobStart", {
@@ -495,9 +689,7 @@ async function run() {
     }
 
     if (command === "job-poll") {
-      if (!opts.chatSessionId) {
-        throw createError("INVALID_ARGUMENT", "Missing required --chat-session <id> for job-poll.");
-      }
+      requireChatSession(opts, "job-poll");
       if (!opts.jobId) {
         throw createError("INVALID_ARGUMENT", "Missing required --job <id> for job-poll.");
       }
@@ -518,9 +710,7 @@ async function run() {
     }
 
     if (command === "job-stop") {
-      if (!opts.chatSessionId) {
-        throw createError("INVALID_ARGUMENT", "Missing required --chat-session <id> for job-stop.");
-      }
+      requireChatSession(opts, "job-stop");
       if (!opts.jobId) {
         throw createError("INVALID_ARGUMENT", "Missing required --job <id> for job-stop.");
       }
@@ -539,9 +729,7 @@ async function run() {
     }
 
     if (command === "sftp") {
-      if (!opts.chatSessionId) {
-        throw createError("INVALID_ARGUMENT", "Missing required --chat-session <id> for sftp.");
-      }
+      requireChatSession(opts, "sftp");
       if (!subcommand || subcommand === "help") {
         printHelp();
         return;
@@ -722,9 +910,7 @@ async function run() {
     }
 
     if (command === "cancel" || command === "resume") {
-      if (!opts.chatSessionId) {
-        throw createError("INVALID_ARGUMENT", `Missing required --chat-session <id> for ${command}.`);
-      }
+      requireChatSession(opts, command);
       const cancelled = command === "cancel";
       const result = await client.call("netcatty/setCancelled", {
         chatSessionId: opts.chatSessionId,
@@ -743,13 +929,20 @@ async function run() {
       if (!rpcMethod) {
         throw createError("INVALID_ARGUMENT", `No RPC mapping for command: ${positionals.join(" ")}`);
       }
-      if (catalogCapability.policy?.requiresChatSession && !opts.chatSessionId) {
-        throw createError(
-          "INVALID_ARGUMENT",
-          `Missing required --chat-session <id> for ${positionals.join(" ")}.`,
-        );
+      if (catalogCapability.policy?.requiresChatSession) {
+        requireChatSession(opts, positionals.join(" "));
+      }
+      if (opts.attachmentIndex != null) {
+        if (catalogCapability.id !== "vault.note.import") {
+          throw createError("INVALID_ARGUMENT", "--attachment-index is only supported for notes import.");
+        }
+        await readNoteFromAttachment(client, opts);
       }
       const params = buildCatalogCliParams(catalogCapability.id, opts, createError);
+      if (catalogCapability.id === "vault.note.import") validateNoteImportSize(params);
+      if (catalogCapability.id.startsWith("vault.note.") && Buffer.byteLength(JSON.stringify(params), "utf8") > MAX_NOTE_RPC_BYTES) {
+        throw createError("INVALID_ARGUMENT", "Note input exceeds the 8 MiB CLI request limit.");
+      }
       const result = ensureBridgeCallOk(
         await client.call(rpcMethod, { ...params, ...buildScopeParams(opts) }),
         "CAPABILITY_RPC_FAILED",
@@ -784,4 +977,9 @@ if (require.main === module) {
 
 module.exports = {
   parseArgs,
+  readNoteInputFromStdin,
+  readNoteFromAttachment,
+  validateNoteImportSize,
+  bindHostChatSession,
+  requireChatSession,
 };

@@ -6,6 +6,7 @@ import { keepOnlyActivePaneSelections } from "./selectionScope";
 import { editorTabStore } from "../../../application/state/editorTabStore";
 import type { EditorTab, EditorTabId } from "../../../application/state/editorTabStore";
 import { releaseEditorTabSaveCoordinator, saveEditorTab } from "../../../application/state/editorTabSave";
+import { confirmCloseOwnedEditors } from "../../../application/state/editorWindowClient";
 import { promptUnsavedChanges } from "../../editor/UnsavedChangesDialog";
 import { toast } from "../../ui/toast";
 import { requireCopyToOtherPaneTarget } from "../copyToOtherPane";
@@ -70,6 +71,15 @@ interface UseSftpViewPaneActionsResult {
   onCopyToOtherPaneRight: (files: SftpTransferSource[]) => void;
   onReceiveFromOtherPaneLeft: (files: SftpTransferSource[]) => void;
   onReceiveFromOtherPaneRight: (files: SftpTransferSource[]) => void;
+}
+
+export async function disconnectSftpPaneAfterConfirmation(params: {
+  confirmClose: () => Promise<boolean>;
+  disconnect: () => Promise<void>;
+}): Promise<boolean> {
+  if (!await params.confirmClose()) return false;
+  await params.disconnect();
+  return true;
 }
 
 export const useSftpViewPaneActions = ({
@@ -173,7 +183,7 @@ export const useSftpViewPaneActions = ({
         throw new Error(tab?.saveError ?? "Save failed");
       }
     };
-    return editorTabStore.confirmCloseByOwner(
+    return confirmCloseOwnedEditors(
       { sessionId: pane.connection?.id, sftpTabId: pane.id },
       choice,
       saveTab,
@@ -181,16 +191,16 @@ export const useSftpViewPaneActions = ({
     );
   }, [sftpRef]);
   const onDisconnectLeft = useCallback(async (): Promise<boolean> => {
-    const ok = await confirmCloseActivePaneEditors("left");
-    if (!ok) return false;
-    sftpRef.current.disconnect("left");
-    return true;
+    return disconnectSftpPaneAfterConfirmation({
+      confirmClose: () => confirmCloseActivePaneEditors("left"),
+      disconnect: () => sftpRef.current.disconnect("left"),
+    });
   }, [confirmCloseActivePaneEditors, sftpRef]);
   const onDisconnectRight = useCallback(async (): Promise<boolean> => {
-    const ok = await confirmCloseActivePaneEditors("right");
-    if (!ok) return false;
-    sftpRef.current.disconnect("right");
-    return true;
+    return disconnectSftpPaneAfterConfirmation({
+      confirmClose: () => confirmCloseActivePaneEditors("right"),
+      disconnect: () => sftpRef.current.disconnect("right"),
+    });
   }, [confirmCloseActivePaneEditors, sftpRef]);
   const onPrepareSelectionLeft = useCallback(() => {
     keepOnlyActivePaneSelections(sftpRef.current, "left");

@@ -156,6 +156,13 @@ test("restoring terminal tasks strips stale conflict payloads (skip-without-clea
   assert.equal(restored.tasks[1]?.conflict?.fileName, "css");
 });
 
+test("a preflight-skipped conflict keeps its stat limit after restart", () => {
+  const pending = { ...task("late-file", "attention", 1), preflightStatSkipped: true };
+  const restored = deserializeSftpTransferCenter(serializeSftpTransferCenter([pending]));
+  assert.equal(restored.tasks[0]?.status, "attention");
+  assert.equal(restored.tasks[0]?.preflightStatSkipped, true);
+});
+
 test("history keeps unfinished tasks and caps terminal tasks by age and count", () => {
   const now = Date.UTC(2026, 6, 23);
   const old = now - 31 * 24 * 60 * 60 * 1000;
@@ -225,6 +232,42 @@ test("resume rejects changed or shortened source files", () => {
       { allowSourceGrowth: true },
     ) ?? "",
     /modified/,
+  );
+});
+
+test("resume skips size-based validation when the source size is unknown", () => {
+  // Stat-less SCP endpoints report size as a placeholder 0 (sizeKnown false).
+  // Saved progress must not be misread as a shrunk/changed source.
+  const resumable = {
+    ...task("scp", "interrupted", 1),
+    totalBytes: 100,
+    sourceLastModified: 50,
+    checkpointBytes: 60,
+  };
+  assert.equal(
+    validateTransferResumeSource(
+      resumable,
+      { size: 0, lastModified: 50, sizeKnown: false },
+      { allowSourceGrowth: true },
+    ),
+    null,
+  );
+  // mtime drift is still detectable without a size.
+  assert.match(
+    validateTransferResumeSource(
+      resumable,
+      { size: 0, lastModified: 51, sizeKnown: false },
+    ) ?? "",
+    /modified/,
+  );
+  // The mtime guard is skipped while growth is allowed (append-only updates).
+  assert.equal(
+    validateTransferResumeSource(
+      resumable,
+      { size: 0, lastModified: 51, sizeKnown: false },
+      { allowSourceGrowth: true },
+    ),
+    null,
   );
 });
 

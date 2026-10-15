@@ -1,6 +1,9 @@
-import type { Host } from '../models';
+import type { GroupConfig, Host, Identity, ProxyProfile } from '../models';
+import { applyGroupDefaults, resolveGroupDefaults } from '../groupConfig';
 import { isPluginHostProtocol } from '../pluginConnection';
-import { encodeCsvKeyPath, encodeCsvPassphrase } from './csvCredentialFields';
+import { hasUnreadableProxyCredential, materializeHostProxyProfile, resolveProxyConfigAuth } from '../proxyProfiles';
+import { CsvLocalShellSpec, encodeCsvKeyPath, encodeCsvLocalShell, encodeCsvPassphrase, encodeCsvProxy } from './csvCredentialFields';
+import { formatCsvProxy } from './csvProxy';
 
 const UTF8_BOM = "\uFEFF";
 
@@ -12,6 +15,9 @@ export interface VaultCsvExportOptions {
   keyPassphrases?: ReadonlyMap<string, string>;
   keyPassphrasesById?: ReadonlyMap<string, string>;
   keyPathsById?: ReadonlyMap<string, string>;
+  proxyProfiles?: ProxyProfile[];
+  identities?: Identity[];
+  groupConfigs?: GroupConfig[];
 }
 
 export const resolveVaultCsvHostKeyPath = (
@@ -30,10 +36,10 @@ export const getVaultCsvTemplate = (
   opts: VaultCsvTemplateOptions = {},
 ): string => {
   const includeExampleRows = opts.includeExampleRows !== false;
-  const header = ["Groups", "Label", "Tags", "Notes", "Hostname/IP", "Protocol", "Port", "Username", "Password", "KeyPath", "Passphrase"];
+  const header = ["Groups", "Label", "Tags", "Notes", "Hostname/IP", "Protocol", "Port", "Username", "Password", "KeyPath", "Passphrase", "Proxy", "LocalShell"];
   const rows: string[][] = [header];
   if (includeExampleRows) {
-    rows.push(["Project/Dev", "Web Server (dev)", "dev,web", "Dev web tier", "192.168.1.10", "ssh", "22", "root", "", "~/.ssh/id_ed25519", ""]);
+    rows.push(["Project/Dev", "Web Server (dev)", "dev,web", "Dev web tier", "192.168.1.10", "ssh", "22", "root", "", "~/.ssh/id_ed25519", "", "socks5://127.0.0.1:1080"]);
     rows.push(["Project/Prod", "Web Server (prod)", "prod,web", "Production", "server-a.example.com", "ssh", "22", "ubuntu", "", "", ""]);
     rows.push(["Database", "DB", "db,mysql", "MySQL primary", "db.example.com", "ssh", "4567", "admin", "", "", ""]);
   }
@@ -47,9 +53,34 @@ export const getVaultCsvTemplate = (
   return rows.map((r) => r.map((c) => escapeCsv(c)).join(",")).join("\r\n") + "\r\n";
 };
 
-const exportHostsToCsv = (hosts: Host[], options: VaultCsvExportOptions): string => {
-  const header = ["Groups", "Label", "Tags", "Notes", "Hostname/IP", "Protocol", "Port", "Username", "Password", "KeyPath", "Passphrase"];
+// The legacy CSV format has no per-host shell columns, so local-shell vault
+// hosts are serialized as one encoded "LocalShell" field; hosts with a
+// non-default shell are otherwise lost on reimport (backup data silently
+// changed). Default-shell Windows/macOS local hosts still export their OS:
+// reimport defaults to Linux, and the OS is part of the reimport dedupe key,
+// so a macOS default-shell entry without an OS field would be reimported as
+// (and collapse with) a Linux host. Linux default-shell hosts match the
+// reimport default and need no field.
+const getLocalShellSpec = (host: Host): CsvLocalShellSpec | null => (
+  host.protocol === "local"
+    && (host.localShell || host.localShellName || host.localShellIcon
+      || host.localStartDir || host.localShellArgs?.length
+      || host.os === "windows" || host.os === "macos")
+    ? {
+        shell: host.localShell || undefined,
+        shellArgs: host.localShellArgs?.length ? host.localShellArgs : undefined,
+        shellName: host.localShellName || undefined,
+        shellIcon: host.localShellIcon || undefined,
+        startDir: host.localStartDir || undefined,
+        os: host.os === "windows" || host.os === "macos" ? host.os : undefined,
+      }
+    : null
+);
+
+const exportHostsToCsv = (hosts: Host[], options: VaultCsvExportOptions) => {
+  const header = ["Groups", "Label", "Tags", "Notes", "Hostname/IP", "Protocol", "Port", "Username", "Password", "KeyPath", "Passphrase", "Proxy", "LocalShell"];
   const rows: string[][] = [header];
+  let unreadableProxyCredentialCount = 0;
 
   const escapeCsv = (value: string, skipFormulaGuard = false) => {
     // Prevent CSV formula injection by prefixing dangerous characters with a single quote
@@ -80,6 +111,8 @@ const exportHostsToCsv = (hosts: Host[], options: VaultCsvExportOptions): string
     return hostname;
   };
 
+  const proxyProfiles = options.proxyProfiles ?? [];
+  const inheritanceOptions = { validProxyProfileIds: new Set(proxyProfiles.map((profile) => profile.id)) };
   for (const host of exportableHosts) {
     // For telnet hosts, use telnet-specific port and username
     const isTelnet = host.protocol === "telnet";
@@ -97,6 +130,19 @@ const exportHostsToCsv = (hosts: Host[], options: VaultCsvExportOptions): string
             : (options.keyPassphrases?.get(keyPath) ?? "")
         )
       : "";
+    // Proxy profiles are materialized inline so the CSV stays self-contained;
+    // encrypted credential placeholders are never written to the file.
+    const effectiveHost = host.group
+      ? applyGroupDefaults(host, resolveGroupDefaults(host.group, options.groupConfigs ?? [], inheritanceOptions), inheritanceOptions)
+      : host;
+    const proxyConfig = materializeHostProxyProfile(effectiveHost, proxyProfiles).proxyConfig;
+    if (hasUnreadableProxyCredential(proxyConfig, options.identities)) {
+      unreadableProxyCredentialCount += 1;
+    }
+    const proxyValue = proxyConfig
+      ? formatCsvProxy(resolveProxyConfigAuth(proxyConfig, options.identities))
+      : "";
+    const localShellSpec = getLocalShellSpec(host);
 
     rows.push([
       host.group ?? "",
@@ -110,22 +156,27 @@ const exportHostsToCsv = (hosts: Host[], options: VaultCsvExportOptions): string
       host.password ?? "",
       encodeCsvKeyPath(keyPath),
       encodeCsvPassphrase(passphrase),
+      encodeCsvProxy(proxyValue),
+      localShellSpec ? encodeCsvLocalShell(localShellSpec) : "",
     ]);
   }
 
   const passwordColIdx = header.indexOf("Password");
   const keyPathColIdx = header.indexOf("KeyPath");
   const passphraseColIdx = header.indexOf("Passphrase");
-  return rows.map((r, rowIdx) => r.map((c, i) => escapeCsv(
+  const proxyColIdx = header.indexOf("Proxy");
+  const csv = rows.map((r, rowIdx) => r.map((c, i) => escapeCsv(
     c,
-    rowIdx > 0 && (i === passwordColIdx || i === keyPathColIdx || i === passphraseColIdx),
+    rowIdx > 0 && (i === passwordColIdx || i === keyPathColIdx || i === passphraseColIdx || i === proxyColIdx),
   )).join(",")).join("\r\n") + "\r\n";
+  return { csv, unreadableProxyCredentialCount };
 };
 
 interface ExportHostsResult {
   csv: string;
   exportedCount: number;
   skippedCount: number;
+  unreadableProxyCredentialCount: number;
 }
 
 export const exportHostsToCsvWithStats = (
@@ -137,10 +188,12 @@ export const exportHostsToCsvWithStats = (
   const isUnsupported = (h: Host) => h.protocol === "serial" || isPluginHostProtocol(h.protocol);
   const skippedHosts = hosts.filter((h) => isUnsupported(h));
   const exportableHosts = hosts.filter((h) => !isUnsupported(h));
+  const { csv, unreadableProxyCredentialCount } = exportHostsToCsv(exportableHosts, options);
 
   return {
-    csv: UTF8_BOM + exportHostsToCsv(exportableHosts, options),
+    csv: UTF8_BOM + csv,
     exportedCount: exportableHosts.length,
     skippedCount: skippedHosts.length,
+    unreadableProxyCredentialCount,
   };
 };

@@ -17,6 +17,7 @@ const {
   resolveBackendKey,
   resolveSdkBackendBinPath,
   shouldCacheSdkRuntimeModels,
+  fetchSdkModelCatalog,
 } = require("./sdkStreamHandlers.cjs");
 
 /**
@@ -24,7 +25,7 @@ const {
  * (cleanup) can be invoked directly. registerSdkStreamHandlers exposes its
  * request-scoped maps on ctx for exactly this kind of test.
  */
-function registerWithStubbedCtx() {
+function registerWithStubbedCtx(overrides = {}) {
   const handlers = new Map();
   const ctx = {
     ipcMain: { handle: (channel, fn) => handlers.set(channel, fn) },
@@ -36,6 +37,7 @@ function registerWithStubbedCtx() {
       cancelWorkerBackgroundJobsForSession: () => {},
       cleanupScopedMetadata: async () => {},
     },
+    ...overrides,
   };
   registerSdkStreamHandlers(ctx);
   return { handlers, ctx };
@@ -100,6 +102,15 @@ test("SDK session keys include backend and resolved CLI path", () => {
   );
 });
 
+test("MiMo model catalog cache changes with its config roots", () => {
+  const base = buildSdkModelCacheKey("mimo", "/usr/bin/mimo", { MIMOCODE_HOME: "/one" });
+  assert.notEqual(base, buildSdkModelCacheKey("mimo", "/usr/bin/mimo", { MIMOCODE_HOME: "/two" }));
+  assert.notEqual(base, buildSdkModelCacheKey("mimo", "/usr/bin/mimo", { MIMOCODE_HOME: "/one", MIMOCODE_CONFIG_DIR: "/extra" }));
+  assert.notEqual(base, buildSdkModelCacheKey("mimo", "/usr/bin/mimo", { MIMOCODE_HOME: "/one", MIMOCODE_BIN: "/another/mimo" }));
+  assert.notEqual(base, buildSdkModelCacheKey("mimo", "/usr/bin/mimo", { MIMOCODE_HOME: "/one", MIMOCODE_BIN_PATH: "/another/mimo" }));
+  assert.notEqual(base, buildSdkModelCacheKey("mimo", "/usr/bin/mimo", { MIMOCODE_HOME: "/one", MIMOCODE_CONFIG: "/another/config.json" }));
+});
+
 test("Cursor session keys isolate CLI login from API key auth modes", () => {
   assert.notEqual(
     buildSdkSessionKey("chat-1", "cursor", "/usr/bin/agent", "sdk", "cli-login"),
@@ -127,6 +138,23 @@ test("SDK model cache keys include catalog-affecting agent environment", () => {
     buildSdkModelCacheKey("cursor", "/usr/bin/cursor", { CURSOR_API_KEY: "very-secret-key" }),
     /very-secret-key/,
   );
+  assert.notEqual(
+    buildSdkModelCacheKey("codex", "/usr/bin/codex", { HOME: "/shared", CODEX_HOME: "/profiles/a" }),
+    buildSdkModelCacheKey("codex", "/usr/bin/codex", { HOME: "/shared", CODEX_HOME: "/profiles/b" }),
+  );
+  assert.notEqual(
+    buildSdkModelCacheKey("claude", "/usr/bin/claude", { HOME: "/shared", CLAUDE_CONFIG_DIR: "/profiles/a" }),
+    buildSdkModelCacheKey("claude", "/usr/bin/claude", { HOME: "/shared", CLAUDE_CONFIG_DIR: "/profiles/b" }),
+  );
+});
+
+test("Claude model cache keys separate authentication without exposing values", () => {
+  for (const name of ["ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "CLAUDE_CODE_OAUTH_TOKEN"]) {
+    const first = buildSdkModelCacheKey("claude", "/usr/bin/claude", { [name]: "secret-one" });
+    const second = buildSdkModelCacheKey("claude", "/usr/bin/claude", { [name]: "secret-two" });
+    assert.notEqual(first, second, `${name} must separate cache entries`);
+    assert.doesNotMatch(first, /secret-one/);
+  }
 });
 
 test("SDK model cache removes expired entries instead of retaining tombstones", () => {
@@ -164,7 +192,102 @@ test("normalizeSdkListModelsResult preserves current model ids from object resul
   });
 });
 
-test("CodeBuddy and OpenCode keep Netcatty context in the system prompt only", () => {
+test("fetchSdkModelCatalog falls back to the App Server catalog when codex-sdk returns empty", async () => {
+  const appServerCatalog = {
+    currentModelId: "gpt-5.6-sol/high",
+    models: [{ id: "gpt-5.6-sol", name: "GPT-5.6 Sol" }],
+  };
+  const appServerRuntime = { listModels: async ({ binPath, env }) => ({ calledWith: binPath, profile: env.CODEX_HOME, ...appServerCatalog }) };
+  const codexDriver = { listModels: async () => [] };
+
+  // codex sdk runtime: empty catalog triggers the App Server fallback (#3496).
+  const codexFallback = await fetchSdkModelCatalog({
+    backendKey: "codex",
+    codexRuntime: "sdk",
+    driver: codexDriver,
+    binPath: "/cli/codex",
+    env: { CODEX_HOME: "/profiles/b" },
+    codexAppServerRuntime: appServerRuntime,
+  });
+  assert.equal(codexFallback.calledWith, "/cli/codex");
+  assert.equal(codexFallback.profile, "/profiles/b");
+  assert.deepEqual(normalizeSdkListModelsResult(codexFallback), appServerCatalog);
+
+  // Non-empty sdk catalog or app-server runtime: no fallback round-trip.
+  let appServerCalls = 0;
+  const countingRuntime = {
+    listModels: async () => {
+      appServerCalls += 1;
+      return appServerCatalog;
+    },
+  };
+  await fetchSdkModelCatalog({
+    backendKey: "codex",
+    codexRuntime: "sdk",
+    driver: { listModels: async () => [{ id: "gpt-5.6-sol" }] },
+    binPath: "/cli/codex",
+    env: {},
+    codexAppServerRuntime: countingRuntime,
+  });
+  assert.equal(appServerCalls, 0);
+
+  await fetchSdkModelCatalog({
+    backendKey: "codex",
+    codexRuntime: "app-server",
+    driver: codexDriver,
+    binPath: "/cli/codex",
+    env: {},
+    codexAppServerRuntime: countingRuntime,
+  });
+  assert.equal(appServerCalls, 1);
+
+  // Non-codex backends never touch the App Server runtime.
+  let driverCalls = 0;
+  await fetchSdkModelCatalog({
+    backendKey: "claude",
+    codexRuntime: "sdk",
+    driver: {
+      listModels: async (args) => {
+        driverCalls += 1;
+        assert.equal(args.cursorAuthMode, undefined);
+        return [{ id: "claude-opus-5-5", name: "Opus 5.5" }];
+      },
+    },
+    binPath: "/cli/claude",
+    env: {},
+    codexAppServerRuntime: countingRuntime,
+  });
+  assert.equal(driverCalls, 1);
+  assert.equal(appServerCalls, 1);
+});
+
+test("empty or failed live catalogs surface a failure for the warning path", async () => {
+  const base = {
+    binPath: "/cli/agent",
+    env: {},
+    driver: { listModels: async () => [] },
+    codexAppServerRuntime: { listModels: async () => [] },
+  };
+  await assert.rejects(
+    fetchSdkModelCatalog({ ...base, backendKey: "claude", codexRuntime: "sdk" }),
+    /returned no models/,
+  );
+  await assert.rejects(
+    fetchSdkModelCatalog({ ...base, backendKey: "codex", codexRuntime: "sdk" }),
+    /returned no models/,
+  );
+  await assert.rejects(
+    fetchSdkModelCatalog({
+      ...base,
+      backendKey: "codex",
+      codexRuntime: "sdk",
+      codexAppServerRuntime: { listModels: async () => { throw new Error("model/list unavailable"); } },
+    }),
+    /model\/list unavailable/,
+  );
+});
+
+test("CodeBuddy, OpenCode and MiMo keep Netcatty context in the system prompt only", () => {
   const input = {
     turnPrompt: "user request",
     contextualPrompt: "netcatty context\n\nuser request",
@@ -180,6 +303,13 @@ test("CodeBuddy and OpenCode keep Netcatty context in the system prompt only", (
   assert.deepEqual(resolveSdkPromptPlacement({
     ...input,
     backendKey: "opencode",
+  }), {
+    prompt: "user request",
+    systemPrompt: "netcatty context",
+  });
+  assert.deepEqual(resolveSdkPromptPlacement({
+    ...input,
+    backendKey: "mimo",
   }), {
     prompt: "user request",
     systemPrompt: "netcatty context",
@@ -862,6 +992,19 @@ test("resolveSdkBackendBinPath keeps non-CodeBuddy SDK path normalization", () =
   assert.equal(out, "C:\\Users\\me\\AppData\\Roaming\\npm\\node_modules\\@openai\\codex\\bin\\codex.js");
 });
 
+test("resolveSdkBackendBinPath prefers the MiMo environment path over PATH", () => {
+  const out = resolveSdkBackendBinPath({
+    backendKey: "mimo",
+    shellEnv: { PATH: "/usr/bin" },
+    env: { MIMOCODE_BIN: "/opt/mimo/bin/mimo" },
+    normalizeCliPathForPlatform: (value) => value,
+    resolveCliFromPath: () => "/usr/bin/mimo",
+    resolveSdkBinPath: () => "/usr/bin/mimo",
+    realpath: (value) => value,
+  });
+  assert.equal(out, "/opt/mimo/bin/mimo");
+});
+
 test("resolveSdkBackendBinPath does not fall back to Windows shell shims for non-CodeBuddy", () => {
   const out = resolveSdkBackendBinPath({
     backendKey: "codex",
@@ -871,4 +1014,56 @@ test("resolveSdkBackendBinPath does not fall back to Windows shell shims for non
     resolveSdkBinPath: () => null,
   });
   assert.equal(out, undefined);
+});
+
+
+test("OpenCode catalog IPC allows cold startup past 10s and still aborts a stalled load", async (t) => {
+  const { getDriver } = require("./index.cjs");
+  const { OPENCODE_SERVER_START_TIMEOUT_MS } = require("./opencodeDriver.cjs");
+  const { handlers } = registerWithStubbedCtx({
+    getShellEnv: async () => ({}),
+    normalizeAgentEnv: (env) => env || {},
+    withCliDiscoveryEnv: (env) => env,
+    normalizeClaudeCodeExecutableEnvForSdk: (env) => env,
+    resolveCliFromPath: () => undefined,
+    normalizeCliPathForPlatform: (value) => value,
+    resolveSdkBinPath: () => undefined,
+    resolveClaudeCodeExecutableForSdk: undefined,
+    resolveCodexExecutableForSdk: undefined,
+    resolveCodebuddyExecutableForSdk: undefined,
+  });
+  const listModels = handlers.get("netcatty:ai:sdk-agent:list-models");
+  const catalog = { models: [{ id: "test/cold-start" }], currentModelId: "test/cold-start" };
+  let signal;
+  let complete;
+  let started;
+  let entered = new Promise((resolve) => { started = resolve; });
+  t.mock.method(getDriver("opencode"), "listModels", ({ abortController }) => {
+    signal = abortController.signal;
+    started();
+    return new Promise((resolve) => { complete = resolve; });
+  });
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+
+  const slow = listModels({ sender: {} }, { sdkBackend: "opencode", agentCommand: "/test/cold-start" });
+  await entered;
+  t.mock.timers.tick(10001);
+  assert.equal(signal.aborted, false, "the old outer 10s deadline must not cancel OpenCode startup");
+  complete(catalog);
+  assert.deepEqual(await slow, { ok: true, ...catalog });
+
+  entered = new Promise((resolve) => { started = resolve; });
+  const stalled = listModels({ sender: {} }, { sdkBackend: "opencode", agentCommand: "/test/stalled-start" });
+  await entered;
+  t.mock.timers.tick(OPENCODE_SERVER_START_TIMEOUT_MS + 10000);
+  const result = await stalled;
+  assert.equal(signal.aborted, true, "the bounded catalog deadline must abort the driver");
+  assert.match(result.warning, /list-models timed out/);
+  assert.deepEqual(result.models, []);
+  // A timeout must leave neither an in-flight entry nor a cached failure.
+  entered = new Promise((resolve) => { started = resolve; });
+  const retried = listModels({ sender: {} }, { sdkBackend: "opencode", agentCommand: "/test/stalled-start" });
+  await entered;
+  complete(catalog);
+  assert.deepEqual(await retried, { ok: true, ...catalog });
 });

@@ -123,6 +123,9 @@ function TerminalLayerWorkspaceSectionInner({ ctx }: { ctx: WorkspaceContext }) 
     onReorderTabs,
     onStartSessionDrag,
     onEndSessionDrag,
+    isGlobalBroadcastEnabled,
+    canUseGlobalBroadcast,
+    onToggleGlobalBroadcast,
     t,
   } = ctx;
 
@@ -143,7 +146,7 @@ function TerminalLayerWorkspaceSectionInner({ ctx }: { ctx: WorkspaceContext }) 
   }, [activeMagnifiedTerminal]);
 
   return (
-    <div className="flex-1 min-h-0 flex flex-col">
+    <div data-section="terminal-workspace-column" className="flex-1 min-h-0 flex flex-col">
     <div ref={workspaceInnerRef} className="flex-1 min-h-0 overflow-hidden relative">
         {draggingSessionId && !isFocusMode && (
           <div
@@ -255,6 +258,9 @@ function TerminalLayerWorkspaceSectionInner({ ctx }: { ctx: WorkspaceContext }) 
           onReorderTabs={onReorderTabs}
           onStartSessionDrag={onStartSessionDrag}
           onEndSessionDrag={onEndSessionDrag}
+          isGlobalBroadcastEnabled={isGlobalBroadcastEnabled}
+          canUseGlobalBroadcast={canUseGlobalBroadcast}
+          onToggleGlobalBroadcast={onToggleGlobalBroadcast}
         />
         {!isFocusMode && activeResizers.map((handle: any) => {
           const isVertical = handle.direction === 'vertical';
@@ -332,8 +338,9 @@ function TerminalLayerWorkspaceSectionInner({ ctx }: { ctx: WorkspaceContext }) 
         workspaceOuterRef.current,
       )}
 
-      {activeWorkspace && isComposeBarOpen && (
+      {activeWorkspace && focusedSessionId && isComposeBarOpen && (
         <TerminalComposeBar
+          sessionId={focusedSessionId}
           onSend={handleComposeSend}
           onSnippetClick={(snippet) => void handleSnippetFromPanel(snippet)}
           snippets={snippets}

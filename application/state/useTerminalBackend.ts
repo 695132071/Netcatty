@@ -133,6 +133,18 @@ export const useTerminalBackend = () => {
     return bridge.startSSHSession(options);
   }, []);
 
+  const testConnection = useCallback(async (options: NetcattySSHOptions) => {
+    const bridge = netcattyBridge.get();
+    if (!bridge?.testConnection) throw new Error("testConnection unavailable");
+    return bridge.testConnection(options);
+  }, []);
+
+  const cancelTestConnection = useCallback(async (sessionId: string) => {
+    const bridge = netcattyBridge.get();
+    if (!bridge?.cancelTestConnection) return { success: false, error: "cancelTestConnection unavailable" };
+    return bridge.cancelTestConnection(sessionId);
+  }, []);
+
   const startTelnetSession = useCallback(async (options: Parameters<NonNullable<NetcattyBridge["startTelnetSession"]>>[0]) => {
     const bridge = netcattyBridge.get();
     if (!bridge?.startTelnetSession) throw new Error("startTelnetSession unavailable");
@@ -202,13 +214,19 @@ export const useTerminalBackend = () => {
     bridge?.writeToSession?.(sessionId, data, options);
   }, []);
 
-  const interruptSession = useCallback((sessionId: string, trace?: NetcattyTerminalInterruptTrace) => {
+  const notifyUserInput = useCallback((sessionId: string) => {
+    const bridge = netcattyBridge.get();
+    bridge?.notifySessionUserInput?.(sessionId);
+  }, []);
+
+  const interruptSession = useCallback((...args: Parameters<NonNullable<NetcattyBridge["interruptSession"]>>) => {
+    const [sessionId, , options] = args;
     const bridge = netcattyBridge.get();
     if (bridge?.interruptSession) {
-      bridge.interruptSession(sessionId, trace);
+      bridge.interruptSession(...args);
       return;
     }
-    bridge?.writeToSession?.(sessionId, "\x03");
+    if (!options?.cancelPendingWritesOnly) bridge?.writeToSession?.(sessionId, "\x03");
   }, []);
 
   const resizeSession = useCallback((sessionId: string, cols: number, rows: number) => {
@@ -515,7 +533,7 @@ export const useTerminalBackend = () => {
 
   const getSessionPwd = useCallback(async (
     sessionId: string,
-    options?: { allowHomeFallback?: boolean; allowLoginShellFallback?: boolean },
+    options?: { allowHomeFallback?: boolean; allowLoginShellFallback?: boolean; timeoutMs?: number },
   ) => {
     const bridge = netcattyBridge.get();
     if (!bridge?.getSessionPwd) return { success: false, error: 'getSessionPwd unavailable' };
@@ -566,6 +584,8 @@ export const useTerminalBackend = () => {
         execAvailable,
         openExternalAvailable,
         startSSHSession,
+        testConnection,
+        cancelTestConnection,
         startTelnetSession,
         startMoshSession,
         startEtSession,
@@ -593,6 +613,7 @@ export const useTerminalBackend = () => {
         getSessionDistroInfo,
         getServerStats,
         writeToSession,
+        notifyUserInput,
         interruptSession,
         resizeSession,
         clearSessionPtyBuffer,
@@ -648,6 +669,8 @@ export const useTerminalBackend = () => {
       execAvailable,
       openExternalAvailable,
       startSSHSession,
+      testConnection,
+      cancelTestConnection,
       startTelnetSession,
       startMoshSession,
       startEtSession,
@@ -675,6 +698,7 @@ export const useTerminalBackend = () => {
       getSessionDistroInfo,
       getServerStats,
       writeToSession,
+      notifyUserInput,
       interruptSession,
       resizeSession,
       clearSessionPtyBuffer,

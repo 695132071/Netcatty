@@ -4,6 +4,10 @@ const {
   parsePuttyCommandLine,
   redactPuttyCommandLinePasswords,
 } = require("./puttyCommandLine.cjs");
+const {
+  parseSecureCrtCommandLineTokens,
+  redactSecureCrtCommandLinePasswords,
+} = require("./secureCrtCommandLine.cjs");
 
 const SSH_DEEP_LINK_CHANNEL = "netcatty:deepLink:ssh";
 const TELNET_DEEP_LINK_CHANNEL = "netcatty:deepLink:telnet";
@@ -19,9 +23,25 @@ function isDeepLinkUrl(rawUrl, protocol) {
   return rawUrl.trim().toLowerCase().startsWith(`${protocol}://`);
 }
 
-function collectDeepLinkUrls(argv, protocol) {
+// Known option values are never standalone URLs, even when parsing fails.
+// On success, also exclude the remaining consumed launch tokens.
+function collectSchemeUrlCandidates(argv) {
   if (!Array.isArray(argv)) return [];
-  return argv.filter((rawUrl) => isDeepLinkUrl(rawUrl, protocol));
+  const tokens = parseSecureCrtCommandLineTokens(argv);
+  if (!tokens) return argv;
+  const filterIndices = new Set();
+  if (tokens.operandIndices instanceof Set) {
+    for (const index of tokens.operandIndices) filterIndices.add(index);
+  }
+  if (tokens.result && tokens.consumedIndices instanceof Set) {
+    for (const index of tokens.consumedIndices) filterIndices.add(index);
+  }
+  if (filterIndices.size === 0) return argv;
+  return argv.filter((_, index) => !filterIndices.has(index));
+}
+
+function collectDeepLinkUrls(argv, protocol) {
+  return collectSchemeUrlCandidates(argv).filter((rawUrl) => isDeepLinkUrl(rawUrl, protocol));
 }
 
 function isSshDeepLinkUrl(rawUrl) {
@@ -48,7 +68,7 @@ function collectJmsDeepLinkUrls(argv) {
   return collectDeepLinkUrls(argv, JMS_PROTOCOL);
 }
 
-function collectPuttyStyleDeepLinkUrls(argv) {
+function collectPuttyStyleDeepLinkIntents(argv) {
   if (
     collectSshDeepLinkUrls(argv).length > 0
     || collectTelnetDeepLinkUrls(argv).length > 0
@@ -57,12 +77,64 @@ function collectPuttyStyleDeepLinkUrls(argv) {
     return { ssh: [], telnet: [] };
   }
 
-  const parsed = parsePuttyCommandLine(argv);
+  // SecureCRT-style switches (/SSH2 /L user /P 22 /PASSWORD pass host) are
+  // tried first: bastion/4A launchers configured as "SecureCRT" emit them, and
+  // the flag sets are disjoint from PuTTY-style dashes, so trying SecureCRT
+  // first then falling back to PuTTY covers both callers (#3390, #3044).
+  const secureCrt = parseSecureCrtCommandLineTokens(argv);
+  const parsed = secureCrt ? secureCrt.result : parsePuttyCommandLine(argv);
   if (!parsed?.url) return { ssh: [], telnet: [] };
+  const intent = { rawUrl: parsed.url, tabName: parsed.tabName };
   if (parsed.protocol === TELNET_PROTOCOL) {
-    return { ssh: [], telnet: [parsed.url] };
+    return { ssh: [], telnet: [intent] };
   }
-  return { ssh: [parsed.url], telnet: [] };
+  return { ssh: [intent], telnet: [] };
+}
+
+function collectPuttyStyleDeepLinkUrls(argv) {
+  const intents = collectPuttyStyleDeepLinkIntents(argv);
+  return {
+    ssh: intents.ssh.map((intent) => intent.rawUrl),
+    telnet: intents.telnet.map((intent) => intent.rawUrl),
+  };
+}
+
+/**
+ * Build the pending-queue items for ssh/telnet connections requested by the
+ * current launch arguments. PuTTY-style CLI args (-ssh user@host -P 22 -pw
+ * pass) are an explicit launch method and must connect regardless of whether
+ * Netcatty is the registered ssh:// protocol client, so those items are only
+ * gated by includeSchemeUrls through the scheme-URL part of the queue.
+ */
+function collectSshDeepLinkQueueItems(argv, { includeSchemeUrls = true } = {}) {
+  const puttyStyleDeepLinks = collectPuttyStyleDeepLinkIntents(argv);
+  const queueItems = {
+    ssh: [],
+    telnet: [],
+  };
+  if (includeSchemeUrls) {
+    collectSshDeepLinkUrls(argv).forEach((rawUrl) => {
+      queueItems.ssh.push({ rawUrl, viaCommandLine: false });
+    });
+    collectTelnetDeepLinkUrls(argv).forEach((rawUrl) => {
+      queueItems.telnet.push({ rawUrl, viaCommandLine: false });
+    });
+  }
+  puttyStyleDeepLinks.ssh.forEach((intent) => {
+    queueItems.ssh.push({
+      rawUrl: intent.rawUrl,
+      viaCommandLine: true,
+      ...(intent.tabName ? { tabName: intent.tabName } : {}),
+    });
+  });
+  puttyStyleDeepLinks.telnet.forEach((intent) => {
+    queueItems.telnet.push({
+      rawUrl: intent.rawUrl,
+      viaCommandLine: true,
+      ...(intent.tabName ? { tabName: intent.tabName } : {}),
+    });
+  });
+  return queueItems;
 }
 
 function registerProtocolClient({
@@ -407,9 +479,11 @@ module.exports = {
   getSshDeepLinkRendererReadyTimeoutMs,
   collectJmsDeepLinkUrls,
   collectPuttyStyleDeepLinkUrls,
+  collectSshDeepLinkQueueItems,
   collectSshDeepLinkUrls,
   collectTelnetDeepLinkUrls,
   redactPuttyCommandLinePasswords,
+  redactSecureCrtCommandLinePasswords,
   isJmsDeepLinkUrl,
   isSshDeepLinkUrl,
   isTelnetDeepLinkUrl,

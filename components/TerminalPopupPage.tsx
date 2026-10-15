@@ -1,6 +1,8 @@
+import { setupVaultAgentBridge } from "../infrastructure/ai/vaultAgentBridgeClient";
 import { Copy, Minus, Square, Unplug, X } from 'lucide-react';
 import React, { lazy, Suspense, useCallback, useEffect, useMemo, useState } from 'react';
 import { I18nProvider, useI18n } from '../application/i18n/I18nProvider';
+import { MultilinePasteConfirmHost } from './terminal/MultilinePasteConfirmDialog';
 import { useTerminalPopupWindow } from '../application/state/useTerminalPopupWindow';
 import { useVaultState } from '../application/state/useVaultState';
 import { useWindowControls } from '../application/state/useWindowControls';
@@ -10,12 +12,14 @@ import {
 } from '../application/state/resolveTerminalSessionExitIntent';
 import { upsertKnownHost } from '../domain/knownHosts';
 import { isPluginHostProtocol, sanitizePluginConnection } from '../domain/pluginConnection';
+import type { ResolveDefaultLocalShellContext } from '../domain/localShellHost';
 import { resolveTerminalChainHosts, resolveTerminalSessionHost } from '../domain/terminalHostResolution';
 import type { TerminalPopupPayload } from '../domain/systemManager/types';
 import type { GroupConfig, Host, ProxyProfile, TerminalTheme } from '../domain/models';
 import type { KnownHost } from '../types';
 import { getEffectiveKnownHosts } from '../infrastructure/syncHelpers';
 import { detectLocalOs } from '../lib/localShell';
+import { useDefaultLocalShellContext } from '../lib/useDiscoveredShells';
 import { cn } from '../lib/utils';
 import type { AppLockGateRenderContext } from './AppLockGate';
 import { PluginAuthenticationHost } from './plugins/PluginAuthenticationHost';
@@ -231,6 +235,7 @@ export function resolveTerminalPopupHost(
     groupConfigs?: GroupConfig[];
     proxyProfiles?: ProxyProfile[];
     localOs?: Host['os'];
+    defaultLocalShell?: ResolveDefaultLocalShellContext;
   } = {},
 ): Host {
   const resolvedHost = resolveTerminalSessionHost({
@@ -239,6 +244,7 @@ export function resolveTerminalPopupHost(
     groupConfigs: options.groupConfigs ?? [],
     proxyProfiles: options.proxyProfiles ?? [],
     localOs: options.localOs ?? 'linux',
+    defaultLocalShell: options.defaultLocalShell,
   });
   return applySourceSessionConnectionOverrides(
     resolvedHost,
@@ -364,14 +370,17 @@ function TerminalPopupPageInner({
     });
   }, [attachAuthorization, attachSessionId, handleClose, onPrepareClose]);
 
+  const defaultLocalShell = useDefaultLocalShellContext(settings.terminalSettings);
+
   const host = useMemo(() => {
     if (!config) return null;
     return resolveTerminalPopupHost(config, hosts, {
       groupConfigs,
       proxyProfiles,
       localOs: detectLocalOs(navigator.userAgent || navigator.platform),
+      defaultLocalShell,
     });
-  }, [config, groupConfigs, hosts, proxyProfiles]);
+  }, [config, groupConfigs, hosts, proxyProfiles, defaultLocalShell]);
 
   const chainHosts = useMemo(() => resolveTerminalChainHosts({
     host,
@@ -537,6 +546,8 @@ export default function TerminalPopupPage({
   settings: SettingsState;
   allowTerminalStart?: boolean;
 }) {
+  useEffect(() => setupVaultAgentBridge(), []);
+
   return (
     <I18nProvider locale={settings.uiLanguage}>
       <TerminalPopupPageInner
@@ -544,6 +555,7 @@ export default function TerminalPopupPage({
         allowTerminalStart={allowTerminalStart}
       />
       <PluginAuthenticationHost />
+      <MultilinePasteConfirmHost />
     </I18nProvider>
   );
 }

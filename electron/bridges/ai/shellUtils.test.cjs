@@ -2,6 +2,7 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 
 const {
+  stripAnsi,
   addCodexExecutableEnvForSdk,
   buildWindowsShellCommandLine,
   extractTrailingIdlePrompt,
@@ -21,11 +22,25 @@ const {
   expandWindowsEnvRefs,
   mergeWindowsPath,
   readWindowsRegistryPath,
+  createWindowsLivePathResolver,
   trackSessionIdlePrompt,
 } = require("./shellUtils.cjs");
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
+
+test("OSC stripping preserves text between independently terminated sequences", () => {
+  for (const firstEnd of ["\x07", "\x1b\\"]) {
+    for (const secondEnd of ["\x07", "\x1b\\"]) {
+      const text = `\x1b]3008;start${firstEnd}\nprobe-reply\n\x1b]3008;end${secondEnd}prompt`;
+      assert.equal(stripAnsi(text), "\nprobe-reply\nprompt");
+    }
+  }
+  assert.equal(
+    stripAnsi("before\x1b[31mcolored\x1b[0m\x1b]0;title\x07after"),
+    "beforecoloredafter",
+  );
+});
 
 test("formatSyntheticEcho normalizes multi-line commands to CRLF so xterm doesn't staircase", () => {
   assert.equal(
@@ -589,7 +604,7 @@ test("readWindowsRegistryPath merges HKCU and HKLM and expands refs", async () =
     return { stdout: "    Path    REG_EXPAND_SZ    C:\\Windows\\System32\r\n" };
   };
   const out = await readWindowsRegistryPath({ exec, env: { APPDATA: "C:\\Roaming" } });
-  assert.equal(out, "C:\\Roaming\\npm;C:\\Windows\\System32");
+  assert.equal(out, "C:\\Windows\\System32;C:\\Roaming\\npm");
 });
 
 test("readWindowsRegistryPath tolerates a failing hive query", async () => {
@@ -745,3 +760,94 @@ function withExecPath(fakePath, fn) {
     Object.defineProperty(process, "execPath", { value: original, configurable: true, writable: true });
   }
 }
+
+test("Windows live PATH refresh is shared, asynchronous, bounded, and cached", async () => {
+  let calls = 0;
+  let tick = 0;
+  const resolve = createWindowsLivePathResolver({
+    exec: () => { calls += 1; return new Promise(() => {}); },
+    timeoutMs: 20,
+    now: () => tick,
+    ttlMs: 50,
+  });
+  const options = { basePath: "C:\\Windows\\System32", platform: "win32", env: {}, knownCliDirs: () => [] };
+  let eventLoopRan = false;
+  setTimeout(() => { eventLoopRan = true; }, 0);
+  const first = resolve(options);
+  const second = resolve(options);
+  assert.equal(calls, 2, "concurrent terminals share one query per hive");
+  assert.deepEqual(await Promise.all([first, second]), [options.basePath, options.basePath]);
+  assert.equal(eventLoopRan, true, "registry reads must not block the main event loop");
+  await resolve(options);
+  assert.equal(calls, 2, "even failed queries are briefly cached");
+  tick = 51;
+  await resolve(options);
+  assert.equal(calls, 4, "expired snapshots refresh");
+});
+
+test("Windows live PATH keeps machine before user and guesses after inherited entries", async () => {
+  const resolve = createWindowsLivePathResolver({
+    exec: async (_cmd, args, options) => {
+      assert.equal(options.windowsHide, true);
+      assert.equal(options.timeout, 1000);
+      return { stdout: args[1].startsWith("HKLM")
+        ? "    Path    REG_SZ    C:\\Windows\\System32;C:\\shared\\\r\n"
+        : "    Path    REG_EXPAND_SZ    %APPDATA%\\npm;c:\\SHARED;C:\\new-release\r\n" };
+    },
+  });
+  const result = await resolve({
+    basePath: "C:\\old-release;C:\\Windows\\System32;C:\\launcher",
+    env: { APPDATA: "C:\\Roaming" },
+    platform: "win32",
+    knownCliDirs: () => ["C:\\guess", "C:\\launcher"],
+  });
+  assert.equal(result, "C:\\Windows\\System32;C:\\shared\\;C:\\Roaming\\npm;C:\\new-release;C:\\old-release;C:\\launcher;C:\\guess");
+});
+
+test("Windows live PATH picks up upgraded directories after cache expiry", async () => {
+  let tick = 0;
+  let release = "v1";
+  let unavailable = false;
+  const resolve = createWindowsLivePathResolver({
+    now: () => tick,
+    ttlMs: 10,
+    exec: async () => {
+      if (unavailable) throw new Error("registry unavailable");
+      return { stdout: `    Path    REG_SZ    C:\\${release}\r\n` };
+    },
+  });
+  const options = { platform: "win32", basePath: "C:\\old", env: {}, knownCliDirs: () => [] };
+  assert.equal(await resolve(options), "C:\\v1;C:\\old");
+  release = "v2";
+  tick = 11;
+  assert.equal(await resolve(options), "C:\\v2;C:\\old");
+  unavailable = true;
+  tick = 22;
+  assert.equal(await resolve(options), "C:\\v2;C:\\old", "query failure retains the last successful snapshot");
+});
+
+test("cached Windows registry references expand per terminal environment", async () => {
+  const resolve = createWindowsLivePathResolver({
+    exec: async () => ({ stdout: "    Path    REG_EXPAND_SZ    %APPDATA%\\npm\r\n" }),
+  });
+  const options = { platform: "win32", basePath: "", knownCliDirs: () => [] };
+  assert.equal(await resolve({ ...options, env: { APPDATA: "C:\\first" } }), "C:\\first\\npm");
+  assert.equal(await resolve({ ...options, env: { APPDATA: "C:\\second" } }), "C:\\second\\npm");
+});
+
+test("Windows live PATH resolver does not query the registry off Windows", async () => {
+  const resolve = createWindowsLivePathResolver({ exec: () => { throw new Error("must not query"); } });
+  assert.equal(await resolve({ basePath: "/usr/bin:/bin", platform: "linux" }), "/usr/bin:/bin");
+});
+
+test("a failed machine hive does not promote user directories ahead of inherited system paths", async () => {
+  const resolve = createWindowsLivePathResolver({
+    exec: async (_cmd, args) => {
+      if (args[1].startsWith("HKLM")) throw new Error("unavailable");
+      return { stdout: "    Path    REG_SZ    C:\\user-tools\r\n" };
+    },
+  });
+  assert.equal(await resolve({
+    platform: "win32", basePath: "C:\\Windows\\System32", env: {}, knownCliDirs: () => [],
+  }), "C:\\Windows\\System32;C:\\user-tools");
+});

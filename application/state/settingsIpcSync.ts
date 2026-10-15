@@ -4,6 +4,7 @@ import { parseCustomKeyBindingsStorageRecord } from '../../domain/customKeyBindi
 import { resolveSupportedLocale } from '../../infrastructure/config/i18n';
 import {
   STORAGE_KEY_ACCENT_MODE,
+  STORAGE_KEY_AUTO_LAUNCH_ENABLED,
   STORAGE_KEY_AUTO_UPDATE_ENABLED,
   STORAGE_KEY_COLOR,
   STORAGE_KEY_CUSTOM_CSS,
@@ -45,6 +46,8 @@ import {
   STORAGE_KEY_SHOW_HOST_TREE_SIDEBAR,
   STORAGE_KEY_TERMINAL_SIDE_PANEL_AUTO_OPEN,
   STORAGE_KEY_TERMINAL_SIDE_PANEL_AUTO_OPEN_TAB,
+  STORAGE_KEY_LOCAL_SHELL_SIDE_PANEL_AUTO_OPEN,
+  STORAGE_KEY_LOCAL_SHELL_SIDE_PANEL_AUTO_OPEN_TAB,
   STORAGE_KEY_WINDOW_OPACITY,
   STORAGE_KEY_APP_ICON_VARIANT,
   STORAGE_KEY_HTTP_NETWORK_PROXY,
@@ -93,6 +96,7 @@ interface UseSettingsIpcSyncParams {
   setWindowOpacity: (raw: unknown) => void;
   setAppIconVariant: Dispatch<SetStateAction<AppIconVariant>>;
   setAutoUpdateEnabled: Dispatch<SetStateAction<boolean>>;
+  setAutoLaunchEnabled: Dispatch<SetStateAction<boolean>>;
   setHttpNetworkProxy: Dispatch<SetStateAction<HttpNetworkProxySettings>>;
   setSftpAutoOpenSidebar: Dispatch<SetStateAction<boolean>>;
   setSftpFollowTerminalCwd: Dispatch<SetStateAction<boolean>>;
@@ -101,6 +105,8 @@ interface UseSettingsIpcSyncParams {
   setShowHostTreeSidebarState: Dispatch<SetStateAction<boolean>>;
   setTerminalSidePanelAutoOpenState: Dispatch<SetStateAction<boolean>>;
   setTerminalSidePanelAutoOpenTabState: Dispatch<SetStateAction<TerminalSidePanelAutoOpenTab>>;
+  setLocalShellSidePanelAutoOpenState: Dispatch<SetStateAction<boolean>>;
+  setLocalShellSidePanelAutoOpenTabState: Dispatch<SetStateAction<TerminalSidePanelAutoOpenTab>>;
   setDisableTerminalFontZoomState: Dispatch<SetStateAction<boolean>>;
   setRestorePreviousSessionState: Dispatch<SetStateAction<boolean>>;
   setRestoreTerminalCwdState: Dispatch<SetStateAction<boolean>>;
@@ -138,6 +144,7 @@ export function useSettingsIpcSync({
   setWindowOpacity,
   setAppIconVariant,
   setAutoUpdateEnabled,
+  setAutoLaunchEnabled,
   setHttpNetworkProxy,
   setSftpAutoOpenSidebar,
   setSftpFollowTerminalCwd,
@@ -146,6 +153,8 @@ export function useSettingsIpcSync({
   setShowHostTreeSidebarState,
   setTerminalSidePanelAutoOpenState,
   setTerminalSidePanelAutoOpenTabState,
+  setLocalShellSidePanelAutoOpenState,
+  setLocalShellSidePanelAutoOpenTabState,
   setDisableTerminalFontZoomState,
   setRestorePreviousSessionState,
   setRestoreTerminalCwdState,
@@ -270,6 +279,13 @@ export function useSettingsIpcSync({
       if (key === STORAGE_KEY_AUTO_UPDATE_ENABLED && typeof value === 'boolean') {
         setAutoUpdateEnabled((prev) => (prev === value ? prev : value));
       }
+      if (key === STORAGE_KEY_AUTO_LAUNCH_ENABLED && typeof value === 'boolean') {
+        // Peer windows (main, tray panel, terminal popups) all mount
+        // useSettingsState via AppLockGate even though the toggle is only
+        // ever rendered in the Settings window — keep their in-memory copy
+        // in sync so it's not stale if anything reads it later.
+        setAutoLaunchEnabled((prev) => (prev === value ? prev : value));
+      }
       if (key === STORAGE_KEY_HTTP_NETWORK_PROXY) {
         const next = normalizeHttpNetworkProxySettings(value);
         setHttpNetworkProxy((prev) => (
@@ -298,6 +314,12 @@ export function useSettingsIpcSync({
       }
       if (key === STORAGE_KEY_TERMINAL_SIDE_PANEL_AUTO_OPEN_TAB && isTerminalSidePanelAutoOpenTab(value)) {
         setTerminalSidePanelAutoOpenTabState((prev) => (prev === value ? prev : value));
+      }
+      if (key === STORAGE_KEY_LOCAL_SHELL_SIDE_PANEL_AUTO_OPEN && typeof value === 'boolean') {
+        setLocalShellSidePanelAutoOpenState((prev) => (prev === value ? prev : value));
+      }
+      if (key === STORAGE_KEY_LOCAL_SHELL_SIDE_PANEL_AUTO_OPEN_TAB && isTerminalSidePanelAutoOpenTab(value)) {
+        setLocalShellSidePanelAutoOpenTabState((prev) => (prev === value ? prev : value));
       }
       if (key === STORAGE_KEY_DISABLE_TERMINAL_FONT_ZOOM && typeof value === 'boolean') {
         setDisableTerminalFontZoomState((prev) => (prev === value ? prev : value));
@@ -330,6 +352,7 @@ export function useSettingsIpcSync({
     applyIncomingCustomKeyBindings,
     mergeIncomingTerminalSettings,
     setAutoUpdateEnabled,
+    setAutoLaunchEnabled,
     setHttpNetworkProxy,
     setEditorWordWrapState,
     setFollowAppTerminalThemeState,
@@ -352,6 +375,8 @@ export function useSettingsIpcSync({
     setShowHostTreeSidebarState,
     setTerminalSidePanelAutoOpenState,
     setTerminalSidePanelAutoOpenTabState,
+    setLocalShellSidePanelAutoOpenState,
+    setLocalShellSidePanelAutoOpenTabState,
     setDisableTerminalFontZoomState,
     setRestorePreviousSessionState,
     setRestoreTerminalCwdState,

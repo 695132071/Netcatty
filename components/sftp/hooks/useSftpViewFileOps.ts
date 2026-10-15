@@ -11,8 +11,10 @@ import { toast } from "../../ui/toast";
 import { netcattyBridge } from "../../../infrastructure/services/netcattyBridge";
 import { getFileExtension, getLanguageId, FileOpenerType, SystemAppInfo } from "../../../lib/sftpFileUtils";
 import { isNavigableDirectory } from "../utils";
+import { resolveDownloadSourceSnapshot } from "../../../application/state/sftp/downloadSourceSnapshot";
 import { reportSftpUploadResults } from "../reportSftpUploadResults";
 import { editorTabStore } from "../../../application/state/editorTabStore";
+import { popOutEditorTab } from "../../../application/state/editorWindowClient";
 import { toEditorTabId, activeTabStore } from "../../../application/state/activeTabStore";
 import type { TextEditorModalSnapshot } from "../../TextEditorModal";
 import type { UseSftpViewFileOpsParams, UseSftpViewFileOpsResult } from "./useSftpViewFileOps.types";
@@ -26,6 +28,15 @@ const LOCAL_BLOB_DOWNLOAD_CONCURRENCY = 1;
  */
 const MULTI_SELECT_ROOT_DOWNLOAD_CONCURRENCY = DEFAULT_SFTP_FILE_TRANSFER_CONCURRENCY;
 
+const promoteModalSnapshot = (snapshot: Parameters<typeof editorTabStore.promoteFromModal>[0]) => {
+  try {
+    return editorTabStore.promoteFromModal(snapshot);
+  } catch (error) {
+    toast.error(error instanceof Error ? error.message : "Failed to transfer editor", "SFTP");
+    return null;
+  }
+};
+
 export const useSftpViewFileOps = ({
   sftpRef,
   behaviorRef,
@@ -36,6 +47,8 @@ export const useSftpViewFileOps = ({
   showSaveDialog,
   selectDirectory,
   getSftpIdForConnection,
+  statSftp,
+  listSftp,
 }: UseSftpViewFileOpsParams): UseSftpViewFileOpsResult => {
   const [permissionsState, setPermissionsState] = useState<{
     file: SftpFileEntry;
@@ -229,7 +242,7 @@ export const useSftpViewFileOps = ({
     const connection = pane.connection;
     if (!connection || !target.hostId) return;
 
-    const editorId = editorTabStore.promoteFromModal({
+    const editorId = promoteModalSnapshot({
       sessionId: connection.id,
       sftpTabId: pane.id,
       hostId: target.hostId,
@@ -241,11 +254,49 @@ export const useSftpViewFileOps = ({
       wordWrap: snapshot.wordWrap,
       viewState: snapshot.viewState,
     });
+    if (!editorId) return;
+    if (editorTabStore.getTab(editorId)?.placement === "window") {
+      void popOutEditorTab(editorId).then((ok) => {
+        if (!ok) return;
+        setShowTextEditor(false);
+        setTextEditorTarget(null);
+        setTextEditorContent("");
+      });
+      return;
+    }
     activeTabStore.setActiveTabId(toEditorTabId(editorId));
     // Close the modal
     setShowTextEditor(false);
     setTextEditorTarget(null);
     setTextEditorContent("");
+  }, [sftpRef]);
+
+  const handlePopOut = useCallback((snapshot: TextEditorModalSnapshot) => {
+    const target = textEditorTargetRef.current;
+    if (!target) return;
+    const pane = target.side === "left" ? sftpRef.current.leftPane : sftpRef.current.rightPane;
+    const connection = pane.connection;
+    if (!connection || !target.hostId) return;
+
+    const editorId = promoteModalSnapshot({
+      sessionId: connection.id,
+      sftpTabId: pane.id,
+      hostId: target.hostId,
+      remotePath: target.fullPath,
+      fileName: target.file.name,
+      languageId: snapshot.languageId || getLanguageId(target.file.name),
+      content: snapshot.content,
+      baselineContent: snapshot.baselineContent,
+      wordWrap: snapshot.wordWrap,
+      viewState: snapshot.viewState,
+    });
+    if (!editorId) return;
+    void popOutEditorTab(editorId).then((ok) => {
+      if (!ok) return;
+      setShowTextEditor(false);
+      setTextEditorTarget(null);
+      setTextEditorContent("");
+    });
   }, [sftpRef]);
 
   const onEditFileLeft = useCallback(
@@ -404,7 +455,7 @@ export const useSftpViewFileOps = ({
       if (!pane.connection) return;
 
       const resolvedFullPath = fullPath ?? sftpRef.current.joinPath(pane.connection.currentPath, file.name);
-      const isDirectory = isNavigableDirectory(file);
+      let isDirectory = isNavigableDirectory(file);
 
       try {
         // For local files, use blob download.
@@ -442,6 +493,18 @@ export const useSftpViewFileOps = ({
           throw new Error("SFTP session not found");
         }
 
+        // The listed entry can be stale when the file was deleted / recreated
+        // in the terminal without refreshing the side panel. Re-stat so the
+        // planned snapshot size and entry type match the real source.
+        const sourceSnapshot = await resolveDownloadSourceSnapshot(
+          statSftp,
+          sftpId,
+          resolvedFullPath,
+          pane.filenameEncoding,
+          listSftp,
+        );
+        isDirectory = sourceSnapshot.isDirectory;
+
         if (isDirectory) {
           if (!selectDirectory) {
             toast.error(t("sftp.error.downloadFailed"), "SFTP");
@@ -451,6 +514,15 @@ export const useSftpViewFileOps = ({
           const selectedDirectory = await selectDirectory(t("sftp.context.download"));
           if (!selectedDirectory) return;
 
+          // The picker may stay open while the remote entry changes again.
+          const selectedSnapshot = await resolveDownloadSourceSnapshot(
+            statSftp,
+            sftpId, resolvedFullPath, pane.filenameEncoding,
+            listSftp,
+          );
+          if (!selectedSnapshot.isDirectory) {
+            throw new Error("Remote source changed while choosing the download target");
+          }
           const targetPath = joinFsPath(selectedDirectory, file.name);
 
           try {
@@ -481,14 +553,17 @@ export const useSftpViewFileOps = ({
 
           return;
         }
-        // Show save dialog to get target path
         const targetPath = await showSaveDialog(file.name);
-        if (!targetPath) {
-          // User cancelled
-          return;
-        }
+        if (!targetPath) return;
 
-        const fileSize = typeof file.size === "string" ? parseInt(file.size, 10) || 0 : (file.size || 0);
+        const selectedSnapshot = await resolveDownloadSourceSnapshot(
+          statSftp,
+          sftpId, resolvedFullPath, pane.filenameEncoding,
+          listSftp,
+        );
+        if (selectedSnapshot.isDirectory) {
+          throw new Error("Remote source changed while choosing the download target");
+        }
         // Route through downloadToLocal so FileZilla-style transfer pool
         // sessions are used (browse session stays free for listing).
         const status = await sftpRef.current.downloadToLocal({
@@ -501,7 +576,7 @@ export const useSftpViewFileOps = ({
           sourceHostLabel: pane.connection.hostLabel,
           sourceEncoding: pane.filenameEncoding,
           isDirectory: false,
-          totalBytes: fileSize,
+          totalBytes: selectedSnapshot.size,
         });
         if (status === "completed") {
           toast.success(`${t("sftp.context.download")}: ${file.name}`, "SFTP");
@@ -523,6 +598,8 @@ export const useSftpViewFileOps = ({
       showSaveDialog,
       selectDirectory,
       getSftpIdForConnection,
+      statSftp,
+      listSftp,
     ],
   );
 
@@ -633,8 +710,16 @@ export const useSftpViewFileOps = ({
           try {
             const sourcePath = sftpRef.current.joinPath(pane.connection.currentPath, file.name);
             const targetPath = joinFsPath(selectedDirectory, file.name);
-            const isDirectory = isNavigableDirectory(file);
-            const fileSize = typeof file.size === "string" ? parseInt(file.size, 10) || 0 : (file.size || 0);
+            // Re-stat each root: the listed entries can be stale after
+            // terminal-side delete + recreate without a refresh.
+            const sourceSnapshot = await resolveDownloadSourceSnapshot(
+              statSftp,
+              sftpId,
+              sourcePath,
+              pane.filenameEncoding,
+              listSftp,
+            );
+            const isDirectory = sourceSnapshot.isDirectory;
 
             const status = await sftpRef.current.downloadToLocal({
               fileName: file.name,
@@ -646,7 +731,7 @@ export const useSftpViewFileOps = ({
               sourceHostLabel: pane.connection.hostLabel,
               sourceEncoding: pane.filenameEncoding,
               isDirectory,
-              totalBytes: isDirectory ? undefined : fileSize,
+              totalBytes: isDirectory ? undefined : sourceSnapshot.size,
             });
             results[index] = { status: "fulfilled", value: { file, status } };
           } catch (reason) {
@@ -679,6 +764,8 @@ export const useSftpViewFileOps = ({
       t,
       selectDirectory,
       getSftpIdForConnection,
+      statSftp,
+      listSftp,
       handleDownloadFileForSide,
     ],
   );
@@ -769,6 +856,7 @@ export const useSftpViewFileOps = ({
     setFileOpenerTarget,
     handleSaveTextFile,
     onPromoteToTab: handlePromoteToTab,
+    onPopOut: handlePopOut,
     handleFileOpenerSelect,
     handleSelectSystemApp,
     onEditPermissionsLeft,

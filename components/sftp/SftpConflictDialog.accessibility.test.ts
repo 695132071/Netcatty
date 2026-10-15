@@ -155,12 +155,44 @@ test("announces folder replacement risk and refocuses Merge for each queued conf
     .split(/\s+/)
     .map((id) => env.document.getElementById(id)?.textContent ?? "")
     .join(" ");
-  assert.match(describedText, /A folder with the same name already exists/);
-  assert.match(describedText, /Replace deletes all destination files and sub-folders/);
+  assert.match(describedText, /Merge: keeps destination-only content/);
+  assert.match(describedText, /Replace: deletes destination-only content and cannot be undone/);
+  assert.doesNotMatch(env.document.body.textContent ?? "", /A folder with the same name already exists/);
+  const dialogTitle = env.document.querySelector("[role=dialog] h2");
+  assert.equal(dialogTitle?.textContent, "docs already exists");
+  assert.equal(dialogTitle?.getAttribute("aria-label"), "Folder Conflict: docs already exists");
+  const warning = env.document.getElementById(describedBy.split(/\s+/).at(-1) ?? "");
+  assert.ok(warning, "folder action guidance should render");
+  assert.equal(warning.querySelectorAll("svg").length, 2, "both guidance rows should use matching icons");
+  assert.equal(warning.querySelectorAll("p.text-xs").length, 0, "guidance rows should use the same text size");
 
   const replaceButton = Array.from(env.document.querySelectorAll("button"))
     .find((button) => button.textContent === "Replace");
   assert.ok(replaceButton, "folder replacement action should render");
+  const mergeButton = Array.from(env.document.querySelectorAll("button"))
+    .find((button) => button.textContent === "Merge");
+  assert.ok(mergeButton, "folder merge action should render");
+  assert.match(mergeButton.className, /bg-primary/);
+  assert.match(mergeButton.className, /border/);
+  assert.doesNotMatch(replaceButton.className, /(^|\s)bg-destructive(?:\s|$)/);
+  assert.match(replaceButton.className, /text-destructive/);
+  assert.match(replaceButton.className, /border/);
+  assert.equal(replaceButton.getAttribute("aria-describedby"), describedBy.split(/\s+/).at(-1));
+  for (const label of ["Stop", "Skip", "Duplicate", "Merge", "Replace"]) {
+    const action = Array.from(env.document.querySelectorAll("button"))
+      .find((button) => button.textContent === label);
+    assert.ok(action, `${label} action should render`);
+    assert.match(action.className, /h-9/);
+    assert.match(action.className, /min-w-24/);
+    assert.match(action.className, /border/);
+  }
+  assert.equal(
+    Array.from(env.document.querySelectorAll("button"))
+      .filter((button) => button.className.includes("bg-primary"))
+      .length,
+    1,
+    "Merge should be the only visually primary action",
+  );
   await dispatchDomEvent(replaceButton, new env.window.MouseEvent("click", { bubbles: true }));
   await flushEffects();
   await new Promise((resolve) => setTimeout(resolve, 20));

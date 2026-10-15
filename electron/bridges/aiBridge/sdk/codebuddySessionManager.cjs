@@ -47,6 +47,7 @@ function computeOptionsFingerprint(sessionOptions) {
     agents: sessionOptions.agents,
     thinking: sessionOptions.thinking,
     effort: sessionOptions.effort,
+    persistSession: sessionOptions.persistSession,
     hasHooks: Boolean(sessionOptions.hooks),
     hasCanUseTool: typeof sessionOptions.canUseTool === "function",
     hasElicitation: Boolean(sessionOptions.elicitation),
@@ -337,7 +338,7 @@ class CodebuddySessionManager {
    * Report mid-turn steer as unsupported for the current V2 Session API.
    */
   async steer() {
-    // SDK 0.3.230 Session.send() starts a new turn by resetting the shared
+    // SDK 0.3.258 Session.send() starts a new turn by resetting the shared
     // message iterator and discarding pending messages. Calling it while
     // runTurn() owns session.stream() can strand that active consumer.
     // Keep this disabled until the SDK exposes a dedicated mid-turn steer API.

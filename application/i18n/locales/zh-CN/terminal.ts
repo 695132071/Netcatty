@@ -1,6 +1,15 @@
 import type { Messages } from '../types';
 
 export const zhCNTerminalMessages: Messages = {
+  'terminal.menu.saveScreen': '保存当前屏幕',
+  'terminal.saveScreen.failed': '保存终端屏幕失败。',
+  // 多行粘贴确认对话框（#3398）
+  'terminal.pasteConfirm.title': '要粘贴多行文本吗？',
+  'terminal.pasteConfirm.summary': '将向会话发送 {lines} 行（{chars} 个字符）。',
+  'terminal.pasteConfirm.preview': '预览（可编辑）',
+  'terminal.pasteConfirm.send': '发送',
+  'terminal.pasteConfirm.sendLineByLine': '逐行发送',
+  'terminal.pasteConfirm.cancel': '取消',
   'terminal.sudoHint.pressEnter': '按 Enter 粘贴已保存的密码',
   'terminal.passwordPicker.title': '已保存的密码',
   'terminal.passwordPicker.empty': '没有已保存的密码',
@@ -269,6 +278,8 @@ export const zhCNTerminalMessages: Messages = {
   'settings.terminal.font.weightBold.desc': '粗体文本字重 (100-900)',
   'settings.terminal.font.smoothing': '字体平滑',
   'settings.terminal.font.smoothing.desc': '使用 macOS 原生字体抗锯齿',
+  'settings.terminal.font.ligatures': '字体连字',
+  'settings.terminal.font.ligatures.desc': '支持连字的字体把 != 这类字符显示成一个符号',
   'settings.terminal.font.linePadding': '行间距',
   'settings.terminal.font.linePadding.desc': '行之间的额外间距 (0-10)',
   'settings.terminal.font.emulationType': '终端仿真类型',
@@ -276,6 +287,8 @@ export const zhCNTerminalMessages: Messages = {
   'settings.terminal.cursor.style.block': '块',
   'settings.terminal.cursor.style.bar': '竖线',
   'settings.terminal.cursor.style.underline': '下划线',
+  'settings.terminal.cursor.barWidth': '竖线光标粗细',
+  'settings.terminal.cursor.barWidth.desc': 'vi 等应用使用竖线光标时的宽度（1-4 像素）',
   'settings.terminal.cursor.blink': '光标闪烁',
   'settings.terminal.cursor.highlightLine': '高亮当前行',
   'settings.terminal.cursor.highlightLine.desc': '为光标所在行加上淡色背景，方便定位当前输入位置',
@@ -289,6 +302,8 @@ export const zhCNTerminalMessages: Messages = {
   'settings.terminal.accessibility.minimumContrastRatio.desc': '调整颜色以满足对比度要求 (1 = 禁用, 21 = 最大)',
   'settings.terminal.behavior.rightClick': '右键行为',
   'settings.terminal.behavior.rightClick.desc': '在终端中右键时执行的操作',
+  'settings.terminal.behavior.rightClick.longPressMenu': '右键长按显示菜单',
+  'settings.terminal.behavior.rightClick.longPressMenu.desc': '右键设为粘贴或选词时，按住半秒打开菜单。不影响接管鼠标的终端应用。',
   'settings.terminal.behavior.rightClick.fullscreenMenu': '在全屏应用中也显示菜单',
   'settings.terminal.behavior.rightClick.fullscreenMenu.desc':
     '即使 tmux、vim 等全屏应用接管了鼠标，也显示右键菜单。关闭时右键会交给应用处理（Shift+右键仍可打开菜单）。',
@@ -322,12 +337,21 @@ export const zhCNTerminalMessages: Messages = {
   'settings.terminal.behavior.autoUploadClipboardImage': '粘贴时自动上传剪贴板图片',
   'settings.terminal.behavior.autoUploadClipboardImage.desc':
     '当剪贴板包含图片时，在远程会话中粘贴会通过 SFTP 将图片上传到远端当前目录的 .netcatty-paste-images/ 文件夹，并在终端输入远端路径，而不是粘贴文本。',
+  'settings.terminal.behavior.confirmMultilinePaste': '粘贴多行前先询问',
+  'settings.terminal.behavior.confirmMultilinePaste.desc':
+    '粘贴多行文本时先弹出确认对话框，显示行数和字符数、可编辑的预览，并提供发送 / 逐行发送 / 取消操作。可保护不支持括号粘贴的网络设备 CLI（Cisco IOS、华为 VRP、H3C Comware）。',
+  'settings.terminal.behavior.confirmMultilinePasteMinLines': '确认阈值（行数）',
+  'settings.terminal.behavior.confirmMultilinePasteMinLines.desc':
+    '粘贴内容达到该行数时才弹出确认对话框。',
   'settings.terminal.behavior.shiftEnterNewline': 'Shift+Enter 发送文本',
   'settings.terminal.behavior.shiftEnterNewline.desc':
     '在终端中按 Shift+Enter 时发送配置的文本，而不是普通回车。',
   'settings.terminal.behavior.shiftEnterNewlineText': '发送内容',
   'settings.terminal.behavior.shiftEnterNewlineText.desc':
-    '使用 \\n 表示换行，\\t 表示 Tab，\\\\ 表示反斜杠。',
+    '使用 \\n 表示换行，\\t 表示 Tab，\\e 表示 ESC，\\\\ 表示反斜杠。',
+  'settings.terminal.behavior.shiftEnterForceText': '在 Win32 输入模式下也发送文本',
+  'settings.terminal.behavior.shiftEnterForceText.desc':
+    '本机 Windows ConPTY 会话协商 Win32 输入模式时，仍然发送上面的文本。Node/Bun 写的 CLI（Claude Code、CodeBuddy）读不到控制台输入记录里的修饰键，需要这个开关才能区分 Shift+Enter。',
   'settings.terminal.behavior.clearWipesScrollback': '`clear` 同时清空回滚历史',
   'settings.terminal.behavior.clearWipesScrollback.desc':
     '`clear` 命令同时清空回滚历史（POSIX 默认行为）。关闭则保留历史。',
@@ -343,6 +367,11 @@ export const zhCNTerminalMessages: Messages = {
   'settings.terminal.behavior.dynamicTabTitle.off': '关闭',
   'settings.terminal.behavior.dynamicTabTitle.agent': '仅 Agent',
   'settings.terminal.behavior.dynamicTabTitle.all': '全部会话',
+  'settings.terminal.behavior.tabDoubleClick': '标签页双击行为',
+  'settings.terminal.behavior.tabDoubleClick.desc': '选择双击顶部终端标签页时执行的操作。',
+  'settings.terminal.behavior.tabDoubleClick.duplicate': '复制会话（新建连接）',
+  'settings.terminal.behavior.tabDoubleClick.copy': '复制标签页（复用连接）',
+  'settings.terminal.behavior.tabDoubleClick.disabled': '无操作',
   'settings.terminal.behavior.oscNotifications': 'OSC 桌面通知',
   'settings.terminal.behavior.oscNotifications.desc':
     '当程序发出 OSC 9、OSC 777 notify 或 kitty OSC 99 时弹出系统通知。Codex 等 Agent 用它提示回合完成或等待审批。',
@@ -719,9 +748,11 @@ export const zhCNTerminalMessages: Messages = {
   'tabs.logPrefix': '日志：',
   'tabs.logLocal': '本地',
   'tabs.copyTab': '复制标签页',
+  'tabs.duplicateSession': '复制会话',
   'tabs.copyTabToNewWindow': '复制标签页到新窗口',
   'tabs.copyTabToNewWindowFailed': '无法在新窗口打开标签页',
   'tabs.closeOthers': '关闭其他标签',
+  'tabs.closeToLeft': '关闭左侧标签',
   'tabs.closeToRight': '关闭右侧标签',
   'tabs.closeAll': '关闭所有标签',
   'keychain.edit.labelRequired': 'Label *',
@@ -892,6 +923,9 @@ export const zhCNTerminalMessages: Messages = {
   'serial.field.lineModeDesc': '缓冲输入，按回车后发送（而不是逐字符发送）',
   'serial.field.backspaceBehavior': '回退键',
   'serial.field.backspaceBehaviorDesc': '如果网络设备不响应默认回退键，请改用 Ctrl+H。',
+  'serial.encoding.pendingInput': '请先提交或清空当前输入，再切换编码。',
+  'serial.field.byteOrientedBackspace': '按字节退格',
+  'serial.field.byteOrientedBackspaceDesc': '发送与字符字节数相同的 DEL，使设备删除整个多字节字符（适用于按字节删除的设备）。若为逐字符删除的行编辑器（如 Linux readline），请关闭。',
   'serial.backspace.default': '默认（DEL，0x7F）',
   'serial.backspace.ctrlH': 'Ctrl+H（BS，0x08）',
   'serial.field.charset': '字符编码',
@@ -905,6 +939,10 @@ export const zhCNTerminalMessages: Messages = {
   'serial.field.configLabelPlaceholder': '例如 Arduino Uno',
   'serial.connectAndSave': '连接并保存',
   'serial.edit.title': '串口设置',
+  'serial.field.username': '用户名',
+  'serial.field.password': '密码',
+  'serial.field.autoLoginDesc': '设置后，串口终端出现 Login/Password 登录提示时，会自动填充此处保存的用户名和密码。',
+  'serial.field.clearPassword': '清除已保存的密码',
 
   // Keyboard Interactive Authentication (2FA/MFA)
   'keyboard.interactive.title': '需要验证',
@@ -931,6 +969,13 @@ export const zhCNTerminalMessages: Messages = {
   // Text Editor
   'sftp.editor.wordWrap': '自动换行',
   'sftp.editor.maximize': '最大化',
+  'sftp.editor.popOut': '在编辑器窗口打开',
+  'sftp.editor.dock': '停靠回主窗口',
+  'sftp.editor.focusWindow': '聚焦编辑器窗口',
+  'sftp.editor.close': '关闭',
+  'sftp.editor.windowTitle': '编辑器',
+  'sftp.editor.windowEmpty': '没有打开的文件',
+  'sftp.editor.dockFailed': '无法把该文件停靠回主窗口',
   'sftp.editor.unsavedTitle': '未保存的修改',
   'sftp.editor.unsavedMessage': '{fileName} 有未保存的修改，是否保存后关闭？',
   'sftp.editor.discardChanges': '不保存',

@@ -10,6 +10,8 @@ interface SessionTabContextMenuContentProps {
   sessionId: string;
   onCloseSession: (sessionId: string) => void;
   onCopySession?: (sessionId: string) => void;
+  /** Duplicate the session with a brand-new connection (fresh auth, e.g. a new bastion login). */
+  onDuplicateSession?: (sessionId: string) => void;
   onCopySessionToNewWindow?: (sessionId: string) => void;
   onDetachSession?: (sessionId: string) => void;
   onReconnectSession: (sessionId: string) => void;
@@ -27,6 +29,7 @@ export function SessionTabContextMenuContent({
   sessionId,
   onCloseSession,
   onCopySession,
+  onDuplicateSession,
   onCopySessionToNewWindow,
   onDetachSession,
   onReconnectSession,
@@ -40,20 +43,6 @@ export function SessionTabContextMenuContent({
 }: SessionTabContextMenuContentProps) {
   return (
     <ContextMenuContent>
-      <ContextMenuItem
-        disabled={isSessionReconnectDisabled(sessionStatus, reconnectActive)}
-        onClick={() => onReconnectSession(sessionId)}
-      >
-        {t('terminal.menu.reconnect')}
-      </ContextMenuItem>
-      <ContextMenuItem onClick={() => onRenameSession(sessionId)}>
-        {t('common.rename')}
-      </ContextMenuItem>
-      {editHost && onEditHost && (
-        <ContextMenuItem onClick={() => onEditHost(editHost)}>
-          {t('terminal.layer.hostTree.editHost')}
-        </ContextMenuItem>
-      )}
       {onCopySession && (
         <ContextMenuItem onClick={() => onCopySession(sessionId)}>
           {t('tabs.copyTab')}
@@ -64,11 +53,30 @@ export function SessionTabContextMenuContent({
           {t('tabs.copyTabToNewWindow')}
         </ContextMenuItem>
       )}
+      {onDuplicateSession && (
+        <ContextMenuItem onClick={() => onDuplicateSession(sessionId)}>
+          {t('tabs.duplicateSession')}
+        </ContextMenuItem>
+      )}
       {onDetachSession && (
         <ContextMenuItem onClick={() => onDetachSession(sessionId)}>
           {t('terminal.menu.detach')}
         </ContextMenuItem>
       )}
+      <ContextMenuItem onClick={() => onRenameSession(sessionId)}>
+        {t('common.rename')}
+      </ContextMenuItem>
+      {editHost && onEditHost && (
+        <ContextMenuItem onClick={() => onEditHost(editHost)}>
+          {t('terminal.layer.hostTree.editHost')}
+        </ContextMenuItem>
+      )}
+      <ContextMenuItem
+        disabled={isSessionReconnectDisabled(sessionStatus, reconnectActive)}
+        onClick={() => onReconnectSession(sessionId)}
+      >
+        {t('terminal.menu.reconnect')}
+      </ContextMenuItem>
       <ContextMenuItem className="text-destructive" onClick={() => onCloseSession(sessionId)}>
         {t('common.close')}
       </ContextMenuItem>

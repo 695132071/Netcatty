@@ -1669,3 +1669,510 @@ test("macOS tray click still opens the panel below a top menu-bar icon", async (
     }
   });
 });
+
+test("pinTrayForHiddenLaunch creates a tray even when close-to-tray is off", () => {
+  const bridge = loadBridge();
+  const electronModule = createElectronStub();
+  bridge.init({ electronModule, getMainWindow: () => null });
+
+  try {
+    assert.equal(bridge.getTray(), null);
+    bridge.pinTrayForHiddenLaunch();
+    assert.notEqual(bridge.getTray(), null);
+  } finally {
+    bridge.cleanup();
+  }
+});
+
+test("a hidden-launch tray pin survives close-to-tray being turned off", async () => {
+  const bridge = loadBridge();
+  const electronModule = createElectronStub();
+  bridge.init({ electronModule, getMainWindow: () => null });
+  const ipcMain = createIpcMainStub();
+  bridge.registerHandlers(ipcMain);
+
+  try {
+    bridge.pinTrayForHiddenLaunch();
+    assert.notEqual(bridge.getTray(), null, "hidden-launch cold start must have a tray");
+
+    // The renderer's close-to-tray effect runs on mount and can disable the
+    // preference before the pin is released — the tray must not disappear,
+    // or a hidden auto-launch becomes an unreachable zombie process.
+    await ipcMain.handlers.get("netcatty:tray:setCloseToTray")(null, { enabled: false });
+    assert.notEqual(bridge.getTray(), null, "the pin must outlive close-to-tray being disabled");
+  } finally {
+    bridge.cleanup();
+  }
+});
+
+test("releasing the hidden-launch tray pin keeps the visible tray when close-to-tray is off", async () => {
+  const bridge = loadBridge();
+  const electronModule = createElectronStub();
+  bridge.init({ electronModule, getMainWindow: () => null });
+  const ipcMain = createIpcMainStub();
+  bridge.registerHandlers(ipcMain);
+
+  try {
+    bridge.pinTrayForHiddenLaunch();
+    await ipcMain.handlers.get("netcatty:tray:setCloseToTray")(null, { enabled: false });
+    assert.notEqual(bridge.getTray(), null);
+
+    bridge.releaseHiddenLaunchTrayPin();
+
+    assert.notEqual(bridge.getTray(), null, "show-tray-icon=on keeps the tray visible");
+  } finally {
+    bridge.cleanup();
+  }
+});
+
+test("releasing the hidden-launch tray pin hides the icon when requested", async () => {
+  const bridge = loadBridge();
+  const electronModule = createElectronStub();
+  bridge.init({ electronModule, getMainWindow: () => null });
+  const ipcMain = createIpcMainStub();
+  bridge.registerHandlers(ipcMain);
+
+  try {
+    bridge.pinTrayForHiddenLaunch();
+    await ipcMain.handlers.get("netcatty:tray:setShowTrayIcon")(null, { enabled: false });
+    assert.notEqual(bridge.getTray(), null, "the hidden launch keeps its recovery icon");
+
+    bridge.releaseHiddenLaunchTrayPin();
+
+    assert.equal(bridge.getTray(), null);
+  } finally {
+    bridge.cleanup();
+  }
+});
+
+test("releasing the hidden-launch tray pin keeps the tray if close-to-tray is on", async () => {
+  const bridge = loadBridge();
+  const electronModule = createElectronStub();
+  bridge.init({ electronModule, getMainWindow: () => null });
+  const { ipcMain } = await enableCloseToTray(bridge, electronModule);
+
+  try {
+    bridge.pinTrayForHiddenLaunch();
+    assert.notEqual(bridge.getTray(), null);
+
+    bridge.releaseHiddenLaunchTrayPin();
+
+    assert.notEqual(bridge.getTray(), null, "close-to-tray=on should keep the tray regardless of the pin");
+    void ipcMain;
+  } finally {
+    bridge.cleanup();
+  }
+});
+
+test("releaseHiddenLaunchTrayPin is a no-op when the pin was never set", () => {
+  const bridge = loadBridge();
+  const electronModule = createElectronStub();
+  bridge.init({ electronModule, getMainWindow: () => null });
+
+  try {
+    assert.doesNotThrow(() => bridge.releaseHiddenLaunchTrayPin());
+    assert.equal(bridge.getTray(), null);
+  } finally {
+    bridge.cleanup();
+  }
+});
+
+test("setCloseToTray(false) keeps a visible tray without hiding the window on close", async () => {
+  const bridge = loadBridge();
+  const electronModule = createElectronStub();
+  const { ipcMain } = await enableCloseToTray(bridge, electronModule);
+
+  try {
+    assert.notEqual(bridge.getTray(), null);
+    await ipcMain.handlers.get("netcatty:tray:setCloseToTray")(null, { enabled: false });
+    assert.notEqual(bridge.getTray(), null);
+    assert.equal(bridge.handleWindowClose({ preventDefault() { assert.fail("close was prevented"); } }, new FakeWindow()), false);
+  } finally {
+    bridge.cleanup();
+  }
+});
+
+test("setShowTrayIcon(false) destroys the tray even when close-to-tray stays on", async () => {
+  const bridge = loadBridge();
+  const electronModule = createElectronStub();
+  const { ipcMain } = await enableCloseToTray(bridge, electronModule);
+
+  try {
+    assert.notEqual(bridge.getTray(), null);
+    const result = await ipcMain.handlers.get("netcatty:tray:setShowTrayIcon")(null, { enabled: false });
+    assert.deepEqual(result, { success: true, enabled: false });
+    assert.equal(bridge.getTray(), null);
+  } finally {
+    bridge.cleanup();
+  }
+});
+
+test("handleWindowClose still hides to tray after the icon was hidden by preference", async () => {
+  await withPlatform("darwin", async () => {
+    const bridge = loadBridge();
+    const electronModule = createElectronStub();
+    const { ipcMain } = await enableCloseToTray(bridge, electronModule);
+
+    try {
+      await ipcMain.handlers.get("netcatty:tray:setShowTrayIcon")(null, { enabled: false });
+      assert.equal(bridge.getTray(), null);
+
+      const win = new FakeWindow({ fullscreen: false });
+      let prevented = false;
+      const result = bridge.handleWindowClose({ preventDefault() { prevented = true; } }, win);
+
+      assert.equal(result, true);
+      assert.equal(prevented, true);
+      assert.equal(win.hideCalls, 1);
+    } finally {
+      bridge.cleanup();
+    }
+  });
+});
+
+test("setShowTrayIcon(true) restores the tray when close-to-tray is on", async () => {
+  const bridge = loadBridge();
+  const electronModule = createElectronStub();
+  const { ipcMain } = await enableCloseToTray(bridge, electronModule);
+
+  try {
+    await ipcMain.handlers.get("netcatty:tray:setShowTrayIcon")(null, { enabled: false });
+    assert.equal(bridge.getTray(), null);
+    await ipcMain.handlers.get("netcatty:tray:setShowTrayIcon")(null, { enabled: true });
+    assert.notEqual(bridge.getTray(), null);
+  } finally {
+    bridge.cleanup();
+  }
+});
+
+test("setShowTrayIcon(true) creates a tray when close-to-tray is off", async () => {
+  const bridge = loadBridge();
+  const electronModule = createElectronStub();
+  bridge.init({ electronModule, getMainWindow: () => null });
+  const ipcMain = createIpcMainStub();
+  bridge.registerHandlers(ipcMain);
+
+  try {
+    await ipcMain.handlers.get("netcatty:tray:setCloseToTray")(null, { enabled: false });
+    await ipcMain.handlers.get("netcatty:tray:setShowTrayIcon")(null, { enabled: true });
+    assert.notEqual(bridge.getTray(), null);
+  } finally {
+    bridge.cleanup();
+  }
+});
+
+test("setCloseToTray(true) does not recreate the tray while the icon is hidden by preference", async () => {
+  const bridge = loadBridge();
+  const electronModule = createElectronStub();
+  bridge.init({ electronModule, getMainWindow: () => null });
+  const ipcMain = createIpcMainStub();
+  bridge.registerHandlers(ipcMain);
+
+  try {
+    await ipcMain.handlers.get("netcatty:tray:setShowTrayIcon")(null, { enabled: false });
+    await ipcMain.handlers.get("netcatty:tray:setCloseToTray")(null, { enabled: true });
+    assert.equal(bridge.getTray(), null);
+  } finally {
+    bridge.cleanup();
+  }
+});
+
+test("tray panel forwarding start reaches the main renderer coordinator", async () => {
+  await withPlatform("darwin", async () => {
+    const bridge = loadBridge();
+    const electronModule = createElectronStub();
+    const sentMessages = [];
+    const mainWin = new FakeWindow();
+    mainWin.webContents = { send: (...args) => sentMessages.push(args) };
+    electronModule.BrowserWindow.getAllWindows = () => [mainWin];
+    bridge.init({ electronModule, getMainWindow: () => mainWin });
+    const ipcMain = createIpcMainStub();
+    bridge.registerHandlers(ipcMain);
+    const result = await ipcMain.handlers.get("netcatty:trayPanel:startPortForward")(null, "reconnect-rule");
+    assert.deepEqual(result, { success: true });
+    assert.ok(sentMessages.some((args) =>
+      args[0] === "netcatty:trayPanel:startPortForward" && args[1] === "reconnect-rule"));
+  });
+});
+
+
+test("tray panel forwarding waits for a newly created main renderer", async () => {
+  await withPlatform("darwin", async () => {
+    const bridge = loadBridge();
+    const electronModule = createElectronStub();
+    const mainWin = new FakeWindow();
+    let main = null;
+    let releaseReady;
+    let delivered = false;
+    const ready = new Promise((resolve) => { releaseReady = resolve; });
+    electronModule.BrowserWindow.getAllWindows = () => main ? [main] : [];
+    bridge.init({
+      electronModule,
+      getMainWindow: () => main,
+      ensureMainWindow: async () => { main = mainWin; return mainWin; },
+      sendWhenRendererReady: async (win, channel, ruleId) => {
+        assert.equal(win, mainWin);
+        assert.equal(channel, "netcatty:trayPanel:startPortForward");
+        assert.equal(ruleId, "new-main-rule");
+        await ready;
+        delivered = true;
+        return { success: true };
+      },
+    });
+    const ipcMain = createIpcMainStub();
+    bridge.registerHandlers(ipcMain);
+    const pending = ipcMain.handlers.get("netcatty:trayPanel:startPortForward")(null, "new-main-rule");
+    assert.equal(delivered, false);
+    releaseReady();
+    assert.deepEqual(await pending, { success: true });
+    assert.equal(delivered, true);
+  });
+});
+
+function createRecordingTrayElectron(scaleHolder) {
+  const electronModule = createElectronStub();
+  const resizes = [];
+  const crops = [];
+  let scaleListener = null;
+  const variantWidth = 10;
+  const variantHeight = 10;
+  const variantBitmap = Buffer.alloc(variantWidth * variantHeight * 4);
+  for (let y = 2; y <= 7; y += 1) {
+    for (let x = 2; x <= 7; x += 1) {
+      variantBitmap[(y * variantWidth + x) * 4 + 3] = 255;
+    }
+  }
+  class RecordingTray {
+    constructor(image) {
+      this.image = image;
+      this.handlers = new Map();
+      this.setImageCalls = [];
+    }
+
+    setToolTip() {}
+    setContextMenu(menu) {
+      this.contextMenu = menu;
+    }
+    setImage(image) {
+      this.image = image;
+      this.setImageCalls.push(image);
+    }
+    destroy() {}
+    on(eventName, handler) {
+      this.handlers.set(eventName, handler);
+    }
+  }
+  electronModule.Tray = RecordingTray;
+  electronModule.screen = {
+    getPrimaryDisplay() {
+      return { scaleFactor: scaleHolder.scale };
+    },
+    on(eventName, handler) {
+      if (eventName === "display-metrics-changed") scaleListener = handler;
+    },
+    removeListener(eventName, handler) {
+      if (eventName === "display-metrics-changed" && scaleListener === handler) {
+        scaleListener = null;
+      }
+    },
+  };
+  electronModule.nativeImage = {
+    createFromPath(filePath) {
+      return {
+        kind: "path",
+        filePath,
+        resize(opts) {
+          resizes.push(opts);
+          return {
+            kind: "resized-path",
+            filePath,
+            ...opts,
+            setTemplateImage() {},
+            addRepresentation() {},
+            isEmpty() {
+              return false;
+            },
+          };
+        },
+        setTemplateImage() {},
+        addRepresentation() {},
+        isEmpty() {
+          return false;
+        },
+      };
+    },
+    createFromBuffer(buffer) {
+      return {
+        kind: "buffer",
+        bytes: buffer.length,
+        getSize() {
+          return { width: variantWidth, height: variantHeight };
+        },
+        toBitmap() {
+          return variantBitmap;
+        },
+        crop(rect) {
+          crops.push(rect);
+          return {
+            kind: "cropped",
+            rect,
+            isEmpty() {
+              return false;
+            },
+            resize(opts) {
+              resizes.push(opts);
+              return {
+                kind: "resized-buffer",
+                bytes: buffer.length,
+                rect,
+                ...opts,
+                isEmpty() {
+                  return false;
+                },
+              };
+            },
+          };
+        },
+        resize(opts) {
+          resizes.push(opts);
+          return {
+            kind: "resized-buffer",
+            bytes: buffer.length,
+            ...opts,
+            isEmpty() {
+              return false;
+            },
+          };
+        },
+        isEmpty() {
+          return false;
+        },
+      };
+    },
+    createEmpty() {
+      return { kind: "empty" };
+    },
+  };
+  return {
+    electronModule,
+    resizes,
+    crops,
+    fireScaleChange() {
+      scaleListener?.();
+    },
+  };
+}
+
+function applyIconVariant(variant) {
+  const appIconManager = require("./appIconManager.cjs");
+  return appIconManager.applyAppIconVariant(variant, {
+    app: { isPackaged: false },
+    BrowserWindow: { getAllWindows: () => [] },
+    nativeImage: {
+      createFromBuffer: () => ({}),
+      createFromPath: () => ({}),
+    },
+    appPath: process.cwd(),
+    isMac: false,
+  });
+}
+
+test("windows tray follows the selected app icon and keeps the ico for original", async () => {
+  await withPlatform("win32", async () => {
+    const appIconManager = require("./appIconManager.cjs");
+    const bridge = loadBridge();
+    const scaleHolder = { scale: 1.5 };
+    const { electronModule, resizes, crops, fireScaleChange } = createRecordingTrayElectron(scaleHolder);
+    try {
+      appIconManager.initializeAppIconManager(process.cwd(), { preferPublic: true, isMac: false });
+      await enableCloseToTray(bridge, electronModule);
+      const trayInstance = bridge.getTray();
+      assert.match(trayInstance.image.filePath, /tray-icon\.ico$/);
+      assert.equal(resizes.length, 0);
+
+      assert.equal(applyIconVariant("bright"), true);
+      assert.equal(bridge.updateTrayIcon(), true);
+      assert.equal(trayInstance.image.kind, "resized-buffer");
+      assert.deepEqual(crops[0], { x: 1, y: 1, width: 8, height: 8 });
+      assert.deepEqual(resizes.at(-1), { width: 24, height: 24, quality: "best" });
+
+      scaleHolder.scale = 2;
+      fireScaleChange();
+      assert.deepEqual(resizes.at(-1), { width: 32, height: 32, quality: "best" });
+
+      assert.equal(applyIconVariant("original"), true);
+      assert.equal(bridge.updateTrayIcon(), true);
+      assert.match(trayInstance.image.filePath, /tray-icon\.ico$/);
+    } finally {
+      bridge.cleanup();
+      appIconManager.initializeAppIconManager(process.cwd(), { preferPublic: true, isMac: false });
+    }
+  });
+});
+
+test("non-windows trays ignore the app icon variant", async () => {
+  await withPlatform("darwin", async () => {
+    const appIconManager = require("./appIconManager.cjs");
+    const bridge = loadBridge();
+    const { electronModule } = createRecordingTrayElectron({ scale: 1 });
+    try {
+      appIconManager.initializeAppIconManager(process.cwd(), { preferPublic: true, isMac: false });
+      await enableCloseToTray(bridge, electronModule);
+      const trayInstance = bridge.getTray();
+      assert.match(trayInstance.image.filePath, /tray-iconTemplate\.png$/);
+      assert.equal(applyIconVariant("bright"), true);
+      assert.equal(bridge.updateTrayIcon(), false);
+      assert.equal(trayInstance.setImageCalls.length, 0);
+      assert.match(trayInstance.image.filePath, /tray-iconTemplate\.png$/);
+    } finally {
+      bridge.cleanup();
+      appIconManager.initializeAppIconManager(process.cwd(), { preferPublic: true, isMac: false });
+    }
+  });
+});
+
+function bitmapWithOpaqueRect(width, height, opaque) {
+  const bitmap = Buffer.alloc(width * height * 4);
+  for (let y = opaque.y; y < opaque.y + opaque.height; y += 1) {
+    for (let x = opaque.x; x < opaque.x + opaque.width; x += 1) {
+      bitmap[(y * width + x) * 4 + 3] = 255;
+    }
+  }
+  return bitmap;
+}
+
+test("tray icon crop drops the transparent margin and keeps a full-bleed image", () => {
+  const bridge = loadBridge();
+  const crops = [];
+  const marginImage = {
+    getSize() {
+      return { width: 10, height: 10 };
+    },
+    toBitmap() {
+      return bitmapWithOpaqueRect(10, 10, { x: 2, y: 2, width: 6, height: 6 });
+    },
+    crop(rect) {
+      crops.push(rect);
+      return { cropped: true, rect, isEmpty() { return false; } };
+    },
+  };
+  const cropped = bridge.__cropTransparentMarginForTests(marginImage);
+  assert.equal(cropped.cropped, true);
+  assert.deepEqual(crops, [{ x: 1, y: 1, width: 8, height: 8 }]);
+
+  let cropCalls = 0;
+  const fullBleed = {
+    getSize() {
+      return { width: 4, height: 4 };
+    },
+    toBitmap() {
+      return bitmapWithOpaqueRect(4, 4, { x: 0, y: 0, width: 4, height: 4 });
+    },
+    crop() {
+      cropCalls += 1;
+      return { isEmpty() { return false; } };
+    },
+  };
+  assert.equal(bridge.__cropTransparentMarginForTests(fullBleed), fullBleed);
+  assert.equal(cropCalls, 0);
+});

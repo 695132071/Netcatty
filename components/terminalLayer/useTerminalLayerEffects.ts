@@ -13,6 +13,7 @@ import {
   resolveSftpTransferNavigationTarget,
 } from '../../domain/sftpTransferNavigation';
 import { collectSidePanelPanes, sidePanelLayoutHasTool } from '../../domain/sidePanelLayout';
+import { isSameSftpHostSelection } from '../../domain/sftpTerminalIdentity';
 import { collectSessionIds } from '../../domain/workspace';
 import {
   moveSidePanelTabMap,
@@ -22,8 +23,10 @@ import {
   type SidePanelTabRemap,
 } from '../../domain/workspaceSidePanelTabRemap';
 import { AI_PANEL_FORCE_HIDE_SHELL } from '../ai/aiPanelDiagnostics';
+import { attachWindowResizeFocusRestore } from '../terminal/restoreWindowResizeFocus';
 import { toast } from '../ui/toast';
 import { getTerminalSidePanelShellWidth } from './TerminalLayerSidePanelSection';
+import type { RendererCwdSource } from '../terminal/sftpCwd';
 
 type TerminalLayerEffectsContext = Record<string, any> & {
   sftpPaneClosedTabIdsRef: MutableRefObject<Set<string>>;
@@ -33,6 +36,7 @@ type RuntimeStateRef<T> = { current: Map<string, T> };
 
 export type TerminalSessionRuntimeState = {
   terminalRendererCwdBySessionRef: RuntimeStateRef<string>;
+  terminalRendererCwdSourceBySessionRef?: RuntimeStateRef<RendererCwdSource>;
   terminalOsc7SignalBySessionRef: RuntimeStateRef<number>;
   cwdProbeGenerationRef: RuntimeStateRef<number>;
   cwdProbeCancelersRef: RuntimeStateRef<() => void>;
@@ -48,6 +52,7 @@ export function clearTerminalSessionRuntimeState(
   state.cwdProbeGenerationRef.current.delete(sessionId);
   state.terminalOsc7SignalBySessionRef.current.delete(sessionId);
   state.terminalRendererCwdBySessionRef.current.delete(sessionId);
+  state.terminalRendererCwdSourceBySessionRef?.current.delete(sessionId);
 
   // Keep terminalCwdStore in sync so SFTP follow does not reuse a closed session path.
   terminalCwdStore.setCwd(sessionId, null);
@@ -67,6 +72,7 @@ export function pruneTerminalSessionRuntimeState(
 ): void {
   const trackedSessionIds = new Set<string>([
     ...state.terminalRendererCwdBySessionRef.current.keys(),
+    ...(state.terminalRendererCwdSourceBySessionRef?.current.keys() ?? []),
     ...state.terminalOsc7SignalBySessionRef.current.keys(),
     ...state.cwdProbeGenerationRef.current.keys(),
     ...state.cwdProbeCancelersRef.current.keys(),
@@ -104,7 +110,7 @@ export function pruneTerminalTabMemoryState(
 
 export function useTerminalLayerEffects(ctx: TerminalLayerEffectsContext) {
   const { openPath } = useSftpBackend();
-  const { activeSidePanelTab, activeSidePanelLayout, activeTabId, activeTabIdRef, activeWorkspace, activityTrackedSessions, cancelAnimationFrame, ChunkedEscapeFilter, clearTopTabsPreviewVars, document, dropHint, effectiveHosts, filterTabsMap, focusedSessionId, getSessionActivityIdsToClear, handleToggleAiFromTopBar, handleToggleScriptsSidePanel, handleToggleSidePanel, hasNotifiableTerminalOutput, isComposeBarOpen, isFocusMode, isTerminalLayerVisible, lastSidePanelTabRef, Map, onConnectToHost, onSessionData, onSplitSessionRef, onToggleBroadcastRef, onToggleWorkspaceViewModeRef, prevFocusedSessionIdRef, refocusActiveTerminalSession, requestAnimationFrame, ResizeObserver, sessionActivityStore, sessions, Set, setAiMountedTabIds, setDropHint, setNotesMountedTabIds, setScriptsMountedTabIds, setSystemMountedTabIds, setSftpHostForTab, setSftpInitialLocationForTab, setSftpPendingUploadsForTab, setSidePanelOpenTabs, setSidePanelLayouts, setThemeMountedTabIds, setWorkspaceArea, shouldMeasureTerminalLayerLayout, sidePanelPosition, sidePanelWidth, sftpActiveHost, sftpHostForTab, sftpPaneClosedTabIdsRef, shouldMarkSessionActivity, sidePanelOpenTabs, splitHorizontalHandlersRef, splitVerticalHandlersRef, toggleScriptsSidePanelRef, toggleSidePanelRef, validAIScopeTargetIds, validSessionActivityIds, window, workspaceBroadcastHandlersRef, workspaceFocusHandlersRef, workspaceInnerRef, workspaces } = ctx;
+  const { activeSidePanelTab, activeSidePanelLayout, activeTabId, activeTabIdRef, activeWorkspace, activityTrackedSessions, cancelAnimationFrame, ChunkedEscapeFilter, clearTopTabsPreviewVars, document, dropHint, effectiveHosts, filterTabsMap, focusedSessionId, getSessionActivityIdsToClear, handleToggleAiFromTopBar, handleToggleScriptsSidePanel, handleToggleSidePanel, hasNotifiableTerminalOutput, isComposeBarOpen, isFocusMode, isTerminalLayerVisible, lastSidePanelTabRef, Map, onConnectToHost, onSessionData, onSplitSessionRef, onToggleBroadcastRef, onToggleWorkspaceViewModeRef, prevFocusedSessionIdRef, refocusActiveTerminalSession, requestAnimationFrame, ResizeObserver, sessionActivityStore, sessions, Set, setAiMountedTabIds, setDropHint, setNotesMountedTabIds, setScriptsMountedTabIds, setSystemMountedTabIds, setSftpHostForTab, setSftpHostSourceSessionForTab, setSftpInitialLocationForTab, setSftpPendingUploadsForTab, setSidePanelOpenTabs, setSidePanelLayouts, setThemeMountedTabIds, setWorkspaceArea, shouldMeasureTerminalLayerLayout, sidePanelPosition, sidePanelHeight, sidePanelWidth, sftpActiveHost, sftpHostForTab, sftpPaneClosedTabIdsRef, shouldMarkSessionActivity, sidePanelOpenTabs, splitHorizontalHandlersRef, splitVerticalHandlersRef, toggleScriptsSidePanelRef, toggleSidePanelRef, validAIScopeTargetIds, validSessionActivityIds, window, workspaceBroadcastHandlersRef, workspaceFocusHandlersRef, workspaceInnerRef, workspaces } = ctx;
 
   const activeWorkspaceId = activeWorkspace?.id;
   const activeWorkspaceViewMode = activeWorkspace?.viewMode;
@@ -195,6 +201,13 @@ export function useTerminalLayerEffects(ctx: TerminalLayerEffectsContext) {
       }
       return next;
     });
+    setSftpHostSourceSessionForTab((prev: Map<string, string>) => {
+      let next = prev;
+      for (const remap of remaps) {
+        next = moveSidePanelTabMap(next, remap);
+      }
+      return next;
+    });
     setSftpInitialLocationForTab((prev: Map<string, any>) => {
       let next = prev;
       for (const remap of remaps) {
@@ -259,6 +272,7 @@ export function useTerminalLayerEffects(ctx: TerminalLayerEffectsContext) {
     setNotesMountedTabIds,
     setScriptsMountedTabIds,
     setSftpHostForTab,
+    setSftpHostSourceSessionForTab,
     setSftpInitialLocationForTab,
     setSftpPendingUploadsForTab,
     setSidePanelLayouts,
@@ -278,6 +292,17 @@ export function useTerminalLayerEffects(ctx: TerminalLayerEffectsContext) {
     resizePreviewWidth: null,
     sidePanelWidth,
   });
+  // Bottom dock trades width for height; the same open/hidden gate applies.
+  const sidePanelShellHeight = sidePanelPosition === 'bottom'
+    ? getTerminalSidePanelShellWidth({
+      activeSidePanelTab,
+      forceHideAiShell: AI_PANEL_FORCE_HIDE_SHELL
+        && (!activeSidePanelLayout || collectSidePanelPanes(activeSidePanelLayout.root).length <= 1),
+      isSidePanelOpenForCurrentTab,
+      resizePreviewWidth: null,
+      sidePanelWidth: sidePanelHeight,
+    })
+    : 0;
 
   const activityEscapeFiltersRef = useRef<any>(new Map());
 
@@ -287,6 +312,7 @@ export function useTerminalLayerEffects(ctx: TerminalLayerEffectsContext) {
     viewMode: undefined as string | undefined,
     composeBarOpen: false,
     shellWidth: 0,
+    shellHeight: 0,
     width: 0,
     height: 0,
   });
@@ -390,6 +416,7 @@ export function useTerminalLayerEffects(ctx: TerminalLayerEffectsContext) {
   useEffect(() => {
       setSidePanelOpenTabs(prev => filterTabsMap(prev, validAIScopeTargetIds));
       setSftpHostForTab(prev => filterTabsMap(prev, validAIScopeTargetIds));
+      setSftpHostSourceSessionForTab(prev => filterTabsMap(prev, validAIScopeTargetIds));
       setSftpInitialLocationForTab(prev => filterTabsMap(prev, validAIScopeTargetIds));
       setSftpPendingUploadsForTab(prev => filterTabsMap(prev, validAIScopeTargetIds));
       setAiMountedTabIds((prev) => prev.filter((tabId) => validAIScopeTargetIds.has(tabId)));
@@ -437,7 +464,8 @@ export function useTerminalLayerEffects(ctx: TerminalLayerEffectsContext) {
       && height > 0
       && prev.width === width
       && prev.height === height
-      && prev.shellWidth === sidePanelShellWidth;
+      && prev.shellWidth === sidePanelShellWidth
+      && prev.shellHeight === sidePanelShellHeight;
     if (
       dimensionsUnchanged
       && prev.workspaceId === activeWorkspaceId
@@ -451,6 +479,7 @@ export function useTerminalLayerEffects(ctx: TerminalLayerEffectsContext) {
       viewMode: activeWorkspaceViewMode,
       composeBarOpen: isComposeBarOpen,
       shellWidth: sidePanelShellWidth,
+      shellHeight: sidePanelShellHeight,
       width,
       height,
     };
@@ -463,6 +492,7 @@ export function useTerminalLayerEffects(ctx: TerminalLayerEffectsContext) {
     shouldMeasureTerminalLayerLayout,
     sidePanelPosition,
     sidePanelShellWidth,
+    sidePanelShellHeight,
   ]);
   
   // Keep sftpHostForTab in sync with focus changes in workspace mode
@@ -471,10 +501,7 @@ export function useTerminalLayerEffects(ctx: TerminalLayerEffectsContext) {
       if (!activeTabId || !sftpActiveHost) return;
       if (!sidePanelLayoutHasTool(activeSidePanelLayout, 'sftp')) return;
       const stored = sftpHostForTab.get(activeTabId);
-      if (stored?.id === sftpActiveHost.id
-        && stored?.hostname === sftpActiveHost.hostname
-        && stored?.port === sftpActiveHost.port
-        && stored?.protocol === sftpActiveHost.protocol) return;
+      if (isSameSftpHostSelection(stored, sftpActiveHost)) return;
       setSftpHostForTab(prev => {
         const next = new Map(prev);
         next.set(activeTabId, sftpActiveHost);
@@ -512,6 +539,11 @@ export function useTerminalLayerEffects(ctx: TerminalLayerEffectsContext) {
       // Bump initialLocation even when the host is already selected so the
       // path-navigation effect re-runs after reopen.
       setSftpHostForTab((prev: Map<string, any>) => new Map(prev).set(tabId, host));
+      setSftpHostSourceSessionForTab((prev: Map<string, string>) => {
+        const next = new Map(prev);
+        next.delete(tabId);
+        return next;
+      });
       setSftpInitialLocationForTab((prev: Map<string, any>) => {
         const next = new Map(prev);
         next.delete(tabId);
@@ -638,7 +670,7 @@ export function useTerminalLayerEffects(ctx: TerminalLayerEffectsContext) {
     };
     window.addEventListener('netcatty:open-sftp-transfer-target', handler);
     return () => window.removeEventListener('netcatty:open-sftp-transfer-target', handler);
-  }, [activeTabIdRef, effectiveHosts, onConnectToHost, openPath, setSftpHostForTab, setSftpInitialLocationForTab, setSidePanelOpenTabs, sftpActiveHost, sftpHostForTab, window]);
+  }, [activeTabIdRef, effectiveHosts, onConnectToHost, openPath, setSftpHostForTab, setSftpHostSourceSessionForTab, setSftpInitialLocationForTab, setSidePanelOpenTabs, sftpActiveHost, sftpHostForTab, window]);
   
   useEffect(() => {
       const sessionIdsToClear = getSessionActivityIdsToClear(activeTabId, sessions);
@@ -715,6 +747,23 @@ export function useTerminalLayerEffects(ctx: TerminalLayerEffectsContext) {
     if (!tabChanged || !refocusActiveTerminalSession) return;
     refocusActiveTerminalSession();
   }, [activeTabId, isTerminalLayerVisible, refocusActiveTerminalSession]);
+
+  // Restore keyboard focus after the OS window is resized or maximized.
+  // #3647: dragging the frame (or maximizing) leaves the active xterm helper
+  // textarea unfocused on Windows, so keystrokes do nothing until a click.
+  // Reuse the tab-change refocus path; the helper only fires once the resize
+  // settles and is gated on the app window actually holding input focus.
+  useEffect(() => {
+    if (!isTerminalLayerVisible) return undefined;
+    return attachWindowResizeFocusRestore({
+      win: window,
+      doc: document,
+      refocus: () => {
+        if (isComposeBarOpen) return;
+        refocusActiveTerminalSession?.();
+      },
+    });
+  }, [document, isComposeBarOpen, isTerminalLayerVisible, refocusActiveTerminalSession, window]);
 
   // When focusedSessionId changes or terminal layer becomes visible,
     // focus the corresponding terminal to restore :focus-within CSS state

@@ -581,3 +581,39 @@ test('runSdkAgentTurn forwards CodeBuddy options, hooks, and elicitation events'
   ]);
   assert.deepEqual(errors, []);
 });
+
+test('runSdkAgentTurn strips unsupported CodeBuddy session persistence', async () => {
+  let streamArgs: unknown[] = [];
+  const bridge: Record<string, (...args: unknown[]) => unknown> = {
+    aiSdkAgentStream: async (...args: unknown[]) => {
+      streamArgs = args;
+      return { ok: true };
+    },
+    aiSdkAgentCancel: async () => ({ ok: true }),
+    onAiSdkAgentEvent: () => () => {},
+    onAiSdkAgentDone: (_requestId: unknown, callback: unknown) => {
+      queueMicrotask(callback as () => void);
+      return () => {};
+    },
+    onAiSdkAgentError: () => () => {},
+  };
+
+  await runSdkAgentTurn(
+    bridge,
+    'request-codebuddy-old',
+    'chat-codebuddy-old',
+    {
+      id: 'codebuddy-old',
+      name: 'CodeBuddy',
+      command: 'codebuddy',
+      enabled: true,
+      sdkBackend: 'codebuddy',
+      cliVersion: '2.125.0',
+      codebuddyOptions: { persistSession: false },
+    },
+    'hello',
+    createCallbacks([]),
+  );
+
+  assert.equal(streamArgs[17], undefined);
+});

@@ -209,3 +209,13 @@ test("restore terminal cwd setting participates in cross-window settings sync", 
   assert.match(ipcSyncSource, /setRestoreTerminalCwdState/);
   assert.match(ipcSyncSource, /key === STORAGE_KEY_RESTORE_TERMINAL_CWD/);
 });
+
+test("editor route keeps IPC/storage synchronization while disabling system effects", () => {
+  const source = readFileSync(new URL("../../index.tsx", import.meta.url), "utf8");
+  const expression = source.match(/const settingsOptions =\s*([^;]+);/s)?.[1];
+  assert.ok(expression, "renderer settings options must be explicit");
+  const resolveOptions = new Function("isPeerSessionWindow", "isEditorWindow", `return (${expression});`);
+  assert.deepEqual(resolveOptions(false, true), { enableSystemEffects: false });
+  assert.deepEqual(resolveOptions(true, false), { enableSettingsSync: false, enableSystemEffects: false });
+  assert.equal(resolveOptions(false, false), undefined);
+});

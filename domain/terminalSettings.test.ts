@@ -7,6 +7,12 @@ test("normalizeTerminalSettings disables cursor line highlight by default", () =
   assert.equal(normalizeTerminalSettings().highlightCursorLine, false);
 });
 
+test("normalizeTerminalSettings defaults and clamps the bar cursor width", () => {
+  assert.equal(normalizeTerminalSettings().cursorBarWidth, 2);
+  assert.equal(normalizeTerminalSettings({ cursorBarWidth: 0 }).cursorBarWidth, 1);
+  assert.equal(normalizeTerminalSettings({ cursorBarWidth: 6 }).cursorBarWidth, 4);
+});
+
 test("normalizeTerminalSettings defaults disconnected sessions to a terminal notice", () => {
   assert.equal(normalizeTerminalSettings().disconnectedNoticeMode, "terminal");
 });
@@ -31,6 +37,11 @@ test("normalizeTerminalSettings rejects unsupported disconnected notice modes", 
 
 test("normalizeTerminalSettings preserves enabled cursor line highlight", () => {
   assert.equal(normalizeTerminalSettings({ highlightCursorLine: true }).highlightCursorLine, true);
+});
+
+test("normalizeTerminalSettings keeps Shift+Enter text opt-in for Win32 input mode", () => {
+  assert.equal(normalizeTerminalSettings().shiftEnterForceText, false);
+  assert.equal(normalizeTerminalSettings({ shiftEnterForceText: true }).shiftEnterForceText, true);
 });
 
 test("normalizeTerminalSettings disables prompt line breaks by default", () => {
@@ -128,6 +139,23 @@ test("normalizeTerminalSettings falls back for unsupported dynamic tab title mod
   );
 });
 
+test("normalizeTerminalSettings defaults tab double click to a new connection", () => {
+  assert.equal(normalizeTerminalSettings().tabDoubleClickBehavior, "duplicate");
+});
+
+test("normalizeTerminalSettings preserves supported tab double-click behaviors", () => {
+  assert.equal(normalizeTerminalSettings({ tabDoubleClickBehavior: "duplicate" }).tabDoubleClickBehavior, "duplicate");
+  assert.equal(normalizeTerminalSettings({ tabDoubleClickBehavior: "copy" }).tabDoubleClickBehavior, "copy");
+  assert.equal(normalizeTerminalSettings({ tabDoubleClickBehavior: "disabled" }).tabDoubleClickBehavior, "disabled");
+});
+
+test("normalizeTerminalSettings rejects unsupported tab double-click behaviors", () => {
+  assert.equal(
+    normalizeTerminalSettings({ tabDoubleClickBehavior: "legacy" as never }).tabDoubleClickBehavior,
+    "duplicate",
+  );
+});
+
 test("normalizeTerminalSettings enables OSC desktop notifications by default", () => {
   assert.equal(normalizeTerminalSettings().oscNotifications, "always");
 });
@@ -149,16 +177,24 @@ test("normalizeTerminalSettings enables font smoothing by default", () => {
   assert.equal(normalizeTerminalSettings().fontSmoothing, true);
 });
 
-test("normalizeTerminalSettings enables terminal auto-close by default", () => {
-  assert.equal(normalizeTerminalSettings().autoCloseOnExit, true);
+test("normalizeTerminalSettings enables font ligatures by default", () => {
+  assert.equal(normalizeTerminalSettings().fontLigatures, true);
+});
+
+test("normalizeTerminalSettings preserves disabled font ligatures", () => {
+  assert.equal(normalizeTerminalSettings({ fontLigatures: false }).fontLigatures, false);
+});
+
+test("normalizeTerminalSettings disables terminal auto-close by default", () => {
+  assert.equal(normalizeTerminalSettings().autoCloseOnExit, false);
 });
 
 test("normalizeTerminalSettings preserves disabled terminal auto-close", () => {
   assert.equal(normalizeTerminalSettings({ autoCloseOnExit: false }).autoCloseOnExit, false);
 });
 
-test("normalizeTerminalSettings disables SSH auto reconnect by default", () => {
-  assert.equal(normalizeTerminalSettings().sshAutoReconnectEnabled, false);
+test("normalizeTerminalSettings enables SSH auto reconnect by default", () => {
+  assert.equal(normalizeTerminalSettings().sshAutoReconnectEnabled, true);
 });
 
 test("normalizeTerminalSettings preserves explicit SSH auto reconnect settings", () => {
@@ -281,5 +317,30 @@ test("normalizeTerminalSettings preserves intentional custom autocompleteMaxSugg
   assert.equal(
     normalizeTerminalSettings({ autocompleteMaxSuggestions: 20 }).autocompleteMaxSuggestions,
     20,
+  );
+});
+
+test("normalizeTerminalSettings keeps multi-line paste confirmation opt-in", () => {
+  assert.equal(normalizeTerminalSettings().confirmBeforeMultilinePaste, false);
+  assert.equal(
+    normalizeTerminalSettings({ confirmBeforeMultilinePaste: true }).confirmBeforeMultilinePaste,
+    true,
+  );
+});
+
+test("normalizeTerminalSettings clamps the multi-line paste threshold", () => {
+  assert.equal(normalizeTerminalSettings().multilinePasteConfirmMinLines, 2);
+  assert.equal(
+    normalizeTerminalSettings({ multilinePasteConfirmMinLines: 5 }).multilinePasteConfirmMinLines,
+    5,
+  );
+  assert.equal(
+    normalizeTerminalSettings({ multilinePasteConfirmMinLines: 0 }).multilinePasteConfirmMinLines,
+    1,
+  );
+  assert.equal(
+    normalizeTerminalSettings({ multilinePasteConfirmMinLines: 5000 })
+      .multilinePasteConfirmMinLines,
+    1000,
   );
 });

@@ -67,6 +67,8 @@ import {
   STORAGE_KEY_EXPLORER_CONTEXT_MENU_ENABLED,
   STORAGE_KEY_TOGGLE_WINDOW_HOTKEY,
   STORAGE_KEY_CLOSE_TO_TRAY,
+  STORAGE_KEY_SHOW_TRAY_ICON,
+  STORAGE_KEY_AUTO_LAUNCH_ENABLED,
   STORAGE_KEY_HTTP_NETWORK_PROXY,
   STORAGE_KEY_GLOBAL_HOTKEY_ENABLED,
   STORAGE_KEY_WINDOW_OPACITY,
@@ -80,6 +82,8 @@ import {
   STORAGE_KEY_SHOW_HOST_TREE_SIDEBAR,
   STORAGE_KEY_TERMINAL_SIDE_PANEL_AUTO_OPEN,
   STORAGE_KEY_TERMINAL_SIDE_PANEL_AUTO_OPEN_TAB,
+  STORAGE_KEY_LOCAL_SHELL_SIDE_PANEL_AUTO_OPEN,
+  STORAGE_KEY_LOCAL_SHELL_SIDE_PANEL_AUTO_OPEN_TAB,
   STORAGE_KEY_SHELL_ONLY_TAB_NUMBER_SHORTCUTS,
   STORAGE_KEY_SHOW_TAB_NUMBER_BADGES,
   STORAGE_KEY_DISABLE_TERMINAL_FONT_ZOOM,
@@ -147,6 +151,7 @@ import {
   isValidUiFontId,
   isValidUiThemeId,
   migrateIncomingTerminalFontId,
+  migrateMaterializedAutoCloseOnExitDefault,
   readStoredString,
   serializeTerminalSettings,
   type HostClickBehavior,
@@ -351,6 +356,9 @@ export const useSettingsState = (options: { enableSettingsSync?: boolean; enable
     passwordVerifier: null,
   });
   const [terminalSettings, setTerminalSettingsState] = useState<TerminalSettings>(() => {
+    // One-time reset of the pre-flip materialized autoCloseOnExit: true before
+    // it is ingested; afterwards stored values are the user's own and win.
+    migrateMaterializedAutoCloseOnExitDefault();
     const stored = localStorageAdapter.read<TerminalSettings>(STORAGE_KEY_TERM_SETTINGS);
     return normalizeTerminalSettings(stored);
   });
@@ -427,6 +435,14 @@ export const useSettingsState = (options: { enableSettingsSync?: boolean; enable
   const [terminalSidePanelAutoOpenTab, setTerminalSidePanelAutoOpenTabState] = useState<TerminalSidePanelAutoOpenTab>(() => {
     const stored = readStoredString(STORAGE_KEY_TERMINAL_SIDE_PANEL_AUTO_OPEN_TAB);
     return isTerminalSidePanelAutoOpenTab(stored) ? stored : DEFAULT_TERMINAL_SIDE_PANEL_AUTO_OPEN_TAB;
+  });
+  const [localShellSidePanelAutoOpen, setLocalShellSidePanelAutoOpenState] = useState<boolean>(() => {
+    const stored = localStorageAdapter.readBoolean(STORAGE_KEY_LOCAL_SHELL_SIDE_PANEL_AUTO_OPEN);
+    return stored ?? false;
+  });
+  const [localShellSidePanelAutoOpenTab, setLocalShellSidePanelAutoOpenTabState] = useState<TerminalSidePanelAutoOpenTab>(() => {
+    const stored = readStoredString(STORAGE_KEY_LOCAL_SHELL_SIDE_PANEL_AUTO_OPEN_TAB);
+    return isTerminalSidePanelAutoOpenTab(stored) ? stored : 'scripts';
   });
   const [shellOnlyTabNumberShortcuts, setShellOnlyTabNumberShortcutsState] = useState<boolean>(() => {
     const stored = localStorageAdapter.readBoolean(STORAGE_KEY_SHELL_ONLY_TAB_NUMBER_SHORTCUTS);
@@ -539,6 +555,20 @@ export const useSettingsState = (options: { enableSettingsSync?: boolean; enable
     if (stored === null) return true;
     return stored === 'true';
   });
+  // Preserve the old tray visibility for existing users until they set this
+  // independently. Fresh installs still default to showing the icon.
+  const [showTrayIcon, setShowTrayIcon] = useState<boolean>(() => {
+    const stored = readStoredString(STORAGE_KEY_SHOW_TRAY_ICON);
+    if (stored === null) return closeToTray;
+    return stored === 'true';
+  });
+  // Optimistic cache for first paint; useSystemSettingsEffects hydrates this
+  // from app.getLoginItemSettings() (the real source of truth) on mount.
+  const [autoLaunchEnabled, setAutoLaunchEnabled] = useState<boolean>(() => {
+    const stored = readStoredString(STORAGE_KEY_AUTO_LAUNCH_ENABLED);
+    return stored === 'true';
+  });
+  const [autoLaunchSupported, setAutoLaunchSupported] = useState<boolean>(true);
   const [httpNetworkProxy, setHttpNetworkProxyState] = useState<HttpNetworkProxySettings>(() => {
     const stored = localStorageAdapter.read<unknown>(STORAGE_KEY_HTTP_NETWORK_PROXY);
     return normalizeHttpNetworkProxySettings(stored ?? DEFAULT_HTTP_NETWORK_PROXY);
@@ -1028,6 +1058,14 @@ export const useSettingsState = (options: { enableSettingsSync?: boolean; enable
         ? storedTerminalSidePanelAutoOpenTab
         : DEFAULT_TERMINAL_SIDE_PANEL_AUTO_OPEN_TAB,
     );
+    const storedLocalShellSidePanelAutoOpen = localStorageAdapter.readBoolean(STORAGE_KEY_LOCAL_SHELL_SIDE_PANEL_AUTO_OPEN);
+    setLocalShellSidePanelAutoOpenState(storedLocalShellSidePanelAutoOpen ?? false);
+    const storedLocalShellSidePanelAutoOpenTab = readStoredString(STORAGE_KEY_LOCAL_SHELL_SIDE_PANEL_AUTO_OPEN_TAB);
+    setLocalShellSidePanelAutoOpenTabState(
+      isTerminalSidePanelAutoOpenTab(storedLocalShellSidePanelAutoOpenTab)
+        ? storedLocalShellSidePanelAutoOpenTab
+        : 'scripts',
+    );
     const storedShellOnlyTabNumberShortcuts = localStorageAdapter.readBoolean(STORAGE_KEY_SHELL_ONLY_TAB_NUMBER_SHORTCUTS);
     setShellOnlyTabNumberShortcutsState(storedShellOnlyTabNumberShortcuts ?? DEFAULT_SHELL_ONLY_TAB_NUMBER_SHORTCUTS);
     const storedShowTabNumberBadges = localStorageAdapter.readBoolean(STORAGE_KEY_SHOW_TAB_NUMBER_BADGES);
@@ -1196,6 +1234,7 @@ export const useSettingsState = (options: { enableSettingsSync?: boolean; enable
     setWindowOpacity: applyIncomingWindowOpacity,
     setAppIconVariant,
     setAutoUpdateEnabled,
+    setAutoLaunchEnabled,
     setHttpNetworkProxy,
     setSftpAutoOpenSidebar,
     setSftpFollowTerminalCwd,
@@ -1204,6 +1243,8 @@ export const useSettingsState = (options: { enableSettingsSync?: boolean; enable
     setShowHostTreeSidebarState,
     setTerminalSidePanelAutoOpenState,
     setTerminalSidePanelAutoOpenTabState,
+    setLocalShellSidePanelAutoOpenState,
+    setLocalShellSidePanelAutoOpenTabState,
     setDisableTerminalFontZoomState,
     setRestorePreviousSessionState,
     setRestoreTerminalCwdState,
@@ -1257,7 +1298,7 @@ export const useSettingsState = (options: { enableSettingsSync?: boolean; enable
     terminalThemeId, followAppTerminalTheme, terminalFontFamilyId, terminalFontSize,
     sftpDoubleClickBehavior, sftpAutoSync, sftpShowHiddenFiles,
     sftpUseCompressedUpload, sftpSkipUnchanged, sftpAutoOpenSidebar, sftpFollowTerminalCwd, sftpDefaultViewMode,
-    showRecentHosts, hostClickBehavior, showOnlyUngroupedHostsInRoot, showSftpTab, showHostTreeSidebar, terminalSidePanelAutoOpen, terminalSidePanelAutoOpenTab, shellOnlyTabNumberShortcuts, showTabNumberBadges, disableTerminalFontZoom, restorePreviousSession, restoreTerminalCwd, startupLanding,
+    showRecentHosts, hostClickBehavior, showOnlyUngroupedHostsInRoot, showSftpTab, showHostTreeSidebar, terminalSidePanelAutoOpen, terminalSidePanelAutoOpenTab, localShellSidePanelAutoOpen, localShellSidePanelAutoOpenTab, shellOnlyTabNumberShortcuts, showTabNumberBadges, disableTerminalFontZoom, restorePreviousSession, restoreTerminalCwd, startupLanding,
     editorWordWrap, sessionLogsEnabled, sessionLogsDir, sessionLogsFormat, sessionLogsTimestampsEnabled, sshDebugLogsEnabled, sshDeepLinkEnabled, jmsDeepLinkEnabled, explorerContextMenuEnabled,
     globalHotkeyEnabled, autoUpdateEnabled, windowOpacity, appIconVariant,
     setTheme, setLightUiThemeId, setDarkUiThemeId, setAccentMode,
@@ -1267,7 +1308,7 @@ export const useSettingsState = (options: { enableSettingsSync?: boolean; enable
     setFollowAppTerminalThemeState, setTerminalFontFamilyId, setTerminalFontSize: applyIncomingTerminalFontSize,
     setSftpDoubleClickBehavior, setSftpAutoSync, setSftpShowHiddenFiles,
     setSftpUseCompressedUpload, setSftpSkipUnchanged, setSftpAutoOpenSidebar, setSftpFollowTerminalCwd, setSftpDefaultViewMode,
-    setShowRecentHostsState, setHostClickBehaviorState, setShowOnlyUngroupedHostsInRootState, setShowSftpTabState, setShowHostTreeSidebarState, setTerminalSidePanelAutoOpenState, setTerminalSidePanelAutoOpenTabState, setShellOnlyTabNumberShortcutsState, setShowTabNumberBadgesState, setDisableTerminalFontZoomState, setRestorePreviousSessionState, setRestoreTerminalCwdState, setStartupLandingState,
+    setShowRecentHostsState, setHostClickBehaviorState, setShowOnlyUngroupedHostsInRootState, setShowSftpTabState, setShowHostTreeSidebarState, setTerminalSidePanelAutoOpenState, setTerminalSidePanelAutoOpenTabState, setLocalShellSidePanelAutoOpenState, setLocalShellSidePanelAutoOpenTabState, setShellOnlyTabNumberShortcutsState, setShowTabNumberBadgesState, setDisableTerminalFontZoomState, setRestorePreviousSessionState, setRestoreTerminalCwdState, setStartupLandingState,
     setEditorWordWrapState, setSessionLogsEnabled, setSessionLogsDir, setSessionLogsFormat, setSessionLogsTimestampsEnabled, setSshDebugLogsEnabled, setSshDeepLinkEnabledState: applyIncomingSshDeepLinkEnabled, setJmsDeepLinkEnabledState: applyIncomingJmsDeepLinkEnabled, setExplorerContextMenuEnabledState: applyIncomingExplorerContextMenuEnabled,
     setGlobalHotkeyEnabled, setWindowOpacity: applyIncomingWindowOpacity, setAppIconVariant, setAutoUpdateEnabled, setWorkspaceFocusStyleState,
     setSftpTransferConcurrencyState, setSshTransportIdleTtlMsState,
@@ -1424,6 +1465,21 @@ export const useSettingsState = (options: { enableSettingsSync?: boolean; enable
     localStorageAdapter.writeString(STORAGE_KEY_TERMINAL_SIDE_PANEL_AUTO_OPEN_TAB, next);
     if (!persistMountedRef.current) return;
     notifySettingsChanged(STORAGE_KEY_TERMINAL_SIDE_PANEL_AUTO_OPEN_TAB, next);
+  }, [notifySettingsChanged]);
+
+  const setLocalShellSidePanelAutoOpen = useCallback((enabled: boolean) => {
+    setLocalShellSidePanelAutoOpenState(enabled);
+    localStorageAdapter.writeBoolean(STORAGE_KEY_LOCAL_SHELL_SIDE_PANEL_AUTO_OPEN, enabled);
+    if (!persistMountedRef.current) return;
+    notifySettingsChanged(STORAGE_KEY_LOCAL_SHELL_SIDE_PANEL_AUTO_OPEN, enabled);
+  }, [notifySettingsChanged]);
+
+  const setLocalShellSidePanelAutoOpenTab = useCallback((tab: TerminalSidePanelAutoOpenTab) => {
+    const next = isTerminalSidePanelAutoOpenTab(tab) ? tab : 'scripts';
+    setLocalShellSidePanelAutoOpenTabState(next);
+    localStorageAdapter.writeString(STORAGE_KEY_LOCAL_SHELL_SIDE_PANEL_AUTO_OPEN_TAB, next);
+    if (!persistMountedRef.current) return;
+    notifySettingsChanged(STORAGE_KEY_LOCAL_SHELL_SIDE_PANEL_AUTO_OPEN_TAB, next);
   }, [notifySettingsChanged]);
 
   const setShellOnlyTabNumberShortcuts = useCallback((enabled: boolean) => {
@@ -1759,6 +1815,8 @@ export const useSettingsState = (options: { enableSettingsSync?: boolean; enable
     toggleWindowHotkey,
     globalHotkeyEnabled,
     closeToTray,
+    showTrayIcon,
+    autoLaunchEnabled,
     windowOpacityRecord,
     windowOpacityMutationSourceRef,
     appIconVariant,
@@ -1768,6 +1826,8 @@ export const useSettingsState = (options: { enableSettingsSync?: boolean; enable
     setHotkeyRegistrationError,
     setAutoUpdateEnabled,
     setAppIconVariant,
+    setAutoLaunchEnabled,
+    setAutoLaunchSupported,
     notifySettingsChanged,
   });
 
@@ -1878,6 +1938,8 @@ export const useSettingsState = (options: { enableSettingsSync?: boolean; enable
       restoreTerminalCwd,
       terminalSidePanelAutoOpen,
       terminalSidePanelAutoOpenTab,
+      localShellSidePanelAutoOpen,
+      localShellSidePanelAutoOpenTab,
     });
   }, [
     darkUiThemeId,
@@ -1899,6 +1961,8 @@ export const useSettingsState = (options: { enableSettingsSync?: boolean; enable
     theme,
     uiLanguage,
     windowOpacity,
+    localShellSidePanelAutoOpen,
+    localShellSidePanelAutoOpenTab,
   ]);
 
   useLayoutEffect(() => {
@@ -2071,6 +2135,10 @@ export const useSettingsState = (options: { enableSettingsSync?: boolean; enable
     setTerminalSidePanelAutoOpen,
     terminalSidePanelAutoOpenTab,
     setTerminalSidePanelAutoOpenTab,
+    localShellSidePanelAutoOpen,
+    setLocalShellSidePanelAutoOpen,
+    localShellSidePanelAutoOpenTab,
+    setLocalShellSidePanelAutoOpenTab,
     shellOnlyTabNumberShortcuts,
     setShellOnlyTabNumberShortcuts,
     showTabNumberBadges,
@@ -2113,6 +2181,11 @@ export const useSettingsState = (options: { enableSettingsSync?: boolean; enable
     setToggleWindowHotkey,
     closeToTray,
     setCloseToTray,
+    showTrayIcon,
+    setShowTrayIcon,
+    autoLaunchEnabled,
+    setAutoLaunchEnabled,
+    autoLaunchSupported,
     httpNetworkProxy,
     setHttpNetworkProxy,
     autoUpdateEnabled,
@@ -2137,7 +2210,7 @@ export const useSettingsState = (options: { enableSettingsSync?: boolean; enable
       terminalThemeId, terminalFontFamilyId, terminalFontSize, terminalSettings,
       customKeyBindings, editorWordWrap,
       sftpDoubleClickBehavior, sftpAutoSync, sftpShowHiddenFiles, sftpUseCompressedUpload, sftpSkipUnchanged, sftpAutoOpenSidebar, sftpFollowTerminalCwd, sftpDefaultViewMode,
-      showRecentHosts, hostClickBehavior, showOnlyUngroupedHostsInRoot, showSftpTab, showHostTreeSidebar, terminalSidePanelAutoOpen, terminalSidePanelAutoOpenTab, shellOnlyTabNumberShortcuts, showTabNumberBadges, disableTerminalFontZoom,
+      showRecentHosts, hostClickBehavior, showOnlyUngroupedHostsInRoot, showSftpTab, showHostTreeSidebar, terminalSidePanelAutoOpen, terminalSidePanelAutoOpenTab, localShellSidePanelAutoOpen, localShellSidePanelAutoOpenTab, shellOnlyTabNumberShortcuts, showTabNumberBadges, disableTerminalFontZoom,
       customThemes, workspaceFocusStyle, sessionLogsTimestampsEnabled, sshDebugLogsEnabled, sshDeepLinkEnabled, jmsDeepLinkEnabled, explorerContextMenuEnabled,
     ]),
   };

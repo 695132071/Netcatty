@@ -4,7 +4,10 @@ import { useI18n } from "../../../../application/i18n/I18nProvider";
 import { Button } from "../../../ui/button";
 import { cn } from "../../../../lib/utils";
 import type { AgentPathInfo } from "./types";
-import type { CodebuddyAdvancedOptions } from "../../../../infrastructure/ai/types";
+import {
+  isCodebuddySessionPersistenceSupported,
+  type CodebuddyAdvancedOptions,
+} from "../../../../infrastructure/ai/types";
 import { parseEnvLines, serializeEnvLines } from "./codebuddyConfigEnv";
 
 const INTERNET_ENV_OPTIONS = [
@@ -15,10 +18,12 @@ const INTERNET_ENV_OPTIONS = [
 
 const EFFORT_OPTIONS = [
   { value: "", labelKey: "ai.codebuddy.effort.default" },
+  { value: "minimal", labelKey: "ai.codebuddy.effort.minimal" },
   { value: "low", labelKey: "ai.codebuddy.effort.low" },
   { value: "medium", labelKey: "ai.codebuddy.effort.medium" },
   { value: "high", labelKey: "ai.codebuddy.effort.high" },
   { value: "xhigh", labelKey: "ai.codebuddy.effort.xhigh" },
+  { value: "max", labelKey: "ai.codebuddy.effort.max" },
 ] as const;
 
 export const CodebuddyCard: React.FC<{
@@ -50,6 +55,13 @@ export const CodebuddyCard: React.FC<{
 }) => {
   const { t } = useI18n();
   const found = pathInfo?.available;
+  const persistSessionSupported = Boolean(
+    found && isCodebuddySessionPersistenceSupported(pathInfo?.version),
+  );
+  // Unsupported/unknown CLIs keep their own default (persistence enabled),
+  // even if a stale false value remains in saved settings.
+  const persistSessionEnabled = !persistSessionSupported
+    || advancedOptions?.persistSession !== false;
   // Collapsed by default; auto-expand when the user already has config so it
   // isn't hidden. Local UI state — not persisted.
   const [configOpen, setConfigOpen] = useState(
@@ -193,7 +205,7 @@ export const CodebuddyCard: React.FC<{
         )}
       </div>
 
-      {/* Advanced SDK options (SDK 0.3.230) */}
+      {/* Advanced SDK options (SDK 0.3.258) */}
       {onAdvancedOptionsChange && (
         <div className="border-t border-border/60 pt-3">
           <button
@@ -276,6 +288,33 @@ export const CodebuddyCard: React.FC<{
                   <span className={cn(
                     "inline-block h-3.5 w-3.5 rounded-full bg-white transition-transform",
                     advancedOptions?.sandbox?.enabled ? "translate-x-[18px]" : "translate-x-[3px]",
+                  )} />
+                </button>
+              </div>
+              {/* Session Persistence */}
+              <div className="flex items-center justify-between gap-2">
+                <div>
+                  <span className="text-xs text-muted-foreground">{t('ai.codebuddy.persistSession')}</span>
+                  <p className="text-[11px] text-muted-foreground leading-4">{t('ai.codebuddy.persistSession.hint')}</p>
+                </div>
+                <button
+                  type="button"
+                  role="switch"
+                  disabled={!persistSessionSupported}
+                  aria-checked={persistSessionEnabled}
+                  onClick={() => {
+                    if (!persistSessionSupported) return;
+                    updateAdvanced({ persistSession: advancedOptions?.persistSession === false ? undefined : false });
+                  }}
+                  className={cn(
+                    "relative inline-flex h-5 w-9 shrink-0 cursor-pointer items-center rounded-full transition-colors",
+                    !persistSessionSupported && "cursor-not-allowed opacity-50",
+                    persistSessionEnabled ? "bg-primary" : "bg-muted",
+                  )}
+                >
+                  <span className={cn(
+                    "inline-block h-3.5 w-3.5 rounded-full bg-white transition-transform",
+                    persistSessionEnabled ? "translate-x-[18px]" : "translate-x-[3px]",
                   )} />
                 </button>
               </div>

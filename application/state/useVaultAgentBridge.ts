@@ -53,6 +53,7 @@ export interface UseVaultAgentBridgeInput {
   stopTunnel: VaultAgentApiDeps['stopTunnel'];
   stopRuleTunnels: VaultAgentApiDeps['stopRuleTunnels'];
   openHost?: VaultAgentApiDeps['openHost'];
+  findExistingSessionForHost?: VaultAgentApiDeps['findExistingSessionForHost'];
   closeSession?: VaultAgentApiDeps['closeSession'];
   getScriptSessionMeta?: (sessionId: string) => Pick<TerminalSession, 'status' | 'customName' | 'hostLabel' | 'hostname' | 'username'> | undefined;
 }
@@ -87,6 +88,20 @@ export function resolveVaultAgentNotes(
   return notesOverride !== undefined
     ? snapshotNotes
     : (getNotesSnapshot().notes as VaultNote[]);
+}
+
+export function applyAgentNotesUpdate(
+  notes: VaultNote[],
+  previousNotes: VaultNote[],
+  updateNotes: (notes: VaultNote[]) => boolean | void,
+): boolean | void {
+  const saved = updateNotes(notes);
+  if (saved === false) {
+    // Editor autosave keeps failed writes in memory so a draft is not lost.
+    // Agent writes must roll that draft back before another approved write.
+    updateNotes(previousNotes);
+  }
+  return saved;
 }
 
 export const haveSameVaultAgentSnapshot = (
@@ -145,6 +160,7 @@ export function useVaultAgentBridge(input: UseVaultAgentBridgeInput): void {
         ?? ((notes: VaultNote[]) => {
           console.warn('[useVaultAgentBridge] updateNotes unavailable');
           void notes;
+          return false;
         });
       return handleVaultAgentOp(op, params, {
         getHosts: () => vaultSnapshotRef.current.hosts,
@@ -239,8 +255,10 @@ export function useVaultAgentBridge(input: UseVaultAgentBridgeInput): void {
           updateKeys: current.updateKeys,
         }),
         updateNotes: (notes) => {
-          vaultSnapshotRef.current.notes = notes;
-          applyUpdateNotes(notes);
+          const previousNotes = vaultSnapshotRef.current.notes;
+          const saved = applyAgentNotesUpdate(notes, previousNotes, applyUpdateNotes);
+          vaultSnapshotRef.current.notes = saved === false ? previousNotes : notes;
+          return saved;
         },
         updateSnippets: (snippetUpdate) => {
           vaultSnapshotRef.current.snippets = typeof snippetUpdate === 'function'
@@ -254,6 +272,7 @@ export function useVaultAgentBridge(input: UseVaultAgentBridgeInput): void {
         openHost: current.openHost
           ? (host, isExternalMcpCall) => current.openHost!(host, isExternalMcpCall)
           : undefined,
+        findExistingSessionForHost: current.findExistingSessionForHost,
         closeSession: current.closeSession
           ? (sessionId) => current.closeSession!(sessionId)
           : undefined,

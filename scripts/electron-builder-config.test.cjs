@@ -1,5 +1,7 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
+const { readFileSync } = require("node:fs");
+const path = require("node:path");
 
 const config = require("../electron-builder.config.cjs");
 
@@ -27,6 +29,29 @@ test("build.files includes shared terminal flow constants for main process", () 
     config.files.includes("infrastructure/config/terminalFlowConstants.json"),
     "terminalFlowConstants.cjs requires sibling terminalFlowConstants.json at packaged startup",
   );
+});
+
+test("build.files includes the prompt classifier required by Mosh", () => {
+  assert.ok(
+    config.files.includes("domain/terminalPromptSecurity.shared.cjs"),
+    "packaged Mosh bootstrap requires the shared prompt classifier",
+  );
+  const promptSecurity = require("../domain/terminalPromptSecurity.shared.cjs");
+  assert.equal(promptSecurity.isUntrustedTerminalInputPrompt("验证码："), true);
+});
+
+test("build.files includes the single-channel SSH banner matcher", () => {
+  assert.ok(
+    config.files.includes("domain/singleChannelSshBanner.shared.cjs"),
+    "packaged SSH and SFTP bridges require the shared banner matcher",
+  );
+  assert.ok(
+    config.files.includes("domain/singleChannelSshBanner.shared.mjs"),
+    "the shared banner matcher requires its source module",
+  );
+  const banner = require("../domain/singleChannelSshBanner.shared.cjs");
+  assert.equal(banner.remoteSoftwareRequiresSingleChannel("BHostSSH_7.0"), true);
+  assert.equal(banner.remoteSoftwareRequiresSingleChannel("JumpServer"), false);
 });
 
 test("unpacked Tool CLI includes capability runtime dependencies", () => {
@@ -176,6 +201,7 @@ test("build.files excludes Vite-bundled renderer-only packages", () => {
     "!node_modules/lexical/**/*",
     "!node_modules/@lexical/**/*",
     "!node_modules/@codemirror/**/*",
+    "!node_modules/katex/**/*",
     "!node_modules/shiki/**/*",
     "!node_modules/@shiki/**/*",
   ]) {
@@ -184,6 +210,14 @@ test("build.files excludes Vite-bundled renderer-only packages", () => {
       `build.files must exclude Vite-bundled renderer package: ${glob}`,
     );
   }
+});
+
+test("KaTeX distribution keeps its license notice", () => {
+  const notice = readFileSync(
+    path.join(__dirname, "..", "public", "licenses", "KaTeX-LICENSE.txt"),
+    "utf8",
+  );
+  assert.match(notice, /Copyright \(c\) 2013-2020 Khan Academy and other contributors/);
 });
 
 test("linux packaging uses multi-size build/icons instead of a single 1024px override", async () => {

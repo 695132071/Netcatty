@@ -280,3 +280,76 @@ test("mergeSnippetImportPayload keeps existing empty snippet packages", () => {
 
   assert.deepEqual(result.snippetPackages, ["local-empty", "imported", "imported/ops"]);
 });
+
+test("snippet export and import preserve the all-hosts scope", () => {
+  const exported = buildSnippetExportPayload({
+    snippets: [
+      snippet({
+        id: "all-hosts",
+        label: "Patch everything",
+        command: "apt-get update",
+        targetsAllHosts: true,
+      }),
+    ],
+    snippetPackages: [],
+    exportedAt: "2026-10-11T00:00:00.000Z",
+  });
+
+  // New exports carry the all-hosts scope, so they must advertise a version
+  // that pre-change releases do not silently accept while dropping the field.
+  assert.equal(exported.version, 3);
+  const parsed = parseSnippetImportPayload(JSON.stringify(exported));
+  const result = mergeSnippetImportPayload({
+    existingSnippets: [],
+    existingSnippetPackages: [],
+    payload: parsed,
+    conflictAction: "skip",
+    createId: () => "imported-all-hosts",
+  });
+
+  assert.equal(exported.snippets[0].targetsAllHosts, true);
+  assert.equal("targets" in exported.snippets[0], false);
+  assert.equal(parsed.snippets[0].targetsAllHosts, true);
+  assert.equal(result.snippets[0].targetsAllHosts, true);
+  assert.deepEqual(result.snippets[0].targets, []);
+  assert.equal(result.snippets[0].targetGroups, undefined);
+});
+
+test("snippet import resolves all-hosts scope against dynamic groups", () => {
+  const parsed = parseSnippetImportPayload(JSON.stringify({
+    kind: "netcatty.snippets",
+    version: 2,
+    exportedAt: "2026-10-11T00:00:00.000Z",
+    snippetPackages: [],
+    snippets: [
+      {
+        label: "All hosts beats groups",
+        command: "uptime",
+        targetGroups: ["Production"],
+        targetsAllHosts: true,
+      },
+      {
+        label: "Explicit false stays unscoped",
+        command: "whoami",
+        targetsAllHosts: false,
+      },
+    ],
+  }));
+
+  assert.equal(parsed.snippets[0].targetsAllHosts, true);
+  assert.equal(parsed.snippets[0].targetGroups, undefined);
+  assert.deepEqual(parsed.snippets[0].targetGroups ?? [], []);
+  assert.deepEqual([...(parsed.snippets[0].tags ?? [])], []);
+  assert.equal(parsed.snippets[1].targetsAllHosts, undefined);
+  const merged = mergeSnippetImportPayload({
+    existingSnippets: [],
+    existingSnippetPackages: [],
+    payload: parsed,
+    conflictAction: "skip",
+    createId: () => "import-1",
+  });
+  assert.equal(merged.snippets[0].targetsAllHosts, true);
+  assert.deepEqual(merged.snippets[0].targetGroups, undefined);
+  assert.equal(merged.snippets[1].targetsAllHosts, undefined);
+  assert.deepEqual(merged.snippets[1].targetGroups, undefined);
+});

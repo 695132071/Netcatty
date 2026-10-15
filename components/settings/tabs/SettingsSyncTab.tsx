@@ -3,7 +3,7 @@ import type { PortForwardingRule } from "../../../domain/models";
 import type { SyncPayload } from "../../../domain/sync";
 import {
   buildCloudSyncPayload,
-  applySyncPayload,
+  prepareSyncPayloadApply,
   getEffectivePortForwardingRulesForSync,
   prepareLocalVaultPayloadApply,
 } from "../../../application/syncPayload";
@@ -49,25 +49,25 @@ export default function SettingsSyncTab(props: {
     );
   }, [vault, getEffectivePortForwardingRules]);
 
-  const onApplyMigrationPayload = useCallback(
+  const onPrepareMigrationPayload = useCallback(
     (payload: SyncPayload) =>
-      applySyncPayload(payload, {
+      prepareSyncPayloadApply(payload, {
         importVaultData: importDataFromString,
         importPortForwardingRules,
         onSettingsApplied,
-      }),
-    [importDataFromString, importPortForwardingRules, onSettingsApplied],
+      }, { currentHosts: vault.hosts }),
+    [importDataFromString, importPortForwardingRules, onSettingsApplied, vault.hosts],
   );
 
   const onApplyPayload = useCallback(
     (payload: SyncPayload) =>
       applyProtectedSyncPayload({
         buildPreApplyPayload: onBuildLocalPayload,
-        applyPayload: () => onApplyMigrationPayload(payload),
+        prepareApply: () => onPrepareMigrationPayload(payload),
         translateProtectiveBackupFailure: (message) =>
           t("cloudSync.localBackups.protectiveBackupFailed", { message }),
       }),
-    [onApplyMigrationPayload, onBuildLocalPayload, t],
+    [onPrepareMigrationPayload, onBuildLocalPayload, t],
   );
 
   const onApplyConvergentPayload = useCallback(
@@ -76,14 +76,17 @@ export default function SettingsSyncTab(props: {
       commitReplica: () => Promise<void>,
     ) => applyProtectedSyncPayload({
       buildPreApplyPayload: onBuildLocalPayload,
-      applyPayload: async () => {
-        await onApplyMigrationPayload(payload);
-        await commitReplica();
+      prepareApply: async () => {
+        const applyPreparedPayload = await onPrepareMigrationPayload(payload);
+        return async () => {
+          await applyPreparedPayload();
+          await commitReplica();
+        };
       },
       translateProtectiveBackupFailure: (message) =>
         t("cloudSync.localBackups.protectiveBackupFailed", { message }),
     }),
-    [onApplyMigrationPayload, onBuildLocalPayload, t],
+    [onPrepareMigrationPayload, onBuildLocalPayload, t],
   );
 
   const onApplyLocalPayload = useCallback(
@@ -112,7 +115,7 @@ export default function SettingsSyncTab(props: {
       <CloudSyncSettings
         onBuildPayload={onBuildPayload}
         onBuildLocalPayload={onBuildLocalPayload}
-        onApplyMigrationPayload={onApplyMigrationPayload}
+        onPrepareMigrationPayload={onPrepareMigrationPayload}
         onApplyPayload={onApplyPayload}
         onApplyConvergentPayload={onApplyConvergentPayload}
         onApplyLocalPayload={onApplyLocalPayload}

@@ -1,6 +1,7 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import React, { memo, useCallback, useEffect, useRef, useState } from 'react';
 import { ChevronsLeft, GripVertical, Minimize2, Network, PanelLeft, X as XIcon } from 'lucide-react';
+import { isTerminalSensitiveInputActive } from './runtime/terminalSensitiveInputRegistry';
 import { isSessionReconnectDisabled } from '../top-tabs/SessionTabContextMenuContent';
 
 import { resolveEffectiveTerminalProtocol } from '../../domain/terminalProtocol';
@@ -390,7 +391,7 @@ function terminalViewCtxEqual(
 }
 
 function TerminalViewInner({ ctx, isPaneMagnified = false }: { ctx: TerminalViewContext; isPaneMagnified?: boolean }) {
-  const { Activity, Button, Clock3, Copy, Maximize2, Radio, RefreshCcw, SquareArrowOutUpRight, TerminalAutocomplete, TerminalComposeBar, TerminalConnectionDialog, TerminalContextMenu, TerminalSearchBar, Tooltip, TooltipContent, TooltipTrigger, Unplug, ZmodemOverwriteDialog, ZmodemProgressIndicator, auth, autocompleteAcceptTextRef, autocompleteCloseRef, autocompleteHostOs, autocompleteInputRef, autocompleteKeyEventRef, autocompleteRepositionRef, autocompleteSettings, canUpdateHost, chainProgress, cn, compactToolbar, lineTimestampsAvailable, containerRef, effectiveFontSize, effectiveFontWeight, effectiveTerminalProtocol, effectiveTheme, error, executeSnippet, executeSnippetCommand, handleAddSelectionToAI, handleCancelConnect, handleCloseDisconnectedSession, handleCloseSearch, handleDisconnect, handleDismissDisconnectedDialog, handleDragEnter, handleDragLeave, handleDragOver, handleDrop, handleFindNext, handleFindPrevious, handleHostKeyAddAndContinue, handleHostKeyClose, handleHostKeyContinue, handleOsc52ReadResponse, handleOsc7SetupConfirm, handleOsc7SetupOpenChange, handleReceiveYmodem, handleRetry, handleSearch, handleSendYmodem, handleTopOverlayMouseDownCapture, hasMouseTracking, host, hotkeyScheme, inWorkspace, isBroadcastEnabled, isCancelling, isComposeBarOpen, isConnectionAwaitingUserInput, isDraggingOver, isFocusMode, isFocusedPane, isLocalConnection, remoteDragDropUsesZmodem, isPluginTerminalProviderAvailable, isReconnectActive, isSerialConnection, isSearchOpen, isSupportedOs, isSystemSidebarEligible, isVisible, keyBindings, keys, knownCwdRef, needsHostKeyVerification, onCloseSession, onDetach, onDetachPointerDown, onExpandToFocus, onTogglePaneMagnification, onOpenSystem, onRename, onSplitHorizontal, onSplitVertical, onToggleBroadcast, onUpdateHost, osc52ReadPromptVisible, osc7SetupOpen, osc7SetupRunning, passwordPromptActiveRef, pendingHostKeyInfo, progressLogs, progressValue, renderControls, resolvedFontFamily, restoreState, scriptExecutionOverlay, searchMatchCount, searchFocusToken, sessionDisplayName, sessionId, workspaceId, sessionRef, setIsComposeBarOpen, setShowLogs, shouldShowConnectionDialog, showDisconnectedTerminalNotice, showConnectionControls, showLogs, showSelectionAIAction, isRestoringSelectionRef, snippets, status, sudoHintRef, sudoHintText, passwordPickerState, onPasswordPickerSelect, passwordPickerTitle, passwordPickerEmptyText, t, termRef, terminalContextActions, terminalCwdTracker, terminalPreviewVars, terminalSettings, terminalReconnectAvailable, reconnectNoticeMessage, timeLeft, toast, zmodem } = ctx;
+  const { Activity, Button, Clock3, Copy, Maximize2, Radio, RefreshCcw, SquareArrowOutUpRight, TerminalAutocomplete, TerminalComposeBar, TerminalConnectionDialog, TerminalContextMenu, TerminalSearchBar, Tooltip, TooltipContent, TooltipTrigger, Unplug, ZmodemOverwriteDialog, ZmodemProgressIndicator, auth, autocompleteAcceptTextRef, autocompleteCloseRef, autocompleteHostOs, autocompleteInputRef, autocompleteKeyEventRef, autocompleteRepositionRef, autocompleteSettings, canUpdateHost, chainProgress, cn, compactToolbar, lineTimestampsAvailable, containerRef, effectiveFontSize, effectiveFontWeight, effectiveTerminalProtocol, effectiveTheme, error, executeSnippet, executeSnippetCommand, handleAddSelectionToAI, handleCancelConnect, handleCloseDisconnectedSession, handleCloseSearch, handleDisconnect, handleDismissDisconnectedDialog, handleDragEnter, handleDragLeave, handleDragOver, handleDrop, handleFindNext, handleFindPrevious, handleHostKeyAddAndContinue, handleHostKeyClose, handleHostKeyContinue, handleOsc52ReadResponse, handleOsc7SetupConfirm, handleOsc7SetupOpenChange, handleReceiveYmodem, handleRetry, handleSearch, handleSendYmodem, handleTopOverlayMouseDownCapture, hasMouseTracking, host, hotkeyScheme, inWorkspace, isBroadcastEnabled, isCancelling, isComposeBarOpen, isConnectionAwaitingUserInput, isDraggingOver, isFocusMode, isFocusedPane, isLocalConnection, remoteDragDropUsesZmodem, isPluginTerminalProviderAvailable, isReconnectActive, isSerialConnection, isSearchOpen, isSupportedOs, isSystemSidebarEligible, isVisible, keyBindings, keys, identities, knownCwdRef, needsHostKeyVerification, onCloseSession, onDetach, onDetachPointerDown, onExpandToFocus, onTogglePaneMagnification, onOpenSystem, onRename, onSplitHorizontal, onSplitVertical, onToggleBroadcast, onUpdateHost, osc52ReadPromptVisible, osc7SetupOpen, osc7SetupRunning, passwordPromptActiveRef, pendingHostKeyInfo, progressLogs, progressValue, renderControls, resolvedFontFamily, restoreState, scriptExecutionOverlay, searchMatchCount, searchFocusToken, sessionDisplayName, sessionId, workspaceId, sessionRef, setIsComposeBarOpen, setShowLogs, shouldShowConnectionDialog, showDisconnectedTerminalNotice, showConnectionControls, showLogs, showSelectionAIAction, isRestoringSelectionRef, snippets, status, sudoHintRef, sudoHintText, passwordPickerState, onPasswordPickerSelect, passwordPickerTitle, passwordPickerEmptyText, t, termRef, terminalContextActions, terminalCwdTracker, terminalPreviewVars, terminalSettings, terminalReconnectAvailable, reconnectNoticeMessage, timeLeft, toast, zmodem } = ctx;
   // Context menu only needs a snapshot at open; avoid selection state lifting into Terminal.
   const [contextMenuHasSelection, setContextMenuHasSelection] = useState(false);
   const isNetworkDevice = host.deviceType === 'network'
@@ -579,9 +580,11 @@ function TerminalViewInner({ ctx, isPaneMagnified = false }: { ctx: TerminalView
       hotkeyScheme={hotkeyScheme}
       keyBindings={keyBindings}
       rightClickBehavior={terminalSettings?.rightClickBehavior}
+      rightClickLongPressMenu={terminalSettings?.rightClickLongPressMenu}
       isAlternateScreen={hasMouseTracking}
       getMouseTrackingMode={() => termRef.current?.modes.mouseTrackingMode}
       showContextMenuOverFullscreenApps={terminalSettings?.showContextMenuOverFullscreenApps}
+      onSaveScreen={terminalContextActions.onSaveScreen}
       onCopy={terminalContextActions.onCopy}
       onPaste={terminalContextActions.onPaste}
       onUploadClipboardImage={status === "connected" ? terminalContextActions.onUploadClipboardImage : undefined}
@@ -832,7 +835,7 @@ function TerminalViewInner({ ctx, isPaneMagnified = false }: { ctx: TerminalView
                 )}
                 {showHostInfoBar && <div className="flex-1 min-w-0" />}
                 <div className="flex items-center gap-0.5 flex-shrink-0">
-                  {inWorkspace && onToggleBroadcast && (
+                  {onToggleBroadcast && (
                     <Tooltip>
                       <TooltipTrigger asChild>
                         <Button
@@ -1145,6 +1148,7 @@ function TerminalViewInner({ ctx, isPaneMagnified = false }: { ctx: TerminalView
             )}
             sensitiveInputActiveRef={passwordPromptActiveRef}
             allowHostStyleGreaterThanPrompt={isNetworkDevice}
+            isNetworkDevice={isNetworkDevice}
           />
 
           <PasswordCredentialPicker
@@ -1258,6 +1262,9 @@ function TerminalViewInner({ ctx, isPaneMagnified = false }: { ctx: TerminalView
                   showAuthPassword: auth.showAuthPassword,
                   setShowAuthPassword: auth.setShowAuthPassword,
                   authRetryMessage: auth.authRetryMessage,
+                  identities,
+                  selectedIdentityId: auth.selectedIdentityId,
+                  onSelectIdentity: auth.selectIdentity,
                   onSubmit: () => auth.submit(),
                   onSubmitWithoutSave: () => auth.submit({ saveToHost: false }),
                   onCancel: handleCancelConnect,
@@ -1303,10 +1310,35 @@ function TerminalViewInner({ ctx, isPaneMagnified = false }: { ctx: TerminalView
         {/* Compose Bar (solo sessions only; workspace uses TerminalLayer's global bar) */}
         {isComposeBarOpen && !inWorkspace && (
           <TerminalComposeBar
-            onSend={(text) => {
+            key={sessionId}
+            sessionId={sessionId}
+            onSend={async (text) => {
               if (sessionRef.current) {
-                executeSnippetCommand(text, false);
+                const sensitive = isTerminalSensitiveInputActive(sessionId);
+                // A bypassed fan-out (#3488) can deliver the payload into a
+                // peer's sensitive prompt even when this source session is
+                // non-sensitive (#3491): that payload is the peer's
+                // password/MFA input, so the send must stay history-
+                // ineligible, like the workspace compose path does.
+                let anyRecipientSensitive = false;
+                let broadcastRecipientIds: readonly string[] = [];
+                const sent = await executeSnippetCommand(text, false, {
+                  onBroadcastDelivered: (sessionIds) => {
+                    broadcastRecipientIds = sessionIds;
+                    if (sessionIds.some((id) => isTerminalSensitiveInputActive(id))) {
+                      anyRecipientSensitive = true;
+                    }
+                  },
+                });
+                // A lagging peer can reach its password prompt by delivery
+                // time; re-check the recorded recipients after the send.
+                if (broadcastRecipientIds.some((id) => isTerminalSensitiveInputActive(id))) {
+                  anyRecipientSensitive = true;
+                }
+                return sent && !sensitive && !anyRecipientSensitive
+                  && !isTerminalSensitiveInputActive(sessionId);
               }
+              return false;
             }}
             onSnippetClick={(snippet) => void executeSnippet(snippet)}
             snippets={snippets}
