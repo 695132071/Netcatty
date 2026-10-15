@@ -129,7 +129,6 @@ If you regularly work with a fleet of servers, Netcatty is built for speed and f
 - **Session management** — run multiple connections side-by-side
 - **Save current screen** — right-click a terminal to save the visible final text, without replaying keystrokes or overwritten output; scroll first to save an earlier screen.
 - **Inline images** — render Kitty graphics, SIXEL and iTerm inline images from remote programs
-- **Archive shortcuts** — Ctrl+click a printed tar/zip filename at an empty Linux shell prompt to prepare an extraction command; press Enter to run it. Relative filenames are available only in the latest command's output; run `ls` again after submitting another command. Existing input is kept, and shortcuts stay off for unknown systems and broadcast mode. Names with spaces must be printed in quotes; wrapped filenames are excluded.
 
 ### 📁 SFTP + Built-in Editor
 - **File workflows** — drag & drop uploads/downloads
