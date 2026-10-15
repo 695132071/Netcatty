@@ -1894,6 +1894,8 @@ function getWorkerJob(jobId, chatSessionId) {
   return job;
 }
 
+const WORKER_JOB_NOT_FOUND_ERROR = "Background job not found";
+
 async function handleWorkerJobPoll(params = {}) {
   const { jobId, chatSessionId, scopedSessionIds } = params || {};
   if (!jobId) throw new Error("jobId is required");
@@ -1907,6 +1909,10 @@ async function handleWorkerJobPoll(params = {}) {
     if (scopeErr) return { ok: false, error: scopeErr };
   }
   const result = await terminalWorkerManager.request("netcatty:ai:jobPoll", params, {});
+  if (result?.ok === false && result.error === WORKER_JOB_NOT_FOUND_ERROR) {
+    // The route is still here but the worker no longer knows the job (pruned or restarted).
+    emitJobDiag("job-stop-miss", { jobId, chatSessionId: chatSessionId || null, op: "poll", reason: "worker-job-missing" });
+  }
   if (result?.completed) {
     deleteWorkerRoute(jobId, job, "poll-completed");
   }
@@ -1925,6 +1931,10 @@ async function handleWorkerJobStop(params = {}) {
     return { ok: false, error: `Session "${job.sessionId}" is not in the current scope.` };
   }
   const result = await terminalWorkerManager.request("netcatty:ai:jobStop", params, {});
+  if (result?.ok === false && result.error === WORKER_JOB_NOT_FOUND_ERROR) {
+    // The route is still here but the worker no longer knows the job (pruned or restarted).
+    emitJobDiag("job-stop-miss", { jobId, chatSessionId: chatSessionId || null, op: "stop", reason: "worker-job-missing" });
+  }
   if (result?.completed) {
     deleteWorkerRoute(jobId, job, "stop-completed");
   }

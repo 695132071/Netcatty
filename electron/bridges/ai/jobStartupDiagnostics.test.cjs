@@ -317,7 +317,7 @@ test("startup timeout reports the bytes of a partial probe reply", async (t) => 
       t.mock.timers.tick(30);
       await nextTick();
     }
-    const partialReply = "partial reply without the probe marker";
+    const partialReply = "partial reply \u00e9\u00e9 without the probe marker";
     pty.push(partialReply);
     await nextTick();
     t.mock.timers.tick(30000);
@@ -327,6 +327,9 @@ test("startup timeout reports the bytes of a partial probe reply", async (t) => 
     const timeout = capture.events.find((event) => event.event === "startup-timeout-fired");
     assert.equal(timeout.probeOutputSeen, true);
     assert.equal(timeout.probeBytes, Buffer.byteLength(partialReply));
+    // The arrival event reports raw bytes too, not UTF-16 code units.
+    const arrived = capture.events.find((event) => event.event === "probe-output-arrived");
+    assert.equal(arrived.probeBytes, Buffer.byteLength(partialReply));
   } finally {
     capture.restore();
     pty.destroy();

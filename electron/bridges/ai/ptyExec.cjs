@@ -608,7 +608,7 @@ function startPtyJob(ptyStream, command, options) {
       if (!jobDiag.stats.probeOutputSeen) {
         jobDiag.stats.probeOutputSeen = true;
         jobDiag.emit("probe-output-arrived", {
-          probeBytes: probeOutput.length,
+          probeBytes: jobDiag.stats.probeBytes,
           session: diagSnapshot(),
         });
       }
@@ -620,7 +620,7 @@ function startPtyJob(ptyStream, command, options) {
       if (!probe) return;
       jobDiag.emit("probe-reply-parsed", {
         shellKind: probe.kind ?? null,
-        probeBytes: probeOutput.length,
+        probeBytes: jobDiag.stats.probeBytes,
       });
       probingShell = false;
       probeOutput = "";
