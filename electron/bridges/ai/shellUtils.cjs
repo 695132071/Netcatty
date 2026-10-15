@@ -13,7 +13,7 @@ const path = require("node:path");
 // ── ANSI / URL regexes ──
 
 const ANSI_ESCAPE_REGEX = /\u001B\[[0-?]*[ -/]*[@-~]/g;
-const ANSI_OSC_REGEX = /\u001B\][^\u0007]*(?:\u0007|\u001B\\)/g;
+const ANSI_OSC_REGEX = /\u001B\][^\u0007]*?(?:\u0007|\u001B\\)/g;
 const URL_CANDIDATE_REGEX = /https?:\/\/[^\s]+/g;
 const WINDOWS_RUNNABLE_EXTENSIONS = [".exe", ".cmd", ".bat", ".com"];
 const MAX_PROMPT_TRACK_TAIL = 4096;

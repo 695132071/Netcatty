@@ -1040,7 +1040,7 @@ function stableLocalFileIdentity(statLike) {
 }
 
 async function promoteLocalTransfer(stagedPath, targetPath, options = {}) {
-  const { publishLocalFileExclusive } = require("./localFilePublish.cjs");
+  const { publishLocalFileExclusive, isMetadataUnsupportedError } = require("./localFilePublish.cjs");
   const assertNotCancelled = options.assertNotCancelled || (() => {});
   const token = crypto.randomUUID().replace(/-/g, "");
   const base = path.join(path.dirname(targetPath), `.${path.basename(targetPath)}.netcatty-${token}`);
@@ -1050,6 +1050,7 @@ async function promoteLocalTransfer(stagedPath, targetPath, options = {}) {
   let backedUp = false;
   let committed = false;
   let keepRecoveryFiles = false;
+  let skipReadyCleanup = false;
   let preparedHandle;
   let originalHandle;
   let restoreProbeCreated = false;
@@ -1060,7 +1061,28 @@ async function promoteLocalTransfer(stagedPath, targetPath, options = {}) {
       await fs.promises.rename(stagedPath, readyPath);
     } catch (error) {
       if (error?.code !== "EXDEV") throw error;
-      await fs.promises.copyFile(stagedPath, readyPath, fs.constants.COPYFILE_EXCL);
+      try {
+        await fs.promises.copyFile(stagedPath, readyPath, fs.constants.COPYFILE_EXCL);
+      } catch (copyError) {
+        if (!["ENOTSUP", "EOPNOTSUPP"].includes(copyError?.code)) throw copyError;
+        // copyFile includes metadata operations that writable GVFS mounts may
+        // reject. Reuse the exclusive bounded read/write publication path.
+        try {
+          await publishLocalFileExclusive(stagedPath, readyPath, assertNotCancelled, undefined, {
+            copyOnly: true, preserveMode: false, requireTimestamps: false,
+          });
+        } catch (fallbackError) {
+          // Do not remove a name this fallback never owned: copyFile may
+          // have left a partial, or an exclusive open may have lost a race.
+          skipReadyCleanup = true;
+          const cancelledBeforeOutput = !fallbackError.localPublicationIncomplete
+            && (fallbackError.code === "ABORT_ERR" || fallbackError.message === "Transfer cancelled");
+          // An early cancellation needs ordinary stage cleanup, not recovery.
+          // Once output exists, retain the complete stage as before.
+          keepRecoveryFiles = !cancelledBeforeOutput;
+          throw fallbackError;
+        }
+      }
     }
     // Stamp the private prepared file before applying possibly unreadable
     // destination permissions. Publication carries these times to the target.
@@ -1085,7 +1107,17 @@ async function promoteLocalTransfer(stagedPath, targetPath, options = {}) {
         ? validatedTarget.existingMode & 0o7777
         : Number.isInteger(options.existingMode) ? options.existingMode & 0o7777 : null;
       if (mode !== null && mode !== appliedMode) {
-        await fs.promises.chmod(readyPath, mode);
+        if (((await preparedHandle.stat()).mode & 0o7777) !== mode) {
+          try {
+            await preparedHandle.chmod(mode);
+          } catch (error) {
+            if (!isMetadataUnsupportedError(error)
+              || ((await preparedHandle.stat()).mode & 0o7777) !== mode) throw error;
+          }
+          if (((await preparedHandle.stat()).mode & 0o7777) !== mode) {
+            throw new Error("Cannot preserve local destination permissions");
+          }
+        }
         appliedMode = mode;
         continue;
       }
@@ -1131,7 +1163,9 @@ async function promoteLocalTransfer(stagedPath, targetPath, options = {}) {
     assertNotCancelled();
     let publishedIdentity = null;
     try {
-      publishedIdentity = await publishLocalFileExclusive(readyPath, targetPath, assertNotCancelled, preparedHandle) ?? null;
+      publishedIdentity = await publishLocalFileExclusive(readyPath, targetPath, assertNotCancelled, preparedHandle, {
+        preserveMode: appliedMode !== null, requireTimestamps: false,
+      }) ?? null;
     } catch (error) {
       if (error?.code === "EEXIST") {
         throw new Error("Local download target changed during replacement", { cause: error });
@@ -1144,12 +1178,13 @@ async function promoteLocalTransfer(stagedPath, targetPath, options = {}) {
     committed = true;
     // Hand the published inode identity to the caller for descriptor-based
     // metadata stamping after publication.
-    options.onCommit?.(publishedIdentity, localMtimePrepared);
+    options.onCommit?.(publishedIdentity, localMtimePrepared && publishedIdentity?.timestampsPreserved !== false);
     if (backedUp) await fs.promises.unlink(backupPath).catch(() => {});
     await fs.promises.unlink(readyPath).catch(() => {});
     await fs.promises.unlink(stagedPath).catch(() => {});
   } catch (error) {
     if (committed) throw error;
+    if (error?.localPublicationIncomplete) keepRecoveryFiles = true;
     if (backedUp && !keepRecoveryFiles) {
       try {
         // The pathname may have changed between open and rename. Never copy
@@ -1179,7 +1214,7 @@ async function promoteLocalTransfer(stagedPath, targetPath, options = {}) {
       if (backedUp) failure.remoteBackupPath = backupPath;
       throw failure;
     }
-    await fs.promises.unlink(readyPath).catch(() => {});
+    if (!skipReadyCleanup) await fs.promises.unlink(readyPath).catch(() => {});
     throw error;
   } finally {
     await preparedHandle?.close().catch(() => {});
@@ -3023,6 +3058,10 @@ function openSftpHandleForTransfer(sftp, filePath, flags, transfer, options = {}
         transfer.abort = previousAbort;
       }
       try { sftp.removeListener?.("error", onOpenChannelError); } catch { /* ignore */ }
+      if (!isWriteOpen) {
+        sftp.removeListener?.("end", onOpenChannelClosed);
+        sftp.removeListener?.("close", onOpenChannelClosed);
+      }
       fn(value);
     };
 
@@ -3079,6 +3118,10 @@ function openSftpHandleForTransfer(sftp, filePath, flags, transfer, options = {}
       }
     };
 
+    const onOpenChannelClosed = () => {
+      onOpenChannelError(new Error("SFTP channel closed before the source file was opened"));
+    };
+
     if (transfer.cancelled) {
       completeSharedWriteDrain();
       releasePathGate();
@@ -3088,6 +3131,16 @@ function openSftpHandleForTransfer(sftp, filePath, flags, transfer, options = {}
 
     transfer.abort = abortDuringOpen;
     sftp.on?.("error", onOpenChannelError);
+    if (!isWriteOpen) {
+      sftp.on?.("end", onOpenChannelClosed);
+      sftp.on?.("close", onOpenChannelClosed);
+      // A failed isolated download may fall back after the browse channel's
+      // end event already fired. ssh2 never answers a new OPEN on that channel.
+      if (sftp.readable === false) {
+        onOpenChannelClosed();
+        return;
+      }
+    }
 
     try {
       sftp.open(filePath, resolveFlags(), (error, handle) => {

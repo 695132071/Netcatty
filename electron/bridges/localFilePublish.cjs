@@ -8,24 +8,27 @@ const fs = require("node:fs");
 // but no pathname cleanup may remove a concurrent writer's replacement.
 // Resolves with the published inode identity ({ dev, ino, size }) so callers can
 // verify an open destination handle before later metadata stamping.
-async function publishLocalFileExclusive(source, target, assertNotCancelled = () => {}, preparedHandle) {
+async function publishLocalFileExclusive(source, target, assertNotCancelled = () => {}, preparedHandle, options = {}) {
   assertNotCancelled();
-  try {
-    await fs.promises.link(source, target);
-    // The hardlink shares the published inode; stat either name.
-    const linkedStat = await fs.promises.lstat(source);
-    return { dev: linkedStat.dev, ino: linkedStat.ino, size: linkedStat.size };
-  } catch (error) {
-    // EISDIR is the misleading libuv mapping for Win32 ERROR_INVALID_FUNCTION
-    // when the volume has no hard-link support (exFAT/FAT32); the source here
-    // is always a regular prepared file, never a directory (nodejs/node#65817).
-    if (!["ENOTSUP", "EOPNOTSUPP", "ENOSYS", "EPERM", "EACCES", "EXDEV", "EISDIR"].includes(error?.code)) throw error;
+  if (!options.copyOnly) {
+    try {
+      await fs.promises.link(source, target);
+      // The hardlink shares the published inode; stat either name.
+      const linkedStat = await fs.promises.lstat(source);
+      return { dev: linkedStat.dev, ino: linkedStat.ino, size: linkedStat.size };
+    } catch (error) {
+      // EISDIR is the misleading libuv mapping for Win32 ERROR_INVALID_FUNCTION
+      // when the volume has no hard-link support (exFAT/FAT32); the source here
+      // is always a regular prepared file, never a directory (nodejs/node#65817).
+      if (!["ENOTSUP", "EOPNOTSUPP", "ENOSYS", "EPERM", "EACCES", "EXDEV", "EISDIR"].includes(error?.code)) throw error;
+    }
   }
 
   let input;
   let output;
   let failure;
   let publishedIdentity;
+  let timestampsPreserved = true;
   try {
     input = preparedHandle ?? await fs.promises.open(source, "r");
     const stat = await input.stat();
@@ -49,14 +52,31 @@ async function publishLocalFileExclusive(source, target, assertNotCancelled = ()
     assertNotCancelled();
     // Restore metadata after writes (which may clear special permission bits),
     // through the owned handle rather than a potentially replaced pathname.
-    await output.chmod(stat.mode & 0o7777);
-    await output.utimes(stat.atime, stat.mtime);
+    const mode = stat.mode & 0o7777;
+    if (((await output.stat()).mode & 0o7777) !== mode) {
+      try {
+        await output.chmod(mode);
+      } catch (error) {
+        // New files follow the mount's access policy (GVFS can synthesize mode
+        // bits). Replacements must still preserve the validated protection.
+        if (!isOptionalMetadataError(error) || options.preserveMode !== false) throw error;
+      }
+      if (options.preserveMode !== false && ((await output.stat()).mode & 0o7777) !== mode) {
+        throw new Error("Cannot preserve local destination permissions");
+      }
+    }
+    try {
+      await output.utimes(stat.atime, stat.mtime);
+    } catch (error) {
+      if (!isOptionalMetadataError(error) || options.requireTimestamps !== false) throw error;
+      timestampsPreserved = false;
+    }
     const ownedStat = await output.stat();
     const targetStat = await fs.promises.lstat(target);
     if (!targetStat.isFile() || targetStat.dev !== ownedStat.dev || targetStat.ino !== ownedStat.ino) {
       throw new Error("Local download target changed during replacement");
     }
-    publishedIdentity = { dev: ownedStat.dev, ino: ownedStat.ino, size: ownedStat.size };
+    publishedIdentity = { dev: ownedStat.dev, ino: ownedStat.ino, size: ownedStat.size, timestampsPreserved };
   } catch (error) {
     failure = error;
   } finally {
@@ -73,4 +93,14 @@ async function publishLocalFileExclusive(source, target, assertNotCancelled = ()
   return publishedIdentity;
 }
 
-module.exports = { publishLocalFileExclusive };
+// Only optional chmod/utimes may ignore permission refusal. Never use this
+// predicate for creation, data writes, close, or required permission changes.
+function isOptionalMetadataError(error) {
+  return isMetadataUnsupportedError(error) || ["EPERM", "EACCES"].includes(error?.code);
+}
+
+function isMetadataUnsupportedError(error) {
+  return ["ENOTSUP", "EOPNOTSUPP", "ENOSYS"].includes(error?.code);
+}
+
+module.exports = { publishLocalFileExclusive, isMetadataUnsupportedError };

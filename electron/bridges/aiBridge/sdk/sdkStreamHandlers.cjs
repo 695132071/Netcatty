@@ -125,6 +125,10 @@ const SDK_MODEL_CACHE_ENV_KEYS = [
   // `grok login` credentials live under GROK_CONFIG_DIR (default ~/.grok), so
   // two login profiles that share HOME and the binary need separate catalogs.
   "GROK_CONFIG_DIR",
+  "COPILOT_GITHUB_TOKEN",
+  "GH_TOKEN",
+  "GITHUB_TOKEN",
+  "GH_CONFIG_DIR",
   "CURSOR_API_KEY",
 ];
 
@@ -1071,13 +1075,18 @@ function registerSdkStreamHandlers(ctx) {
                 currentModelId,
               });
             } else if (currentModelId) {
-              // A current-only catalog (zero visible models, valid current
-              // id - e.g. the mimo filtered auto channel) still carries the
-              // user's selection. Refresh the persisted current id without
-              // clobbering the persisted models list; with no persisted
-              // entry there is nothing to admit (a models-less entry is
-              // unservable anyway).
-              refreshLastKnownCatalogCurrentId(lastKnownPath, cacheKey, currentModelId);
+              // A current-only success still advertises a usable selection.
+              // Keep previous rows when available; otherwise persist that
+              // selection as one visible row for a later failed load.
+              if (readLastKnownCatalogEntry(lastKnownPath, cacheKey)) {
+                refreshLastKnownCatalogCurrentId(lastKnownPath, cacheKey, currentModelId);
+              } else {
+                writeLastKnownCatalogEntry(lastKnownPath, cacheKey, {
+                  backend: backendKey,
+                  models: [{ id: currentModelId, name: currentModelId }],
+                  currentModelId,
+                });
+              }
             }
             return {
               ok: true,

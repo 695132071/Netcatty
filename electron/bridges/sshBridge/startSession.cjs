@@ -27,6 +27,10 @@ const {
   annotateMacLocalNetworkErrorMessage,
   resolveFirstTcpEndpoint,
 } = require("../macLocalNetworkAccess.cjs");
+const {
+  buildRemoteShellExitPayload,
+  normalizeRemoteExitSignal,
+} = require("./remoteShellExit.cjs");
 
 const SSH_TCP_CONNECT_TIMEOUT_MS = 20000;
 const SSH_AUTH_READY_TIMEOUT_MS = 120000;
@@ -544,6 +548,15 @@ function createStartSessionApi(ctx) {
             ),
           });
         },
+        // Upload progress tracks bytes the transport actually accepted instead
+        // of bytes queued (issue #3663): ssh2 keeps writableLength unchanged
+        // until one queued write fully completes but shrinks _chunk as the
+        // channel window opens, so summing both approximates the outstanding
+        // backlog while it drains. Without this, an rz progress bar freezes
+        // mid-file for as long as the channel window takes to flush.
+        getTransportPendingBytes() {
+          return (Number(stream.writableLength) || 0) + (stream._chunk?.length || 0);
+        },
         interruptRemote() {
           try { stream.signal?.("INT"); } catch { /* ignore */ }
         },
@@ -665,7 +678,8 @@ function createStartSessionApi(ctx) {
       // "close" fires whenever the channel closes (could be network drop).
       // Only treat it as user-initiated exit if "exit" fired with a numeric
       // code and no signal. Signal terminations (e.g. server kill, idle
-      // timeout) have code=null and signal set — those are not user exits.
+      // timeout) have code=null and signal set — those are not user exits
+      // and are reported as "signaled", not the reconnectable "closed".
       // A third case exists: a remote that closes the channel without sending
       // exit-status or exit-signal never fires "exit" at all (#3591). The
       // initial values below stay null in that case and must not be reported
@@ -676,8 +690,17 @@ function createStartSessionApi(ctx) {
       stream.on("exit", (code, signal) => {
         log("shell exit", { sessionId, hostname: options.hostname, code, signal, reused: !!isReused });
         streamExitCode = typeof code === "number" ? code : null;
-        streamExitSignal = typeof signal === "string" && signal ? signal : null;
+        streamExitSignal = normalizeRemoteExitSignal(signal);
         streamExited = typeof code === "number" && !streamExitSignal;
+        // conn "close" can win the race against this channel's paced
+        // finalize. Stamp the signal so that path can still tell an
+        // administrative exit-signal from a transport drop.
+        if (streamExitSignal && sessions.get(sessionId) === session) {
+          session._remoteExitSignal = streamExitSignal;
+        }
+        if (streamExited && sessions.get(sessionId) === session) {
+          session._remoteExitCode = streamExitCode;
+        }
       });
 
       let closeFinalized = false;
@@ -686,6 +709,7 @@ function createStartSessionApi(ctx) {
           sessionId,
           hostname: options.hostname,
           streamExitCode,
+          streamExitSignal,
           streamExited,
           reused: !!isReused,
           transportError: sessions.get(sessionId)?._transportError,
@@ -717,27 +741,20 @@ function createStartSessionApi(ctx) {
                 _terminalSessionGeneration: liveSession?._terminalSessionGeneration,
               });
             } else {
-              // A shell TMOUT auto-logout is a clean exit (numeric code, no
-              // signal) — identical to a user-typed `exit` by code/signal —
-              // so detect it via the banner the shell prints just before
-              // exiting and report it as a timeout. That keeps the tab open
-              // for reconnect instead of auto-closing it (#1062 / #977).
+              // TMOUT auto-logout is a clean exit (numeric code, no signal) and
+              // is reported as "timeout" via the shell banner (#1062 / #977).
+              // An exit-signal is a separate administrative kick ("signaled").
+              // A channel close with neither exit-status nor exit-signal stays
+              // "closed" and must not be reported as code 0 (#3591).
               const idleTimedOut = streamExited && looksLikeIdleAutoLogout(liveSession?._promptTrackTail);
-              const reason = idleTimedOut ? "timeout" : (streamExited ? "exited" : "closed");
-              const exitPayload = {
+              const exitPayload = buildRemoteShellExitPayload({
                 sessionId,
-                reason,
-                _terminalSessionGeneration: liveSession?._terminalSessionGeneration,
-              };
-              // Report only exit facts the remote actually sent (#3591). When
-              // the peer closed the channel without exit-status/exit-signal,
-              // there is no code to show — flag it instead so the renderer can
-              // distinguish an abnormal teardown from a user-typed `exit 0`.
-              if (typeof streamExitCode === "number") {
-                exitPayload.exitCode = streamExitCode;
-              } else if (streamExitSignal === null) {
-                exitPayload.remoteClosedWithoutExitStatus = true;
-              }
+                generation: liveSession?._terminalSessionGeneration,
+                exitCode: streamExitCode,
+                exitSignal: streamExitSignal,
+                shellExited: streamExited,
+                idleTimedOut,
+              });
               safeSendSessionExit({ safeSend, electronModule, sessions }, contents, sessionId, exitPayload);
             }
             liveSession?.zmodemSentry?.cancel();
@@ -2464,6 +2481,16 @@ function createStartSessionApi(ctx) {
           });
 
           conn.on("error", (err) => {
+            // ssh2 reports agent failures before trying the next auth method.
+            // Keep the connection and its authentication deadline alive.
+            if (err.level === "agent") {
+              log("non-fatal agent auth error (will try next method)", {
+                sessionId,
+                hostname: options.hostname,
+                error: err.message,
+              });
+              return;
+            }
             clearAuthReadyTimer();
             // After the promise is settled, we can't reject again. But if the
             // session was already established (resolved), we still need to notify
@@ -2638,13 +2665,28 @@ function createStartSessionApi(ctx) {
                   reason: "error",
                   _terminalSessionGeneration: session?._terminalSessionGeneration,
                 });
-              } else {
-                safeSendSessionExit({ safeSend, electronModule, sessions }, contents, sessionId, {
+              } else if (normalizeRemoteExitSignal(session?._remoteExitSignal)) {
+                // The shell already reported an exit-signal. This connection
+                // close is the server finishing that administrative kick, not
+                // a transport flap — keep it out of the reconnect loop.
+                safeSendSessionExit({ safeSend, electronModule, sessions }, contents, sessionId, buildRemoteShellExitPayload({
                   sessionId,
-                  exitCode: 0,
-                  reason: "closed",
-                  _terminalSessionGeneration: session?._terminalSessionGeneration,
-                });
+                  generation: session?._terminalSessionGeneration,
+                  exitSignal: session._remoteExitSignal,
+                  shellExited: false,
+                  idleTimedOut: false,
+                }));
+              } else {
+                // Preserve a shell status already received before transport
+                // close; otherwise do not invent a successful exit code.
+                const shellExited = typeof session?._remoteExitCode === "number";
+                safeSendSessionExit({ safeSend, electronModule, sessions }, contents, sessionId, buildRemoteShellExitPayload({
+                  sessionId,
+                  generation: session?._terminalSessionGeneration,
+                  exitCode: session?._remoteExitCode,
+                  shellExited,
+                  idleTimedOut: shellExited && looksLikeIdleAutoLogout(session?._promptTrackTail),
+                }));
               }
               // Use this connection's captured token so a late close from an
               // old transport can't stop a newer same-sessionId stream (#916).

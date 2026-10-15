@@ -64,6 +64,7 @@ export default function SettingsShortcutsTab(props: {
     if (!recordingBindingId || !recordingScheme) return;
 
     const specialSuffix = getSpecialSuffix(recordingBindingId);
+    let pendingModifierBinding: string | null = null;
 
     const handleKeyDown = (e: KeyboardEvent) => {
       // Skip while app lock overlay is up so password keys never bind (Codex P2).
@@ -77,8 +78,6 @@ export default function SettingsShortcutsTab(props: {
       }
 
       if (specialSuffix) {
-        if (["Meta", "Control", "Alt", "Shift"].includes(e.key)) return;
-
         const parts: string[] = [];
         if (recordingScheme === "mac") {
           if (e.metaKey) parts.push("⌘");
@@ -95,6 +94,11 @@ export default function SettingsShortcutsTab(props: {
         const modifierString = parts.length > 0 ? `${parts.join(" + ")} + ` : "";
         const fullKeyString = modifierString + specialSuffix;
 
+        if (["Meta", "Control", "Alt", "Shift"].includes(e.key)) {
+          pendingModifierBinding = fullKeyString;
+          return;
+        }
+
         updateKeyBinding?.(recordingBindingId, recordingScheme, fullKeyString);
         cancelRecording();
         return;
@@ -103,6 +107,17 @@ export default function SettingsShortcutsTab(props: {
       if (["Meta", "Control", "Alt", "Shift"].includes(e.key)) return;
       const keyString = keyEventToString(e, recordingScheme === "mac");
       updateKeyBinding?.(recordingBindingId, recordingScheme, keyString);
+      cancelRecording();
+    };
+
+    const handleKeyUp = (e: KeyboardEvent) => {
+      if (!specialSuffix || !pendingModifierBinding || isAppLockOverlayActive()) return;
+      if (!["Meta", "Control", "Alt", "Shift"].includes(e.key)) return;
+      e.preventDefault();
+      e.stopPropagation();
+      // Wait for release so a modifier-only editor can capture Ctrl+Alt, etc.
+      if (e.metaKey || e.ctrlKey || e.altKey || e.shiftKey) return;
+      updateKeyBinding?.(recordingBindingId, recordingScheme, pendingModifierBinding);
       cancelRecording();
     };
 
@@ -115,9 +130,11 @@ export default function SettingsShortcutsTab(props: {
     }, 100);
 
     window.addEventListener("keydown", handleKeyDown, true);
+    window.addEventListener("keyup", handleKeyUp, true);
     return () => {
       clearTimeout(timer);
       window.removeEventListener("keydown", handleKeyDown, true);
+      window.removeEventListener("keyup", handleKeyUp, true);
       window.removeEventListener("click", handleClick, true);
     };
   }, [recordingBindingId, recordingScheme, updateKeyBinding, cancelRecording, getSpecialSuffix]);

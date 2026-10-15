@@ -1734,7 +1734,7 @@ function createSessionOpsApi(ctx) {
                 disks,         // Array of all mounted disks
                 netRxSpeed,    // Total network receive speed (bytes/sec)
                 netTxSpeed,    // Total network transmit speed (bytes/sec)
-                latencyMs,      // TCP connection establishment latency to the SSH endpoint (ms)
+                latencyMs,      // SSH transport ping on the existing session (ms); never a second TCP dial (#3630)
                 netInterfaces, // Per-interface network stats
                 hostname,
                 osName,

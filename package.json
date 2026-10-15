@@ -76,7 +76,7 @@
   "dependencies": {
     "@ai-sdk/anthropic": "^4.0.0",
     "@ai-sdk/google": "^4.0.0",
-    "@ai-sdk/openai": "^4.0.0",
+    "@ai-sdk/openai": "4.0.8",
     "@aws-sdk/client-s3": "^3.956.0",
     "@eslint-community/regexpp": "4.12.2",
     "@fontsource/jetbrains-mono": "^5.2.8",
@@ -157,7 +157,7 @@
     "@vitejs/plugin-react": "^5.1.2",
     "concurrently": "^9.2.1",
     "cross-env": "^10.1.0",
-    "electron": "^42.3.3",
+    "electron": "^42.11.12",
     "electron-builder": "^26.15.2",
     "esbuild": "0.27.2",
     "eslint": "^9.39.1",

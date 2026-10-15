@@ -201,8 +201,8 @@ export const useSftpExternalOperations = (
     return { sftpId, release: () => {} };
   }, [ensureRemoteSftpId, getActivePane, getPaneByConnectionId, getPaneByTabId, getSideByTabId, sftpSessionsRef]);
 
-  const registerUploadController = useCallback((taskId: string, controller: UploadController) => {
-    registerExternalUploadController(taskId, controller);
+  const registerUploadController = useCallback((taskId: string, controller: UploadController, scope: "file" | "batch" = "batch") => {
+    registerExternalUploadController(taskId, controller, scope);
   }, []);
 
   const unregisterUploadController = useCallback((controller: UploadController) => {
@@ -222,7 +222,7 @@ export const useSftpExternalOperations = (
       callbacks.onScanningProgress?.(taskId, progress);
     },
     onTaskCreated: (task) => {
-      registerUploadController(task.id, controller);
+      registerUploadController(task.id, controller, !task.isDirectory && !task.parentTaskId ? "file" : "batch");
       if (task.parentTaskId) {
         registerUploadController(task.parentTaskId, controller);
       }
