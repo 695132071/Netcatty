@@ -593,18 +593,11 @@ function startPtyJob(ptyStream, command, options) {
         : Buffer.from(String(data ?? ""));
     // Count what actually arrived before decoding: a chunk that is only an
     // incomplete UTF-8 prefix yields no text yet but is still probe evidence.
-    if (probingShell) jobDiag.stats.probeBytes += bytes.length;
-    const text = outputDecoder.write(bytes);
-    if (!text) return;
-    jobDiag.stats.outputChunks += 1;
-    jobDiag.stats.outputChars += text.length;
-    if (!pendingEnd && !deliveringInput) armOutputTimeout();
-
-    if (probingShell) {
-      probeOutput = (probeOutput + text).slice(-16384);
-      // First decoded output while probing. It may be only the echoed probe
-      // command or unrelated output, so this does not prove the shell replied;
-      // probe-reply-parsed is the checkpoint that does.
+    if (bytes.length > 0) jobDiag.stats.outputChunks += 1;
+    if (probingShell && bytes.length > 0) {
+      jobDiag.stats.probeBytes += bytes.length;
+      // Raw output may be an incomplete character, an echo or unrelated data;
+      // only probe-reply-parsed proves that the shell replied to the probe.
       if (!jobDiag.stats.probeOutputSeen) {
         jobDiag.stats.probeOutputSeen = true;
         jobDiag.emit("probe-output-arrived", {
@@ -612,6 +605,14 @@ function startPtyJob(ptyStream, command, options) {
           session: diagSnapshot(),
         });
       }
+    }
+    const text = outputDecoder.write(bytes);
+    if (!text) return;
+    jobDiag.stats.outputChars += text.length;
+    if (!pendingEnd && !deliveringInput) armOutputTimeout();
+
+    if (probingShell) {
+      probeOutput = (probeOutput + text).slice(-16384);
       if (cancelRequested && hasExpectedPromptSuffix(probeOutput, expectedPrompt)) {
         finish("", -1, "Cancelled");
         return;
@@ -920,7 +921,7 @@ function startPtyJob(ptyStream, command, options) {
     }
   }
   if (probingShell) {
-    jobDiag.emit("probe-write", { probeBytes: buildLiveShellProbe(marker).length });
+    jobDiag.emit("probe-write", { bytes: Buffer.byteLength(buildLiveShellProbe(marker), "utf8") });
     writeInput(`${(skipPendingInputClear ? "" : buildPendingInputClearPrefix(resolvedShellKind))}${buildLiveShellProbe(marker)}`);
   } else {
     writeWrappedCommand();

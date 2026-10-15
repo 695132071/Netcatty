@@ -28,7 +28,9 @@ worker run. Native Windows capture still needs verification on that platform.
 Correlate records using `sessionId` and `jobId` (and `chatSessionId` where present).
 `probe-write` and `cmd-write` mark entry into a paced input attempt, not confirmed
 transport delivery. `probe-output-arrived` means output reached the job while it
-was probing; only `probe-reply-parsed` proves a valid reply was parsed.
+was probing, even if a partial character has not decoded yet; only
+`probe-reply-parsed` proves a valid reply was parsed. Write records use `bytes`
+for the outbound command size, separately from received output counters.
 `probeBytes` counts raw bytes delivered to the job during probing. A zero count
 does not prove the remote shell sent nothing. On a paused SSH stream,
 `session.stream.readableLength` reports queued readable bytes without consuming

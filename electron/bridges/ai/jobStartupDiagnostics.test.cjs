@@ -169,6 +169,10 @@ test("startup timeout emits the #3443 checkpoint timeline keyed by sessionId+job
     assert.equal(names.includes("probe-output-arrived"), false, "the paused stream never delivered the reply");
     assert.equal(names.includes("probe-reply-parsed"), false);
     assert.equal(names.includes("cmd-write"), false, "the timed-out command must not be typed");
+    const probeWrite = events.find((event) => event.event === "probe-write");
+    assert.equal(probeWrite.bytes, Buffer.byteLength(buildLiveShellProbe(job.marker)));
+    assert.equal(Object.hasOwn(probeWrite, "probeBytes"), false,
+      "outbound bytes must not look like received probe evidence");
 
     const accepted = events.find((event) => event.event === "job-start-accepted");
     assert.equal(accepted.outputMode, "background");
@@ -364,15 +368,17 @@ test("startup timeout counts raw probe bytes, including an incomplete UTF-8 pref
     // the bytes did arrive and belong in the timeout evidence.
     pty.push(Buffer.from([0xe2, 0x82]));
     await nextTick();
-    // A complete two-byte character is two bytes, not one UTF-16 unit.
-    pty.push(Buffer.from("\u00e9", "utf8"));
-    await nextTick();
+    const arrived = capture.events.find((event) => event.event === "probe-output-arrived");
+    assert.equal(arrived.probeBytes, 2, "raw arrival must be recorded before any decoded text");
     t.mock.timers.tick(30000);
     await job.resultPromise;
     await nextTick();
     capture.restore();
     const timeout = capture.events.find((event) => event.event === "startup-timeout-fired");
-    assert.equal(timeout.probeBytes, 4);
+    assert.equal(timeout.probeBytes, 2);
+    assert.equal(timeout.probeOutputSeen, true);
+    assert.equal(timeout.outputChunks, 1);
+    assert.equal(timeout.outputChars, 0);
   } finally {
     capture.restore();
     pty.destroy();
