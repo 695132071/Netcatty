@@ -967,6 +967,64 @@ test("posix wrapper keeps cd contained in the subshell (documented trade-off)", 
   }
 });
 
+// Issue #3485: interactive bash 4.4+ expands PS0 after reading a command and
+// before executing it, so a user-defined PS0 hook (commonly a timestamp from
+// ~/.bashrc; root usually has none) prints extra output inside the hidden
+// wrapper's echo window. The wrapper must silence it for its own reads and
+// restore the original value afterwards.
+test("posix wrapper saves PS0 before wrapping and restores it after execution", () => {
+  const marker = "__NCMCP_TEST__";
+  const wrapped = buildWrappedCommand("echo PS0_HOOK_TEST", "posix", marker);
+  assert.match(wrapped, /\[ -n "\$\{PS0-\}" \]&&\{ __NCMCP_PS0=\$\{PS0-\}; PS0=; \}; printf/);
+  assert.match(
+    wrapped,
+    /\[ -n "\$\{__NCMCP_PS0-\}" \]&&\{ PS0=\$\{__NCMCP_PS0-\}; unset __NCMCP_PS0; \}; \(exit \$__NCMCP_rc\); \}/,
+  );
+
+  const result = spawnSync(
+    "bash",
+    ["--norc", "-c", 'PS0="[hook] "\n' + wrapped + 'printf "RESTORED_PS0=%s\\n" "$PS0"'],
+    { encoding: "utf8" },
+  );
+
+  assert.equal(result.error, undefined);
+  assert.equal(result.status, 0);
+  assert.match(result.stdout, new RegExp(`${marker}_E:0`));
+  assert.match(result.stdout, /PS0_HOOK_TEST/);
+  // The user's PS0 value is back once the wrapper group finishes, so their
+  // own subsequent commands still run the hook.
+  assert.match(result.stdout, /RESTORED_PS0=\[hook\] /);
+});
+
+test("posix wrapper leaves PS0 alone when the user has none set", () => {
+  const marker = "__NCMCP_TEST__";
+  const wrapped = buildWrappedCommand("echo NO_PS0_TEST", "posix", marker);
+  const result = spawnSync(
+    "bash",
+    ["--norc", "-c", `unset PS0\n${wrapped}printf "PS0_SET=[%s]\\n" "\${PS0-}"`],
+    { encoding: "utf8" },
+  );
+
+  assert.equal(result.error, undefined);
+  assert.equal(result.status, 0);
+  assert.match(result.stdout, new RegExp(`${marker}_E:0`));
+  // Nothing was saved and nothing is restored: PS0 stays unset afterwards.
+  assert.match(result.stdout, /NO_PS0_TEST/);
+  const ps0Line = result.stdout.split("\n").find((line) => line.startsWith("PS0_SET="));
+  assert.equal(ps0Line, "PS0_SET=[]");
+});
+
+test("posix wrapper silencing still works under sh (dash) where PS0 does not exist", () => {
+  const marker = "__NCMCP_TEST__";
+  const wrapped = buildWrappedCommand("echo DASH_TEST", "posix", marker);
+  const result = spawnSync("sh", ["-c", `${wrapped}printf 'SH_ALIVE\\n'`], { encoding: "utf8" });
+
+  assert.equal(result.error, undefined);
+  assert.equal(result.status, 0);
+  assert.match(result.stdout, new RegExp(`${marker}_E:0`));
+  assert.match(result.stdout, /SH_ALIVE/);
+});
+
 // Issue #3265: with plain HISTCONTROL the wrapper line is recorded in bash
 // history; arrow-up recall then redraws the marker text, the preload __NCMCP_
 // filter suppresses the redraw fragments containing it, and readline's row

@@ -274,16 +274,27 @@ function buildPosixWrapperBody(command, marker, startFormat, { omitBashHistoryCl
     cmdAssign = `${marker}_cmd=$(${writes.join(`; \\\n: '${marker}'; `)})`;
   }
   const historyCleanup = omitBashHistoryCleanup ? [] : [buildBashHistoryCleanup(marker)];
+  // Issue #3485: interactive bash 4.4+ expands PS0 after reading a command
+  // and before executing it. A user-set PS0 hook (commonly a pre-exec
+  // timestamp/hook defined in ~/.bashrc — root usually has none) prints extra
+  // output inside the hidden wrapper's echo window, garbling the agent's
+  // command echo while manual typing renders natively. Save PS0 only while it
+  // is currently set (so an interrupted run cannot overwrite the saved value
+  // with empty), silence it for every wrapper read, and restore it after the
+  // wrapper group finishes. zsh/dash/fish have no PS0, so both guards are
+  // no-ops there.
+  const ps0Save = '[ -n "${PS0-}" ]&&{ __NCMCP_PS0=${PS0-}; PS0=; }';
+  const ps0Restore = '[ -n "${__NCMCP_PS0-}" ]&&{ PS0=${__NCMCP_PS0-}; unset __NCMCP_PS0; }';
   // OpenWrt builds BusyBox with a 512-byte interactive line editor. Keep
   // every physical line below that limit, even for short user commands.
   // Emit a short standalone input marker before the shell reads any PS2
   // continuation. A leading newline separates it from concurrent PTY echo.
-  return `${marker}=0; printf '\\n%s\\n' '${marker}_I'\n` + [
+  return `${marker}=0; ${ps0Save}; printf '\\n%s\\n' '${marker}_I'\n` + [
     ` : '${marker}'; ${cmdAssign}`,
     `{ printf '${startFormat}' '${marker}_S'; trap ':' INT; ( ${noPager}eval "$${marker}_cmd" ); __NCMCP_rc=$?; trap - INT`,
     `printf '%s\\n' '${marker}_E:'"$__NCMCP_rc"`,
     ...historyCleanup,
-    `(exit $__NCMCP_rc); }`,
+    `${ps0Restore}; (exit $__NCMCP_rc); }`,
   ].join(`; \\\n: '${marker}'; `);
 }
 
