@@ -1544,3 +1544,24 @@ test("Copilot catalogs separate supported GitHub credentials and profiles", () =
     assert.doesNotMatch(key, /fixture-profile-a/);
   }
 });
+
+
+test("list-models persists a first current-only success for later failures", async (t) => {
+  const { getDriver } = require("./index.cjs");
+  const { handlers, ctx, cleanup } = makeLastKnownCtx();
+  try {
+    const driver = getDriver("opencode");
+    t.mock.method(driver, "listModels", async () => ({ currentModelId: "custom/configured", models: [] }));
+    const listModels = handlers.get("netcatty:ai:sdk-agent:list-models");
+    const request = { sdkBackend: "opencode", agentCommand: "/test/first-current-only" };
+    assert.deepEqual(await listModels({ sender: {} }, request), { ok: true, currentModelId: "custom/configured", models: [] });
+    ctx.sdkModelCache.clear();
+    driver.listModels.mock.mockImplementation(async () => []);
+    const failed = await listModels({ sender: {} }, request);
+    assert.equal(failed.source, "last-known-good");
+    assert.equal(failed.currentModelId, "custom/configured");
+    assert.deepEqual(failed.models, [{ id: "custom/configured", name: "custom/configured" }]);
+  } finally {
+    cleanup();
+  }
+});

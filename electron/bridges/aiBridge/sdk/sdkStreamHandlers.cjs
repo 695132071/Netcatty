@@ -1067,13 +1067,18 @@ function registerSdkStreamHandlers(ctx) {
                 currentModelId,
               });
             } else if (currentModelId) {
-              // A current-only catalog (zero visible models, valid current
-              // id - e.g. the mimo filtered auto channel) still carries the
-              // user's selection. Refresh the persisted current id without
-              // clobbering the persisted models list; with no persisted
-              // entry there is nothing to admit (a models-less entry is
-              // unservable anyway).
-              refreshLastKnownCatalogCurrentId(lastKnownPath, cacheKey, currentModelId);
+              // A current-only success still advertises a usable selection.
+              // Keep previous rows when available; otherwise persist that
+              // selection as one visible row for a later failed load.
+              if (readLastKnownCatalogEntry(lastKnownPath, cacheKey)) {
+                refreshLastKnownCatalogCurrentId(lastKnownPath, cacheKey, currentModelId);
+              } else {
+                writeLastKnownCatalogEntry(lastKnownPath, cacheKey, {
+                  backend: backendKey,
+                  models: [{ id: currentModelId, name: currentModelId }],
+                  currentModelId,
+                });
+              }
             }
             return { ok: true, currentModelId, models };
           } catch (err) {
