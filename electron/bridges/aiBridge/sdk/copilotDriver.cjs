@@ -26,7 +26,7 @@
  */
 const { mcpEnvPairsToObject } = require("./injectMcp.cjs");
 const { resolveCopilotExecutableForSdk } = require("../../ai/shellUtils.cjs");
-const { buildCopilotHeadlessWrapperPath } = require("./copilotHeadlessLoader.cjs");
+const { resolveCopilotPlatformExecutable } = require("./copilotHeadlessLoader.cjs");
 const { isRemovedChatSessionFlag } = require("../../../cli/cliChatSession.cjs");
 const {
   TOOL_CLI_CHAT_SESSION_ENV_VAR,
@@ -72,19 +72,15 @@ function buildCopilotClientOptions({ cliPath, gitHubToken }) {
 }
 
 /**
- * Resolve the CLI path handed to RuntimeConnection.forStdio. The headless
- * wrapper (see copilotHeadlessLoader.cjs) spawns the same platform exe the
- * npm loader would, with windowsHide:true, so no console window flashes when
- * the SDK starts the runtime from Electron's console-less main process.
- * When no wrapper can be generated, the resolved path passes through as
- * before.
+ * Resolve the CLI path handed to RuntimeConnection.forStdio. For the official
+ * Windows npm loader, select the same installed native runtime it forwards to.
+ * The SDK already hides that child and owns its PID for stop/forceStop.
+ * Keep the original loader when its native runtime cannot be resolved.
  */
 function connectCopilotStdioPath(cliPath, platform = process.platform) {
   const resolved = resolveCopilotExecutableForSdk(cliPath);
-  // The SDK already hides native Windows executables and owns their PID for
-  // forceStop(). Only the Windows npm loader needs the extra hidden launch.
   if (platform !== "win32" || !/(?:^|[\\/])@github[\\/]copilot[\\/]npm-loader\.js$/i.test(resolved || "")) return resolved;
-  return buildCopilotHeadlessWrapperPath(resolved) ?? resolved;
+  return resolveCopilotPlatformExecutable(resolved) ?? resolved;
 }
 
 function toCopilotMcpServers(injectedMcpServers) {
