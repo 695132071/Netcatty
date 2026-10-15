@@ -2073,7 +2073,8 @@ const AIChatSidePanelActive: React.FC<AIChatSidePanelProps> = ({
         canSendCurrentAgent={canSendCurrentAgent}
         providerDisplayName={providerDisplayName}
         modelDisplayName={modelDisplayName}
-        modelCatalogWarning={runtimeModelWarnings[currentAgentId]
+        modelCatalogWarning={!hasCodexCustomConfig
+          && runtimeModelWarnings[currentAgentId]
           && runtimeModelWarnings[currentAgentId].cacheKey === buildExternalAgentRuntimeModelTarget(currentAgentConfig)?.cacheKey
           ? runtimeModelWarnings[currentAgentId].message
           : undefined}
