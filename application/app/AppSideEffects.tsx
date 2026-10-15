@@ -151,6 +151,7 @@ export function AppSideEffects() {
     showSftpTab,
     shellOnlyTabNumberShortcuts,
     workspaceFocusStyle,
+    toggleWindowOpacity,
   } = settings;
 
   // Always publish terminal keyboard focus to the main process. When font zoom
@@ -1079,6 +1080,7 @@ export function AppSideEffects() {
       canUseGlobalBroadcast: canUseGlobalBroadcastRef.current,
       toggleScriptsSidePanelRef,
       toggleSidePanelRef,
+      toggleWindowOpacity,
       toggleWorkspaceViewMode,
       workspaces: workspacesRefForHotkeys.current,
     }), action, e);
@@ -1091,6 +1093,7 @@ export function AppSideEffects() {
     splitSessionWithCurrentShell,
     moveFocusInWorkspace,
     toggleBroadcast,
+    toggleWindowOpacity,
     toggleGlobalBroadcast,
     toggleWorkspaceViewMode,
     confirmIfBusyLocalTerminal,

@@ -883,6 +883,7 @@ Resalta el panel dividido enfocado:
   'settings.shortcuts.binding.new-workspace': 'Nuevo espacio de trabajo',
   'settings.shortcuts.binding.snippets': 'Abrir fragmentos',
   'settings.shortcuts.binding.broadcast': 'Alternar modo de transmisión',
+  'settings.shortcuts.binding.toggle-opacity': 'Alternar la transparencia de la ventana',
   'settings.shortcuts.binding.toggle-side-panel': 'Alternar panel lateral',
   'settings.shortcuts.binding.sftp-copy': 'Copiar archivos',
   'settings.shortcuts.binding.sftp-cut': 'Cortar archivos',
