@@ -142,3 +142,21 @@ test("getContext still hides disconnected sessions outside the agent scope", asy
   });
   assert.equal(environment.hosts.length, 0);
 });
+
+test("external context preserves reconnecting metadata beside another live transport", async (t) => {
+  const bridge = setup(t, { sessions: new Map([["online", { hostname: "online", stream: { write() {} } }]]) });
+  const scope = bridge.EXTERNAL_MCP_CHAT_SESSION_ID;
+  bridge.setExternalMcpHooks({ isEnabled: () => true });
+  bridge.updateSessionMetadata([
+    { sessionId: "online", hostname: "online", connected: true },
+    { sessionId: "retrying", hostname: "retrying", connected: false },
+  ], scope);
+  const context = await bridge.dispatchBuiltinRpc("netcatty/getContext", { chatSessionId: scope });
+  assert.equal(context.hostCount, 2);
+  assert.equal(context.hosts.find(host => host.sessionId === "retrying")?.connected, false);
+  assert.equal(context.hosts.find(host => host.sessionId === "online")?.connected, true);
+  // A renderer-authoritative removal must still remove the closed tab.
+  bridge.updateSessionMetadata([{ sessionId: "online", connected: true }], scope);
+  const afterClose = await bridge.dispatchBuiltinRpc("netcatty/getContext", { chatSessionId: scope });
+  assert.deepEqual(afterClose.hosts.map(host => host.sessionId), ["online"]);
+});

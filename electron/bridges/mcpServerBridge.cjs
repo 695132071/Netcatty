@@ -727,6 +727,15 @@ function syncLiveSessionsToExternalScope(chatSessionId = EXTERNAL_MCP_CHAT_SESSI
     }
     return { ok: true, count: 0, chatSessionId };
   }
+  // A reconnecting renderer tab can be absent from the backend map while
+  // another terminal is still live. Preserve its already scoped metadata;
+  // authoritative renderer updates remove it when the tab actually closes.
+  const liveIds = new Set(sessionList.map((entry) => entry.sessionId));
+  for (const [sessionId, meta] of existingMeta) {
+    if (!liveIds.has(sessionId) && meta.connected === false) {
+      sessionList.push({ sessionId, ...meta });
+    }
+  }
   updateSessionMetadata(sessionList, chatSessionId);
   return { ok: true, count: sessionList.length, chatSessionId };
 }

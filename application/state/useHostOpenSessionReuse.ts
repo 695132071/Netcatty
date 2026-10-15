@@ -1,6 +1,10 @@
 import { useCallback, useLayoutEffect, useRef } from 'react';
 import type { Host, Identity, SSHKey, TerminalSession } from '../../domain/models';
 import { findReusableHostSession } from '../../domain/hostOpenSession';
+import { resolveTelnetPassword, resolveTelnetPort, resolveTelnetUsername } from '../../domain/host';
+import { isEncryptedCredentialPlaceholder, sanitizeCredentialValue } from '../../domain/credentials';
+import { resolveEffectiveTerminalProtocol } from '../../domain/terminalProtocol';
+import { findIncompleteProxyIdentityId, findMissingProxyIdentityId, hasUsableProxyConfig } from '../../domain/proxyProfiles';
 import { buildSftpHostCredentials } from './sftp/useSftpHostCredentials';
 import { buildTransferPoolKey } from './sftp/transferConnectionPool';
 import { createHostTerminalSession } from './sessionFactories';
@@ -17,9 +21,45 @@ type HostOpenSessionReuseInput = {
 export function useHostOpenSessionReuse({ sessions, hosts, keys, identities, resolveEffectiveHost }: HostOpenSessionReuseInput) {
   const openingKeys = useRef(new Map<string, Promise<string | undefined>>());
   const connectionKey = useCallback((host: Host) => {
+    const protocol = resolveEffectiveTerminalProtocol(host);
+    if (protocol === 'local') {
+      const options = {
+        hostname: host.hostname,
+        username: '',
+        localShell: host.localShell || undefined,
+        // undefined lets the backend choose login arguments; [] explicitly does not.
+        localShellArgs: host.localShellArgs,
+        localStartDir: host.localStartDir || undefined,
+      };
+      return buildTransferPoolKey({ hostname: host.hostname, hostId: host.id, protocol, connectionOptions: options });
+    }
+    if (protocol === 'telnet') {
+      // The actual Telnet starter rejects these settings before connecting.
+      if ((host.proxyProfileId && !host.proxyConfig)
+        || findMissingProxyIdentityId(host.proxyConfig, identities)
+        || findIncompleteProxyIdentityId(host.proxyConfig, identities)
+        || hasUsableProxyConfig(host.proxyConfig)) {
+        throw new Error('Telnet proxy configuration cannot be used');
+      }
+      // Match the actual Telnet starter, including explicit empty overrides.
+      const identity = host.telnetIdentityId ? identities.find((item) => item.id === host.telnetIdentityId) : undefined;
+      if (host.telnetIdentityId && (!identity?.username?.trim() || identity.password === undefined)) {
+        throw new Error('Telnet identity is missing or incomplete');
+      }
+      const rawPassword = identity ? identity.password : resolveTelnetPassword(host);
+      if (isEncryptedCredentialPlaceholder(rawPassword)) throw new Error('Telnet credentials are unavailable');
+      const options = {
+        hostname: host.hostname,
+        port: resolveTelnetPort(host),
+        username: identity ? identity.username?.trim() : resolveTelnetUsername(host),
+        password: sanitizeCredentialValue(rawPassword),
+      };
+      return buildTransferPoolKey({ ...options, hostId: host.id, protocol, connectionOptions: options });
+    }
     // Reuse the existing credential/chain expansion and transport identity
     // comparison. Presentation names and SFTP-only choices do not change a
     // terminal's destination or login.
+    if (protocol === 'serial' && isEncryptedCredentialPlaceholder(host.password)) throw new Error('Serial credentials are unavailable');
     const options = buildSftpHostCredentials({
       host, hosts: hosts.map(resolveEffectiveHost), keys, identities,
     });
@@ -28,13 +68,17 @@ export function useHostOpenSessionReuse({ sessions, hosts, keys, identities, res
     for (const hop of options.jumpHosts ?? []) delete hop.label;
     const connectionOptions = {
       ...options,
-      protocol: host.protocol || 'ssh',
+      protocol,
       moshEnabled: host.moshEnabled,
       moshServerPath: host.moshServerPath,
       etEnabled: host.etEnabled,
       etPort: host.etPort,
+      etJumpPorts: protocol === 'et'
+        ? host.hostChain?.hostIds.map((id) => hosts.find((item) => item.id === id)).map((hop) => hop && (resolveEffectiveHost(hop).etPort ?? 2022))
+        : undefined,
       pluginConnection: host.pluginConnection,
-      serialConfig: host.protocol === 'serial' ? createHostTerminalSession('', host).serialConfig : undefined,
+      serialConfig: protocol === 'serial' ? createHostTerminalSession('', host).serialConfig : undefined,
+      serialLogin: protocol === 'serial' ? { username: host.username?.trim(), password: sanitizeCredentialValue(host.password) } : undefined,
       agentForwarding: host.agentForwarding,
       x11Forwarding: host.x11Forwarding,
     };
@@ -54,13 +98,16 @@ export function useHostOpenSessionReuse({ sessions, hosts, keys, identities, res
         openingKeys.current.set(session.id, connectionKey({
           ...resolveEffectiveHost(host),
           hostname: session.hostname,
-          username: session.username,
+          username: session.protocol === 'serial' ? resolveEffectiveHost(host).username : session.username,
           port: session.port ?? host.port,
           protocol: session.protocol ?? host.protocol,
           moshEnabled: session.moshEnabled ?? host.moshEnabled,
           etEnabled: session.etEnabled ?? host.etEnabled,
           serialConfig: session.serialConfig ?? host.serialConfig,
           pluginConnection: session.pluginConnection ?? host.pluginConnection,
+          localShell: session.localShell ?? host.localShell,
+          localShellArgs: session.localShellArgs ?? host.localShellArgs,
+          localStartDir: session.localStartDir ?? host.localStartDir,
         }).catch(() => undefined));
       } catch {
         openingKeys.current.set(session.id, Promise.resolve(undefined));

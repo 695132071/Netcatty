@@ -2,9 +2,9 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import React from 'react';
 import { act, create, type ReactTestRenderer } from 'react-test-renderer';
-import type { Host, Identity, SSHKey, TerminalSession } from '../../domain/models';
+import type { GroupConfig, Host, Identity, SSHKey, TerminalSession } from '../../domain/models';
 import { updateRestoredSessionStatusState } from './sessionRestoreState';
-import { resolveTerminalSessionHost } from '../../domain/terminalHostResolution';
+import { resolveEffectiveTerminalHost, resolveTerminalSessionHost } from '../../domain/terminalHostResolution';
 import { createHostTerminalSession } from './sessionFactories';
 import { useHostOpenSessionReuse } from './useHostOpenSessionReuse';
 
@@ -14,14 +14,14 @@ const host = (extra: Partial<Host> = {}): Host => ({
   id: 'host', hostname: 'original.invalid', username: 'user', label: 'Original', os: 'linux', tags: [], protocol: 'ssh', ...extra,
 });
 
-async function harness(initial: Host, extra: { hosts?: Host[]; keys?: SSHKey[]; identities?: Identity[]; sessions?: TerminalSession[] } = {}) {
+async function harness(initial: Host, extra: { hosts?: Host[]; keys?: SSHKey[]; identities?: Identity[]; sessions?: TerminalSession[]; resolveEffectiveHost?: (host: Host) => Host } = {}) {
   let hosts = [initial, ...(extra.hosts ?? [])];
   let keys = extra.keys ?? [];
   let identities = extra.identities ?? [];
   let sessions: TerminalSession[] = extra.sessions ?? [{ ...createHostTerminalSession('tab', initial), status: 'connected' }];
   let find: ReturnType<typeof useHostOpenSessionReuse>;
   function Harness() {
-    find = useHostOpenSessionReuse({ sessions, hosts, keys, identities, resolveEffectiveHost: effective });
+    find = useHostOpenSessionReuse({ sessions, hosts, keys, identities, resolveEffectiveHost: extra.resolveEffectiveHost ?? effective });
     return null;
   }
   let renderer: ReactTestRenderer;
@@ -145,4 +145,130 @@ test('an unchanged restored plugin configuration can be reused after manual reco
   t.after(api.close);
   await api.update({ sessions: updateRestoredSessionStatusState([restored], restored.id, 'connecting') });
   assert.equal((await api.find())?.sessionId, 'tab');
+});
+
+for (const [field, value] of [
+  ['telnetPort', 2324], ['telnetUsername', 'other-telnet-user'], ['telnetPassword', 'rotated-telnet-password'],
+] as const) {
+  test(`a Telnet ${field} edit cannot reuse the old transport`, async (t) => {
+    const original = host({ protocol: 'telnet', telnetPort: 2323, telnetUsername: 'telnet-user', telnetPassword: 'telnet-password' });
+    const api = await harness(original);
+    t.after(api.close);
+    assert.equal((await api.find())?.sessionId, 'tab');
+    await api.update({ host: { ...original, [field]: value } });
+    assert.equal(await api.find(), undefined);
+  });
+}
+
+test('Telnet identity credential rotation and missing identity reject reuse', async (t) => {
+  const identity: Identity = { id: 'telnet-login', label: 'Telnet login', username: 'telnet-user', password: 'original', authMethod: 'password', created: 0 };
+  const original = host({ protocol: 'telnet', telnetIdentityId: identity.id });
+  const api = await harness(original, { identities: [identity] });
+  t.after(api.close);
+  assert.equal((await api.find())?.sessionId, 'tab');
+  for (const identities of [[{ ...identity, username: 'other-user' }], [{ ...identity, password: 'rotated' }], []]) {
+    await api.update({ identities });
+    assert.equal(await api.find(), undefined);
+  }
+});
+
+test('Telnet explicit empty login does not fall back to SSH login fields', async (t) => {
+  const original = host({ protocol: 'telnet', telnetUsername: '', telnetPassword: '', password: 'ssh-only' });
+  const api = await harness(original);
+  t.after(api.close);
+  assert.equal((await api.find())?.sessionId, 'tab');
+  await api.update({ host: { ...original, label: 'Renamed', username: 'unrelated-ssh-user', password: 'unrelated-ssh-password', identityId: 'missing-ssh-identity', telnetPort: 23 } });
+  assert.equal((await api.find())?.sessionId, 'tab');
+  await api.update({ host: { ...original, telnetUsername: undefined, telnetPassword: undefined } });
+  assert.equal(await api.find(), undefined, 'removing explicit empty overrides enables the actual fallback login');
+});
+
+for (const transport of [{ protocol: 'et' as const }, { protocol: 'ssh' as const, etEnabled: true }]) {
+  test(`changing a jump ET server port rejects the old ${JSON.stringify(transport)} transport`, async (t) => {
+    const original = host({ ...transport, hostChain: { hostIds: ['jump'] } });
+    const jump = host({ id: 'jump', hostname: 'jump.invalid', etPort: 2022 });
+    const api = await harness(original, { hosts: [jump] });
+    t.after(api.close);
+    assert.equal((await api.find())?.sessionId, 'tab');
+    await api.update({ hosts: [original, { ...jump, etPort: 3022 }] });
+    assert.equal(await api.find(), undefined);
+  });
+}
+
+test('serial direct auto-login password is not masked by an unrelated SSH identity', async (t) => {
+  const identity: Identity = { id: 'ssh-login', label: 'SSH login', username: 'ssh-user', password: 'ssh-password', authMethod: 'password', created: 0 };
+  const original = host({ protocol: 'serial', hostname: '/dev/tty.test', username: '', password: 'serial-password', identityId: identity.id });
+  const api = await harness(original, { identities: [identity] });
+  t.after(api.close);
+  assert.equal((await api.find())?.sessionId, 'tab');
+  await api.update({ host: { ...original, password: 'rotated-serial-password' } });
+  assert.equal(await api.find(), undefined);
+});
+
+test('unchanged serial direct username matches the actual auto-login input', async (t) => {
+  const original = host({ protocol: 'serial', hostname: '/dev/tty.test', username: 'serial-user', password: 'serial-password' });
+  const api = await harness(original);
+  t.after(api.close);
+  assert.equal((await api.find())?.sessionId, 'tab');
+  await api.update({ host: { ...original, username: 'other-serial-user' } });
+  assert.equal(await api.find(), undefined);
+});
+
+for (const [field, value] of [
+  ['localShell', '/bin/bash'], ['localShellArgs', ['--norc']], ['localStartDir', '/replacement'],
+] as const) {
+  test(`a saved local ${field} edit cannot reuse the old process`, async (t) => {
+    const original = host({ protocol: 'local', hostname: 'localhost', localShell: '/bin/zsh', localShellArgs: ['-l'], localStartDir: '/original' });
+    const session = { ...createHostTerminalSession('tab', original), status: 'connected', localShell: original.localShell, localShellArgs: original.localShellArgs, localStartDir: original.localStartDir } as TerminalSession;
+    const api = await harness(original, { sessions: [session] });
+    t.after(api.close);
+    assert.equal((await api.find())?.sessionId, 'tab');
+    await api.update({ host: { ...original, [field]: value } });
+    assert.equal(await api.find(), undefined);
+    const alreadyEdited = await harness({ ...original, [field]: value }, { sessions: [session] });
+    t.after(alreadyEdited.close);
+    assert.equal(await alreadyEdited.find(), undefined, 'opening fields come from the actual local session');
+  });
+}
+
+test('local default shell and cwd treat empty values as omitted but explicit empty args stay distinct', async (t) => {
+  const original = host({ protocol: 'local', hostname: 'localhost' });
+  const api = await harness(original);
+  t.after(api.close);
+  await api.update({ host: { ...original, localShell: '', localStartDir: '', label: 'Renamed' } });
+  assert.equal((await api.find())?.sessionId, 'tab');
+  await api.update({ host: { ...original, localShellArgs: [] } });
+  assert.equal(await api.find(), undefined, 'empty args bypass backend login-shell defaults');
+});
+
+for (const [label, proxy] of [
+  ['a missing saved profile', { proxyProfileId: 'missing-profile' }],
+  ['a usable proxy', { proxyConfig: { type: 'socks5', host: 'proxy.invalid', port: 1080 } }],
+  ['a missing proxy identity', { proxyConfig: { type: 'socks5', host: '', port: 0, identityId: 'missing-identity' } }],
+  ['an incomplete proxy identity', { proxyConfig: { type: 'socks5', host: '', port: 0, identityId: 'incomplete-identity' } }],
+] as const) {
+  test(`Telnet adding ${label} cannot bypass actual starter rejection through reuse`, async (t) => {
+    const original = host({ protocol: 'telnet' });
+    const api = await harness(original, { identities: [{ id: 'incomplete-identity', label: 'Incomplete', username: 'proxy-user', authMethod: 'password', created: 0 }] });
+    t.after(api.close);
+    assert.equal((await api.find())?.sessionId, 'tab');
+    await api.update({ host: { ...original, ...proxy } });
+    assert.equal(await api.find(), undefined);
+    await api.update({ host: { ...original, label: 'Renamed without a proxy' } });
+    assert.equal((await api.find())?.sessionId, 'tab');
+  });
+}
+
+test('Telnet inheriting a proxy profile cannot reuse its previous direct session', async (t) => {
+  const original = host({ protocol: 'telnet', group: 'prod/web' });
+  const groupConfigs: GroupConfig[] = [];
+  const proxyProfiles = [{ id: 'group-proxy', label: 'Proxy', createdAt: 0, config: { type: 'socks5' as const, host: 'proxy.invalid', port: 1080 } }];
+  const resolveEffectiveHost = (candidate: Host) => resolveEffectiveTerminalHost({ host: candidate, groupConfigs, proxyProfiles });
+  const api = await harness(original, { resolveEffectiveHost });
+  t.after(api.close);
+  assert.equal((await api.find())?.sessionId, 'tab');
+  groupConfigs.push({ path: 'prod', proxyProfileId: 'group-proxy' });
+  assert.equal(resolveEffectiveHost(original).proxyConfig?.host, 'proxy.invalid');
+  await api.update({ host: { ...original } });
+  assert.equal(await api.find(), undefined);
 });
