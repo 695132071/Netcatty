@@ -51,6 +51,7 @@ import {
   setLatestAISessionsSnapshot,
   writeSessionsForStorage,
   cleanupSdkAgentSessions,
+  cleanupDeletedAIChatSessions,
 } from './state/aiStateSnapshots';
 import { getAISessionsSnapshot, publishAISessionsSnapshot } from './state/aiSessionsStore';
 import {
@@ -135,7 +136,7 @@ import {
   STORAGE_KEY_AI_SESSIONS,
   STORAGE_KEY_CLOUD_SYNC_AI_SESSIONS,
 } from '../infrastructure/config/storageKeys';
-import { mergeAiSessionLists, stripAiSessionDeviceState, stripAiSessionPayloadForSync } from '../domain/syncMerge';
+import { mergeAiSessionLists, mergeSyncPayloads, stripAiSessionDeviceState, stripAiSessionPayloadForSync } from '../domain/syncMerge';
 import { isTerminalSidePanelAutoOpenTab } from '../domain/terminalSidePanelAutoOpen';
 import { prepareRestoredPayloadConvergentWrites } from './convergentSyncReplica';
 
@@ -1242,11 +1243,16 @@ async function applyAiSessionData(sessions: NonNullable<SyncPayload['aiSessions'
     ? sessions
     : sessions.map(stripAiSessionDeviceState);
   const localById = new Map(localSessions.map((session) => [session.id, session]));
+  const incomingIds = new Set(incoming.map((session) => session.id));
+  const removedIds = localSessions.filter((session) => !incomingIds.has(session.id)).map((session) => session.id);
   const resetSdkSessions: string[] = [];
-  const mergedSessions = mergeAiSessionLists(localSessions, incoming).map((session) => {
+  // The sync merge has already decided which session IDs survive. Backups
+  // restore their exact transcript; cloud survivors still retain local turns.
+  const candidates = includeLocalOnlyData ? incoming
+    : mergeAiSessionLists(localSessions.filter((session) => incomingIds.has(session.id)), incoming);
+  const mergedSessions = candidates.map((session) => {
     // Native SDK threads belong to this device. Reuse the local thread
     // only while it already contains the entire merged transcript.
-    if (includeLocalOnlyData) return session;
     const local = localById.get(session.id);
     const portableMessages = (value: typeof session) => stripAiSessionPayloadForSync([value])[0].messages;
     const transcriptChanged = local
@@ -1260,6 +1266,7 @@ async function applyAiSessionData(sessions: NonNullable<SyncPayload['aiSessions'
   if (!writeSessionsForStorage(mergedSessions)) {
     throw new Error('Unable to save downloaded AI chat history');
   }
+  cleanupDeletedAIChatSessions(removedIds);
   await cleanupSdkAgentSessions(resetSdkSessions);
   setLatestAISessionsSnapshot(mergedSessions);
   publishAISessionsSnapshot({ ...getAISessionsSnapshot(), sessions: mergedSessions });
@@ -1269,13 +1276,19 @@ async function applyAiSessionData(sessions: NonNullable<SyncPayload['aiSessions'
 /** Read existing cloud chats before an enabled empty local list can overwrite them. */
 export async function setAiSessionsSyncPreference(
   enabled: boolean,
-  loadRemoteSessions: () => Promise<Array<NonNullable<SyncPayload['aiSessions']>>>,
+  loadRemotePayloads: () => Promise<SyncPayload[]>,
+  preserveDeletions = false,
 ): Promise<void> {
   const wasEnabled = localStorageAdapter.read<{ enabled?: boolean }>(STORAGE_KEY_CLOUD_SYNC_AI_SESSIONS)?.enabled === true;
   if (enabled && !wasEnabled) {
-    const remotes = await loadRemoteSessions();
-    const sessions = remotes.reduce((merged, incoming) => mergeAiSessionLists(merged, incoming), []);
-    await applyAiSessionData(sessions, false);
+    const remotes = await loadRemotePayloads();
+    // Reuse the ordinary no-base deletion rules, including cloud tombstones,
+    // while retaining local-only chats when this is a first-time opt-in.
+    const local: SyncPayload = { hosts: [], keys: [], identities: [], snippets: [], customGroups: [],
+      aiSessions: collectLocalAiSessions(), syncedAt: 0 };
+    const merged = remotes.reduce((current, remote) =>
+      mergeSyncPayloads(null, current, remote, { preserveDeletions }).payload, local);
+    await applyAiSessionData(merged.aiSessions ?? [], false);
   }
   if (!localStorageAdapter.write(STORAGE_KEY_CLOUD_SYNC_AI_SESSIONS, { enabled })) {
     throw new Error('Unable to save the chat sync preference');

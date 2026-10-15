@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import type { AISession } from '../infrastructure/ai/types';
 import type { SyncPayload } from '../domain/sync';
+import { withSyncReliabilityMeta } from '../domain/syncReliability';
 
 const storage = new Map<string, string>();
 const events = new EventTarget();
@@ -22,6 +23,7 @@ const {
 } = await import('./syncPayload');
 
 const vault = { hosts: [], keys: [], identities: [], snippets: [], customGroups: [], knownHosts: [] };
+const remotePayload = (aiSessions: AISession[]): SyncPayload => ({ ...vault, aiSessions, syncedAt: 1 });
 const session = (): AISession => ({
   id: 'chat', title: 'Chat', agentId: 'catty', scope: { type: 'global' }, createdAt: 1, updatedAt: 2,
   messages: [{ id: 'message', role: 'user', content: 'Inspect', timestamp: 1, attachments: [{
@@ -102,6 +104,29 @@ test('restoring an old backup without chat leaves current chats alone', async ()
   assert.deepEqual(JSON.parse(storage.get(keys.STORAGE_KEY_AI_SESSIONS)!), [local]);
 });
 
+test('authoritative cloud session removal stays removed in the next upload', async () => {
+  save([session()]);
+  await applySyncPayload({ ...vault, aiSessions: [], syncedAt: 3 }, { importVaultData: () => undefined });
+  assert.deepEqual(getAISessionsSnapshot().sessions, []);
+  assert.deepEqual(collectAiSessionsForSync(), []);
+  assert.deepEqual((await buildCloudSyncPayload(vault, [], { collectPluginSidecars: () => undefined })).aiSessions, []);
+});
+
+test('local restore replaces later sessions and later turns with the backup snapshot', async () => {
+  const backedUp = session();
+  const later = { ...session(), updatedAt: 3, messages: [...session().messages,
+    { id: 'later', role: 'assistant' as const, content: 'After backup', timestamp: 3 }] };
+  save([later, { ...session(), id: 'created-after-backup' }]);
+  await applyLocalVaultPayload({ ...vault, aiSessions: [backedUp], syncedAt: 1 }, { importVaultData: () => undefined }, {
+    prepareConvergentRestore: async () => async () => {},
+  });
+  assert.deepEqual(getAISessionsSnapshot().sessions, [backedUp]);
+  await applyLocalVaultPayload({ ...vault, aiSessions: [], syncedAt: 1 }, { importVaultData: () => undefined }, {
+    prepareConvergentRestore: async () => async () => {},
+  });
+  assert.deepEqual(getAISessionsSnapshot().sessions, []);
+});
+
 test('cloud downloads respect local chat opt-in while still applying vault data', async () => {
   save([], false);
   let vaultImports = 0;
@@ -122,7 +147,7 @@ test('enabling sync imports existing cloud chats before an empty local list can 
   await setAiSessionsSyncPreference(true, async () => {
     loads++;
     assert.equal(collectAiSessionsForSync(), undefined);
-    return [[session()]];
+    return [remotePayload([session()])];
   });
   assert.equal(loads, 1);
   assert.equal(collectAiSessionsForSync()?.[0].id, 'chat');
@@ -143,8 +168,37 @@ test('enabling from multiple mirrored providers retains the newer turns from eit
   const newer = session();
   newer.updatedAt = 3;
   newer.messages.push({ id: 'new-turn', role: 'assistant', content: 'Newer provider turn', timestamp: 3 });
-  await setAiSessionsSyncPreference(true, async () => [[newer], [session()]]);
+  await setAiSessionsSyncPreference(true, async () => [remotePayload([newer]), remotePayload([session()])]);
   assert.deepEqual(collectAiSessionsForSync()?.[0].messages.map((message) => message.id), ['message', 'new-turn']);
+});
+
+test('initial enable retains local-only chats but respects remote deletions and preservation', async () => {
+  const localOnly = { ...session(), id: 'local-only' };
+  save([localOnly], false);
+  await setAiSessionsSyncPreference(true, async () => [remotePayload([session()])]);
+  assert.deepEqual(collectAiSessionsForSync()?.map(item => item.id).sort(), ['chat', 'local-only']);
+  const removed = withSyncReliabilityMeta(remotePayload([]), remotePayload([session()]), { now: 3 });
+  for (const preserve of [false, true]) {
+    save([session(), localOnly], false);
+    await setAiSessionsSyncPreference(true, async () => [removed, remotePayload([session()])], preserve);
+    assert.deepEqual(collectAiSessionsForSync()?.map(item => item.id).sort(), preserve ? ['chat', 'local-only'] : ['local-only']);
+  }
+});
+
+test('backup rollback resets the native thread that still contains later turns', async () => {
+  const cleanups: string[] = [];
+  Object.assign(window, { netcatty: { aiSdkAgentCleanup: async (id: string) => { cleanups.push(id); return { ok: true }; } } });
+  const backedUp = { ...session(), agentId: 'codex', externalSessionId: 'native-thread' };
+  save([{ ...backedUp, updatedAt: 4, messages: [...backedUp.messages,
+    { id: 'later', role: 'assistant', content: 'After backup', timestamp: 4 }] }]);
+  await applyLocalVaultPayload(remotePayload([backedUp]), { importVaultData: () => undefined }, {
+    prepareConvergentRestore: async () => async () => {},
+  });
+  const restored = getAISessionsSnapshot().sessions[0];
+  assert.equal(restored.externalSessionId, undefined);
+  assert.deepEqual(restored.messages, backedUp.messages);
+  assert.deepEqual(cleanups, ['chat']);
+  delete (window as unknown as { netcatty?: unknown }).netcatty;
 });
 
 test('cloud restore never resumes a source device SDK thread, and preserves matching local threads', async () => {

@@ -757,8 +757,8 @@ export const useCloudSync = (): CloudSyncHook => {
       const providers = Object.entries(manager.getAllProviders())
         .filter(([, connection]) => isProviderReadyForSync(connection));
       const remotes = await Promise.all(providers.map(([provider]) => manager.downloadFromProvider(provider as CloudProvider)));
-      return remotes.map((remote) => remote?.payload.aiSessions ?? []);
-    });
+      return remotes.filter((remote) => remote !== null).map((remote) => remote.payload);
+    }, manager.getState().syncStrategy === 'smartMergePreserve');
   }, []);
 
   const setSyncStrategy = useCallback((strategy: CloudSyncStrategy) => {

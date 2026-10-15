@@ -5,6 +5,7 @@ import { mergeAiSessionLists, mergeSyncPayloads, stripAiSessionDeviceState, stri
 import type { SyncPayload } from "./sync.ts";
 import { encodeSdkSessionIdentity } from "../infrastructure/ai/harness/sdkSessionIdentity.ts";
 import { buildExternalAgentHistoryMessagesForBridge } from "../components/ai/externalAgentHistory.ts";
+import { withSyncReliabilityMeta } from './syncReliability';
 
 type Session = NonNullable<SyncPayload["aiSessions"]>[number];
 
@@ -214,6 +215,20 @@ test("ai sessions: a new turn survives deletion on the other device", () => {
     const result = mergeSyncPayloads(base, local, remote);
     assert.deepEqual(result.payload.aiSessions, [edited]);
     assert.equal(result.hadConflicts, true);
+  }
+});
+
+test('no-base chat deletion records suppress stale sessions unless preservation is selected', () => {
+  const stale = payload({ aiSessions: [session('removed', 100, [msg('m1', 1)])] });
+  const removed = withSyncReliabilityMeta(payload(), stale, { now: 200 });
+  assert.equal(removed.syncMeta?.deletions[0]?.entityType, 'aiSessions');
+  for (const [local, remote] of [[stale, removed], [removed, stale]]) {
+    const normal = mergeSyncPayloads(null, local, remote).payload;
+    assert.deepEqual(normal.aiSessions, []);
+    assert.ok(normal.syncMeta?.deletions.some(item => item.entityType === 'aiSessions' && item.id === 'removed'));
+    const preserved = mergeSyncPayloads(null, local, remote, { preserveDeletions: true }).payload;
+    assert.deepEqual(preserved.aiSessions, stale.aiSessions);
+    assert.equal(preserved.syncMeta?.deletions.some(item => item.id === 'removed') ?? false, false);
   }
 });
 

@@ -323,7 +323,7 @@ function stripAttachmentBlobs(attachments: unknown[]): unknown[] {
  *
  * Sessions are unioned by id. Inside a session the message list is
  * append-only: a message is identified by its id, and the merged transcript is
- * the union of all three sides sorted by timestamp. Two devices that appended
+ * the union of both branches while preserving each branch's sequence. Two devices that appended
  * different turns to the same conversation therefore keep both — which is what
  * a plain last-writer-wins merge would silently throw away.
  */
@@ -331,6 +331,7 @@ function mergeAiSessionArrays<T extends { id: string; updatedAt?: number; messag
   base: T[],
   local: T[],
   remote: T[],
+  tombstones?: { local: Set<string>; remote: Set<string> },
   options?: EntityMergeOptions,
 ): EntityMergeResult<T> {
   const baseMap = new Map(base.map((e) => [e.id, e]));
@@ -352,6 +353,14 @@ function mergeAiSessionArrays<T extends { id: string; updatedAt?: number; messag
     const inLocal = localItem !== undefined;
     const inRemote = remoteItem !== undefined;
 
+    if (!options?.preserveDeletions && !inBase && inLocal && !inRemote && tombstones?.remote.has(id)) {
+      deleted.remote++;
+      continue;
+    }
+    if (!options?.preserveDeletions && !inBase && !inLocal && inRemote && tombstones?.local.has(id)) {
+      deleted.local++;
+      continue;
+    }
     if (!inBase && inLocal && !inRemote) {
       merged.push(localItem as T);
       added.local++;
@@ -870,6 +879,7 @@ export function mergeSyncPayloads(
     baseAiSessions,
     entityArray(local, 'aiSessions', baseAiSessions),
     entityArray(remote, 'aiSessions', baseAiSessions),
+    tombstones('aiSessions'),
     mergeOptions,
   );
 
