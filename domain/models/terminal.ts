@@ -288,6 +288,7 @@ export const DEFAULT_KEYWORD_HIGHLIGHT_RULES: KeywordHighlightRule[] = [
   { id: 'info', label: 'Info', patterns: ['\\[info\\]', '\\[notice\\]', '\\[note\\]', '\\bnotice\\b', '\\bnote\\b'], color: '#3B82F6', enabled: true },
   { id: 'debug', label: 'Debug', patterns: ['\\[debug\\]', '\\[trace\\]', '\\[verbose\\]', '\\bdebug\\b', '\\btrace\\b', '\\bverbose\\b'], color: '#A78BFA', enabled: true },
   { id: 'ip-mac', label: 'URL, IP & MAC', patterns: [URL_HIGHLIGHT_PATTERN, IPV4_HIGHLIGHT_PATTERN, IPV6_HIGHLIGHT_PATTERN, MAC_ADDRESS_HIGHLIGHT_PATTERN], color: '#EC4899', enabled: true },
+  { id: 'unix-path', label: 'Unix paths', patterns: ["(?<=\")(?:/|~/)[^\"\\r\\n]+(?=\")|(?<=')(?:/|~/)[^'\\r\\n]+(?=')|(?<![\\w.:/\"'\\u0080-\\uFFFF])(?:/|~/)[^\\s\"']+"], color: '#A78BFA', enabled: true },
 ];
 
 const cloneKeywordHighlightRule = (rule: KeywordHighlightRule): KeywordHighlightRule => ({
