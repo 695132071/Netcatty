@@ -626,7 +626,7 @@ function mapCopilotModels(models) {
  * @param {string} [args.cliPath]
  * @param {object} [args.sdkModule] inject the @github/copilot-sdk module (for tests)
  */
-async function listCopilotModels({ cliPath, sdkModule, abortController, signal }) {
+async function listCopilotModels({ cliPath, runtimeEnv, sdkModule, abortController, signal }) {
   const externalSignal = signal || abortController?.signal;
   if (externalSignal?.aborted) return [];
   let resolvedModule = sdkModule;
@@ -636,6 +636,7 @@ async function listCopilotModels({ cliPath, sdkModule, abortController, signal }
   const sdk = resolvedModule;
   const { CopilotClient, RuntimeConnection } = sdk;
   const clientOptions = { useLoggedInUser: true };
+  if (runtimeEnv && typeof runtimeEnv === "object") clientOptions.env = runtimeEnv;
   if (cliPath && RuntimeConnection?.forStdio) {
     // Same EINVAL hazard as runCopilotTurn: resolve .cmd/.bat shims first,
     // then wrap for headless spawn (no console flash on Windows).
