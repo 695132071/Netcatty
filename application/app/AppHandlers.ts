@@ -306,6 +306,11 @@ export function handleGlobalHotkeyKeyDownImpl(getCtx: AppContextGetter, e: Keybo
     for (const binding of keyBindings) {
       const keyStr = isMac ? binding.mac : binding.pc;
       if (!matchesKeyBinding(e, keyStr, isMac)) continue;
+      // IME-filtered keys retain their physical code (e.g. Linux Unicode entry).
+      // Let composition handle them instead of treating them as opacity toggles.
+      if (binding.action === 'toggleOpacity' && (e.isComposing || e.keyCode === 229 || e.key === 'Process')) {
+        return;
+      }
       if (HOTKEY_DEBUG) console.log('[Hotkeys] Matched binding:', binding.action, keyStr);
       if (binding.category === 'sftp') {
         continue;

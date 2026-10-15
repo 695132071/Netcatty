@@ -748,6 +748,40 @@ test('toggleOpacity hotkey invokes toggleWindowOpacity', () => {
 
   assert.equal(called, true);
 });
+
+for (const scenario of [
+  { name: 'IME process key with its original physical code', key: 'Process', keyCode: 229, isComposing: false, expected: false },
+  { name: 'key during composition', key: 'U', keyCode: 85, isComposing: true, expected: false },
+  { name: 'ordinary shortcut', key: 'U', keyCode: 85, isComposing: false, expected: true },
+]) {
+  test(`transparency shortcut respects ${scenario.name}`, () => {
+    const target = new FakeHTMLElement();
+    const actions: string[] = [];
+    let prevented = false;
+    const event = {
+      ...scenario,
+      code: 'KeyU',
+      ctrlKey: true,
+      shiftKey: true,
+      altKey: false,
+      metaKey: false,
+      target,
+      composedPath: () => [target],
+      preventDefault: () => { prevented = true; },
+      stopPropagation: () => {},
+    } as unknown as KeyboardEvent;
+    handleGlobalHotkeyKeyDownImpl(() => ({
+      HOTKEY_DEBUG: false,
+      closeTabKeyStr: 'Ctrl + W',
+      executeHotkeyAction: (action: string) => actions.push(action),
+      hotkeyScheme: 'pc',
+      keyBindings: DEFAULT_KEY_BINDINGS,
+      matchesKeyBinding,
+    }), event);
+    assert.deepEqual(actions, scenario.expected ? ['toggleOpacity'] : []);
+    assert.equal(prevented, scenario.expected);
+  });
+}
 for (const scenario of [
   { name: 'single orphan', active: 'one', sessions: [{ id: 'one' }], available: false, expected: null },
   { name: 'two orphans', active: 'one', sessions: [{ id: 'one' }, { id: 'two' }], available: true, expected: 'global' },
