@@ -640,7 +640,7 @@ test("resolveCopilotPlatformExecutable resolves the platform package exe from th
       name: `@github/copilot-${process.platform}-${process.arch}`,
       exports: { ".": `./${exeName}` },
     }));
-    assert.equal(resolveCopilotPlatformExecutable(loaderJs), exePath);
+    assert.equal(fs.realpathSync(resolveCopilotPlatformExecutable(loaderJs)), fs.realpathSync(exePath));
     // No platform package reachable from the loader's node_modules chain
     // (separate tree, so walk-up cannot hoist into the fixture above) -> null;
     // the wrapper then falls back to spawning the loader.

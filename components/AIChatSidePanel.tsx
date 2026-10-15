@@ -2075,7 +2075,8 @@ const AIChatSidePanelActive: React.FC<AIChatSidePanelProps> = ({
           ? runtimeModelWarnings[currentAgentId].message
           : undefined}
         modelCatalogLoading={
-          runtimeModelLoading[currentAgentId]?.cacheKey === buildExternalAgentRuntimeModelTarget(currentAgentConfig)?.cacheKey
+          Boolean(runtimeModelLoading[currentAgentId])
+          && runtimeModelLoading[currentAgentId]?.cacheKey === buildExternalAgentRuntimeModelTarget(currentAgentConfig)?.cacheKey
         }
         modelCatalogSource={modelCatalogSource}
         modelCatalogFetchedAt={modelCatalogFetchedAt}
