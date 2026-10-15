@@ -3,6 +3,10 @@ import assert from 'node:assert/strict';
 import type { AISession } from '../infrastructure/ai/types';
 import type { SyncPayload } from '../domain/sync';
 import { withSyncReliabilityMeta } from '../domain/syncReliability';
+import React from 'react';
+import { act, create, type ReactTestRenderer } from 'react-test-renderer';
+import { getAgentRuntime } from '../infrastructure/ai/harness/globalAgentRuntime';
+import { useAIChatStreaming, type UseAIChatStreamingReturn } from './state/useAIChatStreaming';
 
 const storage = new Map<string, string>();
 const events = new EventTarget();
@@ -53,6 +57,61 @@ test('actual manual upload and auto collector honor consent and explicit empty',
   assert.equal(JSON.stringify(cloud).includes('cHJpdmF0ZQ=='), false);
   assert.equal(JSON.stringify(cloud).includes('/private/device/file'), false);
   assert.equal(JSON.stringify(cloud.aiSessions?.[0].messages[0].attachments).includes('private'), false);
+});
+
+test('sync persistence survives restart beyond the local-only history limits', () => {
+  const many = Array.from({ length: 51 }, (_, index) => ({ ...session(), id: `chat-${index}`, updatedAt: index,
+    messages: Array.from({ length: 201 }, (_, turn) => ({ id: `m-${turn}`, role: 'user' as const, content: 'History', timestamp: turn })) }));
+  save(many);
+  assert.equal(snapshots.writeSessionsForStorage(many), true);
+  assert.equal(collectAiSessionsForSync()?.length, 51);
+  snapshots.setLatestAISessionsSnapshot(null as unknown as AISession[]);
+  const afterRestart = collectAiSessionsForSync()!;
+  assert.equal(afterRestart.length, 51);
+  assert.equal(afterRestart[0].messages.length, 201);
+  save(many, false);
+  assert.equal(snapshots.writeSessionsForStorage(many), true);
+  const localOnly = JSON.parse(storage.get(keys.STORAGE_KEY_AI_SESSIONS)!);
+  assert.equal(localOnly.length, 50);
+  assert.equal(localOnly[0].messages.length, 200);
+});
+
+test('failed history persistence refuses upload without pruning the cloud representation', async () => {
+  save([session()]);
+  const original = globalThis.localStorage.setItem;
+  globalThis.localStorage.setItem = (key, value) => {
+    if (key === keys.STORAGE_KEY_AI_SESSIONS) throw new DOMException('Full', 'QuotaExceededError');
+    original(key, value);
+  };
+  snapshots.setLatestAISessionsSnapshot([{ ...session(), title: 'Unsaved change' }]);
+  try {
+    await assert.rejects(buildCloudSyncPayload(vault, [], { collectPluginSidecars: () => undefined }), /persist|save/i);
+    assert.equal(JSON.parse(storage.get(keys.STORAGE_KEY_AI_SESSIONS)!)[0].title, 'Chat');
+    const backup = buildLocalVaultPayload(vault);
+    assert.equal(backup.aiSessions?.[0].title, 'Unsaved change');
+    assert.equal(backup.aiSessions?.[0].messages[0].attachments?.[0].base64Data, 'cHJpdmF0ZQ==');
+  } finally { globalThis.localStorage.setItem = original; }
+});
+
+test('failed opt-in preference commit leaves local chats and native threads untouched', async () => {
+  const local = { ...session(), externalSessionId: 'native-thread' };
+  save([local], false);
+  const original = globalThis.localStorage.setItem;
+  const cleanups: string[] = [];
+  Object.assign(window, { netcatty: { aiSdkAgentCleanup: async (id: string) => { cleanups.push(id); return { ok: true }; } } });
+  globalThis.localStorage.setItem = (key, value) => {
+    if (key === keys.STORAGE_KEY_CLOUD_SYNC_AI_SESSIONS) throw new DOMException('Full', 'QuotaExceededError');
+    original(key, value);
+  };
+  const incoming = { ...session(), updatedAt: 3, messages: [...session().messages,
+    { id: 'remote', role: 'assistant' as const, content: 'Remote turn', timestamp: 3 }] };
+  try {
+    await assert.rejects(setAiSessionsSyncPreference(true, async () => [remotePayload([incoming])]), /preference|enable/i);
+    assert.deepEqual(snapshots.latestAISessionsSnapshot, [local]);
+    assert.deepEqual(JSON.parse(storage.get(keys.STORAGE_KEY_AI_SESSIONS)!), [local]);
+    assert.deepEqual(cleanups, []);
+    assert.equal(JSON.parse(storage.get(keys.STORAGE_KEY_CLOUD_SYNC_AI_SESSIONS)!).enabled, false);
+  } finally { globalThis.localStorage.setItem = original; delete (window as unknown as { netcatty?: unknown }).netcatty; }
 });
 
 test('local backup retains chat and attachment bytes with cloud consent off', async () => {
@@ -110,6 +169,58 @@ test('authoritative cloud session removal stays removed in the next upload', asy
   assert.deepEqual(getAISessionsSnapshot().sessions, []);
   assert.deepEqual(collectAiSessionsForSync(), []);
   assert.deepEqual((await buildCloudSyncPayload(vault, [], { collectPluginSidecars: () => undefined })).aiSessions, []);
+});
+
+test('replacement stops active turns and waits for finalizers before persisting history', async (context) => {
+  Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
+  let hook: UseAIChatStreamingReturn;
+  function Harness() {
+    hook = useAIChatStreaming({ maxIterations: 1, addMessageToSession: () => {}, updateLastMessage: () => {}, updateMessageById: () => {} });
+    return null;
+  }
+  let renderer: ReactTestRenderer;
+  await act(async () => { renderer = create(React.createElement(Harness)); });
+  const original = globalThis.localStorage.setItem;
+  try {
+    for (const remove of [false, true]) {
+      const order: string[] = [];
+      const controller = new AbortController();
+      const local = { ...session(), messages: [...session().messages,
+        { id: 'reply', role: 'assistant' as const, content: 'Partial', timestamp: 2, executionStatus: 'running' as const }] };
+      save([local]);
+      hook!.abortControllersRef.current.set('chat', controller);
+      await act(async () => { hook!.setStreamingForScope('chat', true); });
+      Object.assign(window, { netcatty: {
+        aiCattyCancelExec: async () => { order.push('cancel'); },
+        aiSdkAgentCancel: async () => ({ ok: true }),
+        aiSdkAgentCleanup: async () => { order.push('cleanup'); return { ok: true }; },
+      } });
+      const wait = context.mock.method(getAgentRuntime(), 'waitForActiveTurn', async () => {
+        assert.equal(controller.signal.aborted, true);
+        await new Promise(resolve => setTimeout(resolve, 0));
+        snapshots.setLatestAISessionsSnapshot([{ ...local, messages: [local.messages[0],
+          { ...local.messages[1], content: 'Settled', executionStatus: 'cancelled' }] }]);
+        order.push('settled');
+      });
+      globalThis.localStorage.setItem = (key, value) => { if (key === keys.STORAGE_KEY_AI_SESSIONS) order.push('persist'); original(key, value); };
+      const incoming = { ...session(), updatedAt: 3, messages: [...session().messages,
+        { id: 'remote', role: 'user' as const, content: 'Remote', timestamp: 3 }] };
+      await applySyncPayload(remotePayload(remove ? [] : [incoming]), { importVaultData: () => undefined });
+      assert.ok(order.indexOf('cancel') < order.indexOf('settled'));
+      assert.ok(order.indexOf('settled') < order.indexOf('persist'));
+      assert.ok(order.indexOf('persist') < order.indexOf('cleanup'));
+      assert.equal(hook!.abortControllersRef.current.has('chat'), false);
+      if (remove) assert.deepEqual(getAISessionsSnapshot().sessions, []);
+      else assert.ok(getAISessionsSnapshot().sessions[0].messages.some(message => message.content === 'Settled'));
+      wait.mock.restore();
+      globalThis.localStorage.setItem = original;
+      await act(async () => { hook!.setStreamingForScope('chat', false); });
+    }
+  } finally {
+    context.mock.restoreAll(); globalThis.localStorage.setItem = original;
+    delete (window as unknown as { netcatty?: unknown }).netcatty;
+    await act(async () => { renderer!.unmount(); });
+  }
 });
 
 test('local restore replaces later sessions and later turns with the backup snapshot', async () => {

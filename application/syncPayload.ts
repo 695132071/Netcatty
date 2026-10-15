@@ -72,6 +72,7 @@ import {
 import { isValidHslToken } from './state/settingsStateDefaults';
 import {
   STORAGE_KEY_TERM_AUTO_CLOSE_EXIT_MIGRATED,
+  STORAGE_KEY_VAULT_RESTORE_IN_PROGRESS_UNTIL,
   STORAGE_KEY_THEME,
   STORAGE_KEY_UI_THEME_LIGHT,
   STORAGE_KEY_UI_THEME_DARK,
@@ -1048,6 +1049,9 @@ export function collectAiSessionsForSync(): SyncPayload['aiSessions'] {
   const enabled = localStorageAdapter.read<{ enabled?: boolean }>(STORAGE_KEY_CLOUD_SYNC_AI_SESSIONS);
   if (enabled?.enabled !== true) return undefined;
   const sessions = collectLocalAiSessions();
+  if (!writeSessionsForStorage(sessions)) {
+    throw new Error('Unable to persist chat history for cloud sync');
+  }
   return stripAiSessionPayloadForSync(sessions);
 }
 
@@ -1064,6 +1068,16 @@ export function buildSyncPayload(
 ): SyncPayload {
   const aiSessions = collectAiSessionsForSync();
   return {
+    ...buildVaultSyncPayload(vault, portForwardingRules),
+    ...(aiSessions !== undefined ? { aiSessions } : {}),
+  };
+}
+
+function buildVaultSyncPayload(
+  vault: SyncableVaultData,
+  portForwardingRules?: PortForwardingRule[],
+): SyncPayload {
+  return {
     hosts: sanitizeHostsForSync(vault.hosts),
     keys: vault.keys,
     identities: vault.identities,
@@ -1075,7 +1089,6 @@ export function buildSyncPayload(
     noteGroups: vault.noteGroups,
     groupConfigs: vault.groupConfigs,
     portForwardingRules: sanitizePortForwardingRulesForSync(portForwardingRules),
-    ...(aiSessions !== undefined ? { aiSessions } : {}),
     settings: collectSyncableSettings(),
     syncedAt: Date.now(),
   };
@@ -1177,7 +1190,7 @@ export function buildLocalVaultPayload(
   portForwardingRules?: PortForwardingRule[],
 ): SyncPayload {
   const base: SyncPayload = {
-    ...buildSyncPayload(vault, portForwardingRules),
+    ...buildVaultSyncPayload(vault, portForwardingRules),
     // Keep device-local recent-connection timestamps in protective backups.
     hosts: vault.hosts,
     settings: collectLocalBackupSettings(),
@@ -1238,12 +1251,26 @@ export async function buildLocalVaultPayloadAsync(
 
 /** Merge downloaded chat data through the existing state and persistence boundary. */
 async function applyAiSessionData(sessions: NonNullable<SyncPayload['aiSessions']>, includeLocalOnlyData: boolean): Promise<void> {
-  const localSessions = collectLocalAiSessions();
   const incoming = includeLocalOnlyData
     ? sessions
     : sessions.map(stripAiSessionDeviceState);
-  const localById = new Map(localSessions.map((session) => [session.id, session]));
   const incomingIds = new Set(incoming.map((session) => session.id));
+  const incomingById = new Map(incoming.map((session) => [session.id, session]));
+  const portableMessages = (value: typeof incoming[number]) => stripAiSessionPayloadForSync([value])[0].messages;
+  const affectedIds = collectLocalAiSessions().filter((local) => {
+    const next = incomingById.get(local.id);
+    if (!next) return true;
+    const candidate = includeLocalOnlyData ? next : mergeAiSessionLists([local], [next])[0];
+    return JSON.stringify(portableMessages(local)) !== JSON.stringify(portableMessages(candidate));
+  }).map((session) => session.id);
+  if (affectedIds.length > 0) {
+    const { stopAIChatSessionBeforeReplacement } = await import('./state/useAIChatStreaming');
+    await Promise.all(affectedIds.map(stopAIChatSessionBeforeReplacement));
+  }
+  // Stop finalizers can finish the last local message. Read it again before
+  // merging so the stopped turn cannot write into a replaced/deleted session.
+  const localSessions = collectLocalAiSessions();
+  const localById = new Map(localSessions.map((session) => [session.id, session]));
   const removedIds = localSessions.filter((session) => !incomingIds.has(session.id)).map((session) => session.id);
   const resetSdkSessions: string[] = [];
   // The sync merge has already decided which session IDs survive. Backups
@@ -1254,7 +1281,6 @@ async function applyAiSessionData(sessions: NonNullable<SyncPayload['aiSessions'
     // Native SDK threads belong to this device. Reuse the local thread
     // only while it already contains the entire merged transcript.
     const local = localById.get(session.id);
-    const portableMessages = (value: typeof session) => stripAiSessionPayloadForSync([value])[0].messages;
     const transcriptChanged = local
       && JSON.stringify(portableMessages(local)) !== JSON.stringify(portableMessages(session));
     if (transcriptChanged) resetSdkSessions.push(session.id);
@@ -1288,7 +1314,24 @@ export async function setAiSessionsSyncPreference(
       aiSessions: collectLocalAiSessions(), syncedAt: 0 };
     const merged = remotes.reduce((current, remote) =>
       mergeSyncPayloads(null, current, remote, { preserveDeletions }).payload, local);
-    await applyAiSessionData(merged.aiSessions ?? [], false);
+    const previous = localStorageAdapter.readString(STORAGE_KEY_CLOUD_SYNC_AI_SESSIONS);
+    const { withRestoreBarrier } = await import('./localVaultBackups');
+    await withRestoreBarrier(async () => {
+      if ((localStorageAdapter.readNumber(STORAGE_KEY_VAULT_RESTORE_IN_PROGRESS_UNTIL) ?? 0) <= Date.now()) {
+        throw new Error('Unable to pause sync while enabling chat history');
+      }
+      if (!localStorageAdapter.write(STORAGE_KEY_CLOUD_SYNC_AI_SESSIONS, { enabled })) {
+        throw new Error('Unable to save the chat sync preference');
+      }
+      try {
+        await applyAiSessionData(merged.aiSessions ?? [], false);
+      } catch (error) {
+        if (previous === null) localStorageAdapter.remove(STORAGE_KEY_CLOUD_SYNC_AI_SESSIONS);
+        else localStorageAdapter.writeString(STORAGE_KEY_CLOUD_SYNC_AI_SESSIONS, previous);
+        throw error;
+      }
+    });
+    return;
   }
   if (!localStorageAdapter.write(STORAGE_KEY_CLOUD_SYNC_AI_SESSIONS, { enabled })) {
     throw new Error('Unable to save the chat sync preference');

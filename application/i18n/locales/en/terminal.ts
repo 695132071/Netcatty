@@ -388,7 +388,7 @@ export const enTerminalMessages: Messages = {
   'cloudSync.aiSessions.title': 'Sync AI chat history',
   'cloudSync.aiSessions.desc': 'Include AI chat sessions in cloud sync. Messages merge append-only across devices; attachment contents stay on this device.',
   'cloudSync.aiSessions.compatibility': 'Older versions may overwrite chat history. Use an updated Netcatty on every synced device.',
-  'cloudSync.aiSessions.enableFailed': 'Could not load existing cloud chats. Reconnect and try again.',
+  'cloudSync.aiSessions.enableFailed': 'Could not update chat sync. Check the cloud connection and available local storage, then try again.',
   'cloudSync.strategy.smartMergePreserve': 'Smart merge (never delete)',
   'cloudSync.strategy.smartMergePreserveDesc': 'Combine changes from both sides and never propagate a one-sided deletion — an entry survives until it is removed on every device. Recommended when you restore backups or keep several machines in sync.',
   'cloudSync.strategy.smartMergeDesc': 'Combine changes from both sides when possible; if Netcatty cannot decide safely, ask you to choose.',
