@@ -28,7 +28,7 @@ function payload(overrides: Partial<SyncPayload> = {}): SyncPayload {
 }
 
 const msg = (id: string, timestamp: number) => ({ id, role: "user" as const, content: id, timestamp });
-const session = (id: string, updatedAt: number, messages: ReturnType<typeof msg>[]) =>
+const session = (id: string, updatedAt: number, messages: Session['messages']) =>
   ({ id, title: id, agentId: "catty", scope: { type: "global" }, messages, createdAt: 0, updatedAt }) as Session;
 
 test("ai sessions: union by session id", () => {
@@ -52,14 +52,69 @@ test("ai sessions: messages merge append-only — both devices' turns survive", 
   assert.deepEqual((s1?.messages ?? []).map((m) => m.id), ["m1", "m2", "m3"]);
 });
 
-test("ai sessions: messages are ordered by timestamp", () => {
+test("ai sessions: preserve each branch sequence despite a backwards device clock", () => {
   const base = payload({ aiSessions: [session("s1", 100, [])] });
   const local = payload({ aiSessions: [session("s1", 200, [msg("late", 90), msg("early", 5)])] });
   const remote = payload({ aiSessions: [session("s1", 300, [msg("mid", 50)])] });
 
   const merged = mergeSyncPayloads(base, local, remote);
   const s1 = merged.payload.aiSessions?.find((s) => s.id === "s1");
-  assert.deepEqual((s1?.messages ?? []).map((m) => m.timestamp), [5, 50, 90]);
+  assert.deepEqual((s1?.messages ?? []).map((m) => m.timestamp), [50, 90, 5]);
+});
+
+test('concurrent complete turns stay together after the shared prefix', () => {
+  const prefix = [msg('shared-user', 100), { ...msg('shared-reply', 110), role: 'assistant' as const }];
+  const a = session('s1', 300, [...prefix, msg('user-a', 200), { ...msg('reply-a', 240), role: 'assistant' as const }]);
+  const b = session('s1', 400, [...prefix, msg('user-b', 210), { ...msg('reply-b', 250), role: 'assistant' as const }]);
+  const expected = ['shared-user', 'shared-reply', 'user-a', 'reply-a', 'user-b', 'reply-b'];
+  for (const [local, remote] of [[a, b], [b, a]]) {
+    assert.deepEqual(mergeAiSessionLists([local], [remote])[0].messages.map(m => m.id), expected);
+  }
+  const skewed = { ...b, messages: [...prefix, msg('user-b', 1), { ...msg('reply-b', 2), role: 'assistant' as const }] };
+  assert.deepEqual(mergeAiSessionLists([a], [skewed])[0].messages.map(m => m.id),
+    ['shared-user', 'shared-reply', 'user-b', 'reply-b', 'user-a', 'reply-a']);
+});
+
+test('different three-device merge histories converge instead of swapping order', () => {
+  const branch = (name: string, time: number) => session('s1', 100, [
+    msg('prefix', 0), msg(`user-${name}`, time), { ...msg(`reply-${name}`, time + 1), role: 'assistant' as const },
+  ]);
+  const a = branch('A', 10), b = branch('B', 30), c = branch('C', 20);
+  let left = mergeAiSessionLists(mergeAiSessionLists([a], [b]), [c]);
+  let right = mergeAiSessionLists(mergeAiSessionLists([a], [c]), [b]);
+  const expected = mergeAiSessionLists(left, right);
+  for (let round = 0; round < 4; round++) {
+    const nextLeft = mergeAiSessionLists(left, right);
+    const nextRight = mergeAiSessionLists(right, left);
+    assert.deepEqual(nextLeft, nextRight);
+    assert.deepEqual(nextLeft, expected);
+    left = nextLeft; right = nextRight;
+  }
+});
+
+test('compaction is kept only while the summarized portable prefix stays unchanged', () => {
+  const compacted = { ...session('s1', 300, [msg('first', 1), msg('second', 3), msg('recent', 4)]),
+    contextCompaction: { summary: 'First two messages', compactedMessageCount: 2 } };
+  const inserted = session('s1', 100, [msg('first', 1), msg('added', 2), msg('second', 3)]);
+  const [changed] = mergeAiSessionLists<Session>([compacted], [inserted]);
+  assert.equal(changed.contextCompaction, undefined);
+  assert.ok(changed.messages.some(m => m.id === 'added'));
+  const appended = session('s1', 100, [...compacted.messages, msg('last', 5)]);
+  assert.deepEqual(mergeAiSessionLists<Session>([compacted], [appended])[0].contextCompaction, compacted.contextCompaction);
+  const withBody = { ...compacted, messages: [{ ...compacted.messages[0], attachments: [{ filename: 'a.png', mediaType: 'image/png', base64Data: 'LOCAL' }] }, ...compacted.messages.slice(1)] };
+  const [metadataOnly] = stripAiSessionPayloadForSync([{ ...withBody, updatedAt: 400 }]);
+  assert.deepEqual(mergeAiSessionLists<Session>([withBody], [metadataOnly])[0].contextCompaction, compacted.contextCompaction);
+  const zero = { ...compacted, contextCompaction: { summary: 'Earlier trimmed history', compactedMessageCount: 0 } };
+  assert.deepEqual(mergeAiSessionLists<Session>([zero], [inserted])[0].contextCompaction, zero.contextCompaction);
+});
+
+test('same-named local attachment bodies are matched once each', () => {
+  const attachments = ['FIRST', 'SECOND'].map(base64Data => ({ base64Data, filename: 'photo.png', mediaType: 'image/png' }));
+  const local = { ...session('s1', 100, [msg('m1', 1)]), messages: [{ ...msg('m1', 1), attachments }] };
+  const [incoming] = stripAiSessionPayloadForSync([{ ...local, updatedAt: 200 }]);
+  assert.deepEqual(mergeAiSessionLists([local], [incoming])[0].messages[0].attachments.map(a => a.base64Data), ['FIRST', 'SECOND']);
+  incoming.messages[0].attachments[0] = attachments[0];
+  assert.deepEqual(mergeAiSessionLists([local], [incoming])[0].messages[0].attachments.map(a => a.base64Data), ['FIRST', 'SECOND']);
 });
 
 test("ai sessions: title/metadata come from the newer side", () => {

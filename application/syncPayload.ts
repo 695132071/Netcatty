@@ -211,11 +211,11 @@ export function hasMeaningfulCloudSyncData(payload: SyncPayload): boolean {
 
 /**
  * Returns true only when the payload contains synced vault entities.
- * Settings are intentionally ignored so default settings written on first
- * launch do not make a new device look non-empty during cloud restore checks.
+ * Settings and chat history are ignored: neither proves that the vault's
+ * hosts and keys survived local data loss.
  */
 export function hasCloudSyncEntityData(payload: SyncPayload): boolean {
-  return hasSyncPayloadEntityData(payload, CLOUD_SYNC_PAYLOAD_ENTITY_KEYS);
+  return hasSyncPayloadEntityData(payload, CLOUD_SYNC_PAYLOAD_ENTITY_KEYS.filter((key) => key !== 'aiSessions'));
 }
 
 export function shouldPromptCloudVaultRecovery(

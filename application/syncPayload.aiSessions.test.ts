@@ -18,6 +18,7 @@ const {
   buildCloudSyncPayload, buildLocalVaultPayload, collectAiSessionsForSync,
   applySyncPayload, applyLocalVaultPayload, hasMeaningfulSyncData,
   setAiSessionsSyncPreference,
+  hasCloudSyncEntityData, hasMeaningfulCloudSyncData, shouldPromptCloudVaultRecovery,
 } = await import('./syncPayload');
 
 const vault = { hosts: [], keys: [], identities: [], snippets: [], customGroups: [], knownHosts: [] };
@@ -63,6 +64,17 @@ test('local backup retains chat and attachment bytes with cloud consent off', as
     prepareConvergentRestore: async () => async () => {},
   });
   assert.equal(getAISessionsSnapshot().sessions[0].messages[0].attachments?.[0].base64Data, 'cHJpdmF0ZQ==');
+});
+
+test('chat-only data is syncable but does not suppress empty-vault recovery', () => {
+  const local = { ...vault, aiSessions: [session()], syncedAt: 1 };
+  assert.equal(hasMeaningfulCloudSyncData(local), true);
+  assert.equal(hasCloudSyncEntityData(local), false);
+  const host = { id: 'remote', label: 'Remote', hostname: 'remote.example', username: 'test', port: 22, protocol: 'ssh' as const, tags: [], os: 'linux' as const };
+  for (const hosts of [[host], [host, { ...host, id: 'second' }]]) {
+    assert.equal(shouldPromptCloudVaultRecovery(local, { ...vault, hosts, syncedAt: 2 }), true);
+  }
+  assert.equal(shouldPromptCloudVaultRecovery({ ...vault, syncedAt: 1 }, local), false);
 });
 
 test('download publishes immediately and keeps local attachment bytes on a newer message', async () => {

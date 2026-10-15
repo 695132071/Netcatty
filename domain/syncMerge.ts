@@ -423,18 +423,23 @@ function retainAvailableAttachments<M extends { id?: string; timestamp?: number 
     const attachments = result[field];
     const available = previous[field] ?? previous[field === 'attachments' ? 'images' : 'attachments'];
     if (!Array.isArray(attachments) || !Array.isArray(available)) continue;
-    result[field] = attachments.map((attachment: unknown) => {
+    const used = new Set<number>();
+    result[field] = attachments.map((attachment: unknown, index: number) => {
       if (!attachment || typeof attachment !== 'object') return attachment;
       const metadata = attachment as Record<string, unknown>;
-      if (typeof metadata.base64Data === 'string' && metadata.base64Data.length > 0) return attachment;
-      const match = available.find((candidate: unknown) => {
+      const matches = (candidate: unknown, candidateIndex: number) => {
+        if (used.has(candidateIndex)) return false;
         if (!candidate || typeof candidate !== 'object') return false;
         const value = candidate as Record<string, unknown>;
         return typeof value.base64Data === 'string' && value.base64Data.length > 0
           && ['filename', 'mediaType', 'terminalSelection', 'vaultNoteId']
             .every((key) => value[key] === metadata[key]);
-      }) as Record<string, unknown> | undefined;
-      if (!match) return attachment;
+      };
+      const matchIndex = matches(available[index], index) ? index : available.findIndex(matches);
+      if (matchIndex >= 0) used.add(matchIndex);
+      if (typeof metadata.base64Data === 'string' && metadata.base64Data.length > 0) return attachment;
+      if (matchIndex < 0) return attachment;
+      const match = available[matchIndex] as Record<string, unknown>;
       const restored: Record<string, unknown> = { ...metadata, base64Data: match.base64Data };
       for (const key of ['previewText', 'dataUrl', 'filePath']) {
         if (match[key] !== undefined) restored[key] = match[key];
@@ -444,6 +449,46 @@ function retainAvailableAttachments<M extends { id?: string; timestamp?: number 
     });
   }
   return result as M;
+}
+
+function aiMessageKey(message: { id?: string; timestamp?: number }): string {
+  return message.id ?? `${message.timestamp ?? 0}:${fingerprint(message)}`;
+}
+
+/** Shared messages anchor complete branch segments; clocks never reorder a branch. */
+function mergeAiMessageOrder(
+  a: Array<{ id?: string; timestamp?: number }>,
+  b: Array<{ id?: string; timestamp?: number }>,
+): string[] {
+  const keysA = a.map(aiMessageKey);
+  const keysB = b.map(aiMessageKey);
+  const indexB = new Map(keysB.map((key, index) => [key, index]));
+  const ordered = new Set<string>();
+  const appendSegments = (left: typeof a, right: typeof b) => {
+    // Timestamps only break ties between concurrent whole segments. Their
+    // internal order comes from the persisted conversation, including skew.
+    const leftKey = left[0] && aiMessageKey(left[0]);
+    const rightKey = right[0] && aiMessageKey(right[0]);
+    const leftFirst = !rightKey || (leftKey && (
+      (left[0].timestamp ?? 0) < (right[0].timestamp ?? 0)
+      || ((left[0].timestamp ?? 0) === (right[0].timestamp ?? 0) && leftKey < rightKey)
+    ));
+    for (const segment of leftFirst ? [left, right] : [right, left]) {
+      for (const message of segment) ordered.add(aiMessageKey(message));
+    }
+  };
+  let startA = 0;
+  let startB = 0;
+  for (let indexA = 0; indexA < keysA.length; indexA++) {
+    const otherIndex = indexB.get(keysA[indexA]);
+    if (otherIndex === undefined || otherIndex < startB) continue;
+    appendSegments(a.slice(startA, indexA), b.slice(startB, otherIndex));
+    ordered.add(keysA[indexA]);
+    startA = indexA + 1;
+    startB = otherIndex + 1;
+  }
+  appendSegments(a.slice(startA), b.slice(startB));
+  return [...ordered];
 }
 
 function mergeAiSessionPair<T extends { id: string; updatedAt?: number; messages?: Array<{ id?: string; timestamp?: number }> }>(
@@ -457,13 +502,29 @@ function mergeAiSessionPair<T extends { id: string; updatedAt?: number; messages
   // earlier streamed copy. Distinct turns remain append-only.
   for (const session of [older, newer]) {
     for (const message of session.messages ?? []) {
-      const key = message.id ?? `${message.timestamp ?? 0}:${fingerprint(message)}`;
+      const key = aiMessageKey(message);
       const existing = seen.get(key);
       seen.set(key, existing ? retainAvailableAttachments(message, existing) : message);
     }
   }
-  const messages = [...seen.values()].sort((x, y) => (x.timestamp ?? 0) - (y.timestamp ?? 0));
-  return { ...newer, messages, updatedAt: Math.max(a.updatedAt ?? 0, b.updatedAt ?? 0) } as T;
+  // Copies that already contain the same turns in different orders need one
+  // stable anchor sequence, or reciprocal syncs would keep swapping them.
+  const [primary, secondary] = (a.updatedAt ?? 0) !== (b.updatedAt ?? 0)
+    ? [newer, older]
+    : JSON.stringify((a.messages ?? []).map(aiMessageKey)) <= JSON.stringify((b.messages ?? []).map(aiMessageKey))
+      ? [a, b] : [b, a];
+  const messages = mergeAiMessageOrder(primary.messages ?? [], secondary.messages ?? []).map((key) => seen.get(key)!);
+  const merged = { ...newer, messages, updatedAt: Math.max(a.updatedAt ?? 0, b.updatedAt ?? 0) } as T & {
+    contextCompaction?: { compactedMessageCount: number };
+  };
+  const count = merged.contextCompaction?.compactedMessageCount;
+  if (count && count > 0) {
+    const portablePrefix = (items: typeof messages) => stripAiSessionPayloadForSync([{ messages: items.slice(0, count) }])[0].messages;
+    if (fingerprint(portablePrefix(newer.messages ?? [])) !== fingerprint(portablePrefix(messages))) {
+      delete merged.contextCompaction;
+    }
+  }
+  return merged;
 }
 
 // ---------------------------------------------------------------------------
