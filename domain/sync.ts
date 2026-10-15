@@ -590,7 +590,7 @@ export interface ConvergentProviderBaselineV2 {
 
 export function hasSyncPayloadEntityData(
   payload: SyncPayload,
-  keys: readonly SyncPayloadEntityKey[] = SYNC_PAYLOAD_ENTITY_KEYS,
+  keys: readonly (SyncPayloadEntityKey | CloudSyncPayloadEntityKey)[] = SYNC_PAYLOAD_ENTITY_KEYS,
 ): boolean {
   return keys.some((key) => {
     const value = payload[key];
