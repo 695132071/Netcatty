@@ -1227,7 +1227,10 @@ const AIChatSidePanelActive: React.FC<AIChatSidePanelProps> = ({
   // showing build-time presets (the renderer-side preset fallback derives
   // 'presets' here). While a load is pending the picker replaces the chip
   // with the spinner row.
-  const modelCatalogSource = useMemo((): SdkRuntimeModelCatalogSource => {
+  const modelCatalogSource = useMemo((): SdkRuntimeModelCatalogSource | undefined => {
+    // A config-locked Codex picker shows only that configured model, not the
+    // discovered catalog whose provenance is tracked below.
+    if (isCodexManagedAgent && codexConfigModel) return undefined;
     const target = buildExternalAgentRuntimeModelTarget(currentAgentConfig);
     const meta = runtimeModelCatalogMeta[currentAgentId];
     const runtimeEntry = runtimeAgentModelPresets[currentAgentId];
@@ -1236,7 +1239,7 @@ const AIChatSidePanelActive: React.FC<AIChatSidePanelProps> = ({
       return meta.source;
     }
     return 'presets';
-  }, [currentAgentConfig, currentAgentId, runtimeModelCatalogMeta, runtimeAgentModelPresets, buildExternalAgentRuntimeModelTarget]);
+  }, [currentAgentConfig, currentAgentId, runtimeModelCatalogMeta, runtimeAgentModelPresets, buildExternalAgentRuntimeModelTarget, isCodexManagedAgent, codexConfigModel]);
   const modelCatalogFetchedAt = useMemo((): string | undefined => {
     const target = buildExternalAgentRuntimeModelTarget(currentAgentConfig);
     const meta = runtimeModelCatalogMeta[currentAgentId];

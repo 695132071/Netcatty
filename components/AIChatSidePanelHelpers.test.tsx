@@ -751,6 +751,8 @@ test('SDK runtime model cache keeps the retry warning when a degraded refresh re
   await cache.refresh(key, async () => ({
     currentModelId: 'gpt-5',
     models: [{ id: 'gpt-5', name: 'GPT-5' }],
+    source: 'live',
+    fetchedAt: '2026-10-15T09:00:00.000Z',
   }));
 
   now = 2_000;
@@ -762,11 +764,14 @@ test('SDK runtime model cache keeps the retry warning when a degraded refresh re
 
   assert.deepEqual(retried.models, [{ id: 'gpt-5', name: 'GPT-5' }]);
   assert.equal(retried.warning, 'catalog unavailable');
+  assert.equal(retried.source, 'last-known-good');
+  assert.equal(retried.fetchedAt, '2026-10-15T09:00:00.000Z');
   // Later reads retain the warning without extending the good catalog's age.
   assert.equal(cache.read(key)?.warning, 'catalog unavailable');
   assert.equal(cache.read(key)?.updatedAt, 1_000);
   const nextRead = await cache.refresh(key, async () => { throw new Error('fresh cache should be reused'); });
   assert.equal(nextRead.warning, 'catalog unavailable');
+  assert.equal(nextRead.source, 'last-known-good');
 });
 
 

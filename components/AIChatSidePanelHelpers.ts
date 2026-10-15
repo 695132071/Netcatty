@@ -264,6 +264,7 @@ export function createSdkRuntimeModelCache(options: SdkRuntimeModelCacheOptions 
             const retained = cloneCatalog(cached);
             if (normalized.warning) {
               retained.warning = normalized.warning;
+              retained.source = 'last-known-good';
               touchEntry(key, { ...retained, updatedAt: cached.updatedAt });
             }
             return retained;
