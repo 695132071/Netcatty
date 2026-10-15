@@ -535,6 +535,8 @@ export const zhCNAiMessages: Messages = {
   'ai.chat.searchSessionsHint': '搜索标题，并优先搜索较新的消息和条目；超长消息及工具输出仅搜索开头的有限部分。这不是全文搜索。',
   'ai.chat.noMatchingSessions': '标题和近期保留的内容中没有匹配结果',
   'ai.chat.noSessions': '没有历史会话',
+  'ai.chat.forkFromHere': '从此处分叉',
+  'ai.chat.forkCreated': '已分叉到新对话，原对话保留在历史中。',
   'ai.chat.retryHint': '你可以重新发送消息来重试。',
   'ai.chat.approvalTimeout': '工具审批已超时（5 分钟）。你可以重新发送消息来重试。',
   'ai.chat.menuHosts': '主机',

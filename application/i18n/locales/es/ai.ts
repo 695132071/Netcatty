@@ -526,6 +526,8 @@ export const esAiMessages: Messages = {
   'ai.chat.searchSessionsHint': 'Busca en los títulos y da prioridad a los mensajes y entradas más recientes. De los mensajes largos y las salidas de herramientas, solo se busca una parte limitada del comienzo. No es una búsqueda de texto completo.',
   'ai.chat.noMatchingSessions': 'Sin coincidencias en títulos ni contenido reciente conservado',
   'ai.chat.noSessions': 'No hay sesiones anteriores',
+  'ai.chat.forkFromHere': 'Bifurcar desde aquí',
+  'ai.chat.forkCreated': 'Conversación bifurcada en un chat nuevo; el original permanece en el historial.',
   'ai.chat.retryHint': 'Puedes reintentar enviando tu mensaje de nuevo.',
   'ai.chat.approvalTimeout': 'La aprobación de la herramienta expiró después de 5 minutos. Puedes reintentar enviando tu mensaje de nuevo.',
   'ai.chat.menuHosts': 'Hosts',

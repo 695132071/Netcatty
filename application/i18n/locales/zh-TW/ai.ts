@@ -525,6 +525,8 @@ export const zhTWAiMessages: Messages = {
   'ai.chat.searchSessionsHint': '搜尋標題，並優先搜尋較新的訊息與項目；超長訊息與工具輸出僅搜尋開頭的有限部分。這不是全文搜尋。',
   'ai.chat.noMatchingSessions': '標題和近期保留的內容中沒有符合的結果',
   'ai.chat.noSessions': '沒有歷史工作階段',
+  'ai.chat.forkFromHere': '從此處分叉',
+  'ai.chat.forkCreated': '已分叉到新對話，原對話保留在歷史中。',
   'ai.chat.retryHint': '你可以重新發送訊息來重試。',
   'ai.chat.approvalTimeout': '工具核准已超時（5 分鐘）。你可以重新發送訊息來重試。',
   'ai.chat.menuHosts': '主機',
