@@ -141,7 +141,6 @@ import {
   DEFAULT_TERMINAL_THEME,
   DEFAULT_THEME,
   DEFAULT_WINDOW_OPACITY,
-  clampWindowOpacity,
   applyThemeTokens,
   areTerminalSettingsEqual,
   createCustomKeyBindingsSyncOrigin,
@@ -180,6 +179,8 @@ import {
 import {
   parseWindowOpacityRecord,
   shouldApplyWindowOpacityRecord,
+  updateWindowOpacityRecord,
+  toggleWindowOpacityRecord,
   type WindowOpacityMutationSource,
   type WindowOpacityRecord,
 } from './windowOpacitySync';
@@ -608,9 +609,7 @@ export const useSettingsState = (options: { enableSettingsSync?: boolean; enable
       const candidate = typeof nextValue === 'function'
         ? (nextValue as (prevState: number) => number)(prev.opacity)
         : nextValue;
-      const nextOpacity = clampWindowOpacity(candidate);
-      if (nextOpacity === prev.opacity) return prev;
-      return { opacity: nextOpacity, version: prev.version + 1 };
+      return updateWindowOpacityRecord(prev, candidate);
     });
   }, []);
   const applyIncomingWindowOpacity = useCallback((raw: unknown) => {
@@ -625,18 +624,28 @@ export const useSettingsState = (options: { enableSettingsSync?: boolean; enable
       return incoming;
     });
   }, []);
-  // Tracks the user's preferred transparency level (last value below 100%) so
-  // Cmd+U can restore it after toggling transparency off. Session-only (useRef),
-  // never persisted — matches iTerm2's session-level toggle behavior.
-  const lastNonFullOpacityRef = useRef<number | null>(windowOpacity < 1.0 ? windowOpacity : null);
-  useEffect(() => {
-    if (windowOpacity < 1.0) {
-      lastNonFullOpacityRef.current = windowOpacity;
-    }
-  }, [windowOpacity]);
   const toggleWindowOpacity = useCallback(() => {
-    setWindowOpacity(windowOpacity < 1.0 ? 1.0 : (lastNonFullOpacityRef.current ?? 0.85));
-  }, [windowOpacity, setWindowOpacity]);
+    windowOpacityMutationSourceRef.current = 'local';
+    setWindowOpacityRecord(toggleWindowOpacityRecord);
+  }, []);
+  // Detached sessions disable the general settings listeners and OS effects.
+  // Opacity is shared window chrome, so keep just this setting synchronized.
+  useEffect(() => {
+    if (enableSettingsSync) return;
+    const unsubscribe = netcattyBridge.get()?.onSettingsChanged?.(({ key, value }) => {
+      if (key === STORAGE_KEY_WINDOW_OPACITY) applyIncomingWindowOpacity(value);
+    });
+    const onStorage = (event: StorageEvent) => {
+      if (event.key === STORAGE_KEY_WINDOW_OPACITY && event.newValue !== null) {
+        applyIncomingWindowOpacity(event.newValue);
+      }
+    };
+    window.addEventListener('storage', onStorage);
+    return () => {
+      unsubscribe?.();
+      window.removeEventListener('storage', onStorage);
+    };
+  }, [enableSettingsSync, applyIncomingWindowOpacity]);
   const [appIconVariant, setAppIconVariantState] = useState<AppIconVariant>(() => {
     const stored = readStoredString(STORAGE_KEY_APP_ICON_VARIANT);
     return resolveAppIconVariant(stored ?? DEFAULT_APP_ICON_VARIANT);
@@ -797,7 +806,7 @@ export const useSettingsState = (options: { enableSettingsSync?: boolean; enable
 
   // Helper to notify other windows about settings changes via IPC
   const notifySettingsChanged = useCallback((key: string, value: unknown) => {
-    if (!enableSettingsSync) return;
+    if (!enableSettingsSync && key !== STORAGE_KEY_WINDOW_OPACITY) return;
     try {
       netcattyBridge.get()?.notifySettingsChanged?.({ key, value });
     } catch {

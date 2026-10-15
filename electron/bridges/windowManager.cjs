@@ -414,7 +414,7 @@ function applyWindowOpacityToWindow(win) {
 
 function applyWindowOpacity(opacity) {
   currentWindowOpacity = clampWindowOpacity(opacity);
-  forEachMainWindow(applyWindowOpacityToWindow);
+  for (const win of getAppContentWindowList()) applyWindowOpacityToWindow(win);
   if (settingsWindow && !settingsWindow.isDestroyed()) {
     applyWindowOpacityToWindow(settingsWindow);
   }
@@ -1282,11 +1282,14 @@ function registerWindowHandlers(ipcMain, nativeTheme) {
     // Notify all windows except the sender
     // Check both isDestroyed() and webContents.isDestroyed() to handle HMR refresh
     try {
-      forEachMainWindow((win) => {
+      const windows = payload?.key === "netcatty_window_opacity_v1"
+        ? getAppContentWindowList()
+        : getMainWindowList();
+      for (const win of windows) {
         if (!win.webContents.isDestroyed() && win.webContents.id !== senderId) {
           win.webContents.send("netcatty:settings:changed", payload);
         }
-      });
+      }
       if (settingsWindow && !settingsWindow.isDestroyed() && !settingsWindow.webContents.isDestroyed() && settingsWindow.webContents.id !== senderId) {
         settingsWindow.webContents.send("netcatty:settings:changed", payload);
       }
