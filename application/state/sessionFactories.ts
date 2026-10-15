@@ -153,8 +153,8 @@ export const createHostTerminalSession = (
       // Preserve field presence: an edited host must not contribute its args
       // to a session that was launched with an explicit shell and no args.
       localShellArgs: host.localShellArgs ?? EMPTY_LOCAL_SHELL_ARGS,
-      localShellName: host.localShellName,
-      localShellIcon: host.localShellIcon,
+      localShellName: host.localShellName ?? "",
+      localShellIcon: host.localShellIcon ?? "",
       // Effective directory from resolveHostDefaultLocalShell, including a
       // Settings directory the saved host inherits. Copy Tab overlays this
       // snapshot, so a later settings or vault edit cannot move the relaunch.
