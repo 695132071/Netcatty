@@ -39,6 +39,7 @@ const fs = require("fs");
 const tempDirBridge = require("../../tempDirBridge.cjs");
 
 const WRAPPER_TMP_PREFIX = "netcatty-copilot-headless-";
+const wrapperPaths = new Map();
 
 /**
  * Resolve the platform-native copilot exe the npm-loader would spawn,
@@ -175,7 +176,12 @@ function buildCopilotHeadlessWrapperPath(resolvedCliPath) {
   // exactly the generated source. Anything else is not handed to the SDK.
   let wrapperPath;
   try {
-    wrapperPath = path.join(tempDirBridge.getTempDir(), `${WRAPPER_TMP_PREFIX}${hash}.js`);
+    const cacheKey = path.join(tempDirBridge.getTempDir(), hash);
+    wrapperPath = wrapperPaths.get(cacheKey);
+    if (!wrapperPath) {
+      wrapperPath = tempDirBridge.getTempFilePath(`${WRAPPER_TMP_PREFIX}${hash}.js`);
+      wrapperPaths.set(cacheKey, wrapperPath);
+    }
   } catch {
     return null;
   }

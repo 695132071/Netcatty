@@ -609,7 +609,9 @@ test("buildCopilotHeadlessWrapperSource bakes paths and spawns hidden", () => {
   assert.ok(source.includes("no copilot executable or loader found"));
 });
 
-test("buildCopilotHeadlessWrapperPath returns null for an empty resolution and reuses one file per content", () => {
+test("buildCopilotHeadlessWrapperPath returns null for an empty resolution and reuses one allocated file per content", (t) => {
+  const tempDirBridge = require("../../tempDirBridge.cjs");
+  const allocatePath = t.mock.method(tempDirBridge, "getTempFilePath");
   assert.equal(buildCopilotHeadlessWrapperPath(null), null);
   assert.equal(buildCopilotHeadlessWrapperPath(""), null);
   const first = buildCopilotHeadlessWrapperPath("C:\\copilot\\copilot.exe");
@@ -620,6 +622,7 @@ test("buildCopilotHeadlessWrapperPath returns null for an empty resolution and r
     assert.ok(first && path.dirname(first) === managedDir);
     assert.ok(first.endsWith(".js"), "wrapper must be a .js so the SDK spawns it via node");
     assert.equal(buildCopilotHeadlessWrapperPath("C:\\copilot\\copilot.exe"), first, "same content reuses the same wrapper");
+    assert.equal(allocatePath.mock.callCount(), 1, "allocate once through the managed temp-file API");
   } finally {
     if (first) fs.rmSync(first, { force: true });
   }
