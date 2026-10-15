@@ -47,6 +47,13 @@ import { decryptField, encryptField } from '../infrastructure/persistence/secure
 import { sanitizeQuickMessages } from '../infrastructure/ai/quickMessages';
 import { emitAIStateChanged } from './state/aiStateEvents';
 import {
+  latestAISessionsSnapshot,
+  setLatestAISessionsSnapshot,
+  writeSessionsForStorage,
+  cleanupSdkAgentSessions,
+} from './state/aiStateSnapshots';
+import { getAISessionsSnapshot, publishAISessionsSnapshot } from './state/aiSessionsStore';
+import {
   persistCommandBlocklistSetting,
   readCommandBlocklistSetting,
 } from './state/commandBlocklistSettings';
@@ -128,7 +135,7 @@ import {
   STORAGE_KEY_AI_SESSIONS,
   STORAGE_KEY_CLOUD_SYNC_AI_SESSIONS,
 } from '../infrastructure/config/storageKeys';
-import { mergeAiSessionLists, stripAiSessionPayloadForSync } from '../domain/syncMerge';
+import { mergeAiSessionLists, stripAiSessionDeviceState, stripAiSessionPayloadForSync } from '../domain/syncMerge';
 import { isTerminalSidePanelAutoOpenTab } from '../domain/terminalSidePanelAutoOpen';
 import { prepareRestoredPayloadConvergentWrites } from './convergentSyncReplica';
 
@@ -174,6 +181,7 @@ function hasMeaningfulPluginSidecars(payload: SyncPayload): boolean {
  */
 export function hasMeaningfulSyncData(payload: SyncPayload): boolean {
   if (hasSyncPayloadEntityData(payload, SYNC_PAYLOAD_ENTITY_KEYS)) return true;
+  if (Array.isArray(payload.aiSessions) && payload.aiSessions.length > 0) return true;
 
   if (
     payload.settings && Object.values(payload.settings).some((value) => value !== undefined)
@@ -1032,23 +1040,23 @@ function pruneOrphanPerAgentBindings(): void {
 // ---------------------------------------------------------------------------
 
 /**
- * Build a complete `SyncPayload` from local data.
- *
- * Port-forwarding rules are optional because they are managed by a separate
- * state hook (`usePortForwardingState`).  Callers should strip transient
- * runtime fields (status, error, lastUsedAt) before passing them in.
- */
-/**
  * AI chat sessions only leave the device when the user opted in.
  * Attachments are stripped — see {@link stripAiSessionPayloadForSync}.
  */
-function collectAiSessionsForSync(): SyncPayload['aiSessions'] {
+export function collectAiSessionsForSync(): SyncPayload['aiSessions'] {
   const enabled = localStorageAdapter.read<{ enabled?: boolean }>(STORAGE_KEY_CLOUD_SYNC_AI_SESSIONS);
   if (enabled?.enabled !== true) return undefined;
-  const sessions = localStorageAdapter.read<SyncPayload['aiSessions']>(STORAGE_KEY_AI_SESSIONS) ?? [];
+  const sessions = collectLocalAiSessions();
   return stripAiSessionPayloadForSync(sessions);
 }
 
+function collectLocalAiSessions(): NonNullable<SyncPayload['aiSessions']> {
+  return latestAISessionsSnapshot
+    ?? localStorageAdapter.read<SyncPayload['aiSessions']>(STORAGE_KEY_AI_SESSIONS)
+    ?? [];
+}
+
+/** Build the portable payload; device-local data is added by the backup builder. */
 export function buildSyncPayload(
   vault: SyncableVaultData,
   portForwardingRules?: PortForwardingRule[],
@@ -1066,7 +1074,7 @@ export function buildSyncPayload(
     noteGroups: vault.noteGroups,
     groupConfigs: vault.groupConfigs,
     portForwardingRules: sanitizePortForwardingRulesForSync(portForwardingRules),
-    ...(aiSessions && aiSessions.length > 0 ? { aiSessions } : {}),
+    ...(aiSessions !== undefined ? { aiSessions } : {}),
     settings: collectSyncableSettings(),
     syncedAt: Date.now(),
   };
@@ -1140,6 +1148,7 @@ export async function buildCloudSyncPayload(
     collectPluginSidecars?: PluginSyncSidecarCollector;
   },
 ): Promise<SyncPayload> {
+  const aiSessions = collectAiSessionsForSync();
   const base: SyncPayload = {
     hosts: sanitizeHostsForSync(vault.hosts),
     keys: vault.keys,
@@ -1152,6 +1161,7 @@ export async function buildCloudSyncPayload(
     noteGroups: vault.noteGroups,
     groupConfigs: vault.groupConfigs,
     portForwardingRules: sanitizePortForwardingRulesForSync(portForwardingRules),
+    ...(aiSessions !== undefined ? { aiSessions } : {}),
     settings: await collectCloudSyncableSettings(),
     syncedAt: Date.now(),
   };
@@ -1171,6 +1181,8 @@ export function buildLocalVaultPayload(
     hosts: vault.hosts,
     settings: collectLocalBackupSettings(),
     knownHosts: vault.knownHosts,
+    // Cloud consent and cloud attachment stripping do not apply to local backups.
+    aiSessions: collectLocalAiSessions(),
   };
   // Protective backups must capture plugin sidecars so restore can recover
   // plugin settings/baselines. Prefer the last successful host collect cache
@@ -1294,11 +1306,33 @@ async function preparePayloadApply(
     // AI chat sessions merge append-only: a cloud snapshot may be missing
     // turns that only exist on this device, so union instead of replace.
     if (Array.isArray(sanitizedPayload.aiSessions)) {
-      const localSessions = localStorageAdapter.read<SyncPayload['aiSessions']>(STORAGE_KEY_AI_SESSIONS) ?? [];
-      const mergedSessions = mergeAiSessionLists(localSessions, sanitizedPayload.aiSessions);
-      if (localStorageAdapter.write(STORAGE_KEY_AI_SESSIONS, mergedSessions)) {
-        emitAIStateChanged(STORAGE_KEY_AI_SESSIONS);
+      const localSessions = collectLocalAiSessions();
+      const incoming = options.includeLocalOnlyData
+        ? sanitizedPayload.aiSessions
+        : sanitizedPayload.aiSessions.map(stripAiSessionDeviceState);
+      const localById = new Map(localSessions.map((session) => [session.id, session]));
+      const resetSdkSessions: string[] = [];
+      const mergedSessions = mergeAiSessionLists(localSessions, incoming).map((session) => {
+        // Native SDK threads belong to this device; a cloud copy can neither
+        // supply one nor replace the existing local thread for this chat.
+        if (options.includeLocalOnlyData) return session;
+        const local = localById.get(session.id);
+        const portableMessages = (value: typeof session) => stripAiSessionPayloadForSync([value])[0].messages;
+        const transcriptChanged = local
+          && JSON.stringify(portableMessages(local)) !== JSON.stringify(portableMessages(session));
+        if (transcriptChanged) resetSdkSessions.push(session.id);
+        const { externalSessionId: _remoteThread, ...portable } = session;
+        return local?.externalSessionId && !transcriptChanged
+          ? { ...portable, externalSessionId: local.externalSessionId }
+          : portable;
+      });
+      if (!writeSessionsForStorage(mergedSessions)) {
+        throw new Error('Unable to save downloaded AI chat history');
       }
+      await cleanupSdkAgentSessions(resetSdkSessions);
+      setLatestAISessionsSnapshot(mergedSessions);
+      publishAISessionsSnapshot({ ...getAISessionsSnapshot(), sessions: mergedSessions });
+      emitAIStateChanged(STORAGE_KEY_AI_SESSIONS);
     }
 
     // Apply synced settings

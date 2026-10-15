@@ -47,12 +47,10 @@ export const AI_STATE_CHANGED_PANEL_VIEW_BY_SCOPE = 'netcatty:ai-panel-view-by-s
 export type DraftsByScope = Partial<Record<string, AIDraft>>;
 export type PanelViewByScope = Partial<Record<string, AIPanelView>>;
 
-export function cleanupSdkAgentSessions(sessionIds: string[]) {
+export async function cleanupSdkAgentSessions(sessionIds: string[]): Promise<void> {
   const bridge = getAIBridge();
   if (sessionIds.length === 0) return;
-  for (const sessionId of sessionIds) {
-    void bridge?.aiSdkAgentCleanup?.(sessionId).catch(() => {});
-  }
+  await Promise.all(sessionIds.map((sessionId) => bridge?.aiSdkAgentCleanup?.(sessionId).catch(() => {})));
 }
 
 export function cleanupDeletedAIChatSessions(sessionIds: string[]) {

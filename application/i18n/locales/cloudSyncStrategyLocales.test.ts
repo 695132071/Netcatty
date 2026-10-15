@@ -19,6 +19,7 @@ const strategyKeys = [
   "cloudSync.strategy.preferLocalDesc",
   "cloudSync.aiSessions.title",
   "cloudSync.aiSessions.desc",
+  "cloudSync.aiSessions.compatibility",
 ] as const;
 
 test("cloud sync strategy copy exists in every bundled locale", () => {

@@ -142,3 +142,30 @@ test("preserveDeletions: deletions are still reported in the summary", () => {
   assert.equal(preserved.summary.deleted.local, 1, "summary should report the local deletion that was not propagated");
   assert.ok(preserved.payload.hosts.some((h) => h.id === "b"));
 });
+
+
+test("preserveDeletions: no-base tombstones cannot suppress surviving entities or strings", () => {
+  const survivor = payload({ hosts: [host("a")], customGroups: ["group"], noteGroups: ["notes"] });
+  const removed = payload({
+    syncMeta: {
+      schemaVersion: 1, generatedAt: 10, localChanged: true,
+      changeSummary: { hasLocalChanges: true, hasRemoteChanges: false, hasConflicts: false, byEntity: {}, conflicts: [] },
+      deletions: [
+        { entityType: "hosts", id: "a", deletedAt: 10 },
+        { entityType: "customGroups", id: "group", deletedAt: 10 },
+        { entityType: "noteGroups", id: "notes", deletedAt: 10 },
+      ],
+    },
+  });
+  for (const [local, remote] of [[survivor, removed], [removed, survivor]]) {
+    const normal = mergeSyncPayloads(null, local, remote).payload;
+    assert.deepEqual(normal.hosts, []);
+    assert.deepEqual(normal.customGroups, []);
+    assert.deepEqual(normal.noteGroups, []);
+    const preserved = mergeSyncPayloads(null, local, remote, { preserveDeletions: true }).payload;
+    assert.deepEqual(preserved.hosts.map((item) => item.id), ["a"]);
+    assert.deepEqual(preserved.customGroups, survivor.customGroups);
+    assert.deepEqual(preserved.noteGroups, survivor.noteGroups);
+    assert.equal(preserved.syncMeta?.deletions.length ?? 0, 0);
+  }
+});

@@ -35,6 +35,7 @@ import {
   type SyncPayload,
 } from './sync';
 import { mergePluginSyncSidecarsThreeWay } from './pluginSyncSidecar';
+import { stripMessageContinuationState, type ForkMessageLike } from './aiSessionFork';
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -80,6 +81,7 @@ const OPTIONAL_ENTITY_KEYS = new Set<CloudSyncPayloadEntityKey>([
   'noteGroups',
   'portForwardingRules',
   'groupConfigs',
+  'aiSessions',
 ]);
 
 // ---------------------------------------------------------------------------
@@ -109,7 +111,7 @@ function entityArray<T>(
 ): T[] {
   if (
     OPTIONAL_ENTITY_KEYS.has(key)
-    && !Object.prototype.hasOwnProperty.call(payload, key)
+    && payload[key] === undefined
   ) {
     return fallback;
   }
@@ -161,12 +163,12 @@ function mergeEntityArrays<T extends { id: string }>(
     const inLocal = localItem !== undefined;
     const inRemote = remoteItem !== undefined;
 
-    if (!inBase && inLocal && !inRemote && tombstones?.remote.has(id)) {
+    if (!options?.preserveDeletions && !inBase && inLocal && !inRemote && tombstones?.remote.has(id)) {
       // Remote explicitly records this entity as deleted. When no base is
       // available, this tombstone is the only durable signal that absence is
       // intentional rather than an old client omitting the entity.
       deleted.remote++;
-    } else if (!inBase && !inLocal && inRemote && tombstones?.local.has(id)) {
+    } else if (!options?.preserveDeletions && !inBase && !inLocal && inRemote && tombstones?.local.has(id)) {
       deleted.local++;
     } else if (!inBase && inLocal && !inRemote) {
       // Local addition
@@ -244,33 +246,59 @@ function mergeEntityArrays<T extends { id: string }>(
 // AI session merge (messages are append-only)
 // ---------------------------------------------------------------------------
 
+/** Remove work state that belongs to the source device, keeping local attachment bodies. */
+export function stripAiSessionDeviceState<T extends { messages?: unknown[] }>(session: T): T {
+  const messages = Array.isArray(session.messages)
+    ? session.messages.map((message) => {
+      if (!message || typeof message !== 'object') return message;
+      const source = message as Record<string, unknown>;
+      const portable = typeof source.id === 'string' && typeof source.content === 'string'
+        && ['user', 'assistant', 'system', 'tool'].includes(source.role as string)
+        ? stripMessageContinuationState(source as ForkMessageLike)
+        : source;
+      const next: Record<string, unknown> = { ...portable };
+      delete next.statusText;
+      delete next.pendingApproval;
+      if (next.executionStatus === 'pending' || next.executionStatus === 'running') {
+        next.executionStatus = 'cancelled';
+      }
+      return next;
+    })
+    : [];
+  const portableSession: Record<string, unknown> = { ...session, messages };
+  // External SDK IDs refer to provider threads/local runtime files on the
+  // source device. Fresh receivers must replay the portable history instead.
+  delete portableSession.externalSessionId;
+  return portableSession as T;
+}
+
 /**
  * Strip inline attachment payloads before they enter a sync payload.
  * Base64 image/PDF blobs would multiply the encrypted vault size and can
  * carry data the user never intended to leave the device; only the metadata
  * (filename, media type, line count) is worth keeping for context.
+ * Device-owned external threads and active approvals cannot resume elsewhere.
  */
 export function stripAiSessionPayloadForSync<T extends { messages?: unknown[] }>(
   sessions: T[] | undefined,
 ): T[] {
   if (!Array.isArray(sessions)) return [];
   return sessions.map((session) => {
-    const messages = Array.isArray((session as { messages?: unknown[] }).messages)
-      ? (session as { messages: Array<Record<string, unknown>> }).messages.map((message) => {
-        if (!message || typeof message !== 'object') return message;
-        const { attachments, images, ...rest } = message as Record<string, unknown> & {
-          attachments?: unknown[];
-          images?: unknown[];
-        };
-        if (attachments === undefined && images === undefined) return rest;
-        return {
-          ...rest,
-          ...(attachments ? { attachments: stripAttachmentBlobs(attachments) } : {}),
-          ...(images ? { images: stripAttachmentBlobs(images) } : {}),
-        };
-      })
-      : [];
-    return { ...session, messages } as T;
+    const portable = stripAiSessionDeviceState(session);
+    const messages = (portable.messages ?? []).map((message) => {
+      if (!message || typeof message !== 'object') return message;
+      const { attachments, images, ...rest } = message as Record<string, unknown> & {
+        attachments?: unknown[];
+        images?: unknown[];
+      };
+      if (attachments === undefined && images === undefined) return rest;
+      return {
+        ...rest,
+        ...(attachments ? { attachments: stripAttachmentBlobs(attachments) } : {}),
+        ...(images ? { images: stripAttachmentBlobs(images) } : {}),
+      };
+    });
+    return { ...portable, messages } as T;
   });
 }
 
@@ -278,8 +306,15 @@ function stripAttachmentBlobs(attachments: unknown[]): unknown[] {
   if (!Array.isArray(attachments)) return attachments;
   return attachments.map((attachment) => {
     if (!attachment || typeof attachment !== 'object') return attachment;
-    const { base64Data: _base64Data, ...meta } = attachment as Record<string, unknown> & { base64Data?: string };
-    return meta;
+    const source = attachment as Record<string, unknown>;
+    // Persist only display metadata. In particular, terminal/note previews,
+    // data URLs and filesystem paths can contain the attachment's full body.
+    const metadata = Object.fromEntries(
+      ['mediaType', 'filename', 'terminalSelection', 'vaultNoteId', 'vaultNoteTitle', 'lineCount']
+        .filter((key) => source[key] !== undefined)
+        .map((key) => [key, source[key]]),
+    );
+    return { ...metadata, base64Data: '', contentUnavailable: true };
   });
 }
 
@@ -342,8 +377,10 @@ function mergeAiSessionArrays<T extends { id: string; updatedAt?: number; messag
       continue;
     }
     if (inBase && inLocal && !inRemote) {
-      if (options?.preserveDeletions) {
+      const localChanged = fingerprint(localItem) !== fingerprint(baseItem);
+      if (localChanged || options?.preserveDeletions) {
         merged.push(localItem as T);
+        if (localChanged) conflicts++;
         deleted.remote++;
       } else {
         deleted.remote++;
@@ -351,8 +388,10 @@ function mergeAiSessionArrays<T extends { id: string; updatedAt?: number; messag
       continue;
     }
     if (inBase && !inLocal && inRemote) {
-      if (options?.preserveDeletions) {
+      const remoteChanged = fingerprint(remoteItem) !== fingerprint(baseItem);
+      if (remoteChanged || options?.preserveDeletions) {
         merged.push(remoteItem as T);
+        if (remoteChanged) conflicts++;
         deleted.local++;
       } else {
         deleted.local++;
@@ -376,16 +415,51 @@ export function mergeAiSessionLists<
   return mergeAiSessionArrays<T>([], local ?? [], incoming ?? []).merged;
 }
 
+/** Keep available attachment bodies on this device when the chosen message is metadata-only. */
+function retainAvailableAttachments<M extends { id?: string; timestamp?: number }>(preferred: M, other: M): M {
+  const result: Record<string, unknown> = { ...preferred };
+  const previous = other as M & Record<string, unknown>;
+  for (const field of ['attachments', 'images']) {
+    const attachments = result[field];
+    const available = previous[field] ?? previous[field === 'attachments' ? 'images' : 'attachments'];
+    if (!Array.isArray(attachments) || !Array.isArray(available)) continue;
+    result[field] = attachments.map((attachment: unknown) => {
+      if (!attachment || typeof attachment !== 'object') return attachment;
+      const metadata = attachment as Record<string, unknown>;
+      if (typeof metadata.base64Data === 'string' && metadata.base64Data.length > 0) return attachment;
+      const match = available.find((candidate: unknown) => {
+        if (!candidate || typeof candidate !== 'object') return false;
+        const value = candidate as Record<string, unknown>;
+        return typeof value.base64Data === 'string' && value.base64Data.length > 0
+          && ['filename', 'mediaType', 'terminalSelection', 'vaultNoteId']
+            .every((key) => value[key] === metadata[key]);
+      }) as Record<string, unknown> | undefined;
+      if (!match) return attachment;
+      const restored: Record<string, unknown> = { ...metadata, base64Data: match.base64Data };
+      for (const key of ['previewText', 'dataUrl', 'filePath']) {
+        if (match[key] !== undefined) restored[key] = match[key];
+      }
+      delete restored.contentUnavailable;
+      return restored;
+    });
+  }
+  return result as M;
+}
+
 function mergeAiSessionPair<T extends { id: string; updatedAt?: number; messages?: Array<{ id?: string; timestamp?: number }> }>(
   a: T,
   b: T,
 ): T {
   const newer = (b.updatedAt ?? 0) > (a.updatedAt ?? 0) ? b : a;
-  const seen = new Map<string, (typeof a.messages extends Array<infer M> ? M : never)>();
-  for (const session of [a, b, newer]) {
-    for (const message of (session.messages ?? []) as Array<{ id?: string; timestamp?: number }>) {
+  const older = newer === a ? b : a;
+  const seen = new Map<string, { id?: string; timestamp?: number }>();
+  // Later values replace matching IDs so a completed reply replaces the
+  // earlier streamed copy. Distinct turns remain append-only.
+  for (const session of [older, newer]) {
+    for (const message of session.messages ?? []) {
       const key = message.id ?? `${message.timestamp ?? 0}:${fingerprint(message)}`;
-      if (!seen.has(key)) seen.set(key, message);
+      const existing = seen.get(key);
+      seen.set(key, existing ? retainAvailableAttachments(message, existing) : message);
     }
   }
   const messages = [...seen.values()].sort((x, y) => (x.timestamp ?? 0) - (y.timestamp ?? 0));
@@ -417,9 +491,9 @@ function mergeStringArrays(
     const inLocal = localSet.has(value);
     const inRemote = remoteSet.has(value);
 
-    if (!inBase && inLocal && !inRemote && tombstones?.remote.has(value)) {
+    if (!options?.preserveDeletions && !inBase && inLocal && !inRemote && tombstones?.remote.has(value)) {
       // Remote tombstone wins over a stale local value when no base exists.
-    } else if (!inBase && !inLocal && inRemote && tombstones?.local.has(value)) {
+    } else if (!options?.preserveDeletions && !inBase && !inLocal && inRemote && tombstones?.local.has(value)) {
       // Local tombstone wins over a stale remote value when no base exists.
     } else if (!inBase) {
       // Addition — keep if either side added it
@@ -837,7 +911,9 @@ export function mergeSyncPayloads(
     noteGroups,
     portForwardingRules: portForwardingRules.merged,
     groupConfigs,
-    aiSessions: aiSessions.merged,
+    ...(base?.aiSessions !== undefined || local.aiSessions !== undefined || remote.aiSessions !== undefined
+      ? { aiSessions: aiSessions.merged }
+      : {}),
     settings,
     ...(mergedSidecarEntries.length > 0 || anySideHadPluginSidecars
       ? { pluginSidecars: { version: 1 as const, entries: mergedSidecarEntries } }

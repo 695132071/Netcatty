@@ -7,7 +7,7 @@
  */
 
 import { useCloudSyncAutoUnlock } from './useCloudSyncAutoUnlock';
-import { useCallback, useEffect, useMemo, useRef, useSyncExternalStore, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useSyncExternalStore } from 'react';
 import {
   type CloudProvider,
   type SecurityState,
@@ -28,7 +28,7 @@ import {
   isProviderReadyForSync,
 } from '../../domain/sync';
 import type { CloudSyncStrategy } from '../../domain/syncStrategy';
-import { localStorageAdapter } from '../../infrastructure/persistence/localStorageAdapter';
+import { LOCAL_STORAGE_ADAPTER_CHANGED_EVENT, localStorageAdapter } from '../../infrastructure/persistence/localStorageAdapter';
 import { STORAGE_KEY_CLOUD_SYNC_AI_SESSIONS } from '../../infrastructure/config/storageKeys';
 import type { CloudSyncConflictAction } from '../../domain/syncStrategy';
 import {
@@ -253,6 +253,25 @@ const subscribe = (callback: () => void) => {
 const getSnapshot = (): SyncManagerState => {
   return manager.getState();
 };
+
+function readAiSessionsSyncEnabled(): boolean {
+  return localStorageAdapter.read<{ enabled?: boolean }>(STORAGE_KEY_CLOUD_SYNC_AI_SESSIONS)?.enabled === true;
+}
+
+function subscribeAiSessionsSyncEnabled(listener: () => void): () => void {
+  const storage = (event: StorageEvent) => {
+    if (event.key === STORAGE_KEY_CLOUD_SYNC_AI_SESSIONS || event.key === null) listener();
+  };
+  const local = (event: Event) => {
+    if ((event as CustomEvent<{ key?: string }>).detail?.key === STORAGE_KEY_CLOUD_SYNC_AI_SESSIONS) listener();
+  };
+  window.addEventListener('storage', storage);
+  window.addEventListener(LOCAL_STORAGE_ADAPTER_CHANGED_EVENT, local);
+  return () => {
+    window.removeEventListener('storage', storage);
+    window.removeEventListener(LOCAL_STORAGE_ADAPTER_CHANGED_EVENT, local);
+  };
+}
 
 export const useCloudSync = (): CloudSyncHook => {
   // Use useSyncExternalStore for real-time state sync across all components
@@ -729,20 +748,11 @@ export const useCloudSync = (): CloudSyncHook => {
     manager.setDeviceName(name);
   }, []);
 
-  const [aiSessionsSyncEnabled, setAiSessionsSyncEnabledState] = useState<boolean>(() => {
-    try {
-      return localStorageAdapter.read<{ enabled?: boolean }>(STORAGE_KEY_CLOUD_SYNC_AI_SESSIONS)?.enabled === true;
-    } catch {
-      return false;
-    }
-  });
+  const aiSessionsSyncEnabled = useSyncExternalStore(
+    subscribeAiSessionsSyncEnabled, readAiSessionsSyncEnabled, readAiSessionsSyncEnabled,
+  );
   const setAiSessionsSyncEnabled = useCallback((enabled: boolean) => {
-    setAiSessionsSyncEnabledState(enabled);
-    try {
-      localStorageAdapter.write(STORAGE_KEY_CLOUD_SYNC_AI_SESSIONS, { enabled });
-    } catch {
-      // Preference storage unavailable — keep the in-memory value only.
-    }
+    localStorageAdapter.write(STORAGE_KEY_CLOUD_SYNC_AI_SESSIONS, { enabled });
   }, []);
 
   const setSyncStrategy = useCallback((strategy: CloudSyncStrategy) => {
@@ -885,6 +895,7 @@ export const useCloudSync = (): CloudSyncHook => {
     }
     return manager.resolveConvergentConflict(addressKey, candidateDot, applyPayload, {
       pluginSidecars,
+      aiSessions: (await import('../syncPayload')).collectAiSessionsForSync(),
     });
   }, [ensureUnlocked]);
 

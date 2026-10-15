@@ -22,6 +22,48 @@ const makeMessage = (index: number): ChatMessage => ({
   timestamp: index,
 });
 
+for (const field of ["attachments", "images"] as const) {
+  test(`ChatMessageList shows unavailable restored ${field} without broken image previews`, () => {
+    const messages: ChatMessage[] = [{
+      id: "restored-user", role: "user", content: "restored request", timestamp: 1,
+      [field]: [
+        { base64Data: "", contentUnavailable: true, mediaType: "image/png", filename: "screenshot.png" },
+        { base64Data: "", contentUnavailable: true, mediaType: "application/pdf", filename: "report.pdf" },
+        { base64Data: "", contentUnavailable: true, mediaType: "text/plain", filename: "selection.log", terminalSelection: true },
+      ],
+    }];
+    const markup = renderToStaticMarkup(
+      <I18nProvider locale="en">
+        <TooltipProvider><ChatMessageList messages={messages} /></TooltipProvider>
+      </I18nProvider>,
+    );
+    assert.match(markup, /screenshot\.png/);
+    assert.match(markup, /report\.pdf/);
+    assert.match(markup, /selection\.log/);
+    assert.match(markup, /Content not available on this device/);
+    assert.doesNotMatch(markup, /<img|data:image/);
+  });
+}
+
+test("ChatMessageList retains local image previews and synced note identities", () => {
+  const messages: ChatMessage[] = [{
+    id: "user", role: "user", content: "look", timestamp: 1,
+    attachments: [
+      { base64Data: "cGljdHVyZQ==", mediaType: "image/png", filename: "local.png" },
+      { base64Data: "", contentUnavailable: true, mediaType: "text/markdown", vaultNoteId: "note-1", vaultNoteTitle: "Runbook" },
+    ],
+  }];
+  const markup = renderToStaticMarkup(
+    <I18nProvider locale="en">
+      <TooltipProvider><ChatMessageList messages={messages} /></TooltipProvider>
+    </I18nProvider>,
+  );
+  assert.match(markup, /<img/);
+  assert.match(markup, /data:image\/png;base64,cGljdHVyZQ==/);
+  assert.match(markup, /Runbook/);
+  assert.doesNotMatch(markup, /Content not available on this device/);
+});
+
 test("resolved approval state retains only tool calls still present in messages", () => {
   const previous = new Map<string, boolean>();
   for (let index = 0; index < 1_000; index += 1) previous.set(`old-${index}`, true);

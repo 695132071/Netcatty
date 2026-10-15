@@ -1,6 +1,7 @@
 import type { Messages } from '../types';
 
 export const enAiMessages: Messages = {
+  'ai.chat.attachmentContentUnavailable': 'Content not available on this device',
   // AI Settings
   'ai.agentSettings': 'Agent Settings',
   'ai.chat.preparing': 'Preparing…',

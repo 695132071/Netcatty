@@ -790,6 +790,7 @@ export const zhCNVaultMessages: Messages = {
   'cloudSync.strategy.smartMerge': '智能合并（推荐）',
   'cloudSync.aiSessions.title': '同步 AI 对话记录',
   'cloudSync.aiSessions.desc': '把 AI 对话记录纳入云同步。多设备的对话会按追加方式合并，附件内容仍保留在本机。',
+  'cloudSync.aiSessions.compatibility': '旧版本可能覆盖对话记录，请先更新所有参与同步的设备。',
   'cloudSync.strategy.smartMergePreserve': '智能合并（不传播删除）',
   'cloudSync.strategy.smartMergePreserveDesc': '合并两边的变化，且单侧删除不会同步到其它设备——只有所有设备都删掉才会真正消失。恢复备份或多台机器同步时推荐使用。',
   'cloudSync.strategy.smartMergeDesc': '尽量保留两边的变化；如果无法安全判断，会再让你手动选择。',

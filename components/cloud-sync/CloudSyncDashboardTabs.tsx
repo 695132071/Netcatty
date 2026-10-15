@@ -603,6 +603,7 @@ export const CloudSyncDashboardTabs: React.FC<CloudSyncDashboardTabsProps> = ({
                                 <div className="text-sm font-medium">{t('cloudSync.aiSessions.title')}</div>
                                 <div className="text-xs text-muted-foreground mt-1">
                                     {t('cloudSync.aiSessions.desc')}
+                                    {' '}{t('cloudSync.aiSessions.compatibility')}
                                 </div>
                             </div>
                             <Switch

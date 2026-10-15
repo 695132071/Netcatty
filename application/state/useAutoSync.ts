@@ -28,6 +28,7 @@ import {
 import {
   SYNCABLE_SETTING_STORAGE_KEYS,
   collectCloudSyncableSettings,
+  collectAiSessionsForSync,
   getEffectivePortForwardingRulesForSync,
   hasCloudSyncEntityData,
   hasMeaningfulCloudSyncData,
@@ -39,6 +40,8 @@ import { commitPluginSidecarsAfterSuccessfulSync } from '../pluginSyncSidecarBri
 import { readInterruptedVaultApply } from '../localVaultBackups';
 import {
   STORAGE_KEY_VAULT_RESTORE_IN_PROGRESS_UNTIL,
+  STORAGE_KEY_AI_SESSIONS,
+  STORAGE_KEY_CLOUD_SYNC_AI_SESSIONS,
 } from '../../infrastructure/config/storageKeys';
 import {
   LOCAL_STORAGE_ADAPTER_CHANGED_EVENT,
@@ -160,6 +163,7 @@ const getSyncPayloadDataHash = (payload: SyncPayload): string => {
     groupConfigs: payload.groupConfigs,
     settings: payload.settings,
     pluginSidecars: payload.pluginSidecars,
+    aiSessions: payload.aiSessions,
   });
 };
 
@@ -244,7 +248,11 @@ export const useAutoSync = (config: AutoSyncConfig) => {
   const [syncableSettingsStorageVersion, setSyncableSettingsStorageVersion] = useState(0);
   useEffect(() => {
     const bumpIfSyncableSetting = (key: string | null | undefined) => {
-      if (!key || !SYNCABLE_SETTING_STORAGE_KEY_SET.has(key)) return;
+      if (!key) return;
+      const chatChanged = key === STORAGE_KEY_AI_SESSIONS
+        && localStorageAdapter.read<{ enabled?: boolean }>(STORAGE_KEY_CLOUD_SYNC_AI_SESSIONS)?.enabled === true;
+      if (!SYNCABLE_SETTING_STORAGE_KEY_SET.has(key)
+        && key !== STORAGE_KEY_CLOUD_SYNC_AI_SESSIONS && !chatChanged) return;
       setSyncableSettingsStorageVersion((v) => v + 1);
     };
 
@@ -300,8 +308,10 @@ export const useAutoSync = (config: AutoSyncConfig) => {
   const buildPayload = useCallback(async (): Promise<SyncPayload> => {
     const { withPluginSyncSidecars } = await import('../syncPayload');
     const { collectPluginSyncSidecarsFromHost } = await import('../pluginSyncSidecarBridge');
+    const aiSessions = collectAiSessionsForSync();
     const base: SyncPayload = {
       ...getSyncSnapshot(),
+      ...(aiSessions !== undefined ? { aiSessions } : {}),
       settings: await collectCloudSyncableSettings(),
       syncedAt: Date.now(),
     };
@@ -782,7 +792,7 @@ export const useAutoSync = (config: AutoSyncConfig) => {
       }
 
       const conflictAction = resolveCloudSyncConflictAction(state.syncStrategy, {
-        hasConflict: inspection.remoteChanged,
+        hasConflict: inspection.remoteChanged || isPreserveDeletionsStrategy(state.syncStrategy),
         hasRemoteFile: Boolean(inspection.remoteFile),
       });
 
