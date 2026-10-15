@@ -628,24 +628,6 @@ export const useSettingsState = (options: { enableSettingsSync?: boolean; enable
     windowOpacityMutationSourceRef.current = 'local';
     setWindowOpacityRecord(toggleWindowOpacityRecord);
   }, []);
-  // Detached sessions disable the general settings listeners and OS effects.
-  // Opacity is shared window chrome, so keep just this setting synchronized.
-  useEffect(() => {
-    if (enableSettingsSync) return;
-    const unsubscribe = netcattyBridge.get()?.onSettingsChanged?.(({ key, value }) => {
-      if (key === STORAGE_KEY_WINDOW_OPACITY) applyIncomingWindowOpacity(value);
-    });
-    const onStorage = (event: StorageEvent) => {
-      if (event.key === STORAGE_KEY_WINDOW_OPACITY && event.newValue !== null) {
-        applyIncomingWindowOpacity(event.newValue);
-      }
-    };
-    window.addEventListener('storage', onStorage);
-    return () => {
-      unsubscribe?.();
-      window.removeEventListener('storage', onStorage);
-    };
-  }, [enableSettingsSync, applyIncomingWindowOpacity]);
   const [appIconVariant, setAppIconVariantState] = useState<AppIconVariant>(() => {
     const stored = readStoredString(STORAGE_KEY_APP_ICON_VARIANT);
     return resolveAppIconVariant(stored ?? DEFAULT_APP_ICON_VARIANT);
@@ -1261,6 +1243,38 @@ export const useSettingsState = (options: { enableSettingsSync?: boolean; enable
     setSftpTransferConcurrencyState,
     setSshTransportIdleTtlMsState,
   });
+
+  // Detached sessions share opacity and the shortcut configuration needed to
+  // operate it. Keep general settings listeners and OS effects disabled there.
+  useEffect(() => {
+    if (enableSettingsSync) return;
+    const applySharedWindowSetting = (key: string, value: unknown) => {
+      if (key === STORAGE_KEY_WINDOW_OPACITY) applyIncomingWindowOpacity(value);
+      if (key === STORAGE_KEY_HOTKEY_SCHEME && (value === 'disabled' || value === 'mac' || value === 'pc')) {
+        setHotkeyScheme(value);
+      }
+      if (key === STORAGE_KEY_CUSTOM_KEY_BINDINGS) {
+        const incoming = parseCustomKeyBindingsStorageRecord(value);
+        if (incoming) applyIncomingCustomKeyBindings(incoming);
+      }
+      if (key === STORAGE_KEY_HOTKEY_RECORDING && typeof value === 'boolean') {
+        setIsHotkeyRecordingState(value);
+      }
+    };
+    const unsubscribe = netcattyBridge.get()?.onSettingsChanged?.(({ key, value }) => {
+      applySharedWindowSetting(key, value);
+    });
+    const onStorage = (event: StorageEvent) => {
+      if (event.key !== null && event.newValue !== null) {
+        applySharedWindowSetting(event.key, event.newValue);
+      }
+    };
+    window.addEventListener('storage', onStorage);
+    return () => {
+      unsubscribe?.();
+      window.removeEventListener('storage', onStorage);
+    };
+  }, [enableSettingsSync, applyIncomingWindowOpacity, applyIncomingCustomKeyBindings]);
 
   useEffect(() => {
     if (!enableSettingsSync) return;

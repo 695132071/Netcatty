@@ -1282,7 +1282,13 @@ function registerWindowHandlers(ipcMain, nativeTheme) {
     // Notify all windows except the sender
     // Check both isDestroyed() and webContents.isDestroyed() to handle HMR refresh
     try {
-      const windows = payload?.key === "netcatty_window_opacity_v1"
+      const sharedWindowSetting = [
+        "netcatty_window_opacity_v1",
+        "netcatty_hotkey_scheme_v1",
+        "netcatty_custom_key_bindings_v1",
+        "netcatty_hotkey_recording_v1",
+      ].includes(payload?.key);
+      const windows = sharedWindowSetting
         ? getAppContentWindowList()
         : getMainWindowList();
       for (const win of windows) {

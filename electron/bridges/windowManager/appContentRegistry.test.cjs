@@ -109,5 +109,31 @@ test("a closing settings recipient does not interrupt delivery to later windows"
     ["netcatty:settings:changed", opacity],
     ["netcatty:settings:changed", recording],
   ]);
-  assert.deepEqual(detachedMessages, [["netcatty:settings:changed", opacity]]);
+  assert.deepEqual(detachedMessages, [
+    ["netcatty:settings:changed", opacity],
+    ["netcatty:settings:changed", recording],
+  ]);
+});
+
+test("detached windows receive live hotkey scheme and binding changes", (context) => {
+  delete require.cache[require.resolve("../windowManager.cjs")];
+  const windowManager = require("../windowManager.cjs");
+  const detached = windowStub(401);
+  const messages = [];
+  detached.webContents.send = (...args) => messages.push(args);
+  windowManager.registerAppContentWindow(detached);
+  context.after(() => windowManager.unregisterAppContentWindow(detached));
+  const handlers = new Map();
+  windowManager.registerWindowHandlers({
+    handle: (channel, handler) => handlers.set(channel, handler),
+    on: (channel, handler) => handlers.set(channel, handler),
+  }, {});
+  const payloads = [
+    { key: "netcatty_hotkey_scheme_v1", value: "disabled" },
+    { key: "netcatty_custom_key_bindings_v1", value: { bindings: { "toggle-opacity": { mac: "Cmd + Shift + U" } }, version: 1, origin: "settings" } },
+  ];
+  for (const payload of payloads) {
+    handlers.get("netcatty:settings:changed")({ sender: { id: 0 } }, payload);
+  }
+  assert.deepEqual(messages, payloads.map((payload) => ["netcatty:settings:changed", payload]));
 });
