@@ -1358,6 +1358,7 @@ const VaultViewInner: React.FC<VaultViewProps> = ({
     handleUnmanageGroup,
     managedGroupPaths,
     moveHostToGroup,
+    moveHostsToGroup,
     setDragOverDropTarget,
     setGroupDragOverDropTarget,
   } = useVaultGroupDragHandlers({
@@ -1602,6 +1603,7 @@ const VaultViewInner: React.FC<VaultViewProps> = ({
           managedSources,
           moveGroup,
           moveHostToGroup,
+          moveHostsToGroup,
           Network,
           newFolderName,
           newHostGroupPath,

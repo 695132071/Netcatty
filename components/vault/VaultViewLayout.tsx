@@ -1,4 +1,5 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
+import { Combobox } from "../ui/combobox";
 import React, { useCallback } from "react";
 import { deleteVaultKey } from "../../application/defaultKeyPassphrases";
 import { VaultGroupDeletionConfirmationChangedError } from "../../application/state/useVaultGroupDeletion";
@@ -243,6 +244,7 @@ export function VaultViewLayout({ ctx }: { ctx: VaultViewLayoutContext }) {
     managedSources,
     moveGroup,
     moveHostToGroup,
+    moveHostsToGroup,
     Network,
     newFolderName,
     newHostGroupPath,
@@ -445,6 +447,8 @@ export function VaultViewLayout({ ctx }: { ctx: VaultViewLayoutContext }) {
     persistWidthStorageKey: STORAGE_KEY_VAULT_HOST_PANEL_WIDTH,
     resizeAriaLabel: t("vault.panel.resizeWidth"),
   };
+  const [isMoveHostsOpen, setIsMoveHostsOpen] = React.useState(false);
+  const [moveTargetGroup, setMoveTargetGroup] = React.useState("");
   const [isSidebarResizing, setIsSidebarResizing] = React.useState(false);
   const keyListRef = React.useRef(keys);
   keyListRef.current = keys;
@@ -1131,6 +1135,19 @@ export function VaultViewLayout({ ctx }: { ctx: VaultViewLayoutContext }) {
                   })}
                 </Button>
                 <Button
+                  variant="secondary"
+                  size="sm"
+                  className="h-7 px-2 text-xs"
+                  disabled={selectedHostIds.size === 0}
+                  onClick={() => {
+                    setMoveTargetGroup("");
+                    setIsMoveHostsOpen(true);
+                  }}
+                >
+                  <FolderTree size={12} className="mr-1" />
+                  {t("vault.hosts.moveSelected", { count: selectedHostIds.size })}
+                </Button>
+                <Button
                   variant="destructive"
                   size="sm"
                   className="h-7 px-2 text-xs"
@@ -1789,6 +1806,43 @@ export function VaultViewLayout({ ctx }: { ctx: VaultViewLayoutContext }) {
               }}
             >
               {t("common.delete")}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={isMoveHostsOpen} onOpenChange={setIsMoveHostsOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>{t("vault.hosts.moveSelected", { count: selectedHostIds.size })}</DialogTitle>
+            <DialogDescription>{t("vault.hosts.moveSelected.description")}</DialogDescription>
+          </DialogHeader>
+          <Combobox
+            options={[
+              { value: "", label: t("vault.hosts.allHosts") },
+              ...allGroupPaths
+                .filter((path: string) => path !== "General"
+                  || customGroups.includes("General")
+                  || allGroupPaths.some((group: string) => group.startsWith("General/")))
+                .map((path: string) => ({ value: path, label: path })),
+            ]}
+            value={moveTargetGroup}
+            onValueChange={setMoveTargetGroup}
+            ariaLabel={t("hostDetails.group.placeholder")}
+            placeholder={t("vault.hosts.allHosts")}
+            clearable={false}
+          />
+          <DialogFooter>
+            <Button variant="ghost" onClick={() => setIsMoveHostsOpen(false)}>{t("common.cancel")}</Button>
+            <Button
+              disabled={selectedHostIds.size === 0}
+              onClick={() => {
+                moveHostsToGroup(selectedHostIds, moveTargetGroup || null);
+                setIsMoveHostsOpen(false);
+                clearHostSelection();
+              }}
+            >
+              {t("vault.hosts.moveSelected", { count: selectedHostIds.size })}
             </Button>
           </DialogFooter>
         </DialogContent>
