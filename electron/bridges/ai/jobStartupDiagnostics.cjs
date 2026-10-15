@@ -31,6 +31,17 @@ function safeJson(value) {
   });
 }
 
+function writeJobDiag(payload) {
+  const line = `[Netcatty JobDiag] ${safeJson(payload)}`;
+  // Utility-process stdout is not reliably captured by the app's launch log.
+  // Use the existing worker message channel and log once in the main process.
+  if (process.parentPort) {
+    process.parentPort.postMessage({ kind: "job-diagnostic", line });
+  } else {
+    console.info(line);
+  }
+}
+
 /**
  * Emit a one-off job diagnostics event from a caller that already knows the
  * session/job identity (e.g. the MCP bridge routing map lifecycle).
@@ -44,14 +55,14 @@ function emitJobDiag(event, payload = {}) {
     ...details
   } = payload;
   try {
-    console.info(`[Netcatty JobDiag] ${safeJson({
+    writeJobDiag({
       event,
       sessionId,
       jobId,
       chatSessionId,
       at: Date.now(),
       ...details,
-    })}`);
+    });
   } catch {
     // Diagnostics must never affect routing or control flow.
   }
@@ -75,7 +86,7 @@ function createJobStartupDiag(context = {}) {
     if (!isJobDiagEnabled()) return;
     const now = Date.now();
     try {
-      console.info(`[Netcatty JobDiag] ${safeJson({
+      writeJobDiag({
         event,
         sessionId: context.sessionId ?? null,
         jobId: context.jobId ?? null,
@@ -83,7 +94,7 @@ function createJobStartupDiag(context = {}) {
         at: now,
         sinceStartMs: now - startedAt,
         ...details,
-      })}`);
+      });
     } catch {
       // Diagnostics must never affect job control flow.
     }

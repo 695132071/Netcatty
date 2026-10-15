@@ -6,9 +6,11 @@ const { Duplex } = require("node:stream");
 const { startPtyJob } = require("./ptyExec.cjs");
 const { buildLiveShellProbe } = require("./liveShellProbe.cjs");
 const {
+  createJobStartupDiag,
   emitJobDiag,
   isJobDiagEnabled,
 } = require("./jobStartupDiagnostics.cjs");
+const { getSessionSnapshot } = require("../terminalInterruptDiagnostics.cjs");
 const {
   clearSessionFlowState,
   setRendererFlowPaused,
@@ -178,6 +180,9 @@ test("startup timeout emits the #3443 checkpoint timeline keyed by sessionId+job
     assert.equal(timeout.session.flowState.rendererPaused, true);
     assert.equal(timeout.session.flowState.appliedPause, true);
     assert.equal(timeout.session.stream.isPaused, true);
+    assert.equal(timeout.probeBytes, 0, "no probe bytes were delivered to the job");
+    assert.equal(timeout.session.stream.readableLength, Buffer.byteLength(probeReply),
+      "the reply is still queued in the paused stream");
 
     const sendInterrupt = events.find((event) => event.event === "send-interrupt");
     assert.equal(sendInterrupt.trigger, "startup-timeout");
@@ -371,5 +376,60 @@ test("startup timeout counts raw probe bytes, including an incomplete UTF-8 pref
   } finally {
     capture.restore();
     pty.destroy();
+  }
+});
+
+
+test("worker diagnostics use the existing IPC channel only when enabled", (t) => {
+  const previousPort = process.parentPort;
+  const messages = [];
+  process.parentPort = { postMessage(message) { messages.push(message); } };
+  t.after(() => {
+    if (previousPort === undefined) delete process.parentPort;
+    else process.parentPort = previousPort;
+    delete process.env.NETCATTY_JOB_DIAG;
+    delete process.env.NETCATTY_TERMINAL_DEBUG;
+  });
+  t.mock.method(console, "info", () => assert.fail("worker must not duplicate console output"));
+  delete process.env.NETCATTY_JOB_DIAG;
+  delete process.env.NETCATTY_TERMINAL_DEBUG;
+  const job = createJobStartupDiag({ sessionId: "s-ipc", jobId: "j-ipc" });
+  emitJobDiag("route-removed");
+  job.emit("probe-write");
+  assert.deepEqual(messages, []);
+
+  process.env.NETCATTY_JOB_DIAG = "1";
+  emitJobDiag("route-removed", { sessionId: "s-ipc", jobId: "j-ipc" });
+  job.emit("probe-write", { bytes: 12 });
+  const events = messages.map((message) => {
+    assert.equal(message.kind, "job-diagnostic");
+    return JSON.parse(message.line.slice(JOB_DIAG_PREFIX.length));
+  });
+  assert.deepEqual(events.map(({ event, sessionId, jobId }) => [event, sessionId, jobId]), [
+    ["route-removed", "s-ipc", "j-ipc"], ["probe-write", "s-ipc", "j-ipc"],
+  ]);
+  process.parentPort.postMessage = () => { throw new Error("closed port"); };
+  assert.doesNotThrow(() => emitJobDiag("route-removed"));
+  assert.doesNotThrow(() => job.emit("probe-write"));
+});
+
+test("paused snapshots distinguish queued reply bytes without consuming them", () => {
+  const empty = makeQuietPty().pty;
+  const buffered = makeQuietPty().pty;
+  try {
+    empty.pause();
+    buffered.pause();
+    buffered.push(Buffer.from("queued probe reply"));
+    const emptyState = getSessionSnapshot({ stream: empty }).stream;
+    const bufferedState = getSessionSnapshot({ stream: buffered }).stream;
+    assert.equal(emptyState.isPaused, true);
+    assert.equal(bufferedState.isPaused, true);
+    assert.equal(emptyState.readableLength, 0);
+    assert.equal(bufferedState.readableLength, Buffer.byteLength("queued probe reply"));
+    assert.equal(buffered.readableLength, bufferedState.readableLength);
+    assert.equal(buffered.isPaused(), true);
+  } finally {
+    empty.destroy();
+    buffered.destroy();
   }
 });

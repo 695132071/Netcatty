@@ -732,8 +732,8 @@ test("job diagnostics tell a scope mismatch from a lost route and log chat cance
   const misses = events().filter((event) => event.event === "job-stop-miss");
   assert.deepEqual(misses.map((event) => [event.op, event.reason]), [
     ["poll", "scope-mismatch"],
-    ["poll", "route-missing"],
-    ["stop", "route-missing"],
+    ["poll", "job-missing"],
+    ["stop", "job-missing"],
   ]);
   const removed = events().filter((event) => event.event === "route-removed");
   assert.deepEqual(removed.map((event) => [event.jobId, event.via]), [["worker-job-1", "chat-session-cancel"]]);

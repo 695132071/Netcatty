@@ -292,7 +292,7 @@ function startPtyJob(ptyStream, command, options) {
       try {
         onInterrupt();
         // finishedAtCallback === true means the job was already finished when
-        // recovery ran (e.g. a startup timeout finished it first) — the exact
+        // recovery ran (e.g. a startup timeout finished it first) - the exact
         // ordering the #3443 investigation hinged on.
         jobDiag.emit("interrupt-callback-invoked", { trigger, finishedAtCallback: finished });
       } catch {

@@ -433,7 +433,7 @@ function createExecHandlerApi(ctx) {
         jobId,
         chatSessionId: chatSessionId || null,
         op,
-        reason: backgroundJobs.has(jobId) ? "scope-mismatch" : "route-missing",
+        reason: backgroundJobs.has(jobId) ? "scope-mismatch" : "job-missing",
       });
     }
 
