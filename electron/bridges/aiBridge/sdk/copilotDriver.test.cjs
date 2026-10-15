@@ -698,15 +698,23 @@ test("buildCopilotHeadlessWrapperPath does not trust a pre-existing file with di
   }
 });
 
-test("connectCopilotStdioPath hands the SDK the resolved CLI directly on POSIX", () => {
+test("connectCopilotStdioPath keeps POSIX and native Windows executables direct", () => {
   // windowsHide is Windows-only; on POSIX the wrapper would sit between the SDK's
   // forceStop() SIGKILL and the real CLI and leave the CLI orphaned.
   assert.equal(connectCopilotStdioPath("/usr/local/bin/copilot", "linux"), "/usr/local/bin/copilot");
   assert.equal(connectCopilotStdioPath("/opt/homebrew/bin/copilot", "darwin"), "/opt/homebrew/bin/copilot");
-  const win = connectCopilotStdioPath("C:\copilot\copilot.exe", "win32");
+  assert.equal(connectCopilotStdioPath("C:\\copilot\\copilot.exe", "win32"), "C:\\copilot\\copilot.exe");
+});
+
+test("connectCopilotStdioPath wraps a Windows npm loader", () => {
+  const loader = require("../../tempDirBridge.cjs").getTempFilePath("copilot-loader.js");
+  fs.writeFileSync(loader, "", { flag: "wx" });
+  let win;
   try {
-    assert.ok(win && win.endsWith(".js"), "Windows still uses the headless wrapper");
+    win = connectCopilotStdioPath(loader, "win32");
+    assert.ok(win && win !== loader && win.endsWith(".js"), "Windows npm loader uses the headless wrapper");
   } finally {
     if (win) fs.rmSync(win, { force: true });
+    fs.rmSync(loader, { force: true });
   }
 });

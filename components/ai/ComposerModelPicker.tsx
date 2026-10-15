@@ -172,7 +172,7 @@ export const ComposerModelPicker: React.FC<ComposerModelPickerProps> = ({
       : '';
     return time
       ? t('ai.chat.modelCatalogSourceCached').replace('{time}', time)
-      : t('ai.chat.modelCatalogSourceCached').replace(' \u00b7 {time}', '');
+      : t('ai.chat.modelCatalogSourceCachedNoTime');
   }, [loading, catalogSource, catalogFetchedAt, t]);
   // Manual model ids are accepted in both modes: provider-bound catalogs and
   // preset lists from external CLI agents whose catalogs lag new models.

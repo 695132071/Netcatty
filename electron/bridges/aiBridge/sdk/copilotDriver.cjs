@@ -81,9 +81,9 @@ function buildCopilotClientOptions({ cliPath, gitHubToken }) {
  */
 function connectCopilotStdioPath(cliPath, platform = process.platform) {
   const resolved = resolveCopilotExecutableForSdk(cliPath);
-  // windowsHide is Windows-only. On POSIX the wrapper would sit between the
-  // SDK's forceStop() SIGKILL and the real CLI, leaving the CLI orphaned.
-  if (platform !== "win32") return resolved;
+  // The SDK already hides native Windows executables and owns their PID for
+  // forceStop(). Only the Windows npm loader needs the extra hidden launch.
+  if (platform !== "win32" || !resolved?.toLowerCase().endsWith(".js")) return resolved;
   return buildCopilotHeadlessWrapperPath(resolved) ?? resolved;
 }
 

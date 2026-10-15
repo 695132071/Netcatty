@@ -515,6 +515,7 @@ export const zhCNAiMessages: Messages = {
   'ai.chat.loadingModels': '正在加载模型...',
   'ai.chat.modelCatalogSourceLive': '实时目录',
   'ai.chat.modelCatalogSourceCached': '缓存 · 上次成功 {time}',
+  'ai.chat.modelCatalogSourceCachedNoTime': '缓存',
   'ai.chat.modelCatalogSourcePresets': '内置默认列表',
   'ai.chat.noMatchingModels': '没有匹配的模型',
   'ai.chat.recent': '最近',

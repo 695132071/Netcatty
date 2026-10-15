@@ -462,6 +462,7 @@ export const ruAiMessages: Messages = {
   'ai.chat.loadingModels': 'Загрузка моделей...',
   'ai.chat.modelCatalogSourceLive': 'Актуальный список моделей',
   'ai.chat.modelCatalogSourceCached': 'Кэш · обновлён {time}',
+  'ai.chat.modelCatalogSourceCachedNoTime': 'Кэш',
   'ai.chat.modelCatalogSourcePresets': 'Встроенный список моделей',
   'ai.chat.noMatchingModels': 'Нет подходящих моделей',
   'ai.chat.recent': 'Недавние',

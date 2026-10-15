@@ -515,6 +515,7 @@ export const enAiMessages: Messages = {
   'ai.chat.loadingModels': 'Loading models...',
   'ai.chat.modelCatalogSourceLive': 'Live catalog',
   'ai.chat.modelCatalogSourceCached': 'Cached · last success {time}',
+  'ai.chat.modelCatalogSourceCachedNoTime': 'Cached',
   'ai.chat.modelCatalogSourcePresets': 'Built-in default list',
   'ai.chat.noMatchingModels': 'No matching models',
   'ai.chat.recent': 'Recent',

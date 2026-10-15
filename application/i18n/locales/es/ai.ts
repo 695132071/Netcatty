@@ -506,6 +506,7 @@ export const esAiMessages: Messages = {
   'ai.chat.loadingModels': 'Cargando modelos...',
   'ai.chat.modelCatalogSourceLive': 'Catálogo en vivo',
   'ai.chat.modelCatalogSourceCached': 'En caché · último éxito {time}',
+  'ai.chat.modelCatalogSourceCachedNoTime': 'En caché',
   'ai.chat.modelCatalogSourcePresets': 'Lista predeterminada integrada',
   'ai.chat.noMatchingModels': 'No hay modelos coincidentes',
   'ai.chat.recent': 'Recientes',
