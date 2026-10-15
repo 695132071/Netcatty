@@ -146,6 +146,15 @@ test("Grok model catalog cache changes with the CLI-login config directory", () 
   assert.equal(base, buildSdkModelCacheKey("grok", "/usr/bin/grok", { GROK_CONFIG_DIR: "/profiles/a" }));
 });
 
+test("Claude model catalog cache changes with the API endpoint", () => {
+  // Another endpoint serves another model list: a failed live load after a
+  // restart must not fall back to the previous endpoint's persisted catalog.
+  const base = buildSdkModelCacheKey("claude", "/usr/bin/claude", { ANTHROPIC_BASE_URL: "https://a.example" });
+  assert.notEqual(base, buildSdkModelCacheKey("claude", "/usr/bin/claude", { ANTHROPIC_BASE_URL: "https://b.example" }));
+  assert.notEqual(base, buildSdkModelCacheKey("claude", "/usr/bin/claude", {}));
+  assert.equal(base, buildSdkModelCacheKey("claude", "/usr/bin/claude", { ANTHROPIC_BASE_URL: "https://a.example" }));
+});
+
 test("Cursor session keys isolate CLI login from API key auth modes", () => {
   assert.notEqual(
     buildSdkSessionKey("chat-1", "cursor", "/usr/bin/agent", "sdk", "cli-login"),
@@ -1349,7 +1358,7 @@ test("list-models keeps an effort-decorated current id from last-known-good when
     const listModels = handlers.get("netcatty:ai:sdk-agent:list-models");
     t.mock.method(driver, "listModels", async () => ({
       currentModelId: "grok-4.6/high",
-      models: [{ id: "grok-4.5", name: "G45" }, { id: "grok-4.6", name: "G46" }],
+      models: [{ id: "grok-4.5", name: "G45" }, { id: "grok-4.6", name: "G46", thinkingLevels: ["high"] }],
     }));
     const seeded = await listModels({ sender: {} }, { sdkBackend: "grok", agentCommand: "/test/lkg-grok-effort" });
     assert.equal(seeded.ok, true);
@@ -1359,6 +1368,30 @@ test("list-models keeps an effort-decorated current id from last-known-good when
     const failed = await listModels({ sender: {} }, { sdkBackend: "grok", agentCommand: "/test/lkg-grok-effort" });
     assert.equal(failed.source, "last-known-good");
     assert.equal(failed.currentModelId, "grok-4.6/high", "the effort must survive when the base row is listed");
+  } finally {
+    cleanup();
+  }
+});
+
+test("list-models does not keep a nested current id that is not an advertised thinking level", async (t) => {
+  const { getDriver } = require("./index.cjs");
+  const { handlers, ctx, cleanup } = makeLastKnownCtx();
+  try {
+    const driver = getDriver("opencode");
+    const listModels = handlers.get("netcatty:ai:sdk-agent:list-models");
+    // `openrouter` is a row, but `openrouter/openai/gpt-5` is not one of its levels.
+    t.mock.method(driver, "listModels", async () => ({
+      currentModelId: "openrouter/openai/gpt-5",
+      models: [{ id: "a/m-1", name: "M1" }, { id: "openrouter", name: "OR", thinkingLevels: ["high"] }],
+    }));
+    const seeded = await listModels({ sender: {} }, { sdkBackend: "opencode", agentCommand: "/test/lkg-nested" });
+    assert.equal(seeded.ok, true);
+
+    ctx.sdkModelCache.clear();
+    driver.listModels.mock.mockImplementation(async () => []);
+    const failed = await listModels({ sender: {} }, { sdkBackend: "opencode", agentCommand: "/test/lkg-nested" });
+    assert.equal(failed.source, "last-known-good");
+    assert.equal(failed.currentModelId, "a/m-1");
   } finally {
     cleanup();
   }

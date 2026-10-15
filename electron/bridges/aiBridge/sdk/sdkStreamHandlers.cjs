@@ -95,6 +95,8 @@ const SDK_MODEL_CACHE_ENV_KEYS = [
   "CLAUDE_CONFIG_DIR",
   "ANTHROPIC_API_KEY",
   "ANTHROPIC_AUTH_TOKEN",
+  // A different endpoint serves a different model list for the same credentials.
+  "ANTHROPIC_BASE_URL",
   "CLAUDE_CODE_OAUTH_TOKEN",
   "OPENCODE_BIN",
   "OPENCODE_CONFIG",
@@ -1103,9 +1105,11 @@ function registerSdkStreamHandlers(ctx) {
               const lastKnownCurrentModelId = !lastKnown.currentModelId
                 ? null
                 // An effort-decorated id (grok-4.6/high) is served as is when its
-                // base row (grok-4.6) is listed, so the effort is not lost.
+                // base row advertises that level, matching the renderer's
+                // modelPresetsContainId; any other suffix stays a dangling id.
                 : lastKnown.models.some((model) => model.id === lastKnown.currentModelId
-                  || lastKnown.currentModelId.startsWith(`${model.id}/`))
+                  || (Array.isArray(model.thinkingLevels)
+                    && model.thinkingLevels.some((level) => `${model.id}/${level}` === lastKnown.currentModelId)))
                   ? lastKnown.currentModelId
                   : lastKnown.models[0]?.id ?? null;
               console.debug(
