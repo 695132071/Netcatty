@@ -974,8 +974,9 @@ function parseGrokModelsOutput(stdout) {
  * 4.6, 4.5). The reverse is equally possible across CLI versions. Unioning
  * keeps the picker from shrinking below either source; when an id appears
  * in both, the ACP entry wins because it carries live vendor `_meta`
- * (reasoning efforts, description), with any field the ACP entry lacks
- * filled in from the CLI row so no information is dropped.
+ * (reasoning efforts, description). Missing descriptive fields can come from
+ * the CLI, but its inferred reasoning defaults must not override ACP's
+ * deliberate absence of reasoning support.
  */
 function mergeGrokCatalogModels(acpModels, cliModels) {
   const acpList = Array.isArray(acpModels) ? acpModels.filter((m) => m?.id) : [];
@@ -991,6 +992,7 @@ function mergeGrokCatalogModels(acpModels, cliModels) {
       continue;
     }
     for (const key of Object.keys(model)) {
+      if (key === "thinkingLevels" || key === "defaultThinkingLevel") continue;
       if (existing[key] === undefined) existing[key] = model[key];
     }
   }

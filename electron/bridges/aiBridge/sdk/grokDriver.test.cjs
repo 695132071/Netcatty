@@ -13,6 +13,7 @@ const {
   parseGrokModelsOutput,
   resetGrokMcpMergeRefcountsForTests,
   resolveGrokPermissionFlags,
+  resolveGrokCatalogCurrentModelId,
   resolveGrokSpawnSpec,
   resolveGrokToolIntegrationFlags,
   resolveGrokTurnPrompt,
@@ -26,6 +27,7 @@ const {
   stripGrokMcpServerSection,
   translateGrokStreamEvent,
 } = require("./grokDriver.cjs");
+const { parseGrokAcpModelCatalog, buildGrokAcpSpawnArgs } = require("./grokAcpDriver.cjs");
 
 function makeEmitter() {
   const calls = [];
@@ -856,19 +858,42 @@ test("mergeGrokCatalogModels keeps ACP entries first and never duplicates shared
   assert.equal(merged[0].name, "Grok 4.7");
 });
 
-test("mergeGrokCatalogModels fills fields an ACP entry lacks from the CLI row", () => {
+test("mergeGrokCatalogModels fills descriptive fields without inventing ACP reasoning support", () => {
   const acpModels = [{ id: "grok-4.6", name: "Grok 4.6" }];
   const cliModels = [{
     id: "grok-4.6",
     name: "grok-4.6",
+    description: "CLI description",
     thinkingLevels: ["xhigh", "high", "medium", "low"],
     defaultThinkingLevel: "high",
   }];
   const merged = mergeGrokCatalogModels(acpModels, cliModels);
   assert.equal(merged.length, 1);
   assert.equal(merged[0].name, "Grok 4.6");
-  assert.deepEqual(merged[0].thinkingLevels, ["xhigh", "high", "medium", "low"]);
-  assert.equal(merged[0].defaultThinkingLevel, "high");
+  assert.equal(merged[0].description, "CLI description");
+  assert.equal(merged[0].thinkingLevels, undefined);
+  assert.equal(merged[0].defaultThinkingLevel, undefined);
+});
+
+test("Grok catalog union preserves explicit ACP no-reasoning through selection and spawn arguments", () => {
+  const acp = parseGrokAcpModelCatalog({ _meta: { modelState: {
+    currentModelId: "grok-4.6",
+    availableModels: ["grok-4.6", "grok-4.5"].map((modelId) => ({
+      modelId,
+      _meta: { supportsReasoningEffort: false },
+    })),
+  } } });
+  const cli = parseGrokModelsOutput("* grok-4.6 (default)\n- grok-4.5");
+  assert.ok(cli.models.every((model) => model.thinkingLevels.length > 0));
+  const merged = mergeGrokCatalogModels(acp.models, cli.models);
+  for (const model of merged) {
+    assert.equal(model.thinkingLevels, undefined);
+    assert.equal(model.defaultThinkingLevel, undefined);
+    const selection = resolveGrokCatalogCurrentModelId(merged, model.id);
+    assert.equal(selection, model.id);
+    const args = buildGrokAcpSpawnArgs({ model: selection, permissionMode: "confirm" });
+    assert.ok(!args.includes("--reasoning-effort"));
+  }
 });
 
 test("mergeGrokCatalogModels tolerates empty or malformed sides", () => {
