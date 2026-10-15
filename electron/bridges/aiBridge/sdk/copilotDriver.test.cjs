@@ -526,7 +526,7 @@ test("listCopilotModels prefers the native copilot.exe only with NETCATTY_COPILO
 });
 
 test("listCopilotModels wraps only Windows JavaScript loaders for the SDK", async () => {
-  for (const cliPath of ["/opt/copilot/npm-loader.js", "C:\\tools\\copilot\\copilot.exe"]) {
+  for (const cliPath of ["/opt/node_modules/@github/copilot/npm-loader.js", "C:\\tools\\copilot\\copilot.exe"]) {
     const captured = {};
     const sdkModule = {
       CopilotClient: class {
@@ -723,8 +723,8 @@ test("connectCopilotStdioPath keeps POSIX and native Windows executables direct"
 
 test("connectCopilotStdioPath wraps a Windows npm loader", () => {
   const dir = require("../../tempDirBridge.cjs").getTempFilePath("copilot-loader-fixture");
-  fs.mkdirSync(dir, { recursive: true });
-  const loader = path.join(dir, "npm-loader.js");
+  const loader = path.join(dir, "node_modules", "@github", "copilot", "npm-loader.js");
+  fs.mkdirSync(path.dirname(loader), { recursive: true });
   fs.writeFileSync(loader, "", { flag: "wx" });
   let win;
   try {
@@ -737,7 +737,7 @@ test("connectCopilotStdioPath wraps a Windows npm loader", () => {
 });
 
 test("connectCopilotStdioPath preserves configured Windows JavaScript launchers", () => {
-  for (const launcher of ["C:\\tools\\copilot\\custom-launcher.js", "/fixture/@github/copilot/custom-launcher.js"]) {
+  for (const launcher of ["C:\\tools\\copilot\\custom-launcher.js", "/fixture/@github/copilot/custom-launcher.js", "/fixture/other-package/npm-loader.js"]) {
     assert.equal(connectCopilotStdioPath(launcher, "win32"), launcher);
   }
 });
