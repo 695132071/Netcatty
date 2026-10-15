@@ -144,8 +144,8 @@ function isSubsequence(query: string, target: string): boolean {
 
 /**
  * Remove history rows that no longer match the edited input while a debounced
- * provider refresh is pending. Other sources keep their provider-specific
- * matching semantics (snippet search, plugin replacement, etc.).
+ * provider refresh is pending. Snippets must be re-queried for the new input
+ * before they can be selected or executed. Other sources retain their matching.
  */
 export function reconcileAutocompletePopupState(
   prev: AutocompleteState,
@@ -158,6 +158,7 @@ export function reconcileAutocompletePopupState(
   const inputContext = parseCommandLine(input);
   const allowFuzzyHistory = input.length >= 2 && inputContext.wordIndex === 0;
   const suggestions = prev.suggestions.filter((suggestion) => {
+    if (suggestion.source === "snippet") return false;
     if (suggestion.source !== "history") return true;
     const text = suggestion.text.toLowerCase();
     if (suggestion.historyMatch === "path-argument") {

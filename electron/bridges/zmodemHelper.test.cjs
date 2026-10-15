@@ -11,6 +11,7 @@ const {
   handleDownload,
   waitForWritableDrain,
   createZmodemUploadDrainWaiter,
+  awaitUploadDrainWithProgress,
   UPLOAD_CHUNK_SIZE,
   UPLOAD_DRAIN_TIMEOUT_MS,
 } = require("./zmodemHelper.cjs");
@@ -420,6 +421,282 @@ test("handleUpload does not read the next chunk until transport backpressure cle
   assert.deepEqual(sentChunkSizes, [UPLOAD_CHUNK_SIZE, 1]);
   assert.equal(progress.at(-1).finalizing, true);
   fs.rmSync(tempDir, { recursive: true, force: true });
+});
+
+test("handleUpload reports transport-accepted bytes instead of the queued backlog", async () => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "netcatty-zmodem-delivered-"));
+  const filePath = path.join(tempDir, "upload.bin");
+  const size = UPLOAD_CHUNK_SIZE * 2;
+  fs.writeFileSync(filePath, Buffer.alloc(size, 0x5a));
+  const progress = [];
+
+  const zsession = {
+    async send_offer() {
+      return {
+        send() {},
+        async end() {},
+      };
+    },
+    async close() {},
+  };
+
+  await handleUpload(zsession, {
+    sessionId: "session-1",
+    getWebContents: () => ({
+      isDestroyed: () => false,
+      send(channel, data) {
+        if (channel === "netcatty:zmodem:progress") progress.push(data);
+      },
+    }),
+    takeDragDropUpload: () => ({
+      filePaths: [filePath],
+      remoteNames: ["upload.bin"],
+    }),
+    progressThrottleMs: 0,
+    // 4096 bytes of every queued amount are still outstanding in the transport.
+    getTransportPendingBytes: () => 4096,
+  });
+
+  assert.deepEqual(
+    progress.map((event) => [event.transferred, Boolean(event.finalizing)]),
+    [
+      [0, false],
+      [UPLOAD_CHUNK_SIZE - 4096, false],
+      [size - 4096, false],
+      [size, true],
+    ],
+  );
+  fs.rmSync(tempDir, { recursive: true, force: true });
+});
+
+test("handleUpload emits delivered-byte progress while parked on transport drain", async () => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "netcatty-zmodem-park-"));
+  const filePath = path.join(tempDir, "upload.bin");
+  const size = UPLOAD_CHUNK_SIZE * 2 + 1;
+  fs.writeFileSync(filePath, Buffer.alloc(size, 0x5a));
+  const progress = [];
+  // Bytes queued into the transport (never consumed; delivery is simulated
+  // below on the pending-byte readout).
+  let outstanding = 0;
+  let drainStartedAt = null;
+  let releaseFirstDrain;
+  const firstDrain = new Promise((resolve) => {
+    releaseFirstDrain = resolve;
+  });
+  let drainCalls = 0;
+
+  const zsession = {
+    async send_offer() {
+      return {
+        send(chunk) {
+          outstanding += chunk.byteLength;
+        },
+        async end() {},
+      };
+    },
+    async close() {},
+  };
+
+  const upload = handleUpload(zsession, {
+    sessionId: "session-1",
+    getWebContents: () => ({
+      isDestroyed: () => false,
+      send(channel, data) {
+        if (channel === "netcatty:zmodem:progress") progress.push(data);
+      },
+    }),
+    takeDragDropUpload: () => ({
+      filePaths: [filePath],
+      remoteNames: ["upload.bin"],
+    }),
+    progressThrottleMs: 0,
+    getTransportPendingBytes: () => {
+      if (drainStartedAt === null) return outstanding;
+      // The backlog drains at 512 B/ms once the parked wait begins.
+      const delivered = Math.min(outstanding, (Date.now() - drainStartedAt) * 512);
+      return outstanding - delivered;
+    },
+    async waitForDrain() {
+      drainCalls += 1;
+      if (drainCalls === 1) {
+        drainStartedAt = Date.now();
+        await firstDrain;
+      }
+    },
+  });
+
+  while (drainCalls === 0) {
+    await new Promise((resolve) => setImmediate(resolve));
+  }
+  const progressedBefore = progress.length;
+  await new Promise((resolve) => setTimeout(resolve, 250));
+  const parkedEvents = progress.slice(progressedBefore);
+  releaseFirstDrain();
+  await upload;
+
+  // While parked, delivered-byte progress must keep flowing (previously the
+  // indicator stayed frozen until the whole backlog drained).
+  assert.ok(
+    parkedEvents.some((event) => event.transferred > 0 && !event.finalizing),
+    `expected delivered-byte emissions while parked, got ${JSON.stringify(parkedEvents.map((e) => [e.transferred, Boolean(e.finalizing)]))}`,
+  );
+
+  const values = progress.map((event) => event.transferred);
+  for (let k = 1; k < values.length; k++) {
+    assert.ok(
+      values[k] >= values[k - 1],
+      `progress must never move backwards: ${values.join(",")}`,
+    );
+    assert.ok(values[k] <= size, `progress must not exceed the file size: ${values.join(",")}`);
+  }
+  assert.equal(progress.at(-1).finalizing, true);
+  fs.rmSync(tempDir, { recursive: true, force: true });
+});
+
+test("awaitUploadDrainWithProgress falls back to a plain drain wait without pending-byte accounting", async () => {
+  let drainCalls = 0;
+  await awaitUploadDrainWithProgress(
+    {
+      waitForDrain: () => {
+        drainCalls += 1;
+        return Promise.resolve();
+      },
+    },
+    () => {
+      throw new Error("no progress emissions without pending-byte accounting");
+    },
+  );
+  assert.equal(drainCalls, 1);
+});
+
+test("awaitUploadDrainWithProgress adds no polling delay when drain resolves immediately", async () => {
+  const startedAt = Date.now();
+  await awaitUploadDrainWithProgress(
+    {
+      waitForDrain: () => Promise.resolve(),
+      getTransportPendingBytes: () => 0,
+    },
+    () => {
+      throw new Error("no emissions without parked backpressure");
+    },
+  );
+  assert.ok(Date.now() - startedAt < 50);
+});
+
+test("awaitUploadDrainWithProgress returns promptly when drain settles during the poll interval", async () => {
+  let releaseDrain;
+  const drainGate = new Promise((resolve) => {
+    releaseDrain = resolve;
+  });
+  let parked = false;
+  const done = awaitUploadDrainWithProgress(
+    {
+      waitForDrain: () => drainGate,
+      getTransportPendingBytes: () => 2048,
+    },
+    () => {
+      parked = true;
+    },
+  );
+
+  const waitStarted = Date.now();
+  while (!parked) {
+    if (Date.now() - waitStarted > 1000) {
+      throw new Error("upload drain wait never parked");
+    }
+    await new Promise((resolve) => setImmediate(resolve));
+  }
+  // The immediate park emission has run and the poll timer (~100ms) is armed.
+  // Settle on the next turn, still inside that interval.
+  await new Promise((resolve) => setImmediate(resolve));
+  const releasedAt = Date.now();
+  releaseDrain();
+  await done;
+  const elapsed = Date.now() - releasedAt;
+  assert.ok(
+    elapsed < 50,
+    `drain settlement during a poll interval resumed in ${elapsed}ms`,
+  );
+});
+
+test("awaitUploadDrainWithProgress propagates a rejection that arrives during the poll interval", async () => {
+  let rejectDrain;
+  const drainGate = new Promise((_, reject) => {
+    rejectDrain = reject;
+  });
+  const err = new Error("Transport drain timeout");
+  err.code = "NETCATTY_ZMODEM_TIMEOUT";
+  let parked = false;
+  const done = awaitUploadDrainWithProgress(
+    {
+      waitForDrain: () => drainGate,
+      getTransportPendingBytes: () => 2048,
+    },
+    () => {
+      parked = true;
+    },
+  );
+
+  const waitStarted = Date.now();
+  while (!parked) {
+    if (Date.now() - waitStarted > 1000) {
+      throw new Error("upload drain wait never parked");
+    }
+    await new Promise((resolve) => setImmediate(resolve));
+  }
+  await new Promise((resolve) => setImmediate(resolve));
+  const releasedAt = Date.now();
+  rejectDrain(err);
+  await assert.rejects(done, (caught) => caught === err);
+  const elapsed = Date.now() - releasedAt;
+  assert.ok(
+    elapsed < 50,
+    `drain rejection during a poll interval resumed in ${elapsed}ms`,
+  );
+});
+
+test("awaitUploadDrainWithProgress emits progress while parked until drain settles", async () => {
+  let releaseDrain;
+  const drainGate = new Promise((resolve) => {
+    releaseDrain = resolve;
+  });
+  let displayed = 0;
+  const emitted = [];
+  const deliverTimer = setInterval(() => {
+    displayed += 512;
+  }, 40);
+
+  try {
+    const parked = awaitUploadDrainWithProgress(
+      {
+        waitForDrain: () => drainGate,
+        getTransportPendingBytes: () => 1024,
+      },
+      () => emitted.push(displayed),
+    );
+    await new Promise((resolve) => setTimeout(resolve, 280));
+    assert.ok(emitted.length >= 2, `expected poll emissions, got ${emitted.length}`);
+    assert.ok(emitted.every((v) => v === 0 || v % 512 === 0));
+    releaseDrain();
+    await parked;
+  } finally {
+    clearInterval(deliverTimer);
+  }
+});
+
+test("awaitUploadDrainWithProgress propagates drain-wait rejections", async () => {
+  const err = new Error("Transport drain timeout");
+  err.code = "NETCATTY_ZMODEM_TIMEOUT";
+  await assert.rejects(
+    awaitUploadDrainWithProgress(
+      {
+        waitForDrain: () => Promise.reject(err),
+        getTransportPendingBytes: () => 0,
+      },
+      () => {},
+    ),
+    (caught) => caught === err,
+  );
 });
 
 test("handleUpload throttles progress IPC by default for every transport", async () => {
@@ -1488,4 +1765,133 @@ test("createZmodemUploadDrainWaiter falls back to a single yield without transpo
 
   await waitForDrain();
   assert.equal(needsDrain, false);
+});
+
+// ---------------------------------------------------------------------------
+// Split hex-header preamble (#3651): the ZRQINIT/ZRINIT hex header that opens
+// every sz/rz session can be fragmented across transport chunks; it must
+// never reach the terminal as garble, and withheld bytes must never be lost.
+// ---------------------------------------------------------------------------
+
+const ZmodemLib = require("zmodem.js");
+
+const DOWNLOAD_PREAMBLE_TEXT = "sz: Sending test.bin\r\nrz\r";
+
+function buildHexHeaderBytes(name, args) {
+  return Buffer.from(ZmodemLib.Header.build(name, ...(args || [])).to_hex());
+}
+
+function createProbeSentry(extra) {
+  const terminal = [];
+  const sentry = createZmodemSentry({
+    sessionId: "probe",
+    onData: (buf) => terminal.push(Buffer.from(buf)),
+    writeToRemote: () => true,
+    getWebContents: () => null,
+    selectDownloadDirectory: async () => ({ canceled: true }),
+    selectUploadFiles: async () => null,
+    hexHeaderFragmentTtlMs: 30,
+    ...extra,
+  });
+  return { sentry, terminal };
+}
+
+function joinedText(terminal) {
+  return Buffer.concat(terminal).toString("latin1");
+}
+
+function assertNoZmodemHeaderBytes(terminal, context) {
+  const joined = Buffer.concat(terminal);
+  assert.equal(
+    joined.indexOf(Buffer.from([0x2a, 0x2a, 0x18, 0x42])),
+    -1,
+    `${context}: ZRQINIT/ZRINIT preamble leaked to the terminal`,
+  );
+  assert.equal(
+    joined.includes(Buffer.from([0x18])),
+    false,
+    `${context}: ZDLE/CAN byte leaked to the terminal`,
+  );
+}
+
+test("fragmented sz ZRQINIT preamble never reaches the terminal", () => {
+  const { sentry, terminal } = createProbeSentry();
+  const stream = Buffer.concat([
+    Buffer.from(DOWNLOAD_PREAMBLE_TEXT),
+    buildHexHeaderBytes("ZRQINIT"),
+    Buffer.from("$ "),
+  ]);
+
+  for (const byte of stream) sentry.consume(Buffer.from([byte]));
+
+  assert.equal(
+    joinedText(terminal),
+    `${DOWNLOAD_PREAMBLE_TEXT}$ `,
+    "only the human-readable sz preamble text should be shown",
+  );
+  assertNoZmodemHeaderBytes(terminal, "byte-at-a-time");
+});
+
+test("split sz preamble leaks nothing at any chunk boundary", () => {
+  const header = buildHexHeaderBytes("ZRQINIT");
+  // Header.build().to_hex() already includes the trailing XON byte.
+  const stream = Buffer.concat([
+    Buffer.from(DOWNLOAD_PREAMBLE_TEXT),
+    header,
+    Buffer.from("$ "),
+  ]);
+
+  for (let chunkSize = 1; chunkSize <= 24; chunkSize += 1) {
+    const { sentry, terminal } = createProbeSentry();
+    for (let i = 0; i < stream.length; i += chunkSize) {
+      sentry.consume(stream.subarray(i, i + chunkSize));
+    }
+    assert.equal(joinedText(terminal), `${DOWNLOAD_PREAMBLE_TEXT}$ `);
+    assertNoZmodemHeaderBytes(terminal, `chunkSize=${chunkSize}`);
+  }
+});
+
+test("fragmented rz ZRINIT preamble never reaches the terminal", () => {
+  const header = buildHexHeaderBytes("ZRINIT", [["CANFDX", "CANOVIO", "CANFC32"]]);
+  const stream = Buffer.concat([Buffer.from("root@host:~$ "), header]);
+
+  for (let chunkSize = 1; chunkSize <= 24; chunkSize += 1) {
+    const { sentry, terminal } = createProbeSentry();
+    for (let i = 0; i < stream.length; i += chunkSize) {
+      sentry.consume(stream.subarray(i, i + chunkSize));
+    }
+    assert.equal(
+      joinedText(terminal),
+      "root@host:~$ ",
+      `split ZRINIT preamble leaked for chunkSize=${chunkSize}`,
+    );
+    assertNoZmodemHeaderBytes(terminal, `rz chunkSize=${chunkSize}`);
+  }
+});
+
+test("bytes withheld as a header fragment are flushed after the TTL", async () => {
+  const { sentry, terminal } = createProbeSentry();
+  const stream = Buffer.from("hello *");
+  for (const byte of stream) sentry.consume(Buffer.from([byte]));
+
+  // The trailing "*" may be the start of a hex header, so it is withheld.
+  assert.equal(joinedText(terminal), "hello ");
+
+  await new Promise((resolve) => setTimeout(resolve, 80));
+  assert.equal(joinedText(terminal), "hello *", "TTL flush must not lose terminal output");
+});
+
+test("output that disproves a header fragment is emitted without delay", () => {
+  const stream = Buffer.from("text **\x18Bxy more");
+  for (let chunkSize = 1; chunkSize <= 6; chunkSize += 1) {
+    const { sentry, terminal } = createProbeSentry();
+    for (let i = 0; i < stream.length; i += chunkSize) {
+      sentry.consume(stream.subarray(i, i + chunkSize));
+    }
+    assert.equal(
+      joinedText(terminal),
+      "text **\x18Bxy more",
+      "a non-hex byte after the pattern stops the deferral",
+    );
+  }
 });

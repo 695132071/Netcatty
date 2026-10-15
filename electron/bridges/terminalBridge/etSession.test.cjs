@@ -26,6 +26,13 @@ function makeApi(t, overrides = {}) {
     getTempFilePath: (name) => path.join(base, name),
     getTempDir: () => base,
   };
+  // Absolute stand-in for OpenSSH. prepareEtSshEnvironment must be able to
+  // inject the PATH wrapper without the host image having /usr/bin/ssh, and
+  // without the execFileSync stub (used to skip Windows icacls) answering
+  // `command -v ssh`.
+  const fakeSsh = path.join(base, "openssh", process.platform === "win32" ? "ssh.exe" : "ssh");
+  fs.mkdirSync(path.dirname(fakeSsh), { recursive: true });
+  fs.writeFileSync(fakeSsh, "#!/bin/sh\nexit 0\n");
   const osMock = {
     homedir: () => fakeHome,
     userInfo: () => ({ username: "tester" }),
@@ -53,7 +60,7 @@ function makeApi(t, overrides = {}) {
     trackSessionIdlePrompt: () => {},
     createPtyOutputBuffer: overrides.createPtyOutputBuffer
       || (() => ({ bufferData() {}, flush() {}, flushPaced() {} })),
-    findExecutable: () => "ssh",
+    findExecutable: (name) => (name === "ssh" ? fakeSsh : name),
     bundledEtClient,
   });
   return { api, base, sessions };

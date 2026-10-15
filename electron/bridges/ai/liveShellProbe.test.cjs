@@ -1,7 +1,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const { EventEmitter } = require('node:events');
-const { buildLiveShellProbe, parseLiveShellProbe } = require('./liveShellProbe.cjs');
+const { buildLiveShellProbe, buildLiveShellProbeCleanup, parseLiveShellProbe } = require('./liveShellProbe.cjs');
 const { startPtyJob } = require('./ptyExec.cjs');
 
 test('live shell response excludes echoed commands, stale markers and partial lines', () => {
@@ -9,11 +9,11 @@ test('live shell response excludes echoed commands, stale markers and partial li
   assert.equal(parseLiveShellProbe(buildLiveShellProbe(marker), marker), null);
   assert.equal(parseLiveShellProbe(`${marker}_P:fi`, marker), null);
   assert.equal(parseLiveShellProbe('__NCMCP_old___P:fish\n', marker), null);
-  assert.deepEqual(parseLiveShellProbe(`\r${marker}_P:/usr/bin/fish\r\n${marker}_Q`, marker), { kind: 'fish' });
-  assert.deepEqual(parseLiveShellProbe(`${marker}_P:-zsh\n${marker}_Q`, marker), { kind: 'posix' });
-  assert.deepEqual(parseLiveShellProbe(`${marker}_P:\n${marker}_Q`, marker), { kind: null });
-  assert.deepEqual(parseLiveShellProbe(`> ${marker}_P:bash\n> ${marker}_Q`, marker), { kind: 'posix' });
-  assert.deepEqual(parseLiveShellProbe(`> ${marker}_P:fish\n> ${marker}_Q`, marker), { kind: 'fish' });
+  assert.deepEqual(parseLiveShellProbe(`\r${marker}_P:/usr/bin/fish\r\n${marker}_Q`, marker), { kind: 'fish', shellName: 'fish' });
+  assert.deepEqual(parseLiveShellProbe(`${marker}_P:-zsh\n${marker}_Q`, marker), { kind: 'posix', shellName: 'zsh' });
+  assert.deepEqual(parseLiveShellProbe(`${marker}_P:\n${marker}_Q`, marker), { kind: null, shellName: '' });
+  assert.deepEqual(parseLiveShellProbe(`> ${marker}_P:bash\n> ${marker}_Q`, marker), { kind: 'posix', shellName: 'bash' });
+  assert.deepEqual(parseLiveShellProbe(`> ${marker}_P:fish\n> ${marker}_Q`, marker), { kind: 'fish', shellName: 'fish' });
 });
 
 test('probe waits for complete reply before choosing the first wrapper', async () => {
@@ -260,7 +260,7 @@ for (const [customization, listHistory] of [
       const { buildWrappedCommand } = require('./ptyExecHelpers.cjs');
       const marker = '__NCMCP_HISTORY_PROBE__';
       const input = `HISTFILE=/dev/null; HISTCONTROL=; PS1=; PS2=\n${customization}\n${listHistory} -c\necho user_one\necho user_two\n`
-        + buildLiveShellProbe(marker)
+        + buildLiveShellProbe(marker) + buildLiveShellProbeCleanup(marker)
         + (executeCommand ? buildWrappedCommand('echo command_ok', 'posix', marker, true) : '')
         + '\nprintf \"\\n\"\n' + listHistory + '\nexit\n';
       const result = spawnSync('/bin/bash', ['--noprofile', '--norc', '-i'], {
@@ -337,7 +337,7 @@ for (const invocationName of ['sh', 'renamed-bash']) {
       const marker = '__NCMCP_RENAMED_BASH__';
       const result = spawnSync(shell, ['--noprofile', '--norc', '-i'], {
         input: 'HISTFILE=/dev/null; HISTCONTROL=; PS1=; PS2=\nbuiltin history -c\necho preserve_user_history\n'
-          + buildLiveShellProbe(marker) + '\nprintf "\\n"\ncommand builtin history\nexit\n',
+          + buildLiveShellProbe(marker) + buildLiveShellProbeCleanup(marker) + '\nprintf "\\n"\ncommand builtin history\nexit\n',
         encoding: 'utf8', env: { ...process.env, TERM: 'dumb' }, timeout: 5000,
       });
       assert.equal(result.status, 0, result.stderr);
@@ -389,7 +389,7 @@ for (const historyControl of ['', 'ignorespace']) {
     const { buildWrappedCommand } = require('./ptyExecHelpers.cjs');
     const marker = '__NCMCP_FALLBACK_GUARD__';
     const input = `HISTFILE=/dev/null; HISTCONTROL=${historyControl}; PS1=; PS2=\nbuiltin() { printf UNEXPECTED_FALLBACK; }\ncommand history -c\necho user_one\n`
-      + buildLiveShellProbe(marker)
+      + buildLiveShellProbe(marker) + buildLiveShellProbeCleanup(marker)
       + buildWrappedCommand('echo command_ok', 'posix', marker, true)
       + '\ncommand history\nexit\n';
     const result = spawnSync('/bin/bash', ['--noprofile', '--norc', '-i'], {
@@ -406,7 +406,7 @@ for (const historyControl of ['', 'ignorespace']) {
 }
 
 for (const stop of ['cancel', 'timeout']) {
-  test(`paced probe stops writing after ${stop}`, async () => {
+  test(`paced Bash probe cleanup stops writing after ${stop}`, async () => {
     const pty = new EventEmitter();
     const writes = [];
     pty.write = data => writes.push(data);
@@ -414,8 +414,9 @@ for (const stop of ['cancel', 'timeout']) {
       shellKind: 'posix', probeLiveShell: true, timeoutMs: stop === 'timeout' ? 70 : 1000,
       enforceWallTimeout: stop === 'timeout',
     });
+    pty.emit('data', `${job.marker}_P:bash\n${job.marker}_Q`);
     await new Promise(resolve => setTimeout(resolve, 45));
-    assert.ok(writes.length >= 2, 'probe must have started a later chunk');
+    assert.ok(writes.length >= 3, 'cleanup must have started a later chunk');
     if (stop === 'cancel') {
       job.cancel();
       pty.emit('close');
@@ -425,5 +426,21 @@ for (const stop of ['cancel', 'timeout']) {
     await new Promise(resolve => setTimeout(resolve, 100));
     assert.equal(writes.length, count);
     assert.ok(writes.every(data => !data.includes('must_not_run')));
+  });
+}
+
+for (const shellName of ['zsh', '/bin/zsh', 'zsh-5.9', 'fish', 'bash', 'sh', 'renamed-bash']) {
+  test(`live probe defers Bash history input until shell reply (${shellName})`, async () => {
+    const pty = new EventEmitter();
+    const writes = [];
+    pty.write = (data) => writes.push(String(data));
+    const job = startPtyJob(pty, 'printf success', { shellKind: 'posix', probeLiveShell: true, timeoutMs: 1000 });
+    assert.doesNotMatch(writes.join(''), /history -d|printf success/);
+    pty.emit('data', `${job.marker}_P:${shellName}\n${job.marker}_Q`);
+    const deferred = writes.slice(1).join('');
+    const needsCleanup = shellName !== 'fish' && !/zsh/.test(shellName);
+    assert.equal(deferred.includes('\\command eval'), needsCleanup);
+    pty.emit('data', `${job.marker}_S\nsuccess\n${job.marker}_E:0\n`);
+    assert.equal((await job.resultPromise).exitCode, 0);
   });
 }

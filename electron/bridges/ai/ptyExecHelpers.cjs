@@ -58,11 +58,25 @@ function subscribeToPtyData(ptyStream, onData) {
   throw new Error("PTY stream does not support data subscriptions");
 }
 
+// Only the end of the output can hold the idle prompt, and this check runs for
+// every PTY chunk while the retained output may be hundreds of thousands of
+// characters long. Normalising the whole text (ANSI and carriage returns) on
+// each chunk stalls the worker during a flood, so look at a tail window that is
+// comfortably larger than the prompt including the escape codes it may carry.
+const PROMPT_SUFFIX_MIN_WINDOW_CHARS = 2048;
+const PROMPT_SUFFIX_WINDOW_PER_PROMPT_CHAR = 8;
+
 function hasExpectedPromptSuffix(text, expectedPrompt) {
   if (!expectedPrompt) return false;
-  const normalizedText = stripAnsi(String(text || "")).replace(/\r/g, "");
   const normalizedPrompt = stripAnsi(String(expectedPrompt || "")).replace(/\r/g, "");
-  return !!normalizedPrompt && normalizedText.endsWith(normalizedPrompt);
+  if (!normalizedPrompt) return false;
+  const fullText = String(text || "");
+  const windowChars = Math.max(
+    PROMPT_SUFFIX_MIN_WINDOW_CHARS,
+    String(expectedPrompt).length * PROMPT_SUFFIX_WINDOW_PER_PROMPT_CHAR,
+  );
+  const tail = fullText.length > windowChars ? fullText.slice(-windowChars) : fullText;
+  return stripAnsi(tail).replace(/\r/g, "").endsWith(normalizedPrompt);
 }
 
 function escapePosixSingleQuoted(text) {
@@ -229,7 +243,7 @@ function buildBashHistoryCleanup(marker, keepDispatcher = false) {
   ].join(` \\\n: "${marker}"; `);
 }
 
-function buildPosixWrapperBody(command, marker, startFormat) {
+function buildPosixWrapperBody(command, marker, startFormat, { omitBashHistoryCleanup = false } = {}) {
   const noPager = "PAGER=cat SYSTEMD_PAGER= GIT_PAGER=cat LESS= ";
   const commandLines = String(command || "").replace(/\r\n?/g, "\n").split("\n");
   let cmdAssign = commandLines.length > 1
@@ -259,7 +273,7 @@ function buildPosixWrapperBody(command, marker, startFormat) {
     }
     cmdAssign = `${marker}_cmd=$(${writes.join(`; \\\n: '${marker}'; `)})`;
   }
-  const historyCleanup = buildBashHistoryCleanup(marker);
+  const historyCleanup = omitBashHistoryCleanup ? [] : [buildBashHistoryCleanup(marker)];
   // OpenWrt builds BusyBox with a 512-byte interactive line editor. Keep
   // every physical line below that limit, even for short user commands.
   // Emit a short standalone input marker before the shell reads any PS2
@@ -268,12 +282,12 @@ function buildPosixWrapperBody(command, marker, startFormat) {
     ` : '${marker}'; ${cmdAssign}`,
     `{ printf '${startFormat}' '${marker}_S'; trap ':' INT; ( ${noPager}eval "$${marker}_cmd" ); __NCMCP_rc=$?; trap - INT`,
     `printf '%s\\n' '${marker}_E:'"$__NCMCP_rc"`,
-    historyCleanup,
+    ...historyCleanup,
     `(exit $__NCMCP_rc); }`,
   ].join(`; \\\n: '${marker}'; `);
 }
 
-function buildWrappedCommand(command, shellKind, marker, separateStartMarker = false) {
+function buildWrappedCommand(command, shellKind, marker, separateStartMarker = false, options = {}) {
   // A live probe leaves its completion marker unterminated to hide the next
   // prompt. POSIX input also hides arbitrary PS2 prompts until a fresh start
   // marker line; keep the fish behavior controlled by separateStartMarker.
@@ -352,7 +366,7 @@ function buildWrappedCommand(command, shellKind, marker, separateStartMarker = f
       // can opt in by adding `HISTCONTROL=ignoreboth` to ~/.bashrc.
       // Without that config the prefix is harmless; it just doesn't
       // suppress history recording.
-      return ` ${buildPosixWrapperBody(command, marker, "\\n%s\\n")}\n`;
+      return ` ${buildPosixWrapperBody(command, marker, "\\n%s\\n", options)}\n`;
     }
   }
 }

@@ -967,6 +967,25 @@ test("posix wrapper keeps cd contained in the subshell (documented trade-off)", 
   }
 });
 
+// A cancelled paced delivery may execute only the first physical line.
+// Neither partial delivery nor a complete command may change user shell hooks.
+for (const [partial, hasPS0] of [[true, true], [false, true], [true, false], [false, false]]) {
+  test(`posix ${partial ? "partial" : "complete"} wrapper preserves ${hasPS0 ? "set" : "unset"} PS0 and existing shell state`, () => {
+    const marker = "__NCMCP_TEST__";
+    const wrapped = buildWrappedCommand("echo HOOK_STATE_TEST", "posix", marker);
+    const script = partial ? wrapped.slice(0, wrapped.indexOf("\n") + 1) : wrapped;
+    const result = spawnSync("bash", ["--norc", "-c",
+      (hasPS0 ? 'PS0="[hook] "; ' : 'unset PS0; ') + '__NCMCP_PS0=user_value\n' + script
+        + 'printf "HOOK_STATE=<%s> SCRATCH=<%s>\\n" "$PS0" "$__NCMCP_PS0"',
+    ], { encoding: "utf8" });
+
+    assert.equal(result.error, undefined);
+    assert.equal(result.status, 0, result.stderr);
+    assert.ok(result.stdout.includes(`HOOK_STATE=<${hasPS0 ? "[hook] " : ""}> SCRATCH=<user_value>`), result.stdout);
+    if (!partial) assert.match(result.stdout, new RegExp(`${marker}_E:0`));
+  });
+}
+
 // Issue #3265: with plain HISTCONTROL the wrapper line is recorded in bash
 // history; arrow-up recall then redraws the marker text, the preload __NCMCP_
 // filter suppresses the redraw fragments containing it, and readline's row
