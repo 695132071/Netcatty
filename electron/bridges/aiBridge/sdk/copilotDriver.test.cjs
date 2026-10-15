@@ -1,5 +1,6 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
+const { execFileSync } = require("node:child_process");
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
@@ -603,6 +604,25 @@ test("buildCopilotHeadlessWrapperSource bakes paths and spawns hidden", () => {
   assert.ok(source.includes("resolvePlatformExe"));
   assert.ok(source.includes("no copilot executable or loader found"));
 });
+
+for (const type of ["commonjs", "module"]) {
+  test(`Copilot wrapper launches its child under a ${type} ancestor package`, () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "netcatty-copilot-module-"));
+    try {
+      fs.writeFileSync(path.join(dir, "package.json"), JSON.stringify({ type }));
+      const nested = path.join(dir, "Temp", "Netcatty");
+      fs.mkdirSync(nested, { recursive: true });
+      const loader = path.join(dir, "fixture.js");
+      fs.writeFileSync(loader, "process.stdout.write(JSON.stringify(process.argv.slice(2)));");
+      const wrapper = path.join(nested, "wrapper.js");
+      fs.writeFileSync(wrapper, buildCopilotHeadlessWrapperSource({ realExePath: loader, loaderPath: loader }));
+      const output = execFileSync(process.execPath, [wrapper, "models", "--json"], { encoding: "utf8" });
+      assert.deepEqual(JSON.parse(output), ["models", "--json"]);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+}
 
 test("buildCopilotHeadlessWrapperPath returns null for an empty resolution and reuses one allocated file per content", (t) => {
   const tempDirBridge = require("../../tempDirBridge.cjs");
