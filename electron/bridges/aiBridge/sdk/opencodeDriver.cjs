@@ -560,6 +560,7 @@ async function runOpenCodeTurn({
   let opencode = null;
   let sessionId = resumeSessionId || null;
   let hasContent = false;
+  let backgroundWarningCount = 0;
   let failed = false;
   let abortSent = false;
   let removeAbortListener = null;
@@ -619,6 +620,13 @@ async function runOpenCodeTurn({
           if (abortController?.signal?.aborted) break;
           const eventSessionId = getOpenCodeSessionIdFromEvent(event);
           if (eventSessionId && eventSessionId !== sessionId) continue;
+          if (!eventSessionId && getOpenCodeEventPayload(event)?.type === "session.error") {
+            const message = extractOpenCodeErrorMessage(getOpenCodeEventPayload(event).properties?.error)
+              || "OpenCode reported a background error";
+            if (emitter.warning) emitter.warning(`opencode-background-error:${++backgroundWarningCount}`, message);
+            else emitter.status(message);
+            continue;
+          }
           const result = translateOpenCodeEvent(event, emitter, state);
           if (result.content) hasContent = true;
           if (result.error) {
