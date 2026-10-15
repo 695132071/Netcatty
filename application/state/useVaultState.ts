@@ -82,6 +82,10 @@ import {
 import { commitVaultNotesWrite } from "./vaultNotesPersistence";
 import { rebasePendingVaultNotes } from "../../domain/vaultNotesReconciliation";
 import { publishShellHistorySnapshot } from "./shellHistoryStore";
+import {
+  clearHistory as clearAutocompleteHistory,
+  markCommandHistoryCleared,
+} from "./commandHistoryStore";
 import { setVaultInitialized } from "./vaultInitStore";
 import { notify } from "../notification";
 import {
@@ -1250,6 +1254,23 @@ export const useVaultState = () => {
     publishShellHistorySnapshot([]);
   }, []);
 
+  /**
+   * Clear every locally recorded command history: the global shell history, the
+   * terminal autocomplete history, and the in-memory compose-bar recall.
+   *
+   * The autocomplete store persists the clear synchronously and fans it out to
+   * other renderers through its own `storage` listener. The compose-bar store
+   * subscribes to that same clear event, so detached terminal popups drop their
+   * recall too without a separate broadcast.
+   */
+  const clearAllCommandHistory = useCallback(() => {
+    clearShellHistory();
+    clearAutocompleteHistory();
+    // Tombstone so a later first-time histfile import cannot restore the
+    // commands the user just deleted.
+    markCommandHistoryCleared();
+  }, [clearShellHistory]);
+
   const removeShellHistoryEntry = useCallback((entryId: string) => {
     setShellHistory((prev) => {
       const updated = removeGlobalHistoryEntry(prev, entryId);
@@ -2201,6 +2222,7 @@ export const useVaultState = () => {
     updateGroupConfigs,
     addShellHistoryEntry,
     clearShellHistory,
+    clearAllCommandHistory,
     removeShellHistoryEntry,
     addConnectionLog,
     updateConnectionLog,

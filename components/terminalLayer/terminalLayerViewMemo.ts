@@ -234,6 +234,7 @@ const SIDE_PANEL_STABLE_CTX_KEYS = [
   'themeMountedTabIds',
   'handleHistoryPaste',
   'handleHistoryDelete',
+  'handleHistoryClear',
   'handleHistoryRun',
   'handleOpenHistory',
   'HistorySidePanel',

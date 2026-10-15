@@ -63,6 +63,10 @@ export const zhTWTerminalMessages: Messages = {
   'history.action.run': '在終端執行',
   'history.action.saveAsSnippet': '儲存為程式碼片段',
   'history.action.delete': '從歷史記錄中刪除',
+  'history.action.clearAll': '清空全部歷史',
+  'history.clearAll.dialog.title': '清空全部指令歷史？',
+  'history.clearAll.dialog.desc': '這將永久刪除所有本機記錄的指令歷史及自動補全建議，且無法復原。',
+  'history.clearAll.dialog.confirm': '全部清空',
   // SFTP File Opener
   'sftp.context.copyPath': '複製檔案路徑',
   'sftp.context.openWith': '開啟方式...',
