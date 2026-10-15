@@ -346,13 +346,13 @@ function isStillValidClaudeAlias(
   return CLAUDE_CLI_MODEL_ALIASES.has(baseId);
 }
 
-// Discovery failure is explicit: a successful Copilot catalog may also
-// contain only auto, and manual picker rows need not contain auto at all.
-function isDegradedCopilotCatalog(
+// Retain unlisted Copilot choices while discovery is pending or failed.
+// A successful auto-only catalog is authoritative, regardless of row names.
+function shouldRetainUnlistedCopilotModel(
   agent: ExternalAgentConfig | undefined,
-  catalogUnavailable: boolean,
+  retainUnlistedModel: boolean,
 ): boolean {
-  return catalogUnavailable && getExternalAgentSdkBackend(agent) === 'copilot';
+  return retainUnlistedModel && getExternalAgentSdkBackend(agent) === 'copilot';
 }
 
 /**
@@ -368,6 +368,20 @@ export function storedModelStillResolvesForAgent(
   if (!storedModelId) return false;
   return modelPresetsContainId(presets, storedModelId)
     || isStillValidClaudeAlias(storedModelId, agent);
+}
+
+export function resolveSdkRuntimeCatalogDefaultModelId(
+  catalog: SdkRuntimeModelCatalog,
+  agent?: ExternalAgentConfig,
+): string | null {
+  if (catalog.currentModelId) return catalog.currentModelId;
+  // Copilot lists models without a current id. Commit the same visible
+  // default on live success, so a later failed refresh cannot revive an
+  // unlisted saved choice that the live catalog has already replaced.
+  if (!catalog.warning && getExternalAgentSdkBackend(agent) === 'copilot' && catalog.models[0]) {
+    return resolveAgentModelSelection(catalog.models[0]);
+  }
+  return null;
 }
 
 export function shouldAdoptSdkCurrentModel(
@@ -398,12 +412,12 @@ export function shouldUseStoredAgentModel(
   storedModelId: string | null | undefined,
   presets: AgentModelPreset[],
   agent?: ExternalAgentConfig,
-  catalogUnavailable = false,
+  retainUnlistedModel = false,
 ): boolean {
   if (!storedModelId) return false;
   return storedModelStillResolvesForAgent(storedModelId, presets, agent)
     || (presets.length === 0 && shouldLoadSdkRuntimeModels(agent))
-    || isDegradedCopilotCatalog(agent, catalogUnavailable);
+    || shouldRetainUnlistedCopilotModel(agent, retainUnlistedModel);
 }
 
 /**
@@ -416,11 +430,11 @@ export function appendRetainedStoredModelPreset(
   presets: AgentModelPreset[],
   storedModelId: string | null | undefined,
   agent?: ExternalAgentConfig,
-  catalogUnavailable = false,
+  retainUnlistedModel = false,
 ): AgentModelPreset[] {
   if (!storedModelId || modelPresetsContainId(presets, storedModelId)) return presets;
   if (!isStillValidClaudeAlias(storedModelId, agent)
-    && !isDegradedCopilotCatalog(agent, catalogUnavailable)) {
+    && !shouldRetainUnlistedCopilotModel(agent, retainUnlistedModel)) {
     return presets;
   }
   const canonical = canonicalizeEffortEncodedModelId(storedModelId);

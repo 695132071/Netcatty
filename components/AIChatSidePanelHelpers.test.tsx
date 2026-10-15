@@ -12,6 +12,7 @@ import {
   modelPresetsContainId,
   normalizeStoredAgentModelSelection,
   normalizeSdkRuntimeModelPresets,
+  resolveSdkRuntimeCatalogDefaultModelId,
   reconcileRuntimeModelWarning,
   shouldAdoptSdkCurrentModel,
   shouldLoadSdkRuntimeModels,
@@ -683,4 +684,17 @@ test('renderer catalogs separate supported credential and profile overrides', ()
     assert.notEqual(key, buildSdkRuntimeModelCacheKey({ ...agent, env: { [name]: 'fixture-profile-b' } }), name);
     assert.doesNotMatch(key, /fixture-profile-a/);
   }
+});
+
+
+test('Copilot successful catalog without current id replaces an unlisted saved choice before failure', () => {
+  const agent: ExternalAgentConfig = { id: 'copilot', name: 'Copilot', command: 'copilot', enabled: true, sdkBackend: 'copilot' };
+  // Copilot returns an array, so IPC has no currentModelId even on success.
+  const live = { models: [{ id: 'auto', name: 'auto' }], currentModelId: null };
+  const next = resolveSdkRuntimeCatalogDefaultModelId(live, agent);
+  assert.equal(next, 'auto');
+  assert.equal(shouldAdoptSdkCurrentModel(next, 'saved-model', live.models, agent), true);
+  const laterFailure = appendRetainedStoredModelPreset(live.models, next, agent, true);
+  assert.deepEqual(laterFailure, live.models);
+  assert.equal(resolveSdkRuntimeCatalogDefaultModelId({ ...live, warning: 'unavailable' }, agent), null);
 });

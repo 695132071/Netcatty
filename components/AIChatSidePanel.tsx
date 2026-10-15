@@ -86,6 +86,7 @@ import {
   mergeFallbackThinkingLevels,
   normalizeStoredAgentModelSelection,
   normalizeSdkRuntimeModelPresets,
+  resolveSdkRuntimeCatalogDefaultModelId,
   shouldAdoptSdkCurrentModel,
   appendRetainedStoredModelPreset,
   shouldLoadSdkRuntimeModels,
@@ -1039,12 +1040,13 @@ const AIChatSidePanelActive: React.FC<AIChatSidePanelProps> = ({
       return;
     }
 
+    const defaultModelId = resolveSdkRuntimeCatalogDefaultModelId(catalog, agent);
     if (
       options.adoptCurrentModel
-      && catalog.currentModelId
-      && shouldAdoptSdkCurrentModel(catalog.currentModelId, agentModelMapRef.current[agentId], runtimePresets, agent)
+      && defaultModelId
+      && shouldAdoptSdkCurrentModel(defaultModelId, agentModelMapRef.current[agentId], runtimePresets, agent)
     ) {
-      setAgentModel(agentId, catalog.currentModelId);
+      setAgentModel(agentId, defaultModelId);
     }
   }, [setAgentModel, setRuntimeModelLoading, buildExternalAgentRuntimeModelTarget, collectCustomModelIds]);
 
@@ -1264,7 +1266,9 @@ const AIChatSidePanelActive: React.FC<AIChatSidePanelProps> = ({
       ),
       agentModelMap[currentAgentId],
       currentAgentConfig,
-      Boolean(runtimeEntry && target && runtimeEntry.cacheKey === target.cacheKey && runtimeEntry.catalogUnavailable),
+      // Until the initial catalog settles, show the choice a failed
+      // preflight would actually send instead of flashing Auto.
+      !runtimeEntry || !target || runtimeEntry.cacheKey !== target.cacheKey || runtimeEntry.catalogUnavailable,
     );
   }, [
     currentAgentConfig,
@@ -1506,11 +1510,12 @@ const AIChatSidePanelActive: React.FC<AIChatSidePanelProps> = ({
               Boolean(catalog.warning),
             );
             const storedModelId = agentModelMapRef.current[sendAgentId];
+            const defaultModelId = resolveSdkRuntimeCatalogDefaultModelId(catalog, currentAgentConfig);
             if (
-              catalog.currentModelId
-              && shouldAdoptSdkCurrentModel(catalog.currentModelId, storedModelId, runtimePresets, currentAgentConfig)
+              defaultModelId
+              && shouldAdoptSdkCurrentModel(defaultModelId, storedModelId, runtimePresets, currentAgentConfig)
             ) {
-              sendSelectedAgentModel = catalog.currentModelId;
+              sendSelectedAgentModel = defaultModelId;
             } else if (shouldUseStoredAgentModel(storedModelId, runtimePresets, currentAgentConfig)) {
               sendSelectedAgentModel = normalizeStoredAgentModelSelection(
                 storedModelId,
