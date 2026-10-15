@@ -8,6 +8,7 @@ const {
   buildOpenCodePromptParts,
   classifyOpenCodeSpawnError,
   createOpenCodeProcessEnv,
+  getOpenCodeDefaultModelIds,
   listOpenCodeModels,
   mapOpenCodeModels,
   OPENCODE_LIST_SERVER_IDLE_MS,
@@ -20,6 +21,27 @@ const {
   withOpenCodeProcessEnv,
   withOpenCodeServerPort,
 } = require("./opencodeDriver.cjs");
+
+test("getOpenCodeDefaultModelIds enumerates defaults and qualifies provider/model shapes", () => {
+  assert.deepEqual(getOpenCodeDefaultModelIds({ default: { xiaomi: "chosen", mimo: "auto-model" } }), [
+    "xiaomi/chosen",
+    "mimo/auto-model",
+  ]);
+  // The {provider, model} shape must stay qualified even when the model id is
+  // bare, or a later provider-aware branch would be unreachable.
+  assert.deepEqual(getOpenCodeDefaultModelIds({ default: { provider: "xiaomi", model: "chosen" } }), [
+    "xiaomi/chosen",
+  ]);
+  // An already-qualified model must not be prefixed a second time.
+  assert.deepEqual(getOpenCodeDefaultModelIds({ default: { provider: "xiaomi", model: "xiaomi/chosen" } }), [
+    "xiaomi/chosen",
+  ]);
+  assert.deepEqual(getOpenCodeDefaultModelIds({ default: { providerID: "xiaomi", modelID: "chosen" } }), [
+    "xiaomi/chosen",
+  ]);
+  assert.deepEqual(getOpenCodeDefaultModelIds({ default: "xiaomi/chosen" }), ["xiaomi/chosen"]);
+  assert.deepEqual(getOpenCodeDefaultModelIds({}), []);
+});
 
 function collector() {
   const events = [];

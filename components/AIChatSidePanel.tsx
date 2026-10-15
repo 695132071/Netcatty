@@ -80,12 +80,15 @@ import {
   buildCursorListModelsAgentEnv,
   buildSdkRuntimeModelCacheKey,
   sdkRuntimeModelCache,
+  reconcileRuntimeModelWarning,
   generateId,
   agentModelPresetsShallowEqual,
   mergeFallbackThinkingLevels,
   normalizeStoredAgentModelSelection,
   normalizeSdkRuntimeModelPresets,
+  resolveSdkRuntimeCatalogDefaultModelId,
   shouldAdoptSdkCurrentModel,
+  appendRetainedStoredModelPreset,
   shouldLoadSdkRuntimeModels,
   shouldUseStoredAgentModel,
   type SdkRuntimeModelCatalog,
@@ -327,7 +330,7 @@ const AIChatSidePanelActive: React.FC<AIChatSidePanelProps> = ({
   // is tracked separately to block sends until the branch settles: a turn
   // submitted meanwhile would run against the (soon hidden) source session.
   const [isUndoingLastTurn, setIsUndoingLastTurn] = useState(false);
-  const [runtimeAgentModelPresets, setRuntimeAgentModelPresets] = useState<Record<string, { cacheKey: string; models: AgentModelPreset[] }>>({});
+  const [runtimeAgentModelPresets, setRuntimeAgentModelPresets] = useState<Record<string, { cacheKey: string; models: AgentModelPreset[]; catalogUnavailable: boolean }>>({});
   const [runtimeModelWarnings, setRuntimeModelWarnings] = useState<Record<string, { cacheKey: string; message: string }>>({});
   // Tracks SDK runtime model catalogs currently loading (per agent scope):
   // while an OpenCode catalog is pending we must not flash the built-in
@@ -1003,25 +1006,22 @@ const AIChatSidePanelActive: React.FC<AIChatSidePanelProps> = ({
       normalizeSdkRuntimeModelPresets(catalog.models, catalog.currentModelId),
       getAgentModelPresets(agent?.command, getExternalAgentSdkBackend(agent)),
     );
-    const runtimePresets = appendComposerCustomModelPresets(
-      catalogPresets,
-      collectCustomModelIds(agentId, catalogPresets),
+    const runtimePresets = appendRetainedStoredModelPreset(
+      appendComposerCustomModelPresets(
+        catalogPresets,
+        collectCustomModelIds(agentId, catalogPresets),
+      ),
+      agentModelMapRef.current[agentId],
+      agent,
+      Boolean(catalog.warning),
     );
-    const storedModelId = agentModelMapRef.current[agentId];
-    if (runtimePresets.length === 0) {
-      setRuntimeAgentModelPresets((prev) => {
-        if (!(agentId in prev)) return prev;
-        const { [agentId]: _removed, ...rest } = prev;
-        return rest;
-      });
-    } else {
-      setRuntimeAgentModelPresets((prev) => (
-        prev[agentId]?.cacheKey === target.cacheKey
-          && agentModelPresetsShallowEqual(prev[agentId].models, runtimePresets)
-          ? prev
-          : { ...prev, [agentId]: { cacheKey: target.cacheKey, models: runtimePresets } }
-      ));
-    }
+    setRuntimeAgentModelPresets((prev) => (
+      prev[agentId]?.cacheKey === target.cacheKey
+        && prev[agentId].catalogUnavailable === Boolean(catalog.warning)
+        && agentModelPresetsShallowEqual(prev[agentId].models, catalogPresets)
+        ? prev
+        : { ...prev, [agentId]: { cacheKey: target.cacheKey, models: catalogPresets, catalogUnavailable: Boolean(catalog.warning) } }
+    ));
     // Another path (e.g. send preflight) applied the catalog before the
     // deferred idle callback scheduled in the visibility effect: clear its
     // stale pending flag so the composer stops claiming models are loading.
@@ -1032,20 +1032,21 @@ const AIChatSidePanelActive: React.FC<AIChatSidePanelProps> = ({
     });
 
     const normalizedStoredModelId = normalizeStoredAgentModelSelection(
-      storedModelId,
+      agentModelMapRef.current[agentId],
       runtimePresets,
     );
-    if (normalizedStoredModelId && normalizedStoredModelId !== storedModelId) {
+    if (normalizedStoredModelId && normalizedStoredModelId !== agentModelMapRef.current[agentId]) {
       setAgentModel(agentId, normalizedStoredModelId);
       return;
     }
 
+    const defaultModelId = resolveSdkRuntimeCatalogDefaultModelId(catalog, agent);
     if (
       options.adoptCurrentModel
-      && catalog.currentModelId
-      && shouldAdoptSdkCurrentModel(catalog.currentModelId, storedModelId, runtimePresets)
+      && defaultModelId
+      && shouldAdoptSdkCurrentModel(defaultModelId, agentModelMapRef.current[agentId], runtimePresets, agent)
     ) {
-      setAgentModel(agentId, catalog.currentModelId);
+      setAgentModel(agentId, defaultModelId);
     }
   }, [setAgentModel, setRuntimeModelLoading, buildExternalAgentRuntimeModelTarget, collectCustomModelIds]);
 
@@ -1089,10 +1090,26 @@ const AIChatSidePanelActive: React.FC<AIChatSidePanelProps> = ({
         return {
           currentModelId: result.currentModelId ?? null,
           models: result.models,
+          warning: result.warning ?? null,
         };
       },
       { force: options.force },
-    ).catch((err) => {
+    ).then((catalog) => {
+      // A refresh that joined another panel's in-flight load never ran the
+      // loader above, so sync this panel's banner from the shared result.
+      setRuntimeModelWarnings((current) => {
+        const agent = externalAgentsRef.current.find((item) => item.id === target.agentId);
+        if (buildExternalAgentRuntimeModelTarget(agent)?.cacheKey !== target.cacheKey) return current;
+        return reconcileRuntimeModelWarning(
+          current,
+          target.agentId,
+          target.cacheKey,
+          Boolean(catalog.warning),
+          t('ai.chat.modelCatalogWarning'),
+        );
+      });
+      return catalog;
+    }).catch((err) => {
       setRuntimeModelWarnings((current) => {
         const agent = externalAgentsRef.current.find((item) => item.id === target.agentId);
         if (buildExternalAgentRuntimeModelTarget(agent)?.cacheKey !== target.cacheKey) return current;
@@ -1119,6 +1136,16 @@ const AIChatSidePanelActive: React.FC<AIChatSidePanelProps> = ({
     const cached = sdkRuntimeModelCache.read(target.cacheKey);
     if (cached) {
       applySdkRuntimeModelCatalog(target, cached);
+      // The cache stores warned (last-known-good) responses too: sync the
+      // banner so another panel or a remount within the TTL does not present
+      // degraded models as live.
+      setRuntimeModelWarnings((current) => reconcileRuntimeModelWarning(
+        current,
+        target.agentId,
+        target.cacheKey,
+        Boolean(cached.warning),
+        t('ai.chat.modelCatalogWarning'),
+      ));
     }
 
     // Respect renderer TTL / in-flight coalescing for all SDK agents including
@@ -1174,6 +1201,7 @@ const AIChatSidePanelActive: React.FC<AIChatSidePanelProps> = ({
     buildExternalAgentRuntimeModelTarget,
     loadSdkRuntimeModelCatalog,
     applySdkRuntimeModelCatalog,
+    t,
   ]);
 
   const isCodexAppServer = isCodexManagedAgent && currentAgentConfig?.codexRuntime === 'app-server';
@@ -1195,10 +1223,15 @@ const AIChatSidePanelActive: React.FC<AIChatSidePanelProps> = ({
     if (hasCodexCustomConfig && codexConfigModel) {
       return [{ id: codexConfigModel, name: codexConfigModel }];
     }
-    if (runtimePresets) {
-      return appendComposerCustomModelPresets(
-        runtimePresets,
-        collectCustomModelIds(currentAgentId, runtimePresets),
+    if (runtimePresets?.length) {
+      return appendRetainedStoredModelPreset(
+        appendComposerCustomModelPresets(
+          runtimePresets,
+          collectCustomModelIds(currentAgentId, runtimePresets),
+        ),
+        agentModelMap[currentAgentId],
+        currentAgentConfig,
+        Boolean(runtimeEntry?.catalogUnavailable),
       );
     }
     // While an OpenCode catalog load is pending, do not flash the built-in
@@ -1226,14 +1259,22 @@ const AIChatSidePanelActive: React.FC<AIChatSidePanelProps> = ({
     const filteredPresets = filterAgentModelPresetsForCliVersion(presets, cliVersion);
     // Manual model ids typed in the composer (#3534) stay selectable even when
     // the CLI catalog does not list them yet.
-    return appendComposerCustomModelPresets(
-      filteredPresets,
-      collectCustomModelIds(currentAgentId, filteredPresets),
+    return appendRetainedStoredModelPreset(
+      appendComposerCustomModelPresets(
+        filteredPresets,
+        collectCustomModelIds(currentAgentId, filteredPresets),
+      ),
+      agentModelMap[currentAgentId],
+      currentAgentConfig,
+      // Until the initial catalog settles, show the choice a failed
+      // preflight would actually send instead of flashing Auto.
+      !runtimeEntry || !target || runtimeEntry.cacheKey !== target.cacheKey || runtimeEntry.catalogUnavailable,
     );
   }, [
     currentAgentConfig,
     currentAgentId,
     runtimeAgentModelPresets,
+    agentModelMap,
     runtimeModelLoading,
     buildExternalAgentRuntimeModelTarget,
     hasCodexCustomConfig,
@@ -1459,17 +1500,23 @@ const AIChatSidePanelActive: React.FC<AIChatSidePanelProps> = ({
                 getExternalAgentSdkBackend(currentAgentConfig),
               ),
             );
-            const runtimePresets = appendComposerCustomModelPresets(
-              catalogPresets,
-              collectCustomModelIds(sendAgentId, catalogPresets),
+            const runtimePresets = appendRetainedStoredModelPreset(
+              appendComposerCustomModelPresets(
+                catalogPresets,
+                collectCustomModelIds(sendAgentId, catalogPresets),
+              ),
+              agentModelMapRef.current[sendAgentId],
+              currentAgentConfig,
+              Boolean(catalog.warning),
             );
             const storedModelId = agentModelMapRef.current[sendAgentId];
+            const defaultModelId = resolveSdkRuntimeCatalogDefaultModelId(catalog, currentAgentConfig);
             if (
-              catalog.currentModelId
-              && shouldAdoptSdkCurrentModel(catalog.currentModelId, storedModelId, runtimePresets)
+              defaultModelId
+              && shouldAdoptSdkCurrentModel(defaultModelId, storedModelId, runtimePresets, currentAgentConfig)
             ) {
-              sendSelectedAgentModel = catalog.currentModelId;
-            } else if (shouldUseStoredAgentModel(storedModelId, runtimePresets)) {
+              sendSelectedAgentModel = defaultModelId;
+            } else if (shouldUseStoredAgentModel(storedModelId, runtimePresets, currentAgentConfig)) {
               sendSelectedAgentModel = normalizeStoredAgentModelSelection(
                 storedModelId,
                 runtimePresets,

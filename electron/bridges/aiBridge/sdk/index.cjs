@@ -104,6 +104,7 @@ const DRIVER_REGISTRY = {
     async listModels(ctx) {
       return copilot.listCopilotModels({
         cliPath: ctx.binPath,
+        runtimeEnv: ctx.env,
         abortController: ctx.abortController,
         signal: ctx.signal,
       });
@@ -425,6 +426,9 @@ const DRIVER_REGISTRY = {
         cwd: ctx.cwd,
         abortController: ctx.abortController,
         signal: ctx.abortController?.signal || ctx.signal,
+        // Shared outer catalog deadline (see MODEL_LIST_DEADLINE_HEADROOM_MS
+        // in sdkStreamHandlers.cjs): readiness + providers cannot exceed it.
+        deadlineTs: ctx.catalogDeadlineTs,
       });
     },
   },

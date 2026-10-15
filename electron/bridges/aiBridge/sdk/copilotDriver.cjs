@@ -25,11 +25,40 @@
  *   text + per-tool-call events (assistant.message / tool execution events).
  */
 const { mcpEnvPairsToObject } = require("./injectMcp.cjs");
+const { resolveCopilotExecutableForSdk } = require("../../ai/shellUtils.cjs");
 const { isRemovedChatSessionFlag } = require("../../../cli/cliChatSession.cjs");
 const {
   TOOL_CLI_CHAT_SESSION_ENV_VAR,
   TOOL_CLI_DISCOVERY_ENV_VAR,
 } = require("../../../cli/discoveryPath.cjs");
+
+/**
+ * Stop a CopilotClient and make sure the spawned CLI process is reaped.
+ *
+ * The SDK (client.d.ts) exposes graceful `stop()`, `forceStop()` (SIGKILL),
+ * and `[Symbol.asyncDispose]` (an alias of stop) — no separate kill/dispose.
+ * Graceful stop closes sessions + the JSON-RPC connection and terminates the
+ * CLI process, but the 1.0.59-era native CLI can hang during that handshake,
+ * leaving its conhost child alive after an app-side timeout/abort (the
+ * "console window stays open" amplifier). Race a short grace period and fall
+ * back to forceStop() when graceful stop fails or exceeds the grace period.
+ */
+async function stopCopilotClient(client, graceMs = 3000) {
+  if (!client || typeof client.stop !== "function") return;
+  let stopped = false;
+  let timer;
+  try {
+    await Promise.race([
+      Promise.resolve(client.stop()).then(() => { stopped = true; }),
+      new Promise((resolve) => { timer = setTimeout(resolve, graceMs); }),
+    ]);
+  } catch { /* best effort */ } finally {
+    clearTimeout(timer);
+  }
+  if (!stopped && typeof client.forceStop === "function") {
+    try { await client.forceStop(); } catch { /* best effort */ }
+  }
+}
 
 // Neutral client options. The real CopilotClient options (with RuntimeConnection)
 // are assembled in runCopilotTurn, because RuntimeConnection comes from the SDK
@@ -451,7 +480,12 @@ async function runCopilotTurn({
     realClientOptions.env = runtimeEnv;
   }
   if (clientOptions?.cliPath && RuntimeConnection?.forStdio) {
-    realClientOptions.connection = RuntimeConnection.forStdio({ path: clientOptions.cliPath });
+    // The SDK spawns `path` via node without shell:true; a Windows .cmd shim
+    // would fail with spawn EINVAL (Node >= 18.20), so hand over the real JS
+    // entry instead.
+    realClientOptions.connection = RuntimeConnection.forStdio({
+      path: resolveCopilotExecutableForSdk(clientOptions.cliPath),
+    });
   }
   if (clientOptions?.gitHubToken) realClientOptions.gitHubToken = clientOptions.gitHubToken;
 
@@ -503,6 +537,9 @@ async function runCopilotTurn({
         if (typeof session.abort === "function") {
           void session.abort().catch(() => {});
         }
+        // Reap the spawned CLI promptly: graceful session.abort() alone does
+        // not terminate the CLI server process.
+        void stopCopilotClient(client);
       };
       if (signal.aborted) {
         onAbort();
@@ -552,7 +589,7 @@ async function runCopilotTurn({
     }
     return { sessionId };
   } finally {
-    try { await client?.stop?.(); } catch { /* best effort */ }
+    await stopCopilotClient(client);
   }
 }
 
@@ -571,7 +608,7 @@ function mapCopilotModels(models) {
  * @param {string} [args.cliPath]
  * @param {object} [args.sdkModule] inject the @github/copilot-sdk module (for tests)
  */
-async function listCopilotModels({ cliPath, sdkModule, abortController, signal }) {
+async function listCopilotModels({ cliPath, runtimeEnv, sdkModule, abortController, signal }) {
   const externalSignal = signal || abortController?.signal;
   if (externalSignal?.aborted) return [];
   let resolvedModule = sdkModule;
@@ -581,15 +618,17 @@ async function listCopilotModels({ cliPath, sdkModule, abortController, signal }
   const sdk = resolvedModule;
   const { CopilotClient, RuntimeConnection } = sdk;
   const clientOptions = { useLoggedInUser: true };
+  if (runtimeEnv && typeof runtimeEnv === "object") clientOptions.env = runtimeEnv;
   if (cliPath && RuntimeConnection?.forStdio) {
-    clientOptions.connection = RuntimeConnection.forStdio({ path: cliPath });
+    // Same EINVAL hazard as runCopilotTurn: resolve .cmd/.bat shims first.
+    clientOptions.connection = RuntimeConnection.forStdio({
+      path: resolveCopilotExecutableForSdk(cliPath),
+    });
   }
   const client = new CopilotClient(clientOptions);
   let stopPromise;
   const stopClient = () => {
-    if (!stopPromise) {
-      try { stopPromise = Promise.resolve(client.stop()).catch(() => {}); } catch { stopPromise = Promise.resolve(); }
-    }
+    if (!stopPromise) stopPromise = stopCopilotClient(client);
     return stopPromise;
   };
   let resolveAbort;
