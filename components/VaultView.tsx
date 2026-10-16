@@ -51,6 +51,7 @@ import { useStoredString } from "../application/state/useStoredString";
 import type { VaultLockHandle } from "../application/state/vaultManagedImportLock";
 import { useTreeExpandedState } from "../application/state/useTreeExpandedState";
 import { useVaultGroupDeletion } from "../application/state/useVaultGroupDeletion";
+import { useVaultHostDeletion } from "../application/state/useVaultHostDeletion";
 import type { VaultHostPersistenceResult } from "../application/state/vaultImportProgress";
 import type {
   VaultGroupMutationResult,
@@ -980,15 +981,19 @@ const VaultViewInner: React.FC<VaultViewProps> = ({
     setIsMultiSelectMode(false);
   }, []);
 
-  const deleteSelectedHosts = useCallback(() => {
+  const deleteVaultHosts = useVaultHostDeletion(onCommitVaultGroupMutation);
+  const deleteSelectedHosts = useCallback(async () => {
     if (selectedHostIds.size === 0) return;
-    const updatedHosts = hosts.filter((h) => !selectedHostIds.has(h.id));
-    onUpdateHosts(updatedHosts);
-    clearHostSelection();
-    toast.success(
-      t("vault.hosts.deleteMultiple.success", { count: selectedHostIds.size }),
-    );
-  }, [selectedHostIds, hosts, onUpdateHosts, clearHostSelection, t]);
+    try {
+      await deleteVaultHosts(selectedHostIds);
+      clearHostSelection();
+      toast.success(
+        t("vault.hosts.deleteMultiple.success", { count: selectedHostIds.size }),
+      );
+    } catch {
+      toast.error(t("common.error"));
+    }
+  }, [selectedHostIds, deleteVaultHosts, clearHostSelection, t]);
 
   const connectSelectedHosts = useCallback(() => {
     if (selectedHostIds.size === 0) return;
