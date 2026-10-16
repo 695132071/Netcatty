@@ -80,6 +80,7 @@ const OPTIONAL_ENTITY_KEYS = new Set<CloudSyncPayloadEntityKey>([
   'notes',
   'noteGroups',
   'portForwardingRules',
+  'browserBookmarks',
   'groupConfigs',
   'aiSessions',
 ]);
@@ -796,6 +797,7 @@ export function mergeSyncPayloads(
     noteGroups: [],
     portForwardingRules: [],
     aiSessions: [],
+    browserBookmarks: [],
     settings: undefined,
     syncedAt: 0,
   };
@@ -858,6 +860,14 @@ export function mergeSyncPayloads(
     tombstones('portForwardingRules'),
     mergeOptions,
   );
+  const baseBrowserBookmarks = b.browserBookmarks ?? [];
+  const browserBookmarks = mergeEntityArrays(
+    baseBrowserBookmarks,
+    entityArray(local, 'browserBookmarks', baseBrowserBookmarks),
+    entityArray(remote, 'browserBookmarks', baseBrowserBookmarks),
+    tombstones('browserBookmarks'),
+    mergeOptions,
+  );
 
   // Merge group configs (keyed by path — wrap with virtual id for entity merge)
   type GCWithId = import('./models').GroupConfig & { id: string };
@@ -885,7 +895,7 @@ export function mergeSyncPayloads(
 
   // Aggregate stats
   const entityResults: Pick<EntityMergeResult<unknown>, 'added' | 'deleted' | 'modified' | 'conflicts'>[] =
-    [hosts, keys, identities, proxyProfiles, snippets, notes, portForwardingRules, groupConfigsResult, aiSessions];
+    [hosts, keys, identities, proxyProfiles, snippets, notes, portForwardingRules, browserBookmarks, groupConfigsResult, aiSessions];
   for (const r of entityResults) {
     summary.added.local += r.added.local;
     summary.added.remote += r.added.remote;
@@ -981,6 +991,7 @@ export function mergeSyncPayloads(
     notes: notes.merged,
     noteGroups,
     portForwardingRules: portForwardingRules.merged,
+    browserBookmarks: browserBookmarks.merged,
     groupConfigs,
     ...(base?.aiSessions !== undefined || local.aiSessions !== undefined || remote.aiSessions !== undefined
       ? { aiSessions: aiSessions.merged }

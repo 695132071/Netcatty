@@ -718,6 +718,11 @@ export const ruCoreMessages: Messages = {
   'settings.terminal.behavior.smoothScrolling': 'Плавная прокрутка',
   'settings.terminal.behavior.smoothScrolling.desc':
     'Анимировать прокрутку области терминала вместо мгновенного перехода',
+  'settings.terminal.sidePanel.pane.browser': 'Браузер',
+  'settings.terminal.behavior.linkBrowser': 'Открывать ссылки терминала в',
+  'settings.terminal.behavior.linkBrowser.desc': 'SSH-ссылки используют подключённый хост; локальные ссылки — этот компьютер.',
+  'settings.terminal.behavior.linkBrowser.netcatty': 'Браузер Netcatty (по умолчанию)',
+  'settings.terminal.behavior.linkBrowser.system': 'Системный браузер',
   'settings.terminal.behavior.linkModifier': 'Клавиша-модификатор для ссылок',
   'settings.terminal.behavior.linkModifier.desc': 'Удерживайте эту клавишу, чтобы нажимать на ссылки в терминале',
   'settings.terminal.behavior.linkModifier.none': 'Нет (нажимать напрямую)',

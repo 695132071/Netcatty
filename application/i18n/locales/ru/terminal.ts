@@ -41,6 +41,9 @@ export const ruTerminalMessages: Messages = {
 
   // Terminal toolbar / search / context menu / auth
   'terminal.toolbar.openSftp': 'Открыть SFTP',
+  'terminal.browser.title': 'Браузер',
+  'terminal.browser.sshOnly': 'Выберите SSH-терминал, чтобы открыть его браузер.',
+  'terminal.browser.open': 'Открыть браузер',
   'terminal.toolbar.availableAfterConnect': 'Доступно после подключения',
   'terminal.toolbar.sendYmodem': 'Отправить через YMODEM',
   'terminal.toolbar.receiveYmodem': 'Получить через YMODEM',
@@ -549,6 +552,7 @@ export const ruTerminalMessages: Messages = {
   'cloudSync.conflict.entity.customGroups': 'Группы',
   'cloudSync.conflict.entity.snippetPackages': 'Пакеты сниппетов',
   'cloudSync.conflict.entity.portForwardingRules': 'Проброс портов',
+  'cloudSync.conflict.entity.browserBookmarks': 'Закладки браузера',
   'cloudSync.conflict.entity.groupConfigs': 'Настройки групп',
   'cloudSync.conflict.entity.settings': 'Настройки',
   'cloudSync.conflict.keepLocal': 'Перезаписать облако (сохранить локальную)',

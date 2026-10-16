@@ -126,6 +126,7 @@ export interface TerminalSettings {
   middleClickPaste: boolean; // Legacy mirror for older settings payloads
   wordSeparators: string; // Characters for word selection
   linkModifier: LinkModifier; // Modifier key to click links
+  linkBrowser?: 'netcatty' | 'system';
   autoCloseOnExit: boolean; // Automatically close terminal UI after eligible session exits
   disconnectedNoticeMode: DisconnectedNoticeMode; // Non-blocking terminal line or legacy dialog after disconnect
   /** Action when double-clicking a terminal session tab. */
@@ -428,6 +429,7 @@ export const normalizeTerminalSettings = (
     middleClickBehavior,
     middleClickPaste: middleClickBehavior === 'paste',
     wordSeparators,
+    linkBrowser: settings?.linkBrowser === 'system' ? 'system' as const : 'netcatty' as const,
     shiftEnterNewlineText,
     cursorBarWidth: normalizeCursorBarWidth(settings?.cursorBarWidth),
     dynamicTabTitleMode: isDynamicTabTitleMode(settings?.dynamicTabTitleMode)
@@ -537,6 +539,7 @@ const DEFAULT_TERMINAL_SETTINGS: TerminalSettings = {
   middleClickPaste: true,
   wordSeparators: DEFAULT_TERMINAL_WORD_SEPARATORS,
   linkModifier: 'none',
+  linkBrowser: 'netcatty',
   // Off by default: remote graceful channel closes can be reported as a clean
   // exit (code 0), which would auto-close tabs on network drops. Users who
   // want close-on-exit can enable it in Settings -> Terminal -> Behavior.

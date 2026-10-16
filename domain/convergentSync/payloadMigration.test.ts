@@ -444,6 +444,22 @@ test('trusted legacy diff treats own undefined optional fields as omitted', () =
   assert.equal(materialized.settings?.theme, 'dark');
 });
 
+test('legacy browser clients cannot erase host browser bookmarks they do not know about', () => {
+  const baseline = payload();
+  baseline.browserBookmarks = [{
+    id: 'bookmark-1', title: 'Dashboard', url: 'https://dashboard.example/',
+    scope: 'host', hostId: 'host-1', icon: 'D', color: '#247969',
+    order: 0, createdAt: NOW, updatedAt: NOW,
+  }];
+  const legacy = { ...baseline };
+  delete legacy.browserBookmarks;
+
+  assert.deepEqual(diffLegacySyncPayload(baseline, legacy), []);
+  const state = createConvergentSyncStateFromPayload(baseline, 'seed', NOW);
+  const next = applyLegacySyncPayload(state, baseline, legacy, 'legacy-device', NOW + 1);
+  assert.deepEqual(materializeSyncPayloadFromConvergentState(next, { syncedAt: NOW + 1 }).browserBookmarks, baseline.browserBookmarks);
+});
+
 test('payload conversion still rejects entities that JSON cannot serialize', () => {
   const invalid = payload();
   const circular: Record<string, unknown> = {};

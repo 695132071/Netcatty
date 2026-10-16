@@ -468,6 +468,9 @@ export const zhCNVaultMessages: Messages = {
 
   // Terminal toolbar / search / context menu / auth
   'terminal.toolbar.openSftp': '打开 SFTP',
+  'terminal.browser.title': '浏览器',
+  'terminal.browser.sshOnly': '请聚焦 SSH 终端以打开浏览器。',
+  'terminal.browser.open': '打开浏览器',
   'terminal.toolbar.availableAfterConnect': '连接后可用',
   'terminal.toolbar.sendYmodem': 'YMODEM 发送',
   'terminal.toolbar.receiveYmodem': 'YMODEM 接收',
@@ -933,6 +936,7 @@ export const zhCNVaultMessages: Messages = {
   'cloudSync.conflict.entity.customGroups': '分组',
   'cloudSync.conflict.entity.snippetPackages': '片段包',
   'cloudSync.conflict.entity.portForwardingRules': '端口转发',
+  'cloudSync.conflict.entity.browserBookmarks': '浏览器书签',
   'cloudSync.conflict.entity.groupConfigs': '分组设置',
   'cloudSync.conflict.entity.settings': '设置',
   'cloudSync.conflict.keepLocal': '覆盖云端（保留本地）',

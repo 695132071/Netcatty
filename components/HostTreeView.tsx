@@ -282,6 +282,7 @@ interface HostTreeViewProps {
   onExpandAll?: (paths: string[]) => void;
   onCollapseAll?: () => void;
   onConnect: (host: Host) => void;
+  onOpenBrowser?: (host: Host) => void;
   onEditHost: (host: Host) => void;
   onDuplicateHost: (host: Host) => void;
   onDeleteHost: (host: Host) => void;
@@ -322,6 +323,7 @@ interface TreeNodeProps {
   expandedPaths: Set<string>;
   onToggle: (path: string) => void;
   onConnect: (host: Host) => void;
+  onOpenBrowser?: (host: Host) => void;
   onEditHost: (host: Host) => void;
   onDuplicateHost: (host: Host) => void;
   onDeleteHost: (host: Host) => void;
@@ -368,6 +370,7 @@ const TreeNode: React.FC<TreeNodeProps> = ({
   expandedPaths,
   onToggle,
   onConnect,
+  onOpenBrowser,
   onEditHost,
   onDuplicateHost,
   onDeleteHost,
@@ -584,6 +587,7 @@ const TreeNode: React.FC<TreeNodeProps> = ({
               expandedPaths={expandedPaths}
               onToggle={onToggle}
               onConnect={onConnect}
+              onOpenBrowser={onOpenBrowser}
               onEditHost={onEditHost}
               onDuplicateHost={onDuplicateHost}
               onDeleteHost={onDeleteHost}
@@ -627,6 +631,7 @@ const TreeNode: React.FC<TreeNodeProps> = ({
               host={host}
               depth={depth + 1}
               onConnect={onConnect}
+              onOpenBrowser={onOpenBrowser}
               onEditHost={onEditHost}
               onDuplicateHost={onDuplicateHost}
               onDeleteHost={onDeleteHost}
@@ -660,6 +665,7 @@ interface HostTreeItemProps {
   host: Host;
   depth: number;
   onConnect: (host: Host) => void;
+  onOpenBrowser?: (host: Host) => void;
   onEditHost: (host: Host) => void;
   onDuplicateHost: (host: Host) => void;
   onDeleteHost: (host: Host) => void;
@@ -706,6 +712,7 @@ const HostTreeItem: React.FC<HostTreeItemProps> = ({
   host,
   depth,
   onConnect,
+  onOpenBrowser,
   onEditHost,
   onDuplicateHost,
   onDeleteHost,
@@ -871,6 +878,7 @@ const HostTreeItem: React.FC<HostTreeItemProps> = ({
       <HostTreeHostContextMenuContent
         host={host}
         onConnect={onConnect}
+        onOpenBrowser={onOpenBrowser}
         onEditHost={onEditHost}
         onDuplicateHost={onDuplicateHost}
         onCopyHostname={onCopyHostname}
@@ -890,6 +898,7 @@ const HostTreeViewInner: React.FC<HostTreeViewProps> = ({
   onExpandAll: externalOnExpandAll,
   onCollapseAll: externalOnCollapseAll,
   onConnect,
+  onOpenBrowser,
   onEditHost,
   onDuplicateHost,
   onDeleteHost,
@@ -1199,6 +1208,7 @@ const HostTreeViewInner: React.FC<HostTreeViewProps> = ({
                 expandedPaths={expandedPaths}
                 onToggle={togglePath}
                 onConnect={onConnect}
+                onOpenBrowser={onOpenBrowser}
                 onEditHost={onEditHost}
                 onDuplicateHost={onDuplicateHost}
                 onDeleteHost={onDeleteHost}
@@ -1240,6 +1250,7 @@ const HostTreeViewInner: React.FC<HostTreeViewProps> = ({
                 host={item.host}
                 depth={item.depth}
                 onConnect={onConnect}
+                onOpenBrowser={onOpenBrowser}
                 onEditHost={onEditHost}
                 onDuplicateHost={onDuplicateHost}
                 onDeleteHost={onDeleteHost}
@@ -1289,6 +1300,7 @@ function hostTreeViewAreEqual(prev: HostTreeViewProps, next: HostTreeViewProps):
     && prev.onExpandAll === next.onExpandAll
     && prev.onCollapseAll === next.onCollapseAll
     && prev.onConnect === next.onConnect
+    && prev.onOpenBrowser === next.onOpenBrowser
     && prev.onEditHost === next.onEditHost
     && prev.onDuplicateHost === next.onDuplicateHost
     && prev.onDeleteHost === next.onDeleteHost

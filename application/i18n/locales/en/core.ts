@@ -767,6 +767,11 @@ Highlight the focused split pane:
   'settings.terminal.behavior.smoothScrolling': 'Smooth scrolling',
   'settings.terminal.behavior.smoothScrolling.desc':
     'Animate terminal viewport scrolling instead of jumping instantly',
+  'settings.terminal.sidePanel.pane.browser': 'Browser',
+  'settings.terminal.behavior.linkBrowser': 'Open terminal links in',
+  'settings.terminal.behavior.linkBrowser.desc': 'SSH links use the connected host; local terminal links use this computer.',
+  'settings.terminal.behavior.linkBrowser.netcatty': 'Netcatty browser (default)',
+  'settings.terminal.behavior.linkBrowser.system': 'System default browser',
   'settings.terminal.behavior.linkModifier': 'Link modifier key',
   'settings.terminal.behavior.linkModifier.desc': 'Hold this key to click on links in terminal',
   'settings.terminal.behavior.linkModifier.none': 'None (click directly)',

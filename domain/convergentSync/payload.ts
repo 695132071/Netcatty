@@ -50,6 +50,7 @@ export const CONVERGENT_ENTITY_COLLECTIONS = [
   'snippets',
   'notes',
   'portForwardingRules',
+  'browserBookmarks',
   'groupConfigs',
 ] as const satisfies readonly CloudSyncPayloadEntityKey[];
 
@@ -230,6 +231,7 @@ export function materializeSyncPayloadFromConvergentState(
     notes: typedCollection<import('../models').VaultNote>(materialized.collections, 'notes'),
     noteGroups: materialized.stringCollections.noteGroups ?? [],
     portForwardingRules: typedCollection<import('../models').PortForwardingRule>(materialized.collections, 'portForwardingRules'),
+    browserBookmarks: typedCollection<import('../browserBookmark').BrowserBookmark>(materialized.collections, 'browserBookmarks'),
     groupConfigs,
     settings,
     syncedAt: options.syncedAt,

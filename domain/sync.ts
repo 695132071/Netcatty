@@ -296,6 +296,7 @@ export interface SyncPayload {
    * are stripped — only their metadata travels.
    */
   aiSessions?: import('../infrastructure/ai/types').AISession[];
+  browserBookmarks?: import('./browserBookmark').BrowserBookmark[];
   
   // Known hosts
   knownHosts?: import('./models').KnownHost[];
@@ -479,6 +480,7 @@ export const SYNC_PAYLOAD_ENTITY_KEYS = [
   'notes',
   'noteGroups',
   'portForwardingRules',
+  'browserBookmarks',
   'knownHosts',
   'groupConfigs',
 ] as const;
@@ -494,6 +496,7 @@ export const CLOUD_SYNC_PAYLOAD_ENTITY_KEYS = [
   'notes',
   'noteGroups',
   'portForwardingRules',
+  'browserBookmarks',
   'groupConfigs',
   'aiSessions',
 ] as const;

@@ -55,6 +55,7 @@ import {
 } from './autoSyncRemoteSchedule';
 import { resolveAutoSyncHashDecision } from './autoSyncHashDecision';
 import { getNotesSnapshot, subscribeNotes } from './notesStore';
+import { collectHostBrowserBookmarks } from '../hostBrowserBookmarks';
 
 /** Prefer dedicated SYNC_PREFERENCES; fall back to legacy SYNC_CONFIG fields. */
 function isPersistedAutoSyncEnabled(fallback: boolean): boolean {
@@ -160,6 +161,7 @@ const getSyncPayloadDataHash = (payload: SyncPayload): string => {
     notes: payload.notes,
     noteGroups: payload.noteGroups,
     portForwardingRules: sanitizePortForwardingRulesForSync(payload.portForwardingRules),
+    browserBookmarks: payload.browserBookmarks,
     groupConfigs: payload.groupConfigs,
     settings: payload.settings,
     pluginSidecars: payload.pluginSidecars,
@@ -224,6 +226,13 @@ export const useAutoSync = (config: AutoSyncConfig) => {
 
   // Listen for SFTP bookmark changes to trigger auto-sync
   const [bookmarksVersion, setBookmarksVersion] = useState(0);
+  const [hostBrowserBookmarksVersion, setHostBrowserBookmarksVersion] = useState(0);
+  useEffect(() => {
+    const unsubscribe = netcattyBridge.get()?.onHostBrowserBookmarksChanged?.(() => {
+      setHostBrowserBookmarksVersion((version) => version + 1);
+    });
+    return () => { unsubscribe?.(); };
+  }, []);
   useEffect(() => {
     const handler = () => setBookmarksVersion((v) => v + 1);
     window.addEventListener('sftp-bookmarks-changed', handler);
@@ -309,9 +318,11 @@ export const useAutoSync = (config: AutoSyncConfig) => {
     const { withPluginSyncSidecars } = await import('../syncPayload');
     const { collectPluginSyncSidecarsFromHost } = await import('../pluginSyncSidecarBridge');
     const aiSessions = collectAiSessionsForSync();
+    const browserBookmarks = await collectHostBrowserBookmarks();
     const base: SyncPayload = {
       ...getSyncSnapshot(),
       ...(aiSessions !== undefined ? { aiSessions } : {}),
+      ...(browserBookmarks !== undefined ? { browserBookmarks } : {}),
       settings: await collectCloudSyncableSettings(),
       syncedAt: Date.now(),
     };
@@ -1125,6 +1136,7 @@ export const useAutoSync = (config: AutoSyncConfig) => {
     config.settingsVersion,
     enabled,
     bookmarksVersion,
+    hostBrowserBookmarksVersion,
     pluginSidecarsVersion,
     convergentSyncPaused,
     syncableSettingsStorageVersion,
@@ -1142,6 +1154,7 @@ export const useAutoSync = (config: AutoSyncConfig) => {
     config.settingsVersion,
     enabled,
     bookmarksVersion,
+    hostBrowserBookmarksVersion,
     pluginSidecarsVersion,
     syncableSettingsStorageVersion,
   ]);

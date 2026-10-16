@@ -26,6 +26,7 @@ import { useNotesStore } from "../../application/state/notesStore";
 import { LazyLoadBoundary } from "../ui/lazy-load-boundary";
 import { toast } from "../ui/toast";
 import { AppWordmark } from "../AppWordmark";
+import { openHostBrowser } from "../../application/hostBrowser";
 
 type VaultViewLayoutContext = Record<string, any>;
 
@@ -1215,6 +1216,11 @@ export function VaultViewLayout({ ctx }: { ctx: VaultViewLayoutContext }) {
                 handleEditGroupConfig,
                 handleEditHost,
                 handleHostConnect,
+                handleOpenHostBrowser: (host: any) => {
+                  if (host.protocol && !['ssh', 'mosh', 'local'].includes(host.protocol)) return;
+                  void openHostBrowser({ host, hosts, keys, identities, knownHosts, terminalSettings })
+                    .catch((error) => toast.error(error instanceof Error ? error.message : 'Could not open the host browser'));
+                },
                 handleUnmanageGroup,
                 hasHostsSidePanel,
                 hostListScrollRef,

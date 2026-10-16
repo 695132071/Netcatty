@@ -682,6 +682,11 @@ Resalta el panel dividido enfocado:
   'settings.terminal.behavior.smoothScrolling': 'Desplazamiento suave',
   'settings.terminal.behavior.smoothScrolling.desc':
     'Anima el desplazamiento de la vista de la terminal en lugar de saltar instantáneamente',
+  'settings.terminal.sidePanel.pane.browser': 'Navegador',
+  'settings.terminal.behavior.linkBrowser': 'Abrir enlaces de terminal en',
+  'settings.terminal.behavior.linkBrowser.desc': 'Los enlaces SSH usan el host conectado; los enlaces locales usan este equipo.',
+  'settings.terminal.behavior.linkBrowser.netcatty': 'Navegador Netcatty (predeterminado)',
+  'settings.terminal.behavior.linkBrowser.system': 'Navegador del sistema',
   'settings.terminal.behavior.linkModifier': 'Tecla modificadora de enlaces',
   'settings.terminal.behavior.linkModifier.desc': 'Mantén presionada esta tecla para hacer clic en enlaces de la terminal',
   'settings.terminal.behavior.linkModifier.none': 'Ninguna (clic directo)',

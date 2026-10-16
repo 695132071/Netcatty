@@ -13,6 +13,16 @@ function createPreloadApi(ctx) {
   const globalSftpTransferListeners = ctx.globalSftpTransferListeners || new Set();
   const pluginContributionsChangedListeners = ctx.pluginContributionsChangedListeners || new Set();
   const uploadStageControllers = new Map();
+  const hostBrowserPanelListeners = new Set();
+  const pendingHostBrowserPanels = [];
+  // TerminalLayer mounts lazily; retain incoming requests until it subscribes.
+  ctx.ipcRenderer?.on?.("netcatty:host-browser:request-panel", (_event, request) => {
+    if (!hostBrowserPanelListeners.size) {
+      pendingHostBrowserPanels.push(request);
+      return;
+    }
+    for (const listener of hostBrowserPanelListeners) listener(request);
+  });
   // Lightweight test contexts may omit this map; default so closeSession never throws.
   if (!ctx.moshSessionReadyListeners) {
     ctx.moshSessionReadyListeners = new Map();
@@ -1304,6 +1314,24 @@ function createPreloadApi(ctx) {
   
   // Open URL in default browser
   openExternal: (url) => ipcRenderer.invoke("netcatty:openExternal", url),
+  focusHostBrowser: (hostId) => ipcRenderer.invoke("netcatty:host-browser:focus", hostId),
+  setHostBrowserPanelLayout: (options) => ipcRenderer.invoke("netcatty:host-browser:panel-layout", options),
+  closeHostBrowserPanel: (browserId) => ipcRenderer.invoke("netcatty:host-browser:panel-close", browserId),
+  openHostBrowserUrl: (options) => ipcRenderer.invoke("netcatty:host-browser:panel-url", options),
+  requestHostBrowserPanel: (request) => ipcRenderer.invoke("netcatty:host-browser:request-panel", request),
+  onHostBrowserPanelRequest: (callback) => {
+    hostBrowserPanelListeners.add(callback);
+    for (const request of pendingHostBrowserPanels.splice(0)) callback(request);
+    return () => hostBrowserPanelListeners.delete(callback);
+  },
+  openHostBrowser: (options) => ipcRenderer.invoke("netcatty:host-browser:open", options),
+  getHostBrowserBookmarks: () => ipcRenderer.invoke("netcatty:host-browser:bookmarks:get-all"),
+  applyHostBrowserBookmarks: (items) => ipcRenderer.invoke("netcatty:host-browser:bookmarks:apply", items),
+  onHostBrowserBookmarksChanged: (callback) => {
+    const listener = () => callback();
+    ipcRenderer.on("netcatty:host-browser:bookmarks-changed", listener);
+    return () => ipcRenderer.removeListener("netcatty:host-browser:bookmarks-changed", listener);
+  },
   openPath: (path) => ipcRenderer.invoke("netcatty:openPath", path),
 
   // App info
