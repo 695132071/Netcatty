@@ -1,14 +1,19 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useId, useMemo, useState } from "react";
 import {
-  Activity,
   ArrowDown,
   ArrowUp,
+  Clock3,
   Copy,
+  Cpu,
+  Gauge,
+  HardDrive,
   LayoutGrid,
   List,
+  MemoryStick,
   Pencil,
   Play,
   Plus,
+  Server,
   Square,
   Terminal,
   Trash2,
@@ -23,19 +28,19 @@ import {
   monitorActions,
   useMonitorSnapshot,
 } from "../../application/state/monitorRuntimeStore";
-import type { MonitorPanel } from "../../domain/monitorPanels";
+import { DEFAULT_MONITOR_INTERVAL, MONITOR_INTERVALS, reorderMonitorHosts, type MonitorPanel } from "../../domain/monitorPanels";
 import {
-  monitorNeedsAttention,
+  monitorStateSince,
   type MonitorHostState,
   type MonitorPoint,
 } from "../../domain/monitorRuntime";
 import type { Host } from "../../domain/models";
+import { buildMonitorTrendGeometry, findMonitorChartPoint } from "../../domain/monitorChart";
 import { cn } from "../../lib/utils";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
 import { Label } from "../ui/label";
 import { Textarea } from "../ui/textarea";
-import { Badge } from "../ui/badge";
 import { Combobox } from "../ui/combobox";
 import { ScrollArea } from "../ui/scroll-area";
 import {
@@ -61,9 +66,13 @@ import {
   DialogTitle,
 } from "../ui/dialog";
 import SelectHostPanel from "../SelectHostPanel";
+import { DistroAvatar } from "../DistroAvatar";
+import { ResourceBar } from "../systemManager/ResourceBar";
+import { MonitorDiskUsage } from "./MonitorDiskUsage";
 import { VaultHeaderSearch, VaultPageHeader } from "./VaultPageHeader";
 import { toast } from "../ui/toast";
 
+const emptyMonitorPoints: MonitorPoint[] = [];
 const percent = (n: number | null | undefined) =>
   n == null || !Number.isFinite(n) ? "--" : `${n.toFixed(1)}%`;
 const capacity = (n: number | null | undefined) =>
@@ -79,12 +88,17 @@ const rate = (n: number | null | undefined) =>
       ? `${(n / 1048576).toFixed(1)} MiB/s`
       : `${(n / 1024).toFixed(1)} KiB/s`;
 
+const monitorAsideHeaderClass =
+  "relative h-14 py-0 border-b-0 after:pointer-events-none after:absolute after:inset-x-0 after:bottom-0 after:h-px after:origin-bottom after:[transform:scaleY(.5)] after:bg-border/40 after:content-['']";
+const monitorAsideClass = "border-border/30 shadow-[-12px_0_24px_hsl(var(--foreground)/0.04)]";
+
 /** Sparse lines: never bridge a missing sample or invent history before monitoring started. */
-export function MonitorTrend({
+export const MonitorTrend = React.memo(function MonitorTrend({
   points,
   field,
   range,
   interval,
+  clock,
   label,
   className,
 }: {
@@ -92,81 +106,92 @@ export function MonitorTrend({
   field: "cpu" | "memory" | "rx" | "tx";
   range: number;
   interval: number;
+  clock: number;
   label: string;
   className?: string;
 }) {
-  const end = Date.now(),
-    start = end - range * 60000;
-  const visible = points.filter((p) => p.at >= start);
-  const max =
-    field === "cpu" || field === "memory"
-      ? 100
-      : Math.max(1, ...visible.map((p) => p[field] ?? 0));
-  const segments: string[] = [];
-  let current = "";
-  let previous: MonitorPoint | null = null;
-  for (const p of visible) {
-    const value = p[field];
-    if (value == null) {
-      if (current) segments.push(current);
-      current = "";
-      previous = null;
-      continue;
-    }
-    if (previous && p.at - previous.at > interval * 2500) {
-      if (current) segments.push(current);
-      current = "";
-    }
-    const x = Math.max(
-      0,
-      Math.min(300, ((p.at - start) / (end - start)) * 300),
-    );
-    const y = 58 - (Math.min(max, Math.max(0, value)) / max) * 54;
-    current += `${current ? " L" : "M"} ${x.toFixed(2)} ${y.toFixed(2)}`;
-    previous = p;
-  }
-  if (current) segments.push(current);
+  const gradientId = useId();
+  const { resolvedLocale } = useI18n();
+  const [hoverAt, setHoverAt] = useState<number | null>(null);
+  const { end, start, visible, max, segments } = useMemo(
+    () => buildMonitorTrendGeometry(points, field, range, interval, Math.max(Date.now(), clock * 5000)),
+    [points, field, range, interval, clock],
+  );
+  const hovered = hoverAt == null ? undefined : visible.find((p) => p.at === hoverAt);
+  const hoveredValue = hovered?.[field];
+  const hoverX = hovered ? ((hovered.at - start) / (end - start)) * 300 : 0;
+  const hoverY = hoveredValue == null ? 0 : 58 - (Math.min(max, Math.max(0, hoveredValue)) / max) * 54;
   return (
-    <svg
-      role="img"
-      aria-label={label}
-      viewBox="0 0 300 64"
-      preserveAspectRatio="none"
-      className={cn("h-16 w-full text-primary", className)}
-    >
-      <path d="M0 58 H300" className="stroke-border" strokeWidth=".5" />
-      {segments.map((d, i) => (
+    <div className="relative min-w-0">
+      <svg
+        role="img"
+        aria-label={label}
+        viewBox="0 0 300 64"
+        preserveAspectRatio="none"
+        className={cn("block h-16 w-full cursor-crosshair text-primary", className)}
+        data-monitor-trend={field}
+        onPointerMove={(event) => {
+          const rect = event.currentTarget.getBoundingClientRect();
+          if (!rect.width) return;
+          const fraction = Math.max(0, Math.min(1, (event.clientX - rect.left) / rect.width));
+          const point = findMonitorChartPoint(
+            visible,
+            field,
+            start + fraction * (end - start),
+            Math.max(interval * 1250, ((end - start) / rect.width) * 4),
+          );
+          setHoverAt(point?.at ?? null);
+        }}
+        onPointerLeave={() => setHoverAt(null)}
+      >
+        <defs>
+          <linearGradient id={gradientId} x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stopColor="currentColor" stopOpacity=".20" />
+            <stop offset="100%" stopColor="currentColor" stopOpacity=".02" />
+          </linearGradient>
+        </defs>
         <path
-          key={i}
-          d={d}
-          fill="none"
-          stroke="currentColor"
-          strokeWidth="1.8"
-          vectorEffect="non-scaling-stroke"
+          d="M0 4 H300 M0 31 H300 M0 58 H300"
+          className="stroke-border/60"
+          strokeWidth=".5"
+          strokeDasharray="3 4"
         />
-      ))}
-    </svg>
+        {segments.map(({ path, firstX, x, y }, i) => (
+          <g key={i}>
+            <path
+              d={`${path} L ${x.toFixed(2)} 58 L ${firstX.toFixed(2)} 58 Z`}
+              fill={`url(#${gradientId})`}
+            />
+            <path
+              d={path}
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="1.8"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              vectorEffect="non-scaling-stroke"
+            />
+            <circle cx={x} cy={y} r="2" fill="currentColor" />
+          </g>
+        ))}
+        {hoveredValue != null && (
+          <g aria-hidden="true">
+            <line x1={hoverX} x2={hoverX} y1="4" y2="58" stroke="currentColor" strokeOpacity=".5" strokeDasharray="3 3" vectorEffect="non-scaling-stroke" />
+            <circle cx={hoverX} cy={hoverY} r="3" fill="currentColor" className="stroke-background" strokeWidth="1.5" />
+          </g>
+        )}
+      </svg>
+      {hovered && hoveredValue != null && (
+        <div role="tooltip" className="pointer-events-none absolute bottom-full right-0 z-10 mb-1 whitespace-nowrap rounded-md border border-border/40 bg-popover px-2 py-1.5 text-[10px] text-popover-foreground shadow-md">
+          <div className="font-medium">{label} · {field === "cpu" || field === "memory" ? `${hoveredValue.toFixed(2)}%` : rate(hoveredValue)}</div>
+          <time dateTime={new Date(hovered.at).toISOString()} className="text-muted-foreground">
+            {new Date(hovered.at).toLocaleTimeString(resolvedLocale, { hour: "2-digit", minute: "2-digit", second: "2-digit" })}
+          </time>
+        </div>
+      )}
+    </div>
   );
-}
-
-export function MonitorRunningIndicator() {
-  const { t } = useI18n();
-  const { count } = useMonitorSnapshot();
-  if (!count) return null;
-  return (
-    <Button
-      variant="ghost"
-      size="sm"
-      className="h-8 gap-1.5 app-no-drag text-xs"
-      onClick={monitorActions.stopAll}
-      title={t("monitor.stopAll")}
-    >
-      <Activity size={14} className="text-primary" />
-      <span>{t("monitor.runningCount", { count })}</span>
-      <Square size={11} />
-    </Button>
-  );
-}
+});
 
 export function MonitorPanels({
   hosts,
@@ -182,6 +207,8 @@ export function MonitorPanels({
   const runtime = useMonitorSnapshot();
   const [selected, setSelected] = useState<string | null>(null);
   const [search, setSearch] = useState("");
+  const [dragging, setDragging] = useState<{ panelId: string; hostId: string } | null>(null);
+  const [dropTarget, setDropTarget] = useState<string | null>(null);
   const [editor, setEditor] = useState<{
     base: MonitorPanel | null;
     draft: MonitorPanel;
@@ -216,10 +243,9 @@ export function MonitorPanels({
             description: "",
             hostIds: [],
             view: "charts",
-            interval: 10,
+            interval: DEFAULT_MONITOR_INTERVAL,
             range: 15,
             sort: "manual",
-            attentionOnly: false,
           },
     });
   };
@@ -280,61 +306,85 @@ export function MonitorPanels({
       toast.error(t("monitor.saveFailed"));
     }
   };
+  const orderedHostIds = useMemo(() => {
+    if (!panel) return [];
+    return panel.sort === "manual" ? panel.hostIds : [...panel.hostIds].sort((a, b) =>
+      (hosts.find((host) => host.id === a)?.label ?? a).localeCompare(hosts.find((host) => host.id === b)?.label ?? b),
+    );
+  }, [panel, hosts]);
   const rows = useMemo(() => {
     if (!panel) return [];
     const q = search.trim().toLocaleLowerCase();
-    const rows = panel.hostIds.map((id) => ({
+    const rows = orderedHostIds.map((id) => ({
       id,
       host: hosts.find((h) => h.id === id),
-      state: runtime.hosts[id],
+      state: monitorStateSince(runtime.hosts[id], runtime.startedAt[panel.id]),
     }));
-    const filtered = rows.filter(
-      ({ host, state }) =>
-        (!q ||
-          `${host?.label ?? ""} ${host?.hostname ?? ""} ${host?.group ?? ""}`
-            .toLocaleLowerCase()
-            .includes(q)) &&
-        (!panel.attentionOnly ||
-          !host ||
-          monitorNeedsAttention(state, panel.interval)),
+    return rows.filter(
+      ({ host }) => !q ||
+        `${host?.label ?? ""} ${host?.hostname ?? ""} ${host?.group ?? ""}`
+          .toLocaleLowerCase()
+          .includes(q),
     );
-    return panel.sort === "manual"
-      ? filtered
-      : filtered.sort((a, b) => {
-          if (panel.sort === "name")
-            return (a.host?.label ?? a.id).localeCompare(b.host?.label ?? b.id);
-          const score = (state: MonitorHostState | undefined) =>
-            panel.sort === "cpu"
-              ? state?.stats?.cpu
-              : panel.sort === "memory"
-                ? state?.stats?.memTotal && state.stats.memUsed != null
-                  ? (state.stats.memUsed / state.stats.memTotal) * 100
-                  : null
-                : state?.stats?.diskPercent;
-          return (score(b.state) ?? -1) - (score(a.state) ?? -1);
-        });
-  }, [panel, hosts, runtime, search]);
+  }, [panel, orderedHostIds, hosts, runtime, search]);
+  const dragProps = (hostId: string): React.HTMLAttributes<HTMLElement> & { "data-monitor-host": string } => ({
+    draggable: true,
+    "data-monitor-host": hostId,
+    onDragStart: (event) => {
+      if (!panel) return;
+      event.dataTransfer.effectAllowed = "move";
+      event.dataTransfer.setData("text/plain", hostId);
+      setDragging({ panelId: panel.id, hostId });
+    },
+    onDragOver: (event) => {
+      if (!panel || dragging?.panelId !== panel.id || dragging.hostId === hostId) return;
+      event.preventDefault();
+      event.dataTransfer.dropEffect = "move";
+      setDropTarget(hostId);
+    },
+    onDrop: (event) => {
+      if (!panel || dragging?.panelId !== panel.id) return;
+      event.preventDefault();
+      if (dragging.hostId !== hostId) void patchPanel({
+        hostIds: reorderMonitorHosts(orderedHostIds, dragging.hostId, hostId),
+        sort: "manual",
+      });
+      setDragging(null);
+      setDropTarget(null);
+    },
+    onDragEnd: () => {
+      setDragging(null);
+      setDropTarget(null);
+    },
+  });
   const status = (host: Host | undefined, state?: MonitorHostState) =>
     !host
       ? "missing"
       : !running
         ? "stopped"
         : state?.status === "live" &&
-            Date.now() - state.at > (panel?.interval ?? 10) * 2500
+            Date.now() - state.at > Math.max(5000, (panel?.interval ?? DEFAULT_MONITOR_INTERVAL) * 2500)
           ? "stale"
           : (state?.status ?? "queued");
   const stateBadge = (host: Host | undefined, state?: MonitorHostState) => (
-    <Badge
-      variant="outline"
+    <span
       className={cn(
-        "text-[10px] shrink-0",
-        ["live"].includes(status(host, state))
-          ? "text-primary border-primary/30"
-          : "text-muted-foreground",
+        "inline-flex items-center gap-1.5 whitespace-nowrap text-[10px] shrink-0 font-medium",
+        status(host, state) === "live"
+          ? "text-emerald-700 dark:text-emerald-400"
+          : ["error", "disconnected", "missing"].includes(status(host, state))
+            ? "text-destructive"
+            : ["login", "stale", "unsupported", "limit"].includes(status(host, state))
+              ? "text-amber-700 dark:text-amber-400"
+              : "text-muted-foreground",
       )}
     >
+      <span
+        aria-hidden="true"
+        className="h-1.5 w-1.5 rounded-full bg-current"
+      />
       {t(`monitor.status.${status(host, state)}`)}
-    </Badge>
+    </span>
   );
   const renderMetrics = (
     state: MonitorHostState | undefined,
@@ -344,42 +394,50 @@ export function MonitorPanels({
     const memory =
       s?.memTotal && s.memUsed != null ? (s.memUsed / s.memTotal) * 100 : null;
     return (
-      <div className={cn("grid grid-cols-2 gap-3", large && "gap-5")}>
-        <div>
-          <div className="text-xs text-muted-foreground">
+      <div className={cn("grid grid-cols-2 gap-2", large && "gap-3")}>
+        <div className="min-w-0">
+          <div className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
+            <Cpu size={13} className="text-sky-600 dark:text-sky-400" />
             {t("monitor.cpu")}
           </div>
-          <div className="text-lg tabular-nums">
-            {percent(s?.cpu)}{" "}
-            <span className="text-xs text-muted-foreground">
-              {s?.cpuCores ? t("monitor.cores", { count: s.cpuCores }) : ""}
-            </span>
+          <div className="mt-2 text-xl font-semibold leading-tight tabular-nums text-foreground">
+            {percent(s?.cpu)}
+          </div>
+          <div className="mt-1 min-h-4 text-[10px] text-muted-foreground">
+            {s?.cpuCores ? t("monitor.cores", { count: s.cpuCores }) : "--"}
           </div>
           {panel && (
             <MonitorTrend
-              points={state?.points ?? []}
+              clock={Math.floor(runtime.takenAt / 5000)}
+              points={state?.points ?? emptyMonitorPoints}
               field="cpu"
               range={panel.range}
               interval={panel.interval}
               label={t("monitor.cpuTrend")}
+              className="mt-2 h-14 text-sky-600 dark:text-sky-400"
             />
           )}
         </div>
-        <div>
-          <div className="text-xs text-muted-foreground">
+        <div className="min-w-0">
+          <div className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
+            <MemoryStick size={13} className="text-emerald-600 dark:text-emerald-400" />
             {t("monitor.memory")}
           </div>
-          <div className="text-lg tabular-nums">{percent(memory)}</div>
-          <div className="text-[10px] text-muted-foreground">
+          <div className="mt-2 text-xl font-semibold leading-tight tabular-nums text-foreground">
+            {percent(memory)}
+          </div>
+          <div className="mt-1 min-h-4 text-[10px] text-muted-foreground">
             {capacity(s?.memUsed)} / {capacity(s?.memTotal)}
           </div>
           {panel && (
             <MonitorTrend
-              points={state?.points ?? []}
+              clock={Math.floor(runtime.takenAt / 5000)}
+              points={state?.points ?? emptyMonitorPoints}
               field="memory"
               range={panel.range}
               interval={panel.interval}
               label={t("monitor.memoryTrend")}
+              className="mt-2 h-14 text-emerald-600 dark:text-emerald-400"
             />
           )}
         </div>
@@ -387,53 +445,38 @@ export function MonitorPanels({
     );
   };
   const hostDetail = hosts.find((h) => h.id === detail);
-  const detailState = detail ? runtime.hosts[detail] : undefined;
-  const hasAside = !!editor || !!detail;
+  const detailState = detail && panel ? monitorStateSince(runtime.hosts[detail], runtime.startedAt[panel.id]) : undefined;
   return (
     <section
-      className="relative flex min-h-0 flex-1 flex-col overflow-hidden"
+      className="relative flex min-h-0 min-w-0 flex-1 overflow-hidden"
       data-section="vault-monitor"
     >
-      <VaultPageHeader>
-        <Activity size={18} />
-        <h1 className="font-semibold text-sm">{t("monitor.title")}</h1>
-        <div className="flex-1" />
-        {!!runtime.count && (
-          <>
-            <span className="hidden lg:block text-xs text-muted-foreground">
-              {t("monitor.runningSummary", {
-                count: runtime.count,
-                hosts: runtime.hostCount,
-              })}
-            </span>
+      <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+        <VaultPageHeader>
+          <Gauge size={18} />
+          <h1 className="font-semibold text-sm">{t("monitor.title")}</h1>
+          <div className="flex-1" />
+          {!!runtime.count && (
             <Button variant="ghost" size="sm" onClick={monitorActions.stopAll}>
               {t("monitor.stopAll")}
             </Button>
-          </>
-        )}
-        <Button size="sm" className="gap-1.5" onClick={() => startEdit(null)}>
-          <Plus size={14} />
-          {t("monitor.create")}
-        </Button>
-      </VaultPageHeader>
-      {runtime.unavailable && (
-        <p
-          role="alert"
-          className="border-b border-border/40 px-4 py-3 text-xs text-destructive"
-        >
-          {t("monitor.unavailable")}
-        </p>
-      )}
-      <div className="flex min-h-0 flex-1 overflow-hidden">
-        <div
-          className={cn(
-            "flex min-w-0 flex-1 flex-col",
-            hasAside && "max-[1000px]:hidden",
           )}
-        >
+          <Button size="sm" className="gap-1.5" onClick={() => startEdit(null)}>
+            <Plus size={14} />
+            {t("monitor.create")}
+          </Button>
+        </VaultPageHeader>
+        {runtime.unavailable && (
+          <p
+            role="alert"
+            className="border-b border-border/40 px-4 py-3 text-xs text-destructive"
+          >
+            {t("monitor.unavailable")}
+          </p>
+        )}
           {!panel ? (
             <div className="flex flex-1 flex-col items-center justify-center gap-4 p-8 text-center">
-              <Activity size={36} className="text-muted-foreground" />
+              <Gauge size={36} className="text-muted-foreground" />
               <h2 className="font-semibold">{t("monitor.empty")}</h2>
               <p className="max-w-sm text-sm text-muted-foreground">
                 {t("monitor.emptyHint")}
@@ -501,13 +544,8 @@ export function MonitorPanels({
                   {t(running ? "monitor.stop" : "monitor.start")}
                 </Button>
               </div>
-              {panel.description && (
-                <p className="px-4 pb-2 text-xs text-muted-foreground">
-                  {panel.description}
-                </p>
-              )}
               <div className="flex flex-wrap items-center gap-2 px-4 py-2">
-                <div className="flex rounded-md border border-border/60 p-0.5">
+                <div className="flex h-8 rounded-md bg-muted/50 p-0.5">
                   {(["list", "charts"] as const).map((view) => (
                     <Button
                       key={view}
@@ -532,6 +570,7 @@ export function MonitorPanels({
                   onChange={(e) => setSearch(e.target.value)}
                   placeholder={t("monitor.search")}
                   className="min-w-36 flex-1"
+                  inputClassName="h-8 text-xs"
                 />
                 <Select
                   value={String(panel.interval)}
@@ -545,10 +584,10 @@ export function MonitorPanels({
                     className="h-8 w-auto text-xs"
                     aria-label={t("monitor.interval")}
                   >
-                    <SelectValue />
+                    <SelectValue>{t("monitor.seconds", { count: panel.interval })}</SelectValue>
                   </SelectTrigger>
                   <SelectContent>
-                    {[10, 30, 60].map((v) => (
+                    {MONITOR_INTERVALS.filter((v) => v >= 3).map((v) => (
                       <SelectItem key={v} value={String(v)}>
                         {t("monitor.seconds", { count: v })}
                       </SelectItem>
@@ -590,7 +629,7 @@ export function MonitorPanels({
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    {["manual", "name", "cpu", "memory", "disk"].map((v) => (
+                    {["manual", "name"].map((v) => (
                       <SelectItem key={v} value={v}>
                         {t(`monitor.sort.${v}`)}
                       </SelectItem>
@@ -598,41 +637,22 @@ export function MonitorPanels({
                   </SelectContent>
                 </Select>
               </div>
-              <div className="flex flex-wrap items-center gap-3 px-4 py-2 text-xs text-muted-foreground border-b border-border/40">
-                <span>
-                  {t("monitor.selectedCount", { count: panel.hostIds.length })}
-                </span>
-                <span>
-                  {t("monitor.liveCount", {
-                    count: panel.hostIds.filter(
-                      (id) => runtime.hosts[id]?.status === "live",
-                    ).length,
-                  })}
-                </span>
-                <Button
-                  variant={panel.attentionOnly ? "secondary" : "ghost"}
-                  size="sm"
-                  className="ml-auto h-7 text-xs"
-                  onClick={() => {
-                    void patchPanel({ attentionOnly: !panel.attentionOnly });
-                  }}
-                >
-                  {t("monitor.attention")}
-                </Button>
-              </div>
-              <ScrollArea className="min-h-0 flex-1">
+              <ScrollArea className="min-h-0 min-w-0 flex-1 [&>[data-radix-scroll-area-viewport]>div]:!block [&>[data-radix-scroll-area-viewport]>div]:!min-w-0">
                 <div className="p-4">
                   {!rows.length ? (
                     <p className="p-8 text-center text-sm text-muted-foreground">
                       {t("monitor.noMatches")}
                     </p>
                   ) : panel.view === "charts" ? (
-                    <div className="grid grid-cols-[repeat(auto-fit,minmax(min(100%,280px),1fr))] gap-3">
+                    <div className="grid auto-rows-fr grid-cols-[repeat(auto-fit,minmax(min(100%,280px),1fr))] gap-4">
                       {rows.map(({ id, host, state }) => (
                         <button
                           key={id}
+                          {...dragProps(id)}
                           className={cn(
-                            "min-w-0 rounded-xl border border-border/60 bg-card p-4 text-left transition-colors hover:bg-muted/30 focus-visible:outline focus-visible:outline-primary",
+                            "flex h-full min-w-0 cursor-grab flex-col overflow-hidden rounded-xl bg-card/70 p-4 text-left shadow-sm shadow-black/[0.02] transition-colors hover:bg-card active:cursor-grabbing focus-visible:outline focus-visible:outline-primary",
+                            dragging?.panelId === panel.id && dragging.hostId === id && "opacity-40",
+                            dropTarget === id && "bg-accent",
                             status(host, state) !== "live" &&
                               "text-muted-foreground",
                           )}
@@ -641,9 +661,14 @@ export function MonitorPanels({
                             setDetail(id);
                           }}
                         >
-                          <div className="flex items-start gap-2 mb-4">
+                          <div className="mb-5 flex items-center gap-3">
+                            {host ? (
+                              <DistroAvatar host={host} fallback={host.label} size="log" />
+                            ) : (
+                              <Server size={24} className="shrink-0 text-muted-foreground" />
+                            )}
                             <div className="min-w-0 flex-1">
-                              <h3 className="truncate text-sm font-semibold">
+                              <h3 className="truncate text-sm font-semibold text-foreground">
                                 {host?.label ?? t("monitor.missingHost")}
                               </h3>
                               <p className="truncate text-xs text-muted-foreground">
@@ -652,54 +677,36 @@ export function MonitorPanels({
                             </div>
                             {stateBadge(host, state)}
                           </div>
-                          {renderMetrics(state)}
-                          <div className="mt-3 border-t border-border/40 pt-3">
-                            <div className="flex items-center justify-between text-xs">
-                              <span>{t("monitor.rootDisk")}</span>
-                              <span className="tabular-nums">
-                                {percent(state?.stats?.diskPercent)}
+                          <div className={cn(status(host, state) !== "live" && "opacity-60")}>
+                            {renderMetrics(state)}
+                            <div className="mt-4">
+                              <div className="mb-2 flex items-center gap-1.5 text-[11px] text-muted-foreground">
+                                <HardDrive size={13} className="text-amber-600 dark:text-amber-400" />
+                                <span>{t("monitor.disks")}</span>
+                              </div>
+                              <MonitorDiskUsage stats={state?.stats} limit={2} />
+                            </div>
+                            <div className="mt-3 grid grid-cols-2 gap-2 text-[11px] tabular-nums">
+                              <span className="flex items-center gap-1.5 py-1">
+                                <ArrowDown size={13} className="shrink-0 text-sky-600 dark:text-sky-400" />
+                                {rate(
+                                  state?.stats?.networkReady
+                                    ? state.stats.netRxSpeed
+                                    : null,
+                                )}
+                              </span>
+                              <span className="flex items-center gap-1.5 py-1">
+                                <ArrowUp size={13} className="shrink-0 text-violet-600 dark:text-violet-400" />
+                                {rate(
+                                  state?.stats?.networkReady
+                                    ? state.stats.netTxSpeed
+                                    : null,
+                                )}
                               </span>
                             </div>
-                            <div className="mt-1.5 h-1 rounded-full bg-muted">
-                              <div
-                                className="h-full rounded-full bg-primary"
-                                style={{
-                                  width: `${Math.min(100, state?.stats?.diskPercent ?? 0)}%`,
-                                }}
-                              />
-                            </div>
-                            {state?.stats?.disks
-                              .filter(
-                                (d) => d.mountPoint !== "/" && d.percent >= 90,
-                              )
-                              .map((d) => (
-                                <p
-                                  key={d.mountPoint}
-                                  className="mt-1 text-xs text-destructive"
-                                >
-                                  {d.mountPoint} {percent(d.percent)}
-                                </p>
-                              ))}
                           </div>
-                          <div className="mt-3 flex justify-between text-xs tabular-nums">
-                            <span className="flex items-center gap-1">
-                              <ArrowDown size={12} />
-                              {rate(
-                                state?.stats?.networkReady
-                                  ? state.stats.netRxSpeed
-                                  : null,
-                              )}
-                            </span>
-                            <span className="flex items-center gap-1">
-                              <ArrowUp size={12} />
-                              {rate(
-                                state?.stats?.networkReady
-                                  ? state.stats.netTxSpeed
-                                  : null,
-                              )}
-                            </span>
-                          </div>
-                          <p className="mt-3 text-[10px] text-muted-foreground">
+                          <p className="mt-auto flex items-center gap-1.5 pt-4 text-[10px] text-muted-foreground">
+                            <Clock3 size={11} />
                             {state?.at
                               ? t("monitor.updatedAt", {
                                   time: new Date(state.at).toLocaleTimeString(),
@@ -710,16 +717,16 @@ export function MonitorPanels({
                       ))}
                     </div>
                   ) : (
-                    <div className="overflow-x-auto rounded-lg border border-border/60">
-                      <table className="w-full min-w-[680px] text-xs">
-                        <thead className="bg-muted/30 text-muted-foreground">
+                    <div className="overflow-x-auto">
+                      <table className="w-full min-w-[840px] border-separate border-spacing-x-0 border-spacing-y-2 text-xs">
+                        <thead className="text-muted-foreground">
                           <tr>
                             {[
                               "host",
                               "status",
                               "cpu",
                               "memory",
-                              "rootDisk",
+                              "disks",
                               "network",
                               "updated",
                             ].map((k) => (
@@ -738,25 +745,36 @@ export function MonitorPanels({
                             return (
                               <tr
                                 key={id}
+                                {...dragProps(id)}
                                 className={cn(
-                                  "border-t border-border/40 hover:bg-muted/30",
+                                  "cursor-grab [&>td]:bg-card/70 [&>td]:transition-colors hover:[&>td]:bg-card [&>td:first-child]:rounded-l-xl [&>td:last-child]:rounded-r-xl",
+                                  dragging?.panelId === panel.id && dragging.hostId === id && "opacity-40",
+                                  dropTarget === id && "[&>td]:bg-accent",
                                   status(host, state) !== "live" &&
                                     "text-muted-foreground",
                                 )}
                               >
                                 <td className="px-3 py-3">
                                   <button
-                                    className="text-left hover:underline"
+                                    draggable
+                                    className="flex items-center gap-2.5 text-left hover:underline"
                                     onClick={() => {
                                       setEditor(null);
                                       setDetail(id);
                                     }}
                                   >
-                                    <div className="font-medium">
-                                      {host?.label ?? t("monitor.missingHost")}
-                                    </div>
-                                    <div className="text-[10px] text-muted-foreground">
-                                      {host?.hostname ?? id}
+                                    {host ? (
+                                      <DistroAvatar host={host} fallback={host.label} size="md" />
+                                    ) : (
+                                      <Server size={24} className="shrink-0 text-muted-foreground" />
+                                    )}
+                                    <div className="min-w-0 max-w-52">
+                                      <div className="truncate font-medium">
+                                        {host?.label ?? t("monitor.missingHost")}
+                                      </div>
+                                      <div className="truncate text-[10px] text-muted-foreground">
+                                        {host?.hostname ?? id}
+                                      </div>
                                     </div>
                                   </button>
                                 </td>
@@ -764,22 +782,20 @@ export function MonitorPanels({
                                   {stateBadge(host, state)}
                                 </td>
                                 <td className="px-3 tabular-nums">
-                                  {percent(s?.cpu)}
+                                  <ResourceBar label="" value={s?.cpu} />
                                 </td>
                                 <td className="px-3 tabular-nums">
-                                  {percent(
-                                    s?.memTotal && s.memUsed != null
-                                      ? (s.memUsed / s.memTotal) * 100
-                                      : null,
-                                  )}
+                                  <ResourceBar
+                                    label=""
+                                    value={
+                                      s?.memTotal && s.memUsed != null
+                                        ? (s.memUsed / s.memTotal) * 100
+                                        : null
+                                    }
+                                  />
                                 </td>
-                                <td className="px-3 tabular-nums">
-                                  {percent(s?.diskPercent)}
-                                  {s?.disks.some((d) => d.percent >= 90) && (
-                                    <span className="ml-1 text-destructive">
-                                      !
-                                    </span>
-                                  )}
+                                <td className="min-w-[220px] px-3 py-3">
+                                  <MonitorDiskUsage stats={s} />
                                 </td>
                                 <td className="px-3 tabular-nums whitespace-nowrap">
                                   ↓{" "}
@@ -813,8 +829,11 @@ export function MonitorPanels({
             onClose={() => setEditor(null)}
             title={t(editor.base ? "monitor.edit" : "monitor.create")}
             layout="inline"
+            resizable
+            resizeAriaLabel={t("vault.panel.resizeWidth")}
+            headerClassName={monitorAsideHeaderClass}
             width="w-[380px]"
-            className="max-[1000px]:!w-full max-[1000px]:border-l-0"
+            className={monitorAsideClass}
           >
             <AsidePanelContent>
               <div className="space-y-2">
@@ -843,6 +862,7 @@ export function MonitorPanels({
                 <Button
                   variant="outline"
                   className="w-full justify-between"
+                  aria-label={t("monitor.chooseHosts")}
                   onClick={() => setSelecting(true)}
                 >
                   {t("monitor.selectedCount", {
@@ -956,11 +976,18 @@ export function MonitorPanels({
             onSelect={() => {}}
             onSelectionChange={(hostIds) => updateDraft({ hostIds })}
             onBack={() => setSelecting(false)}
+            onClose={() => {
+              setSelecting(false);
+              setEditor(null);
+            }}
             onContinue={() => setSelecting(false)}
             title={t("monitor.chooseHosts")}
             subtitle={t("monitor.selectionHint")}
             layout="inline"
-            className="max-[1000px]:!w-full max-[1000px]:border-l-0"
+            resizable
+            resizeAriaLabel={t("vault.panel.resizeWidth")}
+            headerClassName={monitorAsideHeaderClass}
+            className={monitorAsideClass}
           />
         )}
         {detail && (
@@ -970,11 +997,20 @@ export function MonitorPanels({
             title={hostDetail?.label ?? t("monitor.missingHost")}
             subtitle={hostDetail?.hostname}
             layout="inline"
+            resizable
+            resizeAriaLabel={t("vault.panel.resizeWidth")}
+            headerClassName={monitorAsideHeaderClass}
             width="w-[380px]"
-            className="max-[1000px]:!w-full max-[1000px]:border-l-0"
+            className={monitorAsideClass}
           >
             <AsidePanelContent>
-              {stateBadge(hostDetail, detailState)}
+              <div className="flex items-center gap-3">
+                {hostDetail && <DistroAvatar host={hostDetail} fallback={hostDetail.label} size="lg" />}
+                <div className="min-w-0 flex-1">
+                  <div className="mb-1 truncate text-xs text-muted-foreground">{hostDetail?.hostname ?? detail}</div>
+                  {stateBadge(hostDetail, detailState)}
+                </div>
+              </div>
               {["login", "error", "disconnected"].includes(
                 detailState?.status ?? "",
               ) && (
@@ -1074,14 +1110,16 @@ export function MonitorPanels({
                 {panel && (
                   <>
                     <MonitorTrend
-                      points={detailState?.points ?? []}
+                      clock={Math.floor(runtime.takenAt / 5000)}
+                      points={detailState?.points ?? emptyMonitorPoints}
                       field="rx"
                       range={panel.range}
                       interval={panel.interval}
                       label={t("monitor.downloadTrend")}
                     />
                     <MonitorTrend
-                      points={detailState?.points ?? []}
+                      clock={Math.floor(runtime.takenAt / 5000)}
+                      points={detailState?.points ?? emptyMonitorPoints}
                       field="tx"
                       range={panel.range}
                       interval={panel.interval}
@@ -1165,7 +1203,6 @@ export function MonitorPanels({
             </AsidePanelFooter>
           </AsidePanel>
         )}
-      </div>
       <Dialog
         open={!!deleting}
         onOpenChange={(open) => !open && setDeleting(null)}

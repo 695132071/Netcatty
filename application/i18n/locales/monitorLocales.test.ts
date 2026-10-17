@@ -1,10 +1,20 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { enMonitorMessages } from "./en/monitor";
 import { esMonitorMessages } from "./es/monitor";
 import { ruMonitorMessages } from "./ru/monitor";
 import { zhCNMonitorMessages } from "./zh-CN/monitor";
 import { zhTWMonitorMessages } from "./zh-TW/monitor";
+
+test("monitoring UI literal message keys exist, including editor-only controls", () => {
+  for (const name of ["MonitorPanels", "MonitorNavButton", "MonitorDiskUsage"]) {
+    const source = readFileSync(new URL(`../../../components/vault/${name}.tsx`, import.meta.url), "utf8");
+    const keys = [...source.matchAll(/\bt\("(monitor\.[^"]+)"/g)].map((match) => match[1]);
+    for (const key of keys)
+      assert.ok(Object.hasOwn(enMonitorMessages, key), `${name}: ${key}`);
+  }
+});
 for (const [locale, messages] of Object.entries({
   es: esMonitorMessages,
   ru: ruMonitorMessages,

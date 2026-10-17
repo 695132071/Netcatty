@@ -11,6 +11,7 @@ export type MonitorPoint = {
   tx: number | null;
 };
 export type MonitorHostState = {
+  historyId: string;
   status:
     | "queued"
     | "connecting"
@@ -21,10 +22,12 @@ export type MonitorHostState = {
     | "disconnected"
     | "limit";
   at: number;
-  stats: MonitorStats | null;
+  /** Omitted by incremental replies when the receiver already has this sample. */
+  stats?: MonitorStats | null;
   points: MonitorPoint[];
 };
 export type MonitorSnapshot = {
+  historyMode: "replace" | "append";
   running: string[];
   count: number;
   hostCount: number;
@@ -32,11 +35,77 @@ export type MonitorSnapshot = {
   runtimeId: string;
   takenAt: number;
   activeSessions: string[];
+  startedAt: Record<string, number>;
   unavailable?: boolean;
   hosts: Record<string, MonitorHostState>;
 };
+
+export type MonitorHistoryCursor = {
+  runtimeId: string;
+  epoch: number;
+  after: Record<string, { at: number; statsAt: number; historyId: string }>;
+};
+
+/** Incremental transport keeps the full bounded history in the renderer. */
+export function mergeMonitorSnapshotHistory(previous: MonitorSnapshot, next: MonitorSnapshot): MonitorSnapshot {
+  if (previous.runtimeId !== next.runtimeId) {
+    // An old worker reply can still be in transit after its replacement starts.
+    if (previous.runtimeId && next.runtimeId && next.takenAt <= previous.takenAt) return previous;
+    return next;
+  }
+  if (next.epoch < previous.epoch) return previous;
+  if (next.epoch > previous.epoch) return next;
+  if (next.takenAt < previous.takenAt) return previous;
+  if (next.historyMode === "replace") return next;
+  return {
+    ...next,
+    hosts: Object.fromEntries(Object.entries(next.hosts).map(([id, host]) => {
+      if (previous.hosts[id]?.historyId !== host.historyId) return [id, host];
+      const retained = previous.hosts[id]?.points ?? [];
+      const last = retained.at(-1)?.at ?? 0;
+      const added = host.points.filter((point) => point.at > last);
+      const points = added.length || (retained[0] && next.takenAt - retained[0].at > 30 * 60000)
+        ? [...retained, ...added].filter((point) => next.takenAt - point.at <= 30 * 60000).slice(-1800)
+        : retained;
+      return [id, { ...host, stats: host.stats === undefined ? previous.hosts[id]?.stats : host.stats,
+        points }];
+    })),
+  };
+}
+
+const filteredHistories = new WeakMap<MonitorPoint[], Map<number, MonitorPoint[]>>();
+function pointsSince(points: MonitorPoint[], startedAt: number) {
+  if (!points.length || points[0].at > startedAt) return points;
+  let cache = filteredHistories.get(points);
+  if (!cache) {
+    cache = new Map();
+    filteredHistories.set(points, cache);
+  }
+  let filtered = cache.get(startedAt);
+  if (!filtered) {
+    filtered = points.filter((point) => point.at > startedAt);
+    cache.set(startedAt, filtered);
+    if (cache.size > 32) cache.delete(cache.keys().next().value!);
+  }
+  return filtered;
+}
+
+/** A panel only displays samples collected during its current cadence/run. */
+export function monitorStateSince(state: MonitorHostState | undefined, startedAt: number | undefined): MonitorHostState | undefined {
+  if (!state || typeof startedAt !== "number") return undefined;
+  const fresh = state.at > startedAt;
+  if (fresh && (!state.points.length || state.points[0].at > startedAt)) return state;
+  return {
+    ...state,
+    at: fresh ? state.at : 0,
+    stats: fresh ? state.stats : null,
+    status: !fresh && state.status === "live" ? "queued" : state.status,
+    points: pointsSince(state.points, startedAt),
+  };
+}
 export type MonitorPanelDemand = {
   id: string;
+  runId: string;
   interval: MonitorPanel["interval"];
   hosts: {
     id: string;
@@ -44,18 +113,3 @@ export type MonitorPanelDemand = {
     status?: "login" | "error";
   }[];
 };
-export function monitorNeedsAttention(
-  state: MonitorHostState | undefined,
-  interval: number,
-  now = Date.now(),
-): boolean {
-  if (!state || state.status !== "live" || now - state.at > interval * 2500)
-    return true;
-  const s = state.stats;
-  return (
-    !!s &&
-    ((s.cpu ?? 0) >= 85 ||
-      (s.memTotal && s.memUsed ? s.memUsed / s.memTotal >= 0.9 : false) ||
-      s.disks.some((d) => d.percent >= 90))
-  );
-}

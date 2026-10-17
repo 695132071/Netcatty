@@ -26,7 +26,8 @@ function stateFor(conn, endpoint) {
       controller: null,
       latestFull: false,
       pendingFull: false,
-      fullUntil: 0,
+      fullResult: null,
+      fullAt: 0,
     };
   }
   states.set(conn, state);
@@ -45,11 +46,11 @@ function stateFor(conn, endpoint) {
   }
   return state;
 }
-function appendPoint(state, result, now) {
+function appendPoint(state, result, now, freshAfter = 0) {
   if (
     !result.success ||
     !result.stats ||
-    now - (state.points.at(-1)?.at ?? 0) < 10000
+    (now - (state.points.at(-1)?.at ?? 0) < 1000 && (state.points.at(-1)?.at ?? 0) > freshAfter)
   )
     return;
   const s = result.stats;
@@ -66,7 +67,7 @@ function appendPoint(state, result, now) {
   });
   state.points = state.points
     .filter((p) => now - p.at <= 30 * 60000)
-    .slice(-180);
+    .slice(-1800);
 }
 async function sampleSharedStats(session, collect, now = Date.now()) {
   const conn = session.conn || session.moshStatsConn || session.etStatsConn;
@@ -80,15 +81,25 @@ async function sampleSharedStats(session, collect, now = Date.now()) {
       state.latest = result;
       state.at = Date.now();
       state.latestFull = true;
+      state.fullResult = result;
+      state.fullAt = state.at;
     }
     return result;
   }
   const state = stateFor(conn, session._reuseEndpoint);
   const full = !session._monitorStats;
-  if (full) state.fullUntil = now + 15000;
+  const cacheMs = full ? 4000 : Math.min(4000, session._monitorIntervalMs ?? 5000);
+  if (full && state.fullResult?.success && now - state.fullAt < 4000)
+    return state.fullResult;
   if (state.pending) {
     if (full) state.terminalJoined = true;
-    if (!full || state.pendingFull) return state.pending;
+    if (!full || state.pendingFull) {
+      const result = await state.pending;
+      // A reset can join a terminal query that began before the new boundary.
+      if (!full && state.at > session._monitorFreshAfter)
+        appendPoint(state, result, state.at, session._monitorFreshAfter);
+      return result;
+    }
     // A terminal needs process/GPU fields omitted from a monitor-only query.
     // Finish the shared lightweight query, then upgrade once for all full readers.
     await state.pending;
@@ -96,11 +107,12 @@ async function sampleSharedStats(session, collect, now = Date.now()) {
   }
   if (
     state.latest?.success &&
-    now - state.at < 4000 &&
+    now - state.at < cacheMs &&
+    (full || state.at > (session._monitorFreshAfter ?? 0)) &&
     (!full || state.latestFull)
   )
     return state.latest;
-  const collectFull = full || now < state.fullUntil;
+  const collectFull = full;
   // Keep transport capabilities on the collection context; baseline is independent of a terminal.
   const companion = !session.conn;
   Object.assign(state.context, {
@@ -122,7 +134,11 @@ async function sampleSharedStats(session, collect, now = Date.now()) {
         state.latest = result;
         state.latestFull = collectFull;
         state.at = Date.now();
-        appendPoint(state, result, state.at);
+        if (collectFull) {
+          state.fullResult = result;
+          state.fullAt = state.at;
+        }
+        appendPoint(state, result, state.at, session._monitorFreshAfter);
       }
       return result;
     })

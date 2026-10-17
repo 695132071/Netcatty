@@ -101,7 +101,6 @@ test("normal manual and debounced auto-sync upload panel creation, edits and del
     interval: 10,
     range: 15,
     sort: "manual",
-    attentionOnly: false,
   };
   let api: ReturnType<typeof useAutoSync> | undefined;
   let renderer: ReactTestRenderer | undefined;

@@ -83,6 +83,7 @@ interface AsidePanelProps extends AsidePanelResizeProps {
     onBack?: () => void;
     children: ReactNode;
     className?: string;
+    headerClassName?: string;
     width?: string;
     layout?: AsidePanelLayout;
     /**
@@ -99,6 +100,7 @@ interface AsidePanelHeaderProps {
     onBack?: () => void;
     onClose: () => void;
     showBackButton?: boolean;
+    className?: string;
 }
 
 // Header Component
@@ -109,9 +111,10 @@ export const AsidePanelHeader: React.FC<AsidePanelHeaderProps> = ({
     onBack,
     onClose,
     showBackButton = false,
+    className,
 }) => {
     return (
-        <div className="px-4 py-3 flex items-center justify-between border-b border-border/60 app-no-drag shrink-0">
+        <div className={cn("px-4 py-3 flex items-center justify-between border-b border-border/60 app-no-drag shrink-0", className)}>
             <div className="flex items-center gap-2 min-w-0">
                 {showBackButton && onBack && (
                     <button
@@ -345,6 +348,7 @@ export const AsidePanel: React.FC<AsidePanelProps> = ({
     onBack,
     children,
     className,
+    headerClassName,
     width = 'w-[380px]',
     layout = 'overlay',
     resizable = false,
@@ -414,7 +418,7 @@ export const AsidePanel: React.FC<AsidePanelProps> = ({
                 : "absolute right-0 top-0 bottom-0 max-w-full border-l border-border/60 bg-background z-30 flex flex-col app-no-drag overflow-hidden",
             layout === 'overlay' && !usesPixelWidth && width,
             isResizing && 'transition-none',
-            className
+            className,
         )}
         style={panelStyle}
         data-section={dataSection}>
@@ -435,6 +439,7 @@ export const AsidePanel: React.FC<AsidePanelProps> = ({
             {title && (
                 <AsidePanelHeader
                     title={title}
+                    className={headerClassName}
                     subtitle={subtitle}
                     actions={actions}
                     onClose={onClose}

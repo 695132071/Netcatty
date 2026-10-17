@@ -31,7 +31,6 @@ const panel: MonitorPanel = {
   interval: 10,
   range: 15,
   sort: "manual",
-  attentionOnly: false,
 };
 const vault = {
   hosts: [],

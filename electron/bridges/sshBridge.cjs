@@ -1459,7 +1459,7 @@ const monitorService = createMonitorService({ startConnection: startSSHSession, 
 });
 const monitorHandlers = {
   "netcatty:monitor:update": (event, payload) => monitorService.reconcile(event, payload),
-  "netcatty:monitor:snapshot": (event) => monitorService.snapshot(event),
+  "netcatty:monitor:snapshot": (event, cursor) => monitorService.snapshot(event, cursor),
   "netcatty:monitor:stop-all": () => monitorService.stopAll(),
   "netcatty:monitor:owner-close": (_event, owner) => monitorService.removeOwner(owner),
   "netcatty:monitor:retry": (event, hostId) => monitorService.retry(event, hostId),

@@ -4,7 +4,7 @@ declare global {
     monitorUpdate?(
       panels: import("../../domain/monitorRuntime").MonitorPanelDemand[],
     ): Promise<import("../../domain/monitorRuntime").MonitorSnapshot>;
-    monitorSnapshot?(): Promise<
+    monitorSnapshot?(cursor?: import("../../domain/monitorRuntime").MonitorHistoryCursor): Promise<
       import("../../domain/monitorRuntime").MonitorSnapshot
     >;
     monitorStopAll?(): Promise<void>;

@@ -71,13 +71,12 @@
 
 ### 独立入口
 
-Vault 左侧在“主机”下方增加“监控”，沿用原有选中态和折叠方式。正在运行时，栏目旁显示运行面板数；现有顶部仍能看到运行提示。页面主体依次为：
+Vault 左侧在“主机”下方增加“监控”，沿用原有选中态和折叠方式。正在运行时，栏目旁显示运行面板数；应用顶部工具栏保持原样。页面主体依次为：
 
-1. 标题“监控”、全局运行数量、“全部停止”和“新建面板”。
+1. 标题“监控”、“全部停止”和“新建面板”。
 2. 当前面板名称下拉、说明、编辑与更多菜单。
 3. 列表/图表切换、搜索、趋势范围、更新频率、当前面板开始/停止。
-4. 正常、待登录、过期等状态摘要与“只看需关注”。
-5. 主机列表或图表卡片；右侧按需展开编辑或详情。
+4. 主机列表或图表卡片；右侧按需展开编辑或详情，与页面顶部对齐，覆盖在内容上方并可拖拽调宽，不改变左侧内容宽度。
 
 面板多时下拉支持按名称查找。第一版不再给监控面板引入分组、文件夹或嵌套页面。
 
@@ -95,21 +94,21 @@ Vault 左侧在“主机”下方增加“监控”，沿用原有选中态和�
 
 ### 列表模式
 
-每台一行，字段为主机名称/地址、状态、CPU、内存、根分区、上传/下载、更新时间。提供按 CPU/内存/磁盘排序、搜索、需关注筛选与详情入口。
+每台一行，字段为主机图标/名称/地址、状态、CPU、内存、各分区占用、上传/下载、更新时间。仅提供名称与保存的顺序两种排序，列表和卡片均支持拖拽；拖拽基于当前显示顺序保存并切换为保存的顺序，搜索隐藏的主机仍保留。提供搜索与详情入口。没有“需关注”机制。磁盘进度保留百分比，鼠标悬停时显示完整分区名与已用/总容量，缺失容量不伪造为零。
 
 列表用于比较，避免每一行都塞完整图表。缺失值显示 `--`；失败时保留旧值但降灰并说明时间；第一次差值采样尚未完成时显示采样中。CPU 与网速未就绪不伪装成 0。
 
 ### 图表模式
 
-每台一张自动排列的卡片：名称/地址/状态、CPU 当前值及核数、内存当前值及容量、CPU/内存短趋势、根分区占用条、网络上下行当前速率。磁盘其他分区有高占用时，正式功能需补充指明具体分区，不能用磁盘总量掩盖单盘满。
+每台一张自动排列的卡片：主机图标/名称/地址/状态、CPU 当前值及核数、内存当前值及容量、CPU/内存短趋势（悬停显示指示线、真实采样值和时间）、总容量最大的两个分区的挂载点和占用条、网络上下行当前速率。卡片高度保持一致，内部以留白和彩色读数分区，不嵌套描边容器或状态标签；列表同样无边框，工具栏控件统一高度。面板说明不在主页面重复展示。
 
-点击主机打开右侧详情，显示放大的 CPU/内存趋势、网络上传/下载趋势、系统信息和各盘/各网卡读数。详情、编辑与选主机使用同一面板区，互斥打开；窄窗口切为占用主要内容区，保留返回/关闭和固定底部操作。
+点击主机打开右侧详情，显示放大的 CPU/内存趋势、网络上传/下载趋势、系统信息和各盘/各网卡读数。详情、编辑与选主机互斥打开，均使用可拖拽调宽的内联侧栏，打开时收窄左侧内容，与其他 Vault 分区保持一致；侧栏标题栏与主内容标题栏同高，保留返回/关闭和固定底部操作。
 
 两种展示共用主机集合、读数和短趋势。换视图不重新登录、不清曲线、不新建另一份采集。显示偏好按每个面板保存。首版不加入自由拖拽布局和每张图的查询编辑器。
 
 ## 4. 已认可的运行规则
 
-建议每个面板独立开始/停止。**明确开始的面板在应用运行期间继续采集，切换面板或进入终端不中断。** 不因打开下拉菜单或保存面板便自动开始全部面板。
+建议每个面板独立开始/停止。**明确开始的面板在应用运行期间继续采集，切换面板或进入终端不中断。** 不因打开下拉菜单或保存面板便自动开始全部面板。每次明确开始和每次变更采集频率都会清空当前面板的所有旧曲线，从本次操作之后的真实读数重新绘制；不会清除其他面板或终端的共享读数。
 
 这种持续运行方式随雏形获得用户认可。它与上一稿“离开页面暂停”的规则不同，以本稿为准。研究和雏形阶段没有发起真实主机连接；正式实现须使用可控测试环境验证，不能任意批量登录用户保存的生产主机。
 
@@ -120,7 +119,7 @@ Vault 左侧在“主机”下方增加“监控”，沿用原有选中态和�
 - Vault 锁定、系统睡眠或网络断开时，不继续用缓存秘密重试登录；展示暂停/断开与缺口，解锁或恢复网络后依既有安全规则处理，不能绕过身份确认。
 - 需要口令、验证码或主机身份确认时逐台处理，其他主机继续；不要同时弹出一串登录框。
 
-首版建议 10 秒更新，可选 30/60 秒。频率是设计值，不是竞品证明的最佳值或严格性能保证。系统信息、磁盘容量可低频，列表不采完整进程/GPU/每核详情。采集失败有限退避，认证或身份变化等待用户，不循环刷日志。
+默认 5 秒更新，菜单提供 3/5/10/30/60 秒，隐藏 1/2 秒选项，内部采样能力不作变更。共享缓存按当前监控的最快需求刷新，不以旧的 4 秒缓存限制 1 秒采集。系统信息、磁盘容量可低频，列表不采完整进程/GPU/每核详情。采集失败有限退避，认证或身份变化等待用户，不循环刷日志。
 
 ## 5. SSH 长连接：复用现有机制的真实边界
 
@@ -136,7 +135,7 @@ Vault 左侧在“主机”下方增加“监控”，沿用原有选中态和�
 
 - 当前池没有正式 monitor 用途；现有 [统计入口](../../electron/bridges/sshBridge/sessionOps.cjs)仍依赖终端 session。正式实现需要新增监控用途，并把采样上下文与 CPU/网速前次计数从终端会话解耦。不能创建隐藏终端冒充监控，否则可能带来终端启动脚本和其他副作用。
 - 多面板、详情、终端与窗口对同一兼容身份共用一份采集；只有第一次无可用连接才按既有认证/组继承/跳板/信任检查流程建连。不另造监控专用池，不绕过认证。
-- 多个订阅频率不同时，底层基础读数按最短有效需求；例如终端仍要每 5 秒读数，监控面板选择 30 秒不意味着该机器远端查询变为每 30 秒。各面板可按自身频率呈现，实际共享频率需可解释。
+- 多个订阅频率不同时，底层基础读数按最短有效需求；1 秒等快速监控始终使用轻量采集，进程/GPU 等完整读数只由终端按其自身频率触发，并有独立的 4 秒缓存；例如终端仍要每 5 秒读数，监控面板选择 30 秒不意味着该机器远端查询变为每 30 秒。各面板可按自身频率呈现，实际共享频率需可解释。
 - 长连接指已认证 SSH 传输保持与复用，现有路径仍定时执行查询。它不自动等于持续推流、无远端命令或零堡垒机审计；改为持续采集进程属于另一个明确决策，本方案不默认引入远端落盘脚本或常驻安装。
 
 正式支持范围先以现有 Linux/macOS SSH 统计与已验证跳板方式为准。网络设备、Telnet、单通道/受限方式需明确不可用原因。现有 [SelectHostPanel](../../components/SelectHostPanel.tsx)的默认过滤不足以代表这些能力已经全部处理。
@@ -156,9 +155,9 @@ Vault 左侧在“主机”下方增加“监控”，沿用原有选中态和�
 
 监控读数不写 localStorage、IndexedDB、文件、缓存、备份、同步或常规日志；不通过“页面状态恢复”间接带出采样。诊断仅记录必要的状态与计数，不记录采样正文。
 
-短趋势建议每个唯一采集身份一份有上限的内存缓冲，保留最近 30 分钟、最多 180 点，监控展示最快 10 秒一点。多个面板不各存一份。按时间和数量同时裁剪，失去需求后有限期回收；程序退出全部清空。
+短趋势建议每个唯一采集身份一份有上限的内存缓冲，保留最近 30 分钟、最多 1800 点，监控最快 1 秒一点。多个面板不各存一份。按时间和数量同时裁剪，失去需求后有限期回收；程序退出全部清空。
 
-因此只提供最近 5/15/30 分钟的观察范围，不提供昨天/过去一周等历史查询。实际采样不足所选范围时显示已采时长，断网或暂停期间保留缺口，不补 0、不虚构连贯趋势。100 台 × 180 点 × 六个 8 字节数字约 0.86MB 只是原始数字下限，实际对象和渲染占用仍要实测。
+因此只提供最近 5/15/30 分钟的观察范围，不提供昨天/过去一周等历史查询。实际采样不足所选范围时显示已采时长，断网或暂停期间保留缺口，不补 0、不虚构连贯趋势。100 台 × 1,800 点 × 六个 8 字节数字约 8.6MB 只是原始数字下限，实际对象和渲染占用仍要实测。
 
 ## 7. 雏形与本次验证
 
@@ -206,8 +205,8 @@ Vault 左侧在“主机”下方增加“监控”，沿用原有选中态和�
 - Panel configuration is normalized through an allowlist. It participates in the existing three-way and convergent sync collections, deletion records, auto-sync change notifications, Vault JSON export/import and protective backups. Prepared cloud applies rebase intervening window edits; old payloads without the field preserve local panels.
 - Monitoring runs in the terminal worker, using the existing SSH registry's full identity and joined dials, with an explicit `monitor` lease. Authentication reuses the existing SSH preparation, host-key, keyboard-interactive and jump-host paths. No terminal session or shell is created for monitoring.
 - Ordinary terminal opens retain their existing fresh-login policy. If a terminal already exists, monitoring borrows its compatible transport. Distinct transports with the exact same normalized identity share the metrics cache and baseline too, so a required fresh terminal login does not duplicate collection.
-- Shared collection/history is volatile. Each history keeps at most 180 points from the last 30 minutes, sampled no faster than every 10 seconds. At most 256 unique monitoring identities run at once; the metrics identity cache is bounded to 512 entries and periodically prunes expired histories. No readings, errors, running intent or credentials enter the panel storage shape.
-- Known network devices are rejected using the existing renderer banner rules, extracted into one shared module. Recognized single-channel peers are rejected before an extra command runs. Monitor-only samples omit process and GPU queries. A terminal reader upgrades a lightweight sample to a complete one; subsequent shared queries remain complete while a terminal is actively reading. The same existing Linux/macOS parser, disk handling, CPU deltas and network deltas serve terminal and monitoring readers.
+- Shared collection/history is volatile. Each history keeps at most 1800 points from the last 30 minutes, sampled no faster than every second. At most 256 unique monitoring identities run at once; the metrics identity cache is bounded to 512 entries and periodically prunes expired histories. No readings, errors, running intent or credentials enter the panel storage shape. Renderer polling transfers only new history points and omits unchanged host stats using per-history sample cursors; fresh samples and connection changes include their complete current stats. Trend geometry is memoized across unchanged samples (including after panel resets), reduces dense runs to per-column extrema, and advances idle viewports on a shared five-second clock. Hover still reads the original samples; missing samples and cadence gaps remain separate runs.
+- Known network devices are rejected using the existing renderer banner rules, extracted into one shared module. Recognized single-channel peers are rejected before an extra command runs. Monitor-only samples omit process and GPU queries. Terminal readers share a separate four-second complete-sample cache; monitor readers continue collecting lightweight samples. The same existing Linux/macOS parser, disk handling, CPU deltas and network deltas serve terminal and monitoring readers.
 - A real macOS shell exercise found an existing cooked-template escape in the disk awk expression. It now uses a literal prefix comparison, with a generated-command regression test; the actual monitor reads root/volume capacity correctly.
 
 Verified so far in an isolated Electron profile and controlled SSH fixture (no saved production host logins): creation, validation, cross-group selection, copy starting stopped, two running panels, navigation retention, direct and jump-host real shell sampling, known-host confirmation, unsupported network devices, sequential verification prompts, failed login details, light/dark and Chinese/narrow rendering. Stopping an in-flight slow query produced no additional queries after 12 seconds; another panel and an ordinary terminal remained usable. Starting monitoring against an existing terminal did not add an authenticated connection. Restart restored two saved panels with zero running panels and zero monitor readings.
@@ -223,3 +222,7 @@ Additional acceptance evidence:
 - A controlled SSH fixture supplied 100 distinct identities over real connections. All 100 produced their first readings in 876ms; 100 cards rendered (two trend charts each), with a measured renderer heap increase of 6.69MiB. The fixture recorded 100 successful authentications, 100 collection commands plus capability/disk work, and zero shells for this exercise. This tests fixture throughput and rendering, not a production fleet's network latency.
 - Accelerated in-memory history exercise through the production sampler retained exactly 18,000 points for 100 identities, with a measured heap increase of 1.92MiB after collection. This measures the real bounded object representation; it does not claim 30 minutes of production observation.
 - Last successful readings and their timestamp survive sampling failure; missing measurements remain null. A failed host does not block reuse and collection on an already-authenticated host. Capacity is applied after obsolete demand is removed, including replacing a host at the 256-identity bound.
+
+### Fast-cadence transport validation
+
+Renderer polling sends a per-host timestamp cursor. Worker snapshots send only newer points after the first full snapshot; renderer memory merges, deduplicates and bounds history to 1,800 points and 30 minutes. Endpoint history identities travel with cursors so replacing a host connection cannot merge readings from different endpoints. Worker/runtime changes replace history, and older responses cannot overwrite newer state. A 256-host test with full retained histories transfers only 256 new points per polling round, below one percent of the full-history payload. Full terminal stats keep their own four-second cache; one-second monitor requests remain lightweight.

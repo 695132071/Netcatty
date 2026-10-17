@@ -1,5 +1,5 @@
 import React from "react";
-import { Activity } from "lucide-react";
+import { Gauge } from "lucide-react";
 import { useI18n } from "../../application/i18n/I18nProvider";
 import { useMonitorSnapshot } from "../../application/state/monitorRuntimeStore";
 import { cn } from "../../lib/utils";
@@ -29,7 +29,7 @@ export function MonitorNavButton({
               "bg-foreground/10 text-foreground hover:bg-foreground/15 border-border/40",
           )}
         >
-          <Activity size={16} className="shrink-0" />
+          <Gauge size={16} className="shrink-0" />
           {!collapsed && (
             <>
               <span>{t("monitor.title")}</span>

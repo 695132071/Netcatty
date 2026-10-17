@@ -19,8 +19,32 @@ const options = {
 };
 const demand = (id = "p", opts = options) => ({
   id,
+  runId: "first-run",
   interval: 10,
   hosts: [{ id: "h", options: opts }],
+});
+
+test("each start and interval change begins fresh panel history while other panels keep theirs", () => {
+  let now = 1000;
+  const f = fixture({ now: () => now });
+  const a = { ...demand("a"), hosts: [] };
+  const b = { ...demand("b"), hosts: [] };
+  f.service.reconcile(event(1), [a, b]);
+  assert.deepEqual(f.service.snapshot(event(1)).startedAt, { a: 1000, b: 1000 });
+  now = 2000;
+  f.service.reconcile(event(1), [a, b]);
+  assert.deepEqual(f.service.snapshot(event(1)).startedAt, { a: 1000, b: 1000 });
+  const changed = { ...a, interval: 5 };
+  f.service.reconcile(event(1), [changed, b]);
+  assert.deepEqual(f.service.snapshot(event(1)).startedAt, { a: 2000, b: 1000 });
+  now = 3000;
+  f.service.reconcile(event(1), [{ ...changed, runId: "second-run" }, b]);
+  assert.deepEqual(f.service.snapshot(event(1)).startedAt, { a: 3000, b: 1000 });
+  f.service.reconcile(event(1), [b]);
+  now = 4000;
+  f.service.reconcile(event(1), [changed, b]);
+  assert.deepEqual(f.service.snapshot(event(1)).startedAt, { a: 4000, b: 1000 });
+  f.service.dispose();
 });
 const tick = () => new Promise((resolve) => setImmediate(resolve));
 async function until(predicate) {
@@ -556,3 +580,175 @@ for (const sharedHost of ["first", "second"]) {
     f.service.dispose();
   });
 }
+
+for (const interval of [1, 2, 3, 5, 10, 30, 60]) {
+  test(`monitor schedules ${interval}s collection and passes its cache demand`, async () => {
+    let requested;
+    const f = fixture({ getStats: async (context) => {
+      requested = context._monitorIntervalMs;
+      return { success: true, stats: {} };
+    } });
+    f.service.reconcile(event(1), [{ ...demand(), interval }]);
+    await until(() => f.timers.length > 0);
+    assert.equal(f.timers.at(-1).ms, interval * 1000);
+    assert.equal(requested, interval * 1000);
+    f.service.dispose();
+  });
+}
+
+test("one-second monitoring bypasses the terminal's four-second cache and records bounded history", async () => {
+  const c = conn();
+  const original = Date.now;
+  let now = 100000, calls = 0;
+  Date.now = () => now;
+  const session = { conn: c, _monitorStats: true, _monitorIntervalMs: 1000 };
+  const collect = async () => {
+    calls++;
+    return { success: true, stats: { cpu: calls % 100, memTotal: 100, memUsed: 50 } };
+  };
+  try {
+    await sampleSharedStats(session, collect, now);
+    now += 500;
+    await sampleSharedStats(session, collect, now);
+    assert.equal(calls, 1);
+    now += 500;
+    await sampleSharedStats(session, collect, now);
+    assert.equal(calls, 2);
+    assert.equal(readSharedStats(c).points.length, 2);
+    for (let i = 0; i < 2000; i++) {
+      now += 1000;
+      await sampleSharedStats(session, collect, now);
+    }
+    const history = readSharedStats(c).points;
+    assert.equal(history.length, 1800);
+    assert.ok(history.every((p) => now - p.at <= 1800000));
+  } finally {
+    Date.now = original;
+  }
+});
+
+test("fast monitoring stays lightweight while terminal full reads retain their own cache", async (t) => {
+  let now = 100000;
+  t.mock.method(Date, "now", () => now);
+  const c = conn();
+  const fullTimes = [], lightTimes = [];
+  const collect = async (ctx) => {
+    (ctx._monitorStats ? lightTimes : fullTimes).push(now);
+    return { success: true, stats: { cpu: 25, memTotal: 100, memUsed: 50 } };
+  };
+  await sampleSharedStats({ conn: c }, collect);
+  for (let second = 1; second <= 10; second++) {
+    now += 1000;
+    await sampleSharedStats({ conn: c, _monitorStats: true, _monitorIntervalMs: 1000 }, collect);
+    if ([2, 5, 7, 10].includes(second)) await sampleSharedStats({ conn: c }, collect);
+  }
+  assert.deepEqual(fullTimes, [100000, 105000, 110000]);
+  assert.equal(lightTimes.length, 10);
+});
+
+test("changing to a long cadence immediately records a fresh point instead of reusing pre-reset cache", async () => {
+  let calls = 0;
+  const f = fixture({ getStats: (ctx) => sampleSharedStats(ctx, async () => {
+    await new Promise((resolve) => setTimeout(resolve, 2));
+    calls++;
+    return { success: true, stats: { cpu: calls, memTotal: 100, memUsed: 50 } };
+  }) });
+  f.service.reconcile(event(1), [{ ...demand(), interval: 1 }]);
+  await until(() => f.timers.length === 1);
+  const previousAt = f.service.snapshot(event(1)).hosts.h.points[0].at;
+  f.service.reconcile(event(1), [{ ...demand(), interval: 60 }]);
+  await until(() => calls === 2 && f.timers.at(-1).ms === 60000);
+  const snapshot = f.service.snapshot(event(1));
+  assert.equal(snapshot.hosts.h.stats.cpu, 2);
+  assert.ok(snapshot.hosts.h.at > snapshot.startedAt.p);
+  assert.equal(snapshot.hosts.h.points.length, 2);
+  assert.ok(snapshot.hosts.h.points[1].at - previousAt < 1000);
+  assert.ok(f.timers[0].cancelled);
+  f.service.dispose();
+});
+
+test("reset joining a terminal query still records its first fresh point within one second", async (t) => {
+  let now = 100000;
+  t.mock.method(Date, "now", () => now);
+  const c = conn();
+  const result = { success: true, stats: { cpu: 50, memTotal: 100, memUsed: 25 } };
+  await sampleSharedStats({ conn: c, _monitorStats: true }, async () => result);
+  now = 100100;
+  let finish;
+  const terminal = sampleSharedStats({ conn: c }, () => new Promise((resolve) => { finish = resolve; }));
+  now = 100200;
+  const monitor = sampleSharedStats({ conn: c, _monitorStats: true, _monitorIntervalMs: 60000, _monitorFreshAfter: now }, async () => { throw new Error("must join terminal query"); });
+  now = 100300;
+  finish(result);
+  await Promise.all([terminal, monitor]);
+  assert.deepEqual(readSharedStats(c).points.map((point) => point.at), [100000, 100300]);
+});
+
+test("fresh monitoring never samples a reused terminal before its restricted banner check", async () => {
+  const f = fixture();
+  f.c._remoteVer = "SSH-2.0-FortiSSH_1.0";
+  const transport = pool.createTransport({ conn: f.c, endpoint: pool.buildConnectionReuseEndpoint(options) });
+  const terminal = {};
+  pool.borrowTransport(transport, { kind: pool.LEASE_KINDS.shell, holder: terminal });
+  f.service.reconcile(event(1), [demand()]);
+  await until(() => f.service.snapshot(event(1)).hosts.h.status === "unsupported");
+  assert.equal(f.samples, 0);
+  assert.equal(transport.count, 1);
+  f.service.dispose();
+  pool.returnTransport(terminal);
+});
+
+test("snapshot deltas send new points only, even with 256 full retained histories", async (t) => {
+  const connections = [];
+  const f = fixture({
+    startConnection: async (_event, opts) => {
+      const c = conn();
+      connections.push(c);
+      return { transport: pool.createTransport({ conn: c, endpoint: pool.buildConnectionReuseEndpoint(opts) }) };
+    },
+  });
+  const hosts = Array.from({ length: 256 }, (_, index) => ({ id: `h${index}`, options: { ...options, hostname: `host${index}` } }));
+  f.service.reconcile(event(1), [{ ...demand(), hosts }]);
+  await until(() => f.timers.length === 256);
+  t.mock.timers.enable({ apis: ["Date"], now: Date.now() });
+  const at = Date.now();
+  for (const c of connections) {
+    const shared = readSharedStats(c);
+    shared.result.stats = { ...shared.result.stats,
+      disks: Array.from({ length: 32 }, (_, index) => ({ mount: `/disk/${index}`, total: 1024, used: 512 })),
+      netInterfaces: Array.from({ length: 32 }, (_, index) => ({ name: `eth${index}`, rx: 10, tx: 20 })),
+      cpuPerCore: Array.from({ length: 64 }, () => 50),
+    };
+    const points = shared.points;
+    points.length = 0;
+    for (let i = 0; i < 1800; i++) points.push({ at: at - (1799 - i) * 1000, cpu: i % 100, memory: 50, disk: 40, rx: 10, tx: 20 });
+  }
+  const initial = f.service.snapshot(event(1));
+  const initialBytes = JSON.stringify(initial).length;
+  const cursor = { runtimeId: initial.runtimeId, epoch: initial.epoch, after: Object.fromEntries(hosts.map((host) => [host.id, { at, statsAt: initial.hosts[host.id].at, historyId: initial.hosts[host.id].historyId }])) };
+  for (const c of connections) {
+    const points = readSharedStats(c).points;
+    points.shift();
+    points.push({ at: at + 1000, cpu: 51, memory: 52, disk: 40, rx: 10, tx: 20 });
+  }
+  const delta = f.service.snapshot(event(1), cursor);
+  assert.equal(initial.historyMode, "replace");
+  assert.equal(delta.historyMode, "append");
+  assert.equal(Object.values(delta.hosts).reduce((count, host) => count + host.points.length, 0), 256);
+  assert.ok(Object.values(delta.hosts).every((host) => !Object.hasOwn(host, "stats")));
+  assert.ok(JSON.stringify(delta).length < initialBytes / 100);
+  const caughtUp = { ...cursor, after: Object.fromEntries(hosts.map((host) => [host.id, { ...cursor.after[host.id], at: at + 1000 }])) };
+  assert.ok(Object.values(f.service.snapshot(event(1), caughtUp).hosts).every((host) => host.points.length === 0));
+  const staleIdentity = { ...cursor, after: { ...cursor.after, h0: { at: at + 999999, historyId: "old-endpoint" } } };
+  assert.equal(f.service.snapshot(event(1), staleIdentity).hosts.h0.points.length, 1800);
+  assert.deepEqual(f.service.snapshot(event(1), staleIdentity).hosts.h0.stats, initial.hosts.h0.stats);
+  assert.equal(f.service.snapshot(event(1), { ...cursor, runtimeId: "old-worker" }).historyMode, "replace");
+  const shared = readSharedStats(connections[0]);
+  t.mock.timers.tick(5);
+  await sampleSharedStats({ conn: connections[0], _monitorStats: true }, async () =>
+    ({ success: true, stats: { ...shared.result.stats, cpu: 67 } }), shared.at + 5000);
+  const fresh = f.service.snapshot(event(1), caughtUp);
+  assert.equal(fresh.hosts.h0.stats.cpu, 67);
+  assert.ok(Object.entries(fresh.hosts).every(([id, host]) => id === "h0" || !Object.hasOwn(host, "stats")));
+  f.service.dispose();
+});

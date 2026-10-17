@@ -304,7 +304,7 @@ function createPreloadApi(ctx) {
     return result.sessionId;
   },
   monitorUpdate: (panels) => ipcRenderer.invoke("netcatty:monitor:update", panels),
-  monitorSnapshot: () => ipcRenderer.invoke("netcatty:monitor:snapshot"),
+  monitorSnapshot: (cursor) => ipcRenderer.invoke("netcatty:monitor:snapshot", cursor),
   monitorStopAll: () => ipcRenderer.invoke("netcatty:monitor:stop-all"),
   monitorRetry: (hostId) => ipcRenderer.invoke("netcatty:monitor:retry", hostId),
   testConnection: async (options) => {

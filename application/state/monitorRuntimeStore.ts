@@ -1,6 +1,7 @@
 import { useSyncExternalStore } from "react";
-import type { MonitorSnapshot } from "../../domain/monitorRuntime";
+import { mergeMonitorSnapshotHistory, type MonitorSnapshot, type MonitorHistoryCursor } from "../../domain/monitorRuntime";
 const empty: MonitorSnapshot = {
+  historyMode: "replace",
   running: [],
   count: 0,
   hostCount: 0,
@@ -8,13 +9,21 @@ const empty: MonitorSnapshot = {
   runtimeId: "",
   takenAt: 0,
   activeSessions: [],
+  startedAt: {},
   hosts: {},
 };
 let snapshot = empty;
 const listeners = new Set<() => void>();
 export function publishMonitorSnapshot(next: MonitorSnapshot) {
-  snapshot = next;
+  snapshot = mergeMonitorSnapshotHistory(snapshot, next);
   for (const l of listeners) l();
+}
+export function getMonitorHistoryCursor(): MonitorHistoryCursor {
+  return {
+    runtimeId: snapshot.runtimeId,
+    epoch: snapshot.epoch,
+    after: Object.fromEntries(Object.entries(snapshot.hosts).map(([id, host]) => [id, { at: host.points.at(-1)?.at ?? 0, statsAt: host.at, historyId: host.historyId }])),
+  };
 }
 export function publishMonitorUnavailable() {
   publishMonitorSnapshot({ ...empty, unavailable: true });

@@ -72,6 +72,8 @@ function createMonitorService({
         conn: entry.transport.conn,
         hostname: entry.hostname,
         _monitorStats: true,
+        _monitorIntervalMs: intervalFor(entry) * 1000,
+        _monitorFreshAfter: Math.max(...[...panels.values()].filter((panel) => panel.keys.includes(entry.key)).map((panel) => panel.startedAt)),
         _reuseEndpoint: entry.transport.endpoint,
       });
       if (entry.cancelled) return;
@@ -136,6 +138,7 @@ function createMonitorService({
       publishState(entry, "unsupported");
       return;
     }
+    entry.ready = true;
     void collect(entry);
   }
   function connect(entry, event, options) {
@@ -218,6 +221,7 @@ function createMonitorService({
     if (!Array.isArray(input)) throw new Error("Invalid monitor configuration");
     const owner = event.sender.id;
     const wanted = new Set();
+    const freshKeys = new Set();
     for (const panel of input) {
       if (typeof panel.id !== "string" || !Array.isArray(panel.hosts)) continue;
       const id = `${owner}:${panel.id}`;
@@ -246,13 +250,19 @@ function createMonitorService({
         hosts.push({ id: host.id, key });
         hosts[hosts.length - 1].options = options;
       }
+      const interval = [1, 2, 3, 5, 10, 30, 60].includes(panel.interval) ? panel.interval : 5;
+      const previous = panels.get(id);
+      const fresh = !previous || previous.interval !== interval || previous.runId !== panel.runId;
+      if (fresh) for (const key of keys) freshKeys.add(key);
       panels.set(id, {
         event,
         owner,
         id: panel.id,
         keys,
         hosts,
-        interval: [10, 30, 60].includes(panel.interval) ? panel.interval : 10,
+        interval,
+        runId: panel.runId,
+        startedAt: fresh ? now() : previous.startedAt,
       });
     }
     for (const [id, panel] of panels)
@@ -278,6 +288,12 @@ function createMonitorService({
         release(entry);
     admitEntries(owner);
     for (const entry of entries.values()) {
+      if (freshKeys.has(entry.key) && entry.ready && entry.transport && !entry.sampling) {
+        if (entry.timer) timers.clearTimeout(entry.timer);
+        entry.timer = null;
+        void collect(entry);
+        continue;
+      }
       if (entry.timer && entry.due - now() > intervalFor(entry) * 1000) {
         timers.clearTimeout(entry.timer);
         entry.due = now() + intervalFor(entry) * 1000;
@@ -303,12 +319,14 @@ function createMonitorService({
         if (!host.key || entries.has(host.key) || entries.size >= 256) continue;
         const entry = {
           key: host.key,
+          historyId: randomUUID(),
           hostname: host.options.hostname,
           sessionId: `monitor-${randomUUID()}`,
           holder: {},
           owner: panel.owner,
           status: "queued",
           failures: 0,
+          ready: false,
           transport: null,
           timer: null,
           cancelled: false,
@@ -318,8 +336,9 @@ function createMonitorService({
         connect(entry, panel.event, host.options);
       }
   }
-  function snapshot(event) {
+  function snapshot(event, cursor) {
     const own = [...panels.values()].filter((p) => p.owner === event.sender.id);
+    const append = cursor?.runtimeId === runtimeId && cursor.epoch === epoch;
     const hosts = {};
     for (const panel of own)
       for (const host of panel.hosts) {
@@ -327,15 +346,23 @@ function createMonitorService({
         const shared = entry?.transport
           ? readSharedStats(entry.transport.conn)
           : null;
+        const historyId = entry?.historyId ?? "";
+        const last = cursor?.after?.[host.id];
         hosts[host.id] = {
+          historyId,
           status: entry?.status ?? host.status ?? "limit",
           at: shared?.at ?? 0,
-          stats: shared?.result?.success ? shared.result.stats : null,
-          points: shared?.points ?? [],
+          ...(append && last?.historyId === historyId && last.statsAt === (shared?.at ?? 0)
+            ? {}
+            : { stats: shared?.result?.success ? shared.result.stats : null }),
+          points: append && last?.historyId === historyId
+            ? (shared?.points ?? []).filter((point) => point.at > last.at)
+            : shared?.points ?? [],
         };
       }
     return {
       epoch,
+      historyMode: append ? "append" : "replace",
       runtimeId,
       takenAt: now(),
       activeSessions: [
@@ -348,6 +375,7 @@ function createMonitorService({
         ),
       ],
       running: own.map((p) => p.id),
+      startedAt: Object.fromEntries(own.map((p) => [p.id, p.startedAt])),
       count: panels.size,
       hostCount: entries.size,
       hosts,
