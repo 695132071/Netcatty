@@ -62,6 +62,8 @@
     "test:plugin-runtime:electron": "electron electron/plugins/electronRuntime.live.test.cjs",
     "test:sync-crdt": "node --test --import tsx domain/convergentSync/*.test.ts",
     "bench:sync-crdt": "tsx scripts/bench-sync-crdt.ts",
+    "test:fido-sim": "cross-env NETCATTY_FIDO_SIM=1 node --test scripts/fido-auth.live.test.cjs",
+    "test:fido-docker": "cross-env NETCATTY_FIDO_DOCKER=1 node --test scripts/fido-auth.docker.test.cjs",
     "test:ssh-mfa-models": "node --test electron/bridges/sshMfaModels.live.test.cjs",
     "test:ssh-mfa-models:live": "SSH_MFA_LIVE=1 node --test electron/bridges/sshMfaModels.live.test.cjs",
     "test:local-file-drag:electron": "electron scripts/local-file-drag.live.test.cjs",

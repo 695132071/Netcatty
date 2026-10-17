@@ -93,6 +93,7 @@ declare global {
   }
 
   interface NetcattySSHOptions {
+    keyLabel?: string;
     sessionId?: string;
     hostId?: string;
     hostLabel?: string;
