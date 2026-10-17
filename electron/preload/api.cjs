@@ -1374,6 +1374,8 @@ function createPreloadApi(ctx) {
     ipcRenderer.invoke("netcatty:vaultBackups:read", payload),
   trimVaultBackups: (payload) =>
     ipcRenderer.invoke("netcatty:vaultBackups:trim", payload),
+  clearVaultBackups: () =>
+    ipcRenderer.invoke("netcatty:vaultBackups:clear"),
   openVaultBackupDir: () =>
     ipcRenderer.invoke("netcatty:vaultBackups:openDir"),
   // Subscribe to cross-window "backups changed" events emitted by the

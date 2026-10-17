@@ -268,6 +268,7 @@ declare global {
       payload: import('./domain/sync').SyncPayload;
     }>;
     trimVaultBackups?(payload: { maxCount: number }): Promise<{ deletedCount: number; keptCount: number }>;
+    clearVaultBackups?(): Promise<{ deletedCount: number }>;
     openVaultBackupDir?(): Promise<{ success: boolean; path: string }>;
     // Subscribe to main-process-driven "vault backups changed" events.
     // Returns an unsubscribe callback. Undefined in non-Electron builds.
