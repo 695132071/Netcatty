@@ -1,5 +1,5 @@
 import { MonitorHostKeyDialog } from './components/vault/MonitorHostKeyDialog';
-import { useMonitorRuntime } from './application/state/useMonitorRuntime';
+import { MonitorRuntimeHost } from './application/app/MonitorRuntimeHost';
 import React, { useEffect } from 'react';
 
 import { initializeFonts } from './application/state/fontStore';
@@ -47,9 +47,9 @@ function SettingsI18nProvider({ children }: { children: React.ReactNode }) {
  * shell bags; AppSideEffects owns reactive effects + local UI publishing.
  */
 function App() {
-  useMonitorRuntime();
   return (
     <AppLocalStateProvider>
+      <MonitorRuntimeHost />
       <AppSideEffects />
       <MonitorHostKeyDialog />
       <AppShell />

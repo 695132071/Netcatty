@@ -165,7 +165,7 @@ test("Mosh prepares the configured system agent before building native ssh optio
   assert.deepEqual(auth.sshArgs, [
     "-i", path.join(os.homedir(), ".ssh", "id_work.pub"),
     "-o", "IdentitiesOnly=yes",
-    "-o", "IdentityAgent=/tmp/custom-agent.sock",
+    "-o", 'IdentityAgent="/tmp/custom-agent.sock"',
     "-o", "StrictHostKeyChecking=ask",
   ]);
   assert.equal(env.SSH_AUTH_SOCK, "/tmp/custom-agent.sock");
