@@ -39,7 +39,7 @@ function size(bytes) {
 
 function statusText(item) {
   if (item.missing) return "File moved or deleted";
-  if (item.status === "waiting") return "Choose where to save\u2026";
+  if (item.status === "waiting") return "Preparing download\u2026";
   if (item.status === "progressing") return item.total
     ? `${size(item.received)} of ${size(item.total)} \u00b7 ${Math.min(100, Math.round(item.received * 100 / item.total))}%`
     : `${size(item.received)} \u00b7 Downloading\u2026`;
@@ -112,6 +112,7 @@ function render(downloads) {
       actionMenu.append(choice);
     };
     if (item.status === "completed" && !item.missing) addMenuAction("Open file", "open");
+    if (item.status === "completed" && !item.missing) addMenuAction("Save as\u2026", "save-as");
     if (!["waiting", "progressing"].includes(item.status)) addMenuAction("Remove from list", "remove");
     if (actionMenu.childElementCount) actions.append(more);
     row.append(file, detail, actions, actionMenu);

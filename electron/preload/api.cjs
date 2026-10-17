@@ -1341,6 +1341,18 @@ function createPreloadApi(ctx) {
   focusHostBrowser: (hostId) => ipcRenderer.invoke("netcatty:host-browser:focus", hostId),
   setHostBrowserPanelLayout: (options) => ipcRenderer.invoke("netcatty:host-browser:panel-layout", options),
   closeHostBrowserPanel: (browserId) => ipcRenderer.invoke("netcatty:host-browser:panel-close", browserId),
+  getHostBrowserPanelState: (browserId) => ipcRenderer.invoke("netcatty:host-browser:snapshot", browserId),
+  commandHostBrowserPanel: (browserId, command) => ipcRenderer.invoke("netcatty:host-browser:command", command, browserId),
+  listHostBrowserPanelBookmarks: (browserId) => ipcRenderer.invoke("netcatty:host-browser:bookmarks:list", browserId),
+  saveHostBrowserPanelBookmark: (browserId, bookmark) => ipcRenderer.invoke("netcatty:host-browser:bookmarks:upsert", bookmark, browserId),
+  removeHostBrowserPanelBookmark: (browserId, id) => ipcRenderer.invoke("netcatty:host-browser:bookmarks:remove", id, browserId),
+  listHostBrowserPanelDownloads: (browserId) => ipcRenderer.invoke("netcatty:host-browser:downloads:list", browserId),
+  commandHostBrowserPanelDownload: (browserId, command) => ipcRenderer.invoke("netcatty:host-browser:downloads:command", command, browserId),
+  onHostBrowserPanelEvent: (callback) => {
+    const listener = (_event, value) => callback(value);
+    ipcRenderer.on("netcatty:host-browser:panel-event", listener);
+    return () => ipcRenderer.removeListener("netcatty:host-browser:panel-event", listener);
+  },
   openHostBrowserUrl: (options) => ipcRenderer.invoke("netcatty:host-browser:panel-url", options),
   requestHostBrowserPanel: (request) => ipcRenderer.invoke("netcatty:host-browser:request-panel", request),
   onHostBrowserPanelRequest: (callback) => {

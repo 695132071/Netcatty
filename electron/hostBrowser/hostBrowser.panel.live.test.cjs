@@ -6,7 +6,8 @@ const crypto = require("node:crypto");
 const http = require("node:http");
 const net = require("node:net");
 const path = require("node:path");
-const os = require("node:os");
+const fs = require("node:fs");
+const tempDirBridge = require("../bridges/tempDirBridge.cjs");
 const { Server } = require("ssh2");
 const electron = require("electron");
 const { app, BrowserWindow, WebContentsView } = electron;
@@ -62,141 +63,118 @@ async function fixture(label) {
 }
 
 async function main() {
-  app.setPath("userData", path.join(os.tmpdir(), `netcatty-browser-panel-${process.pid}`));
+  const profile = fs.mkdtempSync(tempDirBridge.getTempFilePath("browser-panel-"));
+  app.setPath("userData", profile);
+  fs.mkdirSync(path.join(profile, "downloads"));
+  app.setPath("downloads", path.join(profile, "downloads"));
   const a = await fixture("Host A");
   const b = await fixture("Host B");
   const owner = new BrowserWindow({ width: 1100, height: 760, show: true });
   await owner.loadURL("data:text/html,<h1>Terminal workspace</h1>");
   const ownerEvents = ["blur", "resize", "maximize", "unmaximize", "closed"];
   const beforeListeners = ownerEvents.map((name) => owner.listenerCount(name));
-  const manager = createHostBrowserManager({ electron, app, portForwardingBridge });
+  const handlers = new Map();
+  const manager = createHostBrowserManager({ electron: { ...electron, ipcMain: {
+    handle(name, handler) { handlers.set(name, handler); electron.ipcMain.handle(name, handler); },
+  } }, app, portForwardingBridge });
   const event = { sender: owner.webContents };
-  const bounds = { x: 680, y: 50, width: 400, height: 650 };
+  const bounds = { x: 680, y: 110, width: 400, height: 590 };
   const layout = (browserId, visible, nextBounds = bounds) => manager.updatePanelLayout(event, { browserId, visible, bounds: nextBounds });
+  const state = (id) => manager.getPanelState(event, id);
+  const command = (id, input) => manager.runCommand(event, input, id);
+  const call = (name, ...args) => handlers.get(`netcatty:host-browser:${name}`)(event, ...args);
+  const rootFor = (url) => owner.contentView.children.find((view) => view.children.some((child) => child instanceof WebContentsView && child.webContents.getURL() === url));
   const open = async (id, host) => {
+    manager.openPanelUrl(event, { browserId: id, url: host.url });
     layout(id, true);
     await manager.open(event, { browserId: id, embedded: true, hostId: host.options.hostId,
       label: host.options.hostId, theme: "light", connectionOptions: host.options });
-    return owner.contentView.children.find((view) => view.children.some((child) => child instanceof WebContentsView
-      && child.webContents.getURL().endsWith("browser.html")));
+    await waitFor(() => state(id).tabs[0].title, host.options.hostId);
+    return rootFor(host.url);
   };
-  manager.openPanelUrl(event, { browserId: "workspace:session-a", url: a.url });
-  const rootA = await open("workspace:session-a", a);
-  const chromeA = rootA.children[0].webContents;
-  const snapshotA = () => chromeA.executeJavaScript("window.hostBrowser.snapshot()");
-  assert.equal((await snapshotA()).embedded, true);
-  assert.equal(await chromeA.executeJavaScript("document.querySelector('#route') === null"), true);
-  assert.equal(await chromeA.executeJavaScript("document.documentElement.scrollWidth <= innerWidth"), true);
-  await waitFor(async () => (await snapshotA()).tabs[0].title, "Host A");
-  const chromeBottom = await chromeA.executeJavaScript("document.querySelector('.chrome').getBoundingClientRect().bottom");
-  const pageA = rootA.children.find((child) => child instanceof WebContentsView && child.webContents.getURL() === a.url);
-  assert.equal(pageA.getBounds().y, chromeBottom, "page must meet the compact toolbar without a gap or overlap");
-  await chromeA.executeJavaScript("document.querySelector('.tab').dispatchEvent(new MouseEvent('contextmenu', {bubbles:true,clientX:30,clientY:20}))");
-  await waitFor(() => rootA.children.includes(pageA), false);
-  await chromeA.executeJavaScript("document.querySelector('#tab-icon-change').click()");
-  assert.equal(rootA.children.includes(pageA), false, "web content must not cover the icon editor");
-  assert.equal(await chromeA.executeJavaScript("document.querySelector('#tab-icon-editor').hidden"), false);
-  await chromeA.executeJavaScript("document.querySelector('#tab-icon-cancel').click()");
-  await waitFor(() => rootA.children.includes(pageA), true);
-  layout("workspace:session-a", false);
+  const idA = "workspace:session-a";
+  const rootA = await open(idA, a);
+  assert.equal(rootA.children.length, 1, "embedded browser chrome must be part of the main renderer");
+  const pageA = rootA.children[0];
+  const pageContentsA = pageA.webContents;
+  assert.equal(pageA.getBounds().y, 0, "the native view contains only the webpage viewport");
+  await pageA.webContents.executeJavaScript("window.overlayProbe = 'keep this page'");
+  const captured = await manager.updatePanelLayout(event, { browserId: idA, visible: true, occluded: true, bounds });
   assert.equal(owner.contentView.children.includes(rootA), false);
-  // A locked desktop cannot grant focus; keep the focus check enabled by default.
-  if (!process.env.NETCATTY_BROWSER_SMOKE_SKIP_FOCUS) await waitFor(() => owner.webContents.isFocused(), true);
+  assert.equal(captured.layers.length, 1);
+  assert.equal(electron.nativeImage.createFromDataURL(captured.layers[0].image).isEmpty(), false);
+  layout(idA, true);
+  assert.equal(await pageA.webContents.executeJavaScript("window.overlayProbe"), "keep this page");
+  let finishCapture;
+  const originalCapture = pageA.webContents.capturePage.bind(pageA.webContents);
+  pageA.webContents.capturePage = async () => { await new Promise((resolve) => { finishCapture = resolve; }); return originalCapture(); };
+  const late = manager.updatePanelLayout(event, { browserId: idA, visible: true, occluded: true, bounds });
+  assert.ok(finishCapture);
+  layout(idA, true); finishCapture();
+  assert.equal(await late, false);
+  assert.equal(owner.contentView.children.includes(rootA), true);
+  pageA.webContents.capturePage = originalCapture;
+  layout(idA, false);
   const rootB = await open("workspace:session-b", b);
-  const chromeB = rootB.children[0].webContents;
-  await chromeB.executeJavaScript(`window.hostBrowser.command({type:'navigate',url:${JSON.stringify(b.url)}})`);
-  await waitFor(async () => (await chromeB.executeJavaScript("window.hostBrowser.snapshot()")).tabs[0].title, "Host B");
-  assert.equal(BrowserWindow.getAllWindows().length, 1, "panels must not create popup windows");
+  assert.equal(BrowserWindow.getAllWindows().length, 1);
   layout("workspace:session-b", false);
-  layout("workspace:session-a", true, { x: 20, y: 80, width: 350, height: 500 });
-  assert.deepEqual(rootA.getBounds(), { x: 20, y: 80, width: 350, height: 500 });
-  assert.equal((await snapshotA()).tabs[0].title, "Host A", "focus switch preserves the earlier page");
-  assert.equal(owner.contentView.children.includes(rootB), false, "old context must leave the screen");
-  for (let index = 0; index < 6; index += 1) {
-    await chromeA.executeJavaScript("window.hostBrowser.command({type:'new-tab'})");
-  }
-  assert.equal(await chromeA.executeJavaScript(`(() => {
-    const button = document.querySelector('#new-tab').getBoundingClientRect();
-    return document.documentElement.scrollWidth <= innerWidth && button.left >= 0 && button.right <= innerWidth;
-  })()`), true, "tabs must scroll within a narrow pane and leave the add button reachable");
-  await chromeA.executeJavaScript("document.querySelector('#add-app').click()");
-  assert.equal(await chromeA.executeJavaScript("document.querySelector('#bookmark-panel').getBoundingClientRect().width <= innerWidth"), true);
-  await chromeA.executeJavaScript("document.querySelector('#bookmark-close').click()");
-  await chromeA.executeJavaScript("window.hostBrowser.command({type:'set-download-panel',open:true})");
-  const downloads = rootA.children.find((child) => child instanceof WebContentsView && child.webContents.getURL().endsWith("downloads.html"));
-  assert.ok(downloads);
-  assert.ok(downloads.getBounds().width <= rootA.getBounds().width);
-  assert.equal(downloads.getBounds().y, chromeBottom, "downloads must start below the compact toolbar");
+  layout(idA, true, { x: 20, y: 100, width: 350, height: 500 });
+  assert.equal(owner.contentView.children.includes(rootB), false);
+  assert.equal(state(idA).tabs[0].title, "Host A");
+  for (let index = 0; index < 6; index++) await command(idA, { type: "new-tab" });
+  assert.equal(state(idA).tabs.length, 7);
   const otherOwner = new BrowserWindow({ show: false });
-  assert.throws(() => manager.updatePanelLayout({ sender: otherOwner.webContents }, { browserId: "workspace:session-a", visible: false }), /another terminal window/);
-  assert.throws(() => manager.openPanelUrl({ sender: otherOwner.webContents }, { browserId: "workspace:session-a", url: a.url }), /another terminal window/);
-  assert.throws(() => manager.openPanelUrl(event, { browserId: "workspace:session-a", url: "file:///etc/passwd" }), /HTTP and HTTPS/);
+  assert.throws(() => manager.getPanelState({ sender: otherOwner.webContents }, idA), /Untrusted/);
+  assert.throws(() => manager.getPanelState({ sender: pageA.webContents }, idA), /Untrusted/);
+  assert.throws(() => manager.updatePanelLayout({ sender: otherOwner.webContents }, { browserId: idA, visible: false }), /another terminal window/);
+  assert.throws(() => manager.openPanelUrl(event, { browserId: idA, url: "file:\/\/\/etc/passwd" }), /HTTP and HTTPS/);
   otherOwner.destroy();
-  assert.ok(a.connections() > 0 && b.connections() > 0);
-  manager.closePanel(event, "workspace:session-a");
-  await waitFor(() => chromeA.isDestroyed(), true);
-  assert.equal(owner.isDestroyed(), false, "closing browser must keep the terminal window alive");
+  const bookmark = call("bookmarks:upsert", { title: "Remote app", url: a.url, scope: "host" }, idA);
+  assert.ok(call("bookmarks:list", idA).some((item) => item.id === bookmark.id));
+  assert.equal(call("bookmarks:list", "workspace:session-b").some((item) => item.id === bookmark.id), false);
+  await assert.rejects(command(idA, { type: "navigate", url: "file:///etc/passwd" }), /HTTP and HTTPS/);
+  manager.closePanel(event, idA);
+  await waitFor(() => pageContentsA.isDestroyed(), true);
+  assert.equal(owner.webContents.isDestroyed(), false, "closing a browser must never close its main renderer");
+
   const localSite = http.createServer((request, response) => {
-    if (request.url === '/slow.bin') {
-      response.writeHead(200, { 'content-type': 'application/octet-stream', 'content-length': 1048576 });
-      response.write(Buffer.alloc(16384));
-      return;
-    }
-    response.end('<title>Local browser</title><h1>Local browser</h1>');
+    if (request.url === '/slow.bin') { response.writeHead(200, { 'content-type': 'application/octet-stream', 'content-length': 1048576 }); response.write(Buffer.alloc(16384)); return; }
+    response.end('<title>Local browser</title>');
   });
   await new Promise((resolve) => localSite.listen(0, "127.0.0.1", resolve));
-  manager.openPanelUrl(event, { browserId: "local:session", url: `http://127.0.0.1:${localSite.address().port}/` });
-  layout("local:session", true);
-  await manager.open(event, { browserId: "local:session", embedded: true, local: true,
-    hostId: "local", label: "Local terminal", theme: "light" });
-  const localRoot = owner.contentView.children.find((view) => view.children.some((child) => child instanceof WebContentsView
-    && child.webContents.getURL().endsWith("browser.html")));
-  const localChrome = localRoot.children[0].webContents;
-  await waitFor(async () => (await localChrome.executeJavaScript("window.hostBrowser.snapshot()")).tabs[0].title, "Local browser");
-  assert.equal((await localChrome.executeJavaScript("window.hostBrowser.snapshot()")).tabs.length, 1, "first terminal link reuses the blank tab");
-  const localPage = localRoot.children.find((child) => child instanceof WebContentsView && child !== localRoot.children[0]);
-  layout('local:session', false);
+  const localUrl = `http://127.0.0.1:${localSite.address().port}/`;
+  manager.openPanelUrl(event, { browserId: 'local:session', url: localUrl });
+  layout('local:session', true);
+  await manager.open(event, { browserId: 'local:session', embedded: true, local: true, hostId: 'local', label: 'Local', theme: 'light' });
+  await waitFor(() => state('local:session').tabs[0].title, 'Local browser');
+  assert.equal(state('local:session').tabs.length, 1);
+  const localPage = rootFor(localUrl).children[0];
   layout('local:peer', true);
-  await manager.open(event, { browserId: 'local:peer', embedded: true, local: true,
-    hostId: 'local', label: 'Same host peer', theme: 'light' });
-  const peerRoot = owner.contentView.children.find((view) => view.children.some((child) => child instanceof WebContentsView
-    && child.webContents.getURL().endsWith('browser.html')));
-  await peerRoot.children[0].webContents.executeJavaScript("window.hostBrowser.command({type:'set-download-panel',open:true})");
-  const peerDownloads = peerRoot.children.find((child) => child instanceof WebContentsView && child.webContents.getURL().endsWith('downloads.html')).webContents;
-  let activeDownload;
+  await manager.open(event, { browserId: 'local:peer', embedded: true, local: true, hostId: 'local', label: 'Peer', theme: 'light' });
+  let download;
   const startDownload = async () => {
-    activeDownload = undefined;
-    localPage.webContents.session.once('will-download', (_downloadEvent, item) => {
-      activeDownload = item;
-      item.setSavePath(path.join(app.getPath('userData'), 'closing-download.bin'));
-    });
-    localPage.webContents.downloadURL(`http://127.0.0.1:${localSite.address().port}/slow.bin`);
-    await waitFor(() => Boolean(activeDownload), true);
+    download = undefined;
+    localPage.webContents.session.once('will-download', (_event, item) => { download = item; });
+    localPage.webContents.downloadURL(`${localUrl}slow.bin`);
+    await waitFor(() => Boolean(download), true);
   };
   await startDownload();
+  const items = call('downloads:list', 'local:peer');
+  assert.ok(items.some((item) => item.status === 'progressing' || item.status === 'waiting'));
   let cancelled = false;
-  activeDownload.once('done', (_downloadEvent, status) => { cancelled = status === 'cancelled'; });
-  await waitFor(() => peerDownloads.executeJavaScript("Boolean(document.querySelector('button[title=\"Cancel download\"]'))"), true);
-  await peerDownloads.executeJavaScript("window.hostBrowserDownloads.list().then(items => window.hostBrowserDownloads.command('cancel', items[0].id))");
+  download.once('done', (_event, status) => { cancelled = status === 'cancelled'; });
+  await call('downloads:command', { type: 'cancel', id: items[0].id }, 'local:peer');
   await waitFor(() => cancelled, true);
-  await waitFor(() => peerDownloads.executeJavaScript("Boolean(document.querySelector('button[title=\"Cancel download\"]'))"), false);
   manager.closePanel(event, 'local:peer');
-  await startDownload();
-  cancelled = false;
-  activeDownload.once('done', (_downloadEvent, status) => { cancelled = status === 'cancelled'; });
+  await startDownload(); cancelled = false;
+  download.once('done', (_event, status) => { cancelled = status === 'cancelled'; });
   manager.closePanel(event, 'local:session');
   await waitFor(() => cancelled, true);
-  await waitFor(() => localChrome.isDestroyed(), true);
-  assert.equal(owner.isDestroyed(), false, 'closing during a download must keep the terminal alive');
-  manager.closeAll();
-  localSite.closeAllConnections();
-  localSite.close();
-  assert.equal(owner.isDestroyed(), false);
+  assert.equal(owner.webContents.isDestroyed(), false);
+  manager.closeAll(); localSite.closeAllConnections(); localSite.close();
   assert.deepEqual(ownerEvents.map((name) => owner.listenerCount(name)), beforeListeners);
-  owner.destroy();
-  a.close(); b.close();
-  console.log(JSON.stringify({ ok: true, embedded: true, hostSwitching: true, pageRetention: true, popups: 0 }));
+  owner.destroy(); a.close(); b.close();
+  console.log(JSON.stringify({ ok: true, rendererChrome: true, hostSwitching: true, pageRetention: true, scopedControls: true, downloads: true }));
   app.quit();
 }
-
 app.whenReady().then(main).catch((error) => { console.error(error); app.exit(1); });

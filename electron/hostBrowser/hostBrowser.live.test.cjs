@@ -3,7 +3,7 @@
 // Run with: electron electron/hostBrowser/hostBrowser.live.test.cjs
 const assert = require("node:assert/strict");
 const net = require("node:net");
-const os = require("node:os");
+const tempDirBridge = require("../bridges/tempDirBridge.cjs");
 const path = require("node:path");
 const fs = require("node:fs");
 const { app, BrowserWindow, WebContentsView, session, ipcMain } = require("electron");
@@ -77,7 +77,10 @@ function makeSocksServer() {
 }
 
 async function main() {
-  app.setPath("userData", path.join(os.tmpdir(), `netcatty-host-browser-live-${process.pid}`));
+  const profile = fs.mkdtempSync(tempDirBridge.getTempFilePath("browser-standalone-"));
+  app.setPath("userData", profile);
+  fs.mkdirSync(path.join(profile, "downloads"));
+  app.setPath("downloads", path.join(profile, "downloads"));
   const socks = makeSocksServer();
   await new Promise((resolve) => socks.listen(0, "127.0.0.1", resolve));
   const port = socks.address().port;
@@ -137,7 +140,7 @@ async function main() {
   await page.executeJavaScript("document.querySelector('[data-icon-mode=text]').click();document.querySelector('[data-scope=all-hosts]').click()");
   assert.equal(await page.executeJavaScript("document.getElementById('bookmark-scope').value"), "all-hosts");
   await page.executeJavaScript("document.querySelector('[data-scope=host]').click()");
-  const formScreenshot = path.join(os.tmpdir(), "netcatty-host-browser-app-form.png");
+  const formScreenshot = path.join(profile, "netcatty-host-browser-app-form.png");
   fs.writeFileSync(formScreenshot, (await page.capturePage()).toPNG());
   await page.executeJavaScript("document.getElementById('bookmark-back').click()");
   await page.executeJavaScript("document.querySelector('.app-tile').click()");
@@ -155,11 +158,9 @@ async function main() {
   const downloadsView = browser.contentView.children[1];
   assert.equal(await downloadsView.webContents.executeJavaScript("document.getElementById('empty').hidden"), false);
   assert.ok(downloadsView.getBounds().height < 300);
-  const downloadsScreenshot = await captureView(downloadsView, path.join(os.tmpdir(), "netcatty-host-browser-downloads.png"));
-  const downloadPath = path.join(app.getPath("userData"), "host-browser-test.bin");
-  const slowPath = path.join(app.getPath("userData"), "slow.bin");
+  const downloadsScreenshot = await captureView(downloadsView, path.join(profile, "netcatty-host-browser-downloads.png"));
+  const downloadPath = path.join(app.getPath("downloads"), "host-browser-test.bin");
   const websiteView = browser.contentView.children[0];
-  websiteView.webContents.session.on("will-download", (_event, item) => item.setSavePath(item.getFilename() === "slow.bin" ? slowPath : downloadPath));
   browser.contentView.children[0].webContents.downloadURL("http://example.invalid:3000/download.bin");
   for (let i = 0; i < 50 && !(await page.executeJavaScript("window.hostBrowser.listDownloads()")).some((item) => item.status === "completed"); i += 1) await wait(100);
   const downloaded = (await page.executeJavaScript("window.hostBrowser.listDownloads()"))[0];
@@ -182,7 +183,7 @@ async function main() {
   await downloadsView.webContents.executeJavaScript("document.querySelector('button[title=\"Cancel download\"]').click()");
   for (let i = 0; i < 40 && !(await page.executeJavaScript("window.hostBrowser.listDownloads()")).some((item) => item.filename === "slow.bin" && item.status === "cancelled"); i += 1) await wait(100);
   assert.equal((await page.executeJavaScript("window.hostBrowser.listDownloads()")).some((item) => item.filename === "slow.bin" && item.status === "cancelled"), true);
-  const downloadedScreenshot = await captureView(downloadsView, path.join(os.tmpdir(), "netcatty-host-browser-downloaded.png"));
+  const downloadedScreenshot = await captureView(downloadsView, path.join(profile, "netcatty-host-browser-downloaded.png"));
   assert.equal(downloaded.missing, false);
   await downloadsView.webContents.executeJavaScript("document.getElementById('clear').click()");
   for (let i = 0; i < 20 && (await page.executeJavaScript("window.hostBrowser.listDownloads()")).length; i += 1) await wait(100);
@@ -222,7 +223,7 @@ async function main() {
   await page.executeJavaScript("document.getElementById('bookmarks-menu').click()");
   await wait(100);
   assert.equal(await page.executeJavaScript("document.getElementById('add-app').getBoundingClientRect().right <= document.getElementById('bookmark-panel').getBoundingClientRect().left"), true);
-  const screenshot = path.join(os.tmpdir(), "netcatty-host-browser-live.png");
+  const screenshot = path.join(profile, "netcatty-host-browser-live.png");
   require("node:fs").writeFileSync(screenshot, (await page.capturePage()).toPNG());
   browser.setSize(720, 500);
   await wait(100);
@@ -234,12 +235,12 @@ async function main() {
     connectionOptions: { hostId: "live-host", type: "dynamic", hostname: "fixture", username: "test" },
   });
   assert.equal((await snapshot()).theme, "light");
-  const lightScreenshot = path.join(os.tmpdir(), "netcatty-host-browser-live-light.png");
+  const lightScreenshot = path.join(profile, "netcatty-host-browser-live-light.png");
   require("node:fs").writeFileSync(lightScreenshot, (await page.capturePage()).toPNG());
   await page.executeJavaScript("document.getElementById('downloads-menu').click()");
   for (let i = 0; i < 20 && !(await snapshot()).downloadsPanelOpen; i += 1) await wait(100);
   assert.equal(await downloadsView.webContents.executeJavaScript("document.body.classList.contains('dark')"), false);
-  const lightDownloadsScreenshot = await captureView(downloadsView, path.join(os.tmpdir(), "netcatty-host-browser-downloads-light.png"));
+  const lightDownloadsScreenshot = await captureView(downloadsView, path.join(profile, "netcatty-host-browser-downloads-light.png"));
   await downloadsView.webContents.executeJavaScript("document.getElementById('close').click()");
   assert.equal(browser.isMinimizable(), true);
   assert.equal(browser.isMaximizable(), true);

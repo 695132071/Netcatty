@@ -62,7 +62,7 @@ async function main() {
   const globals = { ...React, Map, Promise, Object, crypto: require("node:crypto").webcrypto,
     setTimeout, clearTimeout, queueMicrotask,
     requestAnimationFrame: () => 1, cancelAnimationFrame: () => {},
-    document: { querySelector: () => null, documentElement: { classList: { contains: () => false } } },
+    document: { querySelector: () => null, querySelectorAll: () => [], documentElement: { classList: { contains: () => false } } },
     getComputedStyle: () => style, netcattyBridge: { get: () => bridge }, isValidHslToken: () => false,
   };
   const { mountHostBrowser, currentBrowserThemeTokens } = loadModule("application/hostBrowser.ts", globals);
@@ -83,19 +83,19 @@ async function main() {
       renderer = create(React.createElement(React.StrictMode, null, React.createElement(Panel)), { createNodeMock: () => element });
     });
     await Promise.all(opens);
-    const root = owner.contentView.children.find((view) => view.children.some((child) => child instanceof WebContentsView
-      && child.webContents.getURL().endsWith("browser.html")));
-    assert.ok(root, "the first click must open the browser pane");
-    const chrome = root.children[0].webContents;
-    const snapshot = await chrome.executeJavaScript("window.hostBrowser.snapshot()");
-    assert.equal(snapshot.tabs[0].url, url, "the first click must also open its page without a second terminal click");
+    const snapshot = manager.getPanelState(event, browserId);
+    assert.equal(snapshot.tabs[0].url, url, "the first click must open its page without a second terminal click");
     let loadedTitle = "";
     for (let attempt = 0; attempt < 60; attempt += 1) {
-      loadedTitle = (await chrome.executeJavaScript("window.hostBrowser.snapshot()")).tabs[0].title;
+      loadedTitle = manager.getPanelState(event, browserId).tabs[0].title;
       if (loadedTitle === "First click opened") break;
       await new Promise((resolve) => setTimeout(resolve, 20));
     }
     assert.equal(loadedTitle, "First click opened", "the first-click page must actually finish loading");
+    const root = owner.contentView.children.find((view) => view.children.some((child) => child instanceof WebContentsView
+      && child.webContents.getURL() === url));
+    assert.ok(root, "the first click must open the browser pane");
+    assert.equal(root.children.length, 1, "only the website has a native view; controls belong to the app renderer");
     const page = root.children.find((view) => view instanceof WebContentsView && view.webContents.getURL() === url).webContents;
     assert.equal(page.getWebRTCIPHandlingPolicy(), 'disable_non_proxied_udp');
     page.setWebRTCIPHandlingPolicy('default');

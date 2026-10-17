@@ -5,17 +5,32 @@ const fs = require("node:fs");
 const { createHash, randomUUID } = require("node:crypto");
 const { createBookmarkStore } = require("./bookmarkStore.cjs");
 const { createDownloadStore } = require("./downloadStore.cjs");
+const { reserveDownloadFile } = require("./downloadFile.cjs");
 const { createSiteIconStore, iconOrigin, validImageDataUrl } = require("./siteIconStore.cjs");
 const { windowsFramelessContentChromeOptions } = require("../bridges/windowManager/windowsWindowChrome.cjs");
 
 const DEAD_PROXY = "socks5://127.0.0.1:9";
 const CHROME_HEIGHT = 80;
-const EMBEDDED_CHROME_HEIGHT = 64;
-const chromeHeight = (record) => Math.round((record.embedded ? EMBEDDED_CHROME_HEIGHT : CHROME_HEIGHT) * (record.zoom || 1));
+const chromeHeight = (record) => Math.round((record.embedded ? 0 : CHROME_HEIGHT) * (record.zoom || 1));
 const MAX_TABS = 32;
 const DOWNLOAD_PANEL_WIDTH = 372;
 const ALLOWED_PAGE_SCHEMES = new Set(["http:", "https:", "ws:", "wss:", "blob:", "data:"]);
 const THEME_TOKEN_NAMES = ["background", "foreground", "secondary", "muted", "muted-foreground", "border", "primary", "primary-foreground"];
+
+function pdfDownloadHeaders({ resourceType, statusCode, responseHeaders }) {
+  // The page allowlist deliberately excludes Chromium's extension-based PDF
+  // viewer. Hand PDF navigations to the download manager at response headers,
+  // before that viewer can consume/cache the body outside download tracking.
+  if (!["mainFrame", "subFrame"].includes(resourceType) || statusCode < 200 || statusCode >= 300 || !responseHeaders) return;
+  const typeKey = Object.keys(responseHeaders).find((key) => key.toLowerCase() === "content-type");
+  if (responseHeaders[typeKey]?.[0]?.split(";", 1)[0].trim().toLowerCase() !== "application/pdf") return;
+  const dispositionKey = Object.keys(responseHeaders).find((key) => key.toLowerCase() === "content-disposition") || "Content-Disposition";
+  const disposition = responseHeaders[dispositionKey]?.[0] || "";
+  if (/^\s*attachment\s*(;|$)/i.test(disposition)) return;
+  // Keep the site's filename / filename* parameters, including localized names.
+  const parameters = disposition.indexOf(";");
+  return { ...responseHeaders, [dispositionKey]: [`attachment${parameters < 0 ? "" : disposition.slice(parameters)}`] };
+}
 
 function validThemeTokens(input) {
   const result = {};
@@ -74,7 +89,7 @@ function normalizeBrowserUrl(input) {
 }
 
 function createHostBrowserManager({ electron, app, portForwardingBridge }) {
-  const { BrowserWindow, WebContentsView, session, ipcMain, shell } = electron;
+  const { BrowserWindow, WebContentsView, session, ipcMain, shell, dialog } = electron;
   const windows = new Map();
   const panelLayouts = new Map();
   const byChromeId = new Map();
@@ -83,7 +98,7 @@ function createHostBrowserManager({ electron, app, portForwardingBridge }) {
   const downloadStore = createDownloadStore(app);
   const bookmarkStore = createBookmarkStore(app, () => {
     for (const record of windows.values()) {
-      if (record.embedded && !record.chromeContents.isDestroyed()) record.chromeContents.send("netcatty:host-browser:bookmarks-changed");
+      if (record.embedded && !record.chromeContents.isDestroyed()) panelEvent(record, { type: "bookmarks" });
     }
     for (const win of BrowserWindow.getAllWindows()) {
       if (!win.isDestroyed() && !win.webContents.isDestroyed()) {
@@ -91,16 +106,21 @@ function createHostBrowserManager({ electron, app, portForwardingBridge }) {
       }
     }
   });
+  const panelEvent = (record, event) => {
+    if (!record.sourceWebContents.isDestroyed()) record.sourceWebContents.send("netcatty:host-browser:panel-event", { browserId: record.id, ...event });
+  };
   const send = (record) => {
     if (record.win.isDestroyed() || record.chromeContents.isDestroyed()) return;
-    record.chromeContents.send("netcatty:host-browser:state", snapshot(record));
+    if (record.embedded) panelEvent(record, { type: "state", state: snapshot(record) });
+    else record.chromeContents.send("netcatty:host-browser:state", snapshot(record));
   };
-  const notifyDownloads = (record) => {
+  const notifyDownloads = (record, startedId) => {
     const downloads = downloadStore.list(record.hostId);
     for (const target of windows.values()) {
       if (target.hostId !== record.hostId || target.win.isDestroyed() || target.chromeContents.isDestroyed()) continue;
       if (target.downloadsPanelOpen) positionDownloadsView(target);
-      target.chromeContents.send("netcatty:host-browser:downloads-changed", downloads);
+      if (target.embedded) panelEvent(target, { type: "downloads", downloads, startedId: target === record ? startedId : undefined });
+      else target.chromeContents.send("netcatty:host-browser:downloads-changed", downloads);
       if (target.downloadsView && !target.downloadsView.webContents.isDestroyed()) {
         target.downloadsView.webContents.send("netcatty:host-browser:downloads-changed", downloads);
       }
@@ -126,7 +146,10 @@ function createHostBrowserManager({ electron, app, portForwardingBridge }) {
   });
   const notifySiteIcon = (record) => {
     send(record);
-    if (!record.win.isDestroyed()) record.chromeContents.send("netcatty:host-browser:site-icons-changed");
+    if (!record.win.isDestroyed()) {
+      if (record.embedded) panelEvent(record, { type: "bookmarks" });
+      else record.chromeContents.send("netcatty:host-browser:site-icons-changed");
+    }
   };
   const updateFavicon = async (record, tab, urls) => {
     if (!tab.url || record.route !== "connected") return;
@@ -167,6 +190,7 @@ function createHostBrowserManager({ electron, app, portForwardingBridge }) {
     send(record);
   };
   const setDownloadsPanel = async (record, open) => {
+    if (record.embedded) return;
     if (!open) { closeDownloadsPanel(record); return; }
     if (!record.downloadsView) {
       const view = new WebContentsView({ webPreferences: {
@@ -216,6 +240,18 @@ function createHostBrowserManager({ electron, app, portForwardingBridge }) {
       try { record.container.removeChildView(record.downloadsView); } catch {}
       record.container.addChildView(record.downloadsView);
     }
+    if (record.embedded) {
+      const attached = record.win.contentView.children.includes(record.container);
+      // An empty native View still intercepts mouse input on macOS. The
+      // renderer owns the default tab and connection screens, so attach this
+      // container only while it contains a website.
+      if (record.container.children.length) {
+        if (!attached) record.win.contentView.addChildView(record.container);
+      } else if (attached) {
+        record.win.contentView.removeChildView(record.container);
+        record.sourceWebContents.focus();
+      }
+    }
     send(record);
   };
   const refreshTab = (record, tab) => {
@@ -251,7 +287,11 @@ function createHostBrowserManager({ electron, app, portForwardingBridge }) {
       const type = { t: "new-tab", w: "close-tab", r: "reload", l: "focus-address" }[key];
       if (!type) return;
       event.preventDefault();
-      if (!record.win.isDestroyed()) record.chromeContents.send("netcatty:host-browser:shortcut", { type, tabId: tab.id });
+      if (type === "focus-address" || type === "new-tab") record.chromeContents.focus();
+      if (!record.win.isDestroyed()) {
+        if (record.embedded) panelEvent(record, { type: "shortcut", shortcut: { type, tabId: tab.id } });
+        else record.chromeContents.send("netcatty:host-browser:shortcut", { type, tabId: tab.id });
+      }
     });
     contents.setWindowOpenHandler(({ url }) => {
       try { addTab(record, normalizeBrowserUrl(url)); } catch {}
@@ -313,7 +353,7 @@ function createHostBrowserManager({ electron, app, portForwardingBridge }) {
     record.sourceWebContents.off("destroyed", record.onOwnerClosed);
     if (record.embedded) {
       try { record.win.contentView.removeChildView(record.container); } catch {}
-      try { record.chromeContents.close(); } catch {}
+      if (record.chromeView) { try { record.chromeContents.close(); } catch {} }
     }
     byChromeId.delete(record.chromeId);
     if (record.downloadsView) {
@@ -420,7 +460,7 @@ function createHostBrowserManager({ electron, app, portForwardingBridge }) {
       record.themeTokens = validThemeTokens(layout.themeTokens);
       record.downloadsView?.webContents.send("netcatty:host-browser:theme", { theme: record.theme, themeTokens: record.themeTokens });
     }
-    const visible = layout?.sender === record.sourceWebContents && layout.visible === true;
+    const visible = layout?.sender === record.sourceWebContents && layout.visible === true && !layout.occluded;
     const attached = record.win.contentView.children.includes(record.container);
     if (!visible) {
       if (attached) {
@@ -445,12 +485,27 @@ function createHostBrowserManager({ electron, app, portForwardingBridge }) {
       return;
     }
     record.container.setBounds(record.bounds);
-    record.chromeView.setBounds({ x: 0, y: 0, width, height });
-    record.chromeContents.setZoomFactor(zoom);
     for (const tab of record.tabs.values()) tab.view.webContents.setZoomFactor(zoom);
-    if (!attached) record.win.contentView.addChildView(record.container);
     resizeView(record);
     displayTab(record);
+  };
+  const capturePanelLayers = (record) => {
+    if (record.panelSnapshotPromise) return record.panelSnapshotPromise;
+    const zoom = record.zoom || 1;
+    const views = record.container.children.filter((view) => view instanceof WebContentsView);
+    const operation = Promise.all(views.map(async (view) => {
+      const bounds = view.getBounds();
+      const image = await view.webContents.capturePage();
+      if (image.isEmpty()) return null;
+      return { image: image.toDataURL(), bounds: Object.fromEntries(
+        Object.entries(bounds).map(([key, value]) => [key, value / zoom]),
+      ) };
+    })).then((layers) => layers.filter(Boolean)).catch(() => []);
+    record.panelSnapshotPromise = operation;
+    void operation.finally(() => {
+      if (record.panelSnapshotPromise === operation) record.panelSnapshotPromise = null;
+    });
+    return operation;
   };
   const updatePanelLayout = (event, input) => {
     const owner = BrowserWindow.fromWebContents(event.sender);
@@ -465,8 +520,18 @@ function createHostBrowserManager({ electron, app, portForwardingBridge }) {
     const bounds = input.bounds;
     if (input.visible && (!bounds || ![bounds.x, bounds.y, bounds.width, bounds.height].every(Number.isFinite)
       || bounds.width < 0 || bounds.height < 0)) throw new Error("Invalid browser panel bounds");
-    panelLayouts.set(id, { sender: event.sender, visible: input.visible === true, bounds, pendingUrls: previous?.pendingUrls ?? [],
-      theme: input.theme === "light" || input.theme === "dark" ? input.theme : undefined, themeTokens: validThemeTokens(input.themeTokens) });
+    const layout = { sender: event.sender, visible: input.visible === true, occluded: input.occluded === true, bounds, pendingUrls: previous?.pendingUrls ?? [],
+      theme: input.theme === "light" || input.theme === "dark" ? input.theme : undefined, themeTokens: validThemeTokens(input.themeTokens) };
+    panelLayouts.set(id, layout);
+    if (record && layout.visible && layout.occluded) {
+      return capturePanelLayers(record).then((layers) => {
+        // A menu may close, the pane may move or the owner may disappear while
+        // capture is pending. Never hide a newer layout or return stale pixels.
+        if (panelLayouts.get(id) !== layout || windows.get(id) !== record || owner.isDestroyed()) return false;
+        applyPanelLayout(record);
+        return { layers };
+      });
+    }
     if (record) applyPanelLayout(record);
     return true;
   };
@@ -543,18 +608,30 @@ function createHostBrowserManager({ electron, app, portForwardingBridge }) {
       themeTokens: validThemeTokens(input?.themeTokens),
       pageSession, route: "connecting", error: null, panelOpen: false, overlayOpen: false,
       tunnelId: null, connectionOptions: input.connectionOptions, sourceWebContents: event.sender,
-      routeGeneration: 0, proxyQueue: Promise.resolve(), tabs: new Map(), downloads: new Map(),
+      routeGeneration: 0, proxyQueue: Promise.resolve(), tabs: new Map(), downloads: new Map(), navigations: new Map(),
       downloadsView: null, downloadsPanelOpen: false, activeTabId: null, win: null };
     record.downloadHandler = (event, item, contents) => {
       const ownedPage = [...record.tabs.values()].some((tab) => tab.view.webContents === contents);
       if (record.route !== "connected" || !ownedPage) { event.preventDefault(); return; }
       const id = randomUUID();
       const filename = path.basename(String(item.getFilename() || "download").replace(/\\/g, "/")) || "download";
-      item.setSaveDialogOptions({ defaultPath: path.join(app.getPath("downloads"), filename) });
+      let destination;
+      try {
+        destination = reserveDownloadFile(app.getPath("downloads"), filename);
+        item.setSavePath(destination.savePath);
+      } catch {
+        destination?.cleanupEmpty();
+        event.preventDefault();
+        downloadStore.upsert({ id, hostId, filename, url: item.getURL(), savePath: "", status: "interrupted",
+          received: 0, total: item.getTotalBytes(), startedAt: Date.now(), endedAt: Date.now() });
+        notifyDownloads(record, id);
+        return;
+      }
       record.downloads.set(id, item);
-      downloadStore.upsert({ id, hostId, filename, url: item.getURL(), savePath: "",
-        status: "waiting", received: 0, total: item.getTotalBytes(), startedAt: Date.now() });
-      notifyDownloads(record);
+      downloadStore.upsert({ id, hostId, filename: path.basename(destination.savePath), url: item.getURL(), savePath: destination.savePath,
+        status: "progressing", received: 0, total: item.getTotalBytes(), startedAt: Date.now() });
+      notifyDownloads(record, id);
+      if (!record.embedded) void setDownloadsPanel(record, true).catch(() => {});
       let lastProgressAt = 0;
       item.on("updated", (_updateEvent, status) => {
         const now = Date.now();
@@ -569,6 +646,7 @@ function createHostBrowserManager({ electron, app, portForwardingBridge }) {
       });
       item.once("done", (_doneEvent, status) => {
         record.downloads.delete(id);
+        if (status !== "completed") destination.cleanupEmpty();
         const previous = downloadStore.get(hostId, id);
         if (!previous) return;
         const savePath = item.getSavePath() || previous.savePath;
@@ -581,12 +659,20 @@ function createHostBrowserManager({ electron, app, portForwardingBridge }) {
     pageSession.webRequest.onBeforeRequest((details, callback) => {
       let allowed = false;
       try { allowed = record.route === "connected" && ALLOWED_PAGE_SCHEMES.has(new URL(details.url).protocol); } catch {}
+      const navigation = record.navigations.get(details.webContentsId);
+      if (allowed && details.resourceType === "mainFrame" && navigation?.url === details.url) navigation.requestId = details.id;
       callback({ cancel: !allowed });
     });
-    const chromeOptions = { webPreferences: {
-      preload: path.join(__dirname, "browserPreload.cjs"),
-      sandbox: true, contextIsolation: true, nodeIntegration: false,
-    } };
+    pageSession.webRequest.onHeadersReceived((details, callback) => {
+      const responseHeaders = pdfDownloadHeaders(details);
+      const navigation = record.navigations.get(details.webContentsId);
+      const headers = responseHeaders || details.responseHeaders || {};
+      if (navigation?.requestId === details.id && details.resourceType === "mainFrame" && details.statusCode >= 200 && details.statusCode < 300
+        && Object.entries(headers).some(([key, values]) => key.toLowerCase() === "content-disposition" && /^\s*attachment\s*(;|$)/i.test(values[0]))) {
+        navigation.downloading = true;
+      }
+      callback(responseHeaders ? { responseHeaders } : {});
+    });
     const win = embedded ? owner : new BrowserWindow({
       title: "Browser",
       width: 1100, height: 760, minWidth: 720, minHeight: 480,
@@ -602,12 +688,11 @@ function createHostBrowserManager({ electron, app, portForwardingBridge }) {
     });
     record.win = win;
     record.container = embedded ? new electron.View() : win.contentView;
-    record.chromeView = embedded ? new WebContentsView(chromeOptions) : null;
-    record.chromeContents = record.chromeView?.webContents || win.webContents;
-    if (embedded) record.container.addChildView(record.chromeView);
+    record.chromeView = null;
+    record.chromeContents = win.webContents;
     record.chromeId = record.chromeContents.id;
     windows.set(id, record);
-    byChromeId.set(record.chromeId, record);
+    if (!embedded) byChromeId.set(record.chromeId, record);
     record.onResize = () => resizeView(record);
     record.onBlur = () => closeDownloadsPanel(record);
     record.onMaximize = () => send(record);
@@ -618,10 +703,12 @@ function createHostBrowserManager({ electron, app, portForwardingBridge }) {
     record.onOwnerClosed = () => closeRecord(record);
     win.on("closed", record.onOwnerClosed);
     event.sender.once("destroyed", record.onOwnerClosed);
-    record.chromeContents.setWindowOpenHandler(() => ({ action: "deny" }));
-    record.chromeContents.on("will-navigate", (navigationEvent) => navigationEvent.preventDefault());
+    if (!embedded) {
+      record.chromeContents.setWindowOpenHandler(() => ({ action: "deny" }));
+      record.chromeContents.on("will-navigate", (navigationEvent) => navigationEvent.preventDefault());
+    }
     try {
-      await record.chromeContents.loadFile(path.join(__dirname, "browser.html"));
+      if (!embedded) await record.chromeContents.loadFile(path.join(__dirname, "browser.html"));
       if (win.isDestroyed() || windows.get(id) !== record) throw new Error("Browser was closed before it opened");
       addTab(record);
       if (embedded) applyPanelLayout(record);
@@ -641,12 +728,19 @@ function createHostBrowserManager({ electron, app, portForwardingBridge }) {
     record.win.focus();
     return record.route === "connected";
   };
-  const getOwned = (event) => {
+  const getOwned = (event, browserId) => {
+    if (browserId !== undefined) {
+      const owned = windows.get(browserId);
+      if (!owned?.embedded || owned.sourceWebContents !== event.sender
+        || BrowserWindow.fromWebContents(event.sender)?.webContents !== event.sender) throw new Error("Untrusted browser control");
+      return owned;
+    }
     const record = byChromeId.get(event.sender.id);
     if (!record || record.chromeContents !== event.sender) throw new Error("Untrusted browser control");
     return record;
   };
-  const getBrowserOwned = (event) => {
+  const getBrowserOwned = (event, browserId) => {
+    if (browserId !== undefined) return getOwned(event, browserId);
     const chrome = byChromeId.get(event.sender.id);
     if (chrome && chrome.chromeContents === event.sender) return chrome;
     const downloads = byDownloadsId.get(event.sender.id);
@@ -658,17 +752,18 @@ function createHostBrowserManager({ electron, app, portForwardingBridge }) {
   ipcMain.handle("netcatty:host-browser:panel-url", openPanelUrl);
   ipcMain.handle("netcatty:host-browser:open", open);
   ipcMain.handle("netcatty:host-browser:focus", focus);
-  ipcMain.handle("netcatty:host-browser:snapshot", (event) => snapshot(getOwned(event)));
-  ipcMain.handle("netcatty:host-browser:downloads:list", (event) => {
-    const record = getBrowserOwned(event);
+  const getPanelState = (event, browserId) => snapshot(getOwned(event, browserId));
+  ipcMain.handle("netcatty:host-browser:snapshot", getPanelState);
+  ipcMain.handle("netcatty:host-browser:downloads:list", (event, browserId) => {
+    const record = getBrowserOwned(event, browserId);
     return downloadStore.list(record.hostId);
   });
   ipcMain.handle("netcatty:host-browser:downloads:theme", (event) => {
     const record = getBrowserOwned(event);
     return { theme: record.theme, themeTokens: record.themeTokens };
   });
-  ipcMain.handle("netcatty:host-browser:downloads:command", async (event, input) => {
-    const record = getBrowserOwned(event);
+  ipcMain.handle("netcatty:host-browser:downloads:command", async (event, input, browserId) => {
+    const record = getBrowserOwned(event, browserId);
     const item = downloadStore.get(record.hostId, input?.id);
     switch (input?.type) {
       case "close": closeDownloadsPanel(record); return true;
@@ -689,11 +784,18 @@ function createHostBrowserManager({ electron, app, portForwardingBridge }) {
         notifyDownloads(record);
         return true;
       case "open":
+      case "save-as":
       case "reveal": {
         if (!item || item.status !== "completed" || !item.savePath || !fs.existsSync(item.savePath)) {
           throw new Error("File moved or deleted");
         }
-        if (input.type === "reveal") (shell || require("electron").shell).showItemInFolder(item.savePath);
+        if (input.type === "save-as") {
+          const result = await (dialog || require("electron").dialog).showSaveDialog(record.win, {
+            defaultPath: item.savePath, properties: ["createDirectory", "showOverwriteConfirmation"],
+          });
+          if (result.canceled || !result.filePath) return false;
+          if (path.resolve(result.filePath) !== path.resolve(item.savePath)) await fs.promises.copyFile(item.savePath, result.filePath);
+        } else if (input.type === "reveal") (shell || require("electron").shell).showItemInFolder(item.savePath);
         else {
           const error = await (shell || require("electron").shell).openPath(item.savePath);
           if (error) throw new Error(error);
@@ -703,8 +805,8 @@ function createHostBrowserManager({ electron, app, portForwardingBridge }) {
       default: throw new Error("Unknown download action");
     }
   });
-  ipcMain.handle("netcatty:host-browser:bookmarks:list", (event) => {
-    const record = getOwned(event);
+  ipcMain.handle("netcatty:host-browser:bookmarks:list", (event, browserId) => {
+    const record = getOwned(event, browserId);
     return bookmarkStore.list().filter((item) => item.scope === "all-hosts" || item.hostId === record.hostId)
       .map((item) => {
         const siteIcon = siteIconStore.get(record.hostId, item.url);
@@ -712,16 +814,16 @@ function createHostBrowserManager({ electron, app, portForwardingBridge }) {
           siteIconGlyph: siteIcon?.glyph || null, siteIconColor: siteIcon?.color || null };
       });
   });
-  ipcMain.handle("netcatty:host-browser:bookmarks:upsert", (event, input) => {
-    const record = getOwned(event);
+  ipcMain.handle("netcatty:host-browser:bookmarks:upsert", (event, input, browserId) => {
+    const record = getOwned(event, browserId);
     if (input?.id) {
       const previous = bookmarkStore.list().find((item) => item.id === input.id);
       if (previous && previous.scope === "host" && previous.hostId !== record.hostId) throw new Error("Bookmark belongs to another host");
     }
     return bookmarkStore.upsert({ ...input, hostId: input?.scope === "all-hosts" ? null : record.hostId });
   });
-  ipcMain.handle("netcatty:host-browser:bookmarks:remove", (event, id) => {
-    const record = getOwned(event);
+  ipcMain.handle("netcatty:host-browser:bookmarks:remove", (event, id, browserId) => {
+    const record = getOwned(event, browserId);
     const previous = bookmarkStore.list().find((item) => item.id === id);
     if (!previous || (previous.scope === "host" && previous.hostId !== record.hostId)) return false;
     bookmarkStore.remove(id);
@@ -736,8 +838,8 @@ function createHostBrowserManager({ electron, app, portForwardingBridge }) {
     bookmarkStore.apply(items);
     return true;
   });
-  ipcMain.handle("netcatty:host-browser:command", async (event, command) => {
-    const record = getOwned(event);
+  const runCommand = async (event, command, browserId) => {
+    const record = getOwned(event, browserId);
     if (command?.type?.startsWith("window-") && record.embedded) return snapshot(record);
     if (command?.type === "window-close") { record.win.close(); return null; }
     const tab = record.tabs.get(command?.tabId || record.activeTabId);
@@ -781,7 +883,7 @@ function createHostBrowserManager({ electron, app, portForwardingBridge }) {
         }
         break;
       }
-      case "activate": if (tab) { record.activeTabId = tab.id; displayTab(record); } break;
+      case "activate": if (tab) { record.activeTabId = tab.id; displayTab(record); if (record.visible && tab.url) tab.view.webContents.focus(); } break;
       case "close-tab":
         if (tab) {
           const tabs = [...record.tabs.values()];
@@ -799,7 +901,20 @@ function createHostBrowserManager({ electron, app, portForwardingBridge }) {
         if (tab) {
           tab.url = normalizeBrowserUrl(command.url);
           displayTab(record);
-          await tab.view.webContents.loadURL(tab.url);
+          const contents = tab.view.webContents;
+          const contentsId = contents.id;
+          const url = tab.url;
+          const navigation = { url, downloading: false };
+          record.navigations.set(contentsId, navigation);
+          if (record.visible && record.activeTabId === tab.id && !record.overlayOpen) contents.focus();
+          try { await contents.loadURL(url); }
+          catch (error) {
+            // Chromium rejects loadURL when a navigation becomes a download.
+            // Response headers identify this request before will-download fires.
+            if (!navigation.downloading || !["ERR_FAILED", "ERR_ABORTED"].includes(error.code)) throw error;
+          } finally {
+            if (record.navigations.get(contentsId) === navigation) record.navigations.delete(contentsId);
+          }
         }
         break;
       case "back": if (tab && record.route === "connected") tab.view.webContents.navigationHistory?.goBack(); break;
@@ -809,7 +924,8 @@ function createHostBrowserManager({ electron, app, portForwardingBridge }) {
       default: throw new Error("Unknown browser command");
     }
     return snapshot(record);
-  });
+  };
+  ipcMain.handle("netcatty:host-browser:command", runCommand);
   const unsubscribeTunnelStatus = portForwardingBridge.onTunnelStatus((event) => {
     for (const record of windows.values()) {
       if (record.tunnelId === event.tunnelId && ["inactive", "error"].includes(event.status)) {
@@ -817,10 +933,10 @@ function createHostBrowserManager({ electron, app, portForwardingBridge }) {
       }
     }
   });
-  return { focus, open, updatePanelLayout, closePanel, openPanelUrl, closeAll: () => {
+  return { focus, open, updatePanelLayout, closePanel, openPanelUrl, getPanelState, runCommand, closeAll: () => {
     unsubscribeTunnelStatus();
     for (const record of [...windows.values()]) { closeRecord(record); if (!record.embedded && !record.win.isDestroyed()) record.win.destroy(); }
   } };
 }
 
-module.exports = { createHostBrowserManager, normalizeBrowserUrl };
+module.exports = { createHostBrowserManager, normalizeBrowserUrl, pdfDownloadHeaders };
