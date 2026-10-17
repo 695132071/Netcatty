@@ -66,11 +66,12 @@ function cancelFidoPromptRequest(requestId, reason = "cancelled") {
  * @param {string} [reason]
  * @returns {number}
  */
-function cancelFidoPromptRequestsForLease(leaseId, reason = "lease-released") {
+function cancelFidoPromptRequestsForLease(leaseId, reason = "lease-released", notificationsOnly = false) {
   if (typeof leaseId !== "string" || !leaseId) return 0;
   let cancelled = 0;
   for (const [requestId, pending] of [...fidoPromptRequests.entries()]) {
     if (pending.leaseId !== leaseId) continue;
+    if (notificationsOnly && !pending.notificationOnly) continue;
     if (cancelFidoPromptRequest(requestId, reason)) cancelled += 1;
   }
   return cancelled;
@@ -116,6 +117,7 @@ function requestFidoPrompt(sender, options = {}) {
       webContentsId: sender.id,
       kind,
       leaseId,
+      notificationOnly: options.notificationOnly === true,
       createdAt: Date.now(),
       timeoutId,
     });

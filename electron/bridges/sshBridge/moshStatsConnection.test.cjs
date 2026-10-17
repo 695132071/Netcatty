@@ -385,6 +385,24 @@ test("path-backed sk-* key handles are filtered out of the companion's identity 
   assert.equal(FakeSSHClient.instances[0].connectOpts.agent, "/tmp/prepared-fido-agent.sock");
 });
 
+test("FIDO stats preparation resolves only its requesting live window", async () => {
+  let prepared;
+  let destroyed = false;
+  const sender = { id: 2823, isDestroyed: () => destroyed };
+  const { api, sessions } = makeApi({ prepareSystemSshAgentForAuth: async auth => {
+    prepared = auth;
+    return "/tmp/fido-stats.sock";
+  } });
+  const session = { moshStatsAuth: { hostname: "h", username: "u", useSshAgent: true } };
+  sessions.set("sid", session);
+  api.ensureMoshStatsConnection(session, "sid", sender);
+  await tick();
+  assert.equal(prepared.resolveWebContents(), sender);
+  destroyed = true;
+  assert.equal(prepared.resolveWebContents(), null);
+  FakeSSHClient.instances[0].emit("close");
+});
+
 test("falls back to ssh-agent when a socket is available and no inline creds", async () => {
   // The system ssh used by the Mosh handshake authenticates via the local
   // agent by default, so the companion should too — regardless of the

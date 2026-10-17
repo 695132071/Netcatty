@@ -11,12 +11,14 @@ const { execFile } = require("node:child_process");
 const { promisify } = require("node:util");
 const { once } = require("node:events");
 const { Client, Server, utils } = require("ssh2");
+const { createAgent } = require("ssh2/lib/agent.js");
 const tempDirBridge = require("../electron/bridges/tempDirBridge.cjs");
 const askpass = require("../electron/bridges/fidoAskpass.cjs");
 const prompts = require("../electron/bridges/fidoPromptHandler.cjs");
 const { generateFidoSshKeyPair } = require("../electron/bridges/fidoSshKeygen.cjs");
 const { enhanceAuthOptionsForFido, prepareSystemSshAgentForAuth } = require("../electron/bridges/sshAuthHelper.cjs");
 const { shutdownFidoAgentSubsystem } = require("../electron/bridges/fidoAgentManager.cjs");
+const manager = require("../electron/bridges/fidoAgentManager.cjs");
 const { attachFidoAgentRelease } = require("../electron/bridges/attachFidoAgentRelease.cjs");
 const run = promisify(execFile);
 const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
@@ -34,6 +36,11 @@ test("Windows security-key integration with real user-mode OpenSSH", {
   timeout: 180000,
 }, async t => {
   const dir = fs.mkdtempSync(path.join(tempDirBridge.getTempDir(), "fw-"));
+  const originalGetTempDir = tempDirBridge.getTempDir;
+  const originalAcquire = manager.acquireFidoAgent;
+  const spacedTemp = path.join(dir, "profile space");
+  fs.mkdirSync(spacedTemp);
+  tempDirBridge.getTempDir = () => spacedTemp;
   const control = path.join(dir, "presence");
   const saved = Object.fromEntries(["NETCATTY_SSH_AGENT_PATH", "SSH_SK_PROVIDER", "NETCATTY_FIDO_SIM_CONTROL"].map(key => [key, process.env[key]]));
   const seen = [];
@@ -90,15 +97,18 @@ test("Windows security-key integration with real user-mode OpenSSH", {
       const session = accept();
       session.on("exec", acceptExec => {
         const stream = acceptExec();
-        stream.end("windows-fido-ok");
+        stream.write("windows-fido-ok");
+        stream.exit(0);
+        stream.end();
       });
     }));
   });
 
-  async function connect(generated, password) {
+  async function connect(generated, password, nativeAgent = false) {
     const options = await enhanceAuthOptionsForFido({
       hostname: "127.0.0.1", port: server.address().port, username: "netcatty",
       privateKey: generated.privateKey, identitiesOnly: true, keyLabel: "Windows test key", password,
+      nativeFidoAgent: nativeAgent,
     }, sender);
     const agent = await prepareSystemSshAgentForAuth(options, "[WindowsFido]");
     assert.ok(agent, "production auth preparation must return an agent");
@@ -113,7 +123,8 @@ test("Windows security-key integration with real user-mode OpenSSH", {
       });
       client.once("close", () => resolve({ error: new Error("Connection closed") }));
     });
-    client.connect({ host: "127.0.0.1", port: server.address().port, username: "netcatty", agent,
+    client.connect({ host: "127.0.0.1", port: server.address().port, username: "netcatty",
+      agent: nativeAgent ? createAgent(agent._netcattyAgentSocket) : agent,
       password, authHandler: password ? ["agent", "password"] : ["agent"], readyTimeout: 15000 });
     return { client, outcome, close() { client.end(); agent._releaseNetcattyFidoAgent?.(); } };
   }
@@ -122,6 +133,14 @@ test("Windows security-key integration with real user-mode OpenSSH", {
     assert.ok(process.env.NETCATTY_WINDOWS_SSH_AGENT, "Windows OpenSSH agent path is required");
     assert.ok(process.env.NETCATTY_WINDOWS_SSH_KEYGEN, "Windows OpenSSH keygen path is required");
     process.env.NETCATTY_SSH_AGENT_PATH = process.env.NETCATTY_WINDOWS_SSH_AGENT;
+    manager.acquireFidoAgent = options => originalAcquire({ ...options, execFile: async (binary, args, options) => {
+      try { return await run(binary, args, options); }
+      catch (error) {
+        // Agent startup has no secret input; surface binding errors in CI.
+        console.log("[WindowsFido] agent startup rejected", args, error.stderr || error.message);
+        throw error;
+      }
+    } });
     process.env.SSH_SK_PROVIDER = "/usr/lib/netcatty-fido-test-provider.dll";
     process.env.NETCATTY_FIDO_SIM_CONTROL = control.replace(/\\/g, "/");
     server.listen(0, "127.0.0.1");
@@ -156,7 +175,7 @@ test("Windows security-key integration with real user-mode OpenSSH", {
         const before = seen.length;
         fs.rmSync(`${control}.waiting`, { force: true });
         fs.writeFileSync(control, "waiting");
-        const connection = await connect(generated);
+        const connection = await connect(generated, undefined, true);
         let settled = false;
         connection.outcome.then(() => { settled = true; });
         try {
@@ -175,6 +194,33 @@ test("Windows security-key integration with real user-mode OpenSSH", {
           assert.equal(output, "windows-fido-ok");
         } finally { connection.close(); }
       });
+
+      for (const runtime of ["MSYS", "Win32"]) {
+        await t.test(`${type}: real ${runtime} OpenSSH logs in through its native socket`, async () => {
+          const sshPath = runtime === "MSYS"
+            ? path.join(path.dirname(process.env.NETCATTY_WINDOWS_SSH_AGENT), "ssh.exe")
+            : path.join(process.env.SystemRoot, "System32", "OpenSSH", "ssh.exe");
+          assert.ok(fs.existsSync(sshPath), `${runtime} SSH client must be installed`);
+          const before = seen.length;
+          fs.writeFileSync(control, "touch");
+          const options = await enhanceAuthOptionsForFido({
+            privateKey: generated.privateKey, identitiesOnly: true,
+            nativeFidoAgent: true, nativeSshPath: sshPath,
+          }, sender);
+          const agent = await prepareSystemSshAgentForAuth(options, "[WindowsNativeFido]");
+          try {
+            const identityAgent = agent._netcattyAgentSocket;
+            assert.equal(identityAgent.startsWith("\\\\.\\pipe"), runtime === "Win32");
+            const result = await run(sshPath, ["-F", "none", "-p", String(server.address().port),
+              "-o", "StrictHostKeyChecking=no", "-o", "UserKnownHostsFile=NUL",
+              "-o", "PreferredAuthentications=publickey", "-o", "BatchMode=yes",
+              "-o", `IdentityAgent=${JSON.stringify(identityAgent)}`, "netcatty@127.0.0.1", "probe"],
+            { env: { ...process.env, SSH_AUTH_SOCK: identityAgent }, timeout: 15000, windowsHide: true });
+            assert.equal(result.stdout, "windows-fido-ok");
+            assert.ok(seen.slice(before).some(request => request.kind === "pin"));
+          } finally { agent._releaseNetcattyFidoAgent?.(); }
+        });
+      }
 
       for (const fallback of [false, true]) {
         await t.test(`${type}: missing device ${fallback ? "allows explicit password fallback" : "cancel never uses saved password"}`, async () => {
@@ -207,13 +253,15 @@ test("Windows security-key integration with real user-mode OpenSSH", {
         } finally { connection.close(); responsePin = "123456"; }
       });
     }
-    assert.equal(acceptedPublicKeys, 2, "server must verify both actual SK signatures");
+    assert.equal(acceptedPublicKeys, 6, "server must verify both SK algorithms through ssh2, MSYS SSH, and Win32 SSH");
     assert.equal(acceptedPasswords, 2, "only explicit fallback may use a password");
   } finally {
     for (const client of clients) client.end();
     await new Promise(resolve => server.close(resolve));
     shutdownFidoAgentSubsystem();
     askpass.shutdownFidoAskpass();
+    tempDirBridge.getTempDir = originalGetTempDir;
+    manager.acquireFidoAgent = originalAcquire;
     for (const [key, value] of Object.entries(saved)) {
       if (value === undefined) delete process.env[key]; else process.env[key] = value;
     }

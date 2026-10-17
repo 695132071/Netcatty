@@ -8,7 +8,8 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
 const net = require("node:net");
-const { execFileSync, spawn } = require("node:child_process");
+const { execFileSync, execFile, spawn } = require("node:child_process");
+const execFileAsync = require("node:util").promisify(execFile);
 const { once } = require("node:events");
 const { Client } = require("ssh2");
 const { generateFidoSshKeyPair } = require("../electron/bridges/fidoSshKeygen.cjs");
@@ -114,6 +115,8 @@ test("software FIDO authenticator authenticates against real OpenSSH", {
         execFileSync("ssh-keygen", ["-s", path.join(dir, "host"), "-I", "fido-sim",
           "-n", username, "-V", "-1m:+5m", "-O", "verify-required", `${keyPath}.pub`]);
         const certificate = fs.readFileSync(`${keyPath}-cert.pub`, "utf8").trim();
+        // A selected SK handle remains usable without its optional .pub file.
+        fs.unlinkSync(`${keyPath}.pub`);
         // Probe must use the same %r expansion as ssh-add, before deciding agent auth.
         const options = await enhanceAuthOptionsForFido({
           hostname: "127.0.0.1", port, username, useSshAgent: false,
@@ -169,6 +172,39 @@ test("software FIDO authenticator authenticates against real OpenSSH", {
               assert.equal(await exec(connection, "printf multi-window-ok"), "multi-window-ok");
             }));
             assert.deepEqual(new Set(routedPrompts.slice(beforeRouting)), new Set([sender.id, otherSender.id]));
+            const nativeAgents = await Promise.all([sender, otherSender].map(owner => prepareSystemSshAgentForAuth({
+              ...options, nativeFidoAgent: true, resolveWebContents: () => owner,
+            }, "[NativeFidoWindow]")));
+            try {
+              const beforeNative = routedPrompts.length;
+              const results = await Promise.all(nativeAgents.map(nativeAgent => execFileAsync("ssh", [
+                "-o", `IdentityAgent=${nativeAgent._netcattyAgentSocket}`,
+                "-o", "IdentitiesOnly=yes", "-o", "BatchMode=yes", "-o", "CertificateFile=none",
+                "-o", "StrictHostKeyChecking=no", "-o", "UserKnownHostsFile=/dev/null",
+                "-i", keyPath, "-p", String(port), `${username}@127.0.0.1`, "printf native-fido-ok",
+              ], { timeout: 15000 })));
+              for (const result of results) assert.equal(result.stdout, "native-fido-ok");
+              assert.deepEqual(new Set(routedPrompts.slice(beforeNative)), new Set([sender.id, otherSender.id]));
+            } finally { nativeAgents.forEach(nativeAgent => nativeAgent._releaseNetcattyFidoAgent?.()); }
+            // A second certificate for an owned bare key needs its own hold.
+            // Closing it must remove that certificate and retain the first.
+            const extraPubPath = path.join(dir, `${type}-extra.pub`);
+            fs.writeFileSync(extraPubPath, generated.publicKey);
+            execFileSync("ssh-keygen", ["-s", path.join(dir, "host"), "-I", "fido-extra", "-z", "2",
+              "-n", username, "-V", "-1m:+5m", "-O", "verify-required", extraPubPath]);
+            const extraCertificate = fs.readFileSync(extraPubPath.replace(/\.pub$/, "-cert.pub"), "utf8").trim();
+            const extraAgent = await prepareSystemSshAgentForAuth({
+              ...options, privateKey: generated.privateKey, identityFilePaths: [], certificate: extraCertificate,
+            }, "[ExtraFidoCertificate]");
+            const sharedSocket = require("../electron/bridges/fidoAgentManager.cjs").getActiveFidoAgentSocket();
+            extraAgent._releaseNetcattyFidoAgent();
+            await require("../electron/bridges/systemSshAgent.cjs").withAgentIdentityLock(sharedSocket, async () => {});
+            const remaining = (await execFileAsync("ssh-add", ["-L"], {
+              env: { ...process.env, SSH_AUTH_SOCK: sharedSocket },
+            })).stdout;
+            assert.ok(remaining.includes(generated.publicKey.split(" ")[1]), "bare identity remains in use");
+            assert.ok(remaining.includes(certificate.split(" ")[1]), "other session's certificate remains in use");
+            assert.ok(!remaining.includes(extraCertificate.split(" ")[1]), "released certificate is removed");
           } finally {
             pair.forEach((connection) => connection.end());
             otherAgent._releaseNetcattyFidoAgent?.();
@@ -180,7 +216,7 @@ test("software FIDO authenticator authenticates against real OpenSSH", {
         fs.writeFileSync(authorizedKeys,
           `cert-authority,verify-required,principals="${username}" ${fs.readFileSync(path.join(dir, "host.pub"), "utf8")}`);
         const certAgent = await prepareSystemSshAgentForAuth({
-          ...options, certificate,
+          ...options, certificate, nativeFidoAgent: true,
           ...(type === "ECDSA-SK" ? { privateKey: generated.privateKey, identityFilePaths: [] } : {}),
         }, "[FidoCertificateSimulation]");
         const certClient = new Client();
@@ -188,6 +224,13 @@ test("software FIDO authenticator authenticates against real OpenSSH", {
           certClient.connect({ host: options.hostname, port, username, agent: certAgent, readyTimeout: 15000 });
           await once(certClient, "ready");
           assert.equal(await exec(certClient, "printf fido-cert-ok"), "fido-cert-ok");
+          const nativeCertificate = await execFileAsync("ssh", [
+            "-o", `IdentityAgent=${certAgent._netcattyAgentSocket}`, "-o", "IdentitiesOnly=yes", "-o", "BatchMode=yes",
+            "-o", `CertificateFile=${keyPath}-cert.pub`, "-o", "StrictHostKeyChecking=no",
+            "-o", "UserKnownHostsFile=/dev/null", "-i", keyPath, "-p", String(port),
+            `${username}@127.0.0.1`, "printf native-cert-ok",
+          ], { timeout: 15000 });
+          assert.equal(nativeCertificate.stdout, "native-cert-ok");
         } finally {
           certClient.end();
           certAgent._releaseNetcattyFidoAgent?.();

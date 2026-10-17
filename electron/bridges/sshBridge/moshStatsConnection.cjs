@@ -264,7 +264,11 @@ function createMoshStatsConnectionApi(ctx) {
       }
 
       if (!agent && auth.useSshAgent && typeof prepareSystemSshAgentForAuth === "function") {
-        const prepared = await prepareSystemSshAgentForAuth(auth, `[${label} Stats]`);
+        const prepared = await prepareSystemSshAgentForAuth({
+          ...auth,
+          resolveWebContents: () => auth.webContents && !auth.webContents.isDestroyed?.()
+            ? auth.webContents : null,
+        }, `[${label} Stats]`);
         connectOpts.agent = prepared;
         if (typeof prepared?._releaseNetcattyFidoAgent === "function") {
           // Surface the release hook on connectOpts so establishStatsConnection

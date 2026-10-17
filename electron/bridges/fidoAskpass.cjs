@@ -182,7 +182,7 @@ function resolveFidoAskpassSocketPath(baseDir, platform = process.platform) {
   if (platform === "win32") {
     return `\\\\.\\pipe\\netcatty-fido-askpass-${randomUUID().slice(0, 8)}`;
   }
-  return path.join(baseDir, "askpass.sock");
+  return path.posix.join(baseDir, "askpass.sock");
 }
 
 function writeSecureFile(filePath, contents, mode = 0o700) {
@@ -243,7 +243,7 @@ function resolveSharedAgentPromptSender() {
     || liveSenderFromResolver(resolveWebContents);
 }
 
-function handleAskpassClient(socket) {
+function handleAskpassClient(socket, platform = process.platform) {
   let buf = "";
   let handled = false;
   const controller = new AbortController();
@@ -302,14 +302,28 @@ function handleAskpassClient(socket) {
     }
     const signing = signingQueue[0]?.leaseId === ownerLeaseId ? signingQueue[0] : null;
     try {
-      const result = await fidoPromptHandler.requestFidoPrompt(sender, {
+      const detachedNotification = notificationOnly && platform === "win32";
+      if (kind === "pin" && platform === "win32") {
+        fidoPromptHandler.cancelFidoPromptRequestsForLease(ownerLeaseId, "pin-requested", true);
+      }
+      const pending = fidoPromptHandler.requestFidoPrompt(sender, {
         kind,
         notificationOnly,
         message: prompt,
         keyName: signing?.keyName || "",
         leaseId: ownerLeaseId,
-        signal: controller.signal,
+        signal: detachedNotification
+          ? (signing?.attemptController || signing?.controller)?.signal : controller.signal,
       });
+      if (detachedNotification) {
+        // MSYS cannot reliably terminate a native Node notification helper.
+        // Acknowledge this non-authorizing notification immediately; retain the
+        // hint under the signing attempt (or key-generation lease) instead.
+        void pending;
+        socket.end('{"ok":true,"response":""}\n');
+        return;
+      }
+      const result = await pending;
       if (socket.destroyed) return;
       if (!result || result.cancelled) {
         if (kind === "pin" && signing) signing.cancelled = true;
@@ -319,14 +333,16 @@ function handleAskpassClient(socket) {
       // Touch/confirm: empty string is fine; PIN: return entered secret.
       const response = kind === "pin" ? (result.response || "") : "";
       if (kind === "pin" && signing) signing.pinSubmitted = true;
-      if (kind === "pin" && response && /user presence|touch|tap/i.test(prompt)
-          && signing?.leaseId === ownerLeaseId && !signing.controller.signal.aborted) {
+      if (kind === "pin" && response
+          && (platform === "win32" || /user presence|touch|tap/i.test(prompt))
+          && ((signing?.leaseId === ownerLeaseId && !signing.controller.signal.aborted)
+            || (platform === "win32" && ownerLeaseId))) {
         // ssh-agent ends its initial notification before asking for a PIN and
         // does not restart it on retry. Keep a device-only waiting hint visible
         // after PIN submission until the actual signature callback completes.
         void fidoPromptHandler.requestFidoPrompt(sender, {
-          kind: "touch", notificationOnly: true, message: prompt, keyName: signing.keyName || "",
-          leaseId: ownerLeaseId, signal: (signing.attemptController || signing.controller).signal,
+          kind: "touch", notificationOnly: true, message: prompt, keyName: signing?.keyName || "",
+          leaseId: ownerLeaseId, signal: (signing?.attemptController || signing?.controller)?.signal,
         });
       }
       socket.end(`${JSON.stringify({ ok: true, response })}\n`);
@@ -360,6 +376,12 @@ function ensureFidoAskpass(options = {}) {
   askpassScriptPath = path.join(base, "netcatty-fido-askpass.cjs");
   writeSecureFile(askpassScriptPath, FIDO_ASKPASS_SCRIPT, 0o700);
 
+  const posixWrapperPath = path.join(base, "netcatty-fido-askpass.sh");
+  const shellQuote = value => `'${value.replace(/'/g, "'\\''")}'`;
+  const shellPath = value => process.platform === "win32" ? value.replace(/\\/g, "/") : value;
+  writeSecureFile(posixWrapperPath,
+    `#!/bin/sh\nELECTRON_RUN_AS_NODE=1 exec ${shellQuote(shellPath(process.execPath))} ${shellQuote(shellPath(askpassScriptPath))} "$@"\n`,
+    0o700);
   if (process.platform === "win32") {
     askpassWrapperPath = path.join(base, "netcatty-fido-askpass.cmd");
     writeSecureFile(
@@ -368,14 +390,7 @@ function ensureFidoAskpass(options = {}) {
       0o700,
     );
   } else {
-    askpassWrapperPath = path.join(base, "netcatty-fido-askpass.sh");
-    const electronExec = JSON.stringify(process.execPath);
-    const scriptExec = JSON.stringify(askpassScriptPath);
-    writeSecureFile(
-      askpassWrapperPath,
-      `#!/bin/sh\nELECTRON_RUN_AS_NODE=1 exec ${electronExec} ${scriptExec} "$@"\n`,
-      0o700,
-    );
+    askpassWrapperPath = posixWrapperPath;
   }
 
   if (!isWindowsNamedPipePath(askpassSocketPath) && fs.existsSync(askpassSocketPath)) {
@@ -402,9 +417,31 @@ function ensureFidoAskpass(options = {}) {
   };
 }
 
+function isWindowsPosixSsh(binaryPath, platform = process.platform, env = process.env, exists = fs.existsSync) {
+  if (platform !== "win32" || !binaryPath) return false;
+  const binary = /\.exe$/i.test(binaryPath) ? binaryPath : `${binaryPath}.exe`;
+  const candidates = /[\\/]/.test(binaryPath) ? [binary]
+    : (env.PATH || env.Path || "").split(";").map(dir => path.win32.join(dir, binary));
+  for (const candidate of candidates) {
+    if (!exists(candidate)) continue;
+    const dir = path.win32.dirname(candidate);
+    if (exists(path.win32.join(dir, "msys-2.0.dll")) || exists(path.win32.join(dir, "cygwin1.dll"))) {
+      return true;
+    }
+    break;
+  }
+  return false;
+}
+
+function selectFidoAskpassWrapper(wrapperPath, binaryPath, platform = process.platform, env = process.env, exists = fs.existsSync) {
+  // MSYS uses its own shell/shebang execution so spaces in helper paths survive.
+  return isWindowsPosixSsh(binaryPath, platform, env, exists)
+    ? wrapperPath.replace(/\.cmd$/i, ".sh").replace(/\\/g, "/") : wrapperPath;
+}
+
 /**
  * Environment for ssh-agent / ssh-add / ssh-keygen so PIN/touch use Netcatty UI.
- * @param {{ resolveWebContents?: () => import("electron").WebContents|null }} [options]
+ * @param {{ resolveWebContents?: () => import("electron").WebContents|null, sshBinaryPath?: string, env?: NodeJS.ProcessEnv }} [options]
  */
 function buildFidoAskpassEnv(options = {}) {
   const artifacts = ensureFidoAskpass(options);
@@ -413,7 +450,7 @@ function buildFidoAskpassEnv(options = {}) {
     askpassLeases.set(leaseId, options.resolveWebContents);
   }
   const env = {
-    SSH_ASKPASS: artifacts.wrapperPath,
+    SSH_ASKPASS: selectFidoAskpassWrapper(artifacts.wrapperPath, options.sshBinaryPath, process.platform, options.env),
     SSH_ASKPASS_REQUIRE: "force",
     NETCATTY_FIDO_ASKPASS_SOCK: artifacts.socketPath,
     NETCATTY_FIDO_ASKPASS_LEASE: leaseId,
@@ -485,6 +522,8 @@ module.exports = {
   classifyAskpassPrompt: fidoPromptHandler.classifyAskpassPrompt,
   resolveFidoAskpassSocketPath,
   isWindowsNamedPipePath,
+  selectFidoAskpassWrapper,
+  isWindowsPosixSsh,
   // exposed for tests
   getTempBase,
   handleAskpassClient,

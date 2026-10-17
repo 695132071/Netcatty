@@ -31,11 +31,27 @@ signature framing. `npm test` skips the opt-in integration simulation.
 This verifies the OpenSSH integration on Linux with a software authenticator.
 Real USB/CTAP devices and Windows/macOS installations still need device testing.
 
+The Linux simulation also removes the optional `.pub` file before strict agent
+selection, runs two real native OpenSSH clients concurrently against separate
+caller-bound agent sockets, and checks native SK certificate authentication.
+It verifies that releasing a second certificate preserves the bare key and
+the first certificate while removing only the released certificate. Native
+Mosh/ET authentication uses these sockets so its signatures follow the same
+window attribution and recovery wrapper as ssh2.
+
+Identity preparation and removal are serialized per underlying agent socket.
+Bare-key removal uses `ssh-add -d -k` and certificate removal has its own hold;
+staging directories remain until all associated removals have completed.
+The tests also cover partial credential-write failures, socket paths containing
+spaces, and unknown agent-extension requests followed by normal requests on
+the same connection.
+
 ## Native Windows integration check
 
 The `windows-fido` job in `.github/workflows/test.yml` runs native Windows Node
 with real MSYS2 OpenSSH and an MSYS-built version of the disposable provider.
-It exercises Windows named-pipe askpass IPC, enrollment and actual signatures
+It uses a managed temporary path containing spaces and exercises Windows
+named-pipe askpass IPC, enrollment and actual signatures
 for both SK algorithms, PIN plus a separately gated touch, incorrect PIN,
 missing-device cancellation with a saved password, and explicit password
 fallback. A local SSH protocol server verifies the signatures and executes a

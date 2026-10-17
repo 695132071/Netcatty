@@ -1086,21 +1086,26 @@ async function materializeSkPrivateKeyFile(privateKey, injected = {}) {
   }
   const baseDir = tempDirBridge.getTempDir();
   const dir = await fsMod.promises.mkdtemp(pathMod.join(baseDir, "netcatty-sk-key-"));
-  const keyPath = pathMod.join(dir, "id_sk");
-  await fsMod.promises.writeFile(keyPath, privateKey, { mode: 0o600 });
-  // Companion .pub lets shared-agent prep recognize an already-loaded identity
-  // across unique per-session temp paths (refcount cleanup keys on the blob).
-  const publicKeyHint = typeof injected.publicKey === "string" ? injected.publicKey.trim() : "";
-  const publicKeyLine = publicKeyHint || deriveSkPublicKeyLine(privateKey);
-  if (publicKeyLine) {
-    await fsMod.promises.writeFile(`${keyPath}.pub`, `${publicKeyLine}\n`, { mode: 0o600 });
+  try {
+    const keyPath = pathMod.join(dir, "id_sk");
+    await fsMod.promises.writeFile(keyPath, privateKey, { mode: 0o600 });
+    // Companion .pub lets shared-agent prep recognize an already-loaded identity
+    // across unique per-session temp paths (refcount cleanup keys on the blob).
+    const publicKeyHint = typeof injected.publicKey === "string" ? injected.publicKey.trim() : "";
+    const publicKeyLine = publicKeyHint || deriveSkPublicKeyLine(privateKey);
+    if (publicKeyLine) {
+      await fsMod.promises.writeFile(`${keyPath}.pub`, `${publicKeyLine}\n`, { mode: 0o600 });
+    }
+    const certificate = typeof injected.certificate === "string" ? injected.certificate.trim() : "";
+    if (certificate) {
+      // OpenSSH ssh-add auto-loads `<key>-cert.pub` next to the private handle.
+      await fsMod.promises.writeFile(`${keyPath}-cert.pub`, `${certificate}\n`, { mode: 0o600 });
+    }
+    return { keyPath, cleanupDir: dir };
+  } catch (error) {
+    await fsMod.promises.rm(dir, { recursive: true, force: true }).catch(() => {});
+    throw error;
   }
-  const certificate = typeof injected.certificate === "string" ? injected.certificate.trim() : "";
-  if (certificate) {
-    // OpenSSH ssh-add auto-loads `<key>-cert.pub` next to the private handle.
-    await fsMod.promises.writeFile(`${keyPath}-cert.pub`, `${certificate}\n`, { mode: 0o600 });
-  }
-  return { keyPath, cleanupDir: dir };
 }
 
 async function prepareSystemSshAgentForAuth(options, logPrefix = "[SSHAuth]") {
@@ -1204,66 +1209,16 @@ async function prepareSystemSshAgentForAuth(options, logPrefix = "[SSHAuth]") {
     ? options.agentPublicKeys.find((key) => looksLikeSkOpenSshMaterial(key))
     : null;
   let skTempCleanup = null;
-  if (looksLikeSkOpenSshMaterial(options.privateKey)) {
-    try {
-      const materialized = await materializeSkPrivateKeyFile(options.privateKey, {
-        certificate: options.certificate,
-        publicKey: publicKeyHint,
-      });
-      if (materialized?.keyPath) {
-        identityFilePaths.push(materialized.keyPath);
-        skTempCleanup = materialized.cleanupDir;
-      }
-    } catch (error) {
-      console.log(`${logPrefix} Could not materialize FIDO2 key handle for agent load`, {
-        error: error instanceof Error ? error.message : String(error),
-      });
-    }
-  } else if (
-    isFidoFlow
-    && typeof options.certificate === "string"
-    && options.certificate.trim()
-    && Array.isArray(options.identityFilePaths)
-  ) {
-    // Path-backed SK + vault certificate: copy handle into temp and stage
-    // `<key>-cert.pub` so ssh-add advertises the certified identity. Never
-    // mutate the user's IdentityFile tree.
-    try {
-      for (const rawPath of options.identityFilePaths) {
-        const identityPath = expandIdentityFilePath(rawPath, options);
-        if (!identityPath || identityPath.endsWith(".pub")) continue;
-        let privateKeyText = "";
-        try {
-          privateKeyText = await fs.promises.readFile(identityPath, "utf8");
-        } catch {
-          continue;
-        }
-        if (!looksLikeSkOpenSshMaterial(privateKeyText)) continue;
-        const materialized = await materializeSkPrivateKeyFile(privateKeyText, {
-          certificate: options.certificate,
-          publicKey: publicKeyHint,
-        });
-        if (materialized?.keyPath) {
-          identityFilePaths.push(materialized.keyPath);
-          skTempCleanup = materialized.cleanupDir;
-        }
-        break;
-      }
-    } catch (error) {
-      console.log(`${logPrefix} Could not stage FIDO certificate for agent load`, {
-        error: error instanceof Error ? error.message : String(error),
-      });
-    }
-  }
-
   /** @type {string[]} */
   let newlyLoadedIdentityPaths = [];
   /** @type {Array<{ key: string, identityPath: string }>} */
   let sharedAgentIdentities = [];
   let fidoResourcesReleased = false;
+  let nativeFidoAgent = null;
   const releaseAcquiredFidoResources = () => {
     if (fidoResourcesReleased) return;
     fidoResourcesReleased = true;
+    nativeFidoAgent?.close();
     // Netcatty-owned agents outlive a single session (releaseFidoAgent keeps
     // the process alive while other sessions hold refs), just like the shared
     // Windows system agent. In both cases: drop our hold and only ssh-add -d
@@ -1276,40 +1231,27 @@ async function prepareSystemSshAgentForAuth(options, logPrefix = "[SSHAuth]") {
         releaseSharedAgentIdentity,
       } = require("./systemSshAgent.cjs");
       const sshAdd = fidoSshAddPath || resolveSshAddBinary(process.platform, process.env);
-      for (const entry of sharedAgentIdentities) {
-        const { shouldRemove, identityPath, cleanupDir } = releaseSharedAgentIdentity(entry.key);
-        if (!shouldRemove) continue;
-        const removeCleanupDir = () => {
-          if (!cleanupDir) return;
-          fs.promises.rm(cleanupDir, { recursive: true, force: true }).catch(() => {});
-        };
-        if (identityPath) {
-          try {
-            // ssh-add -d treats operands as identity-file paths; keep the
-            // staging dir until the child finishes (or fails to spawn).
-            childProcess.execFile(
-              sshAdd,
-              ["-d", identityPath],
-              {
-                timeout: 5000,
-                windowsHide: true,
-                env: {
-                  ...process.env,
-                  SSH_AUTH_SOCK: socketPath,
-                  SSH_ASKPASS_REQUIRE: "never",
-                },
-              },
-              () => {
-                removeCleanupDir();
-              },
-            );
-          } catch {
-            removeCleanupDir();
+      void systemSshAgent.withAgentIdentityLock(socketPath, async () => {
+        for (const entry of sharedAgentIdentities) {
+          const { shouldRemove, identityPath, cleanupDir, plain } = releaseSharedAgentIdentity(entry.key, socketPath);
+          if (!shouldRemove) continue;
+          if (identityPath) {
+            // Keep all selectors until ssh-add finishes, and prevent a new
+            // preparation from borrowing an identity that is being removed.
+            await new Promise(resolve => {
+              try {
+                childProcess.execFile(sshAdd, plain ? ["-d", "-k", identityPath] : ["-d", identityPath], {
+                  timeout: 5000,
+                  windowsHide: true,
+                  env: { ...process.env, SSH_AUTH_SOCK: socketPath, SSH_ASKPASS_REQUIRE: "never" },
+                }, () => resolve());
+              } catch { resolve(); }
+            });
           }
-        } else {
-          removeCleanupDir();
+          const removable = systemSshAgent.finishSharedCleanupDir(cleanupDir);
+          if (removable) await fs.promises.rm(removable, { recursive: true, force: true }).catch(() => {});
         }
-      }
+      }).catch(() => {});
     }
     try {
       // Always drop the acquire refcount (owned child or Windows system-pipe slot).
@@ -1330,103 +1272,163 @@ async function prepareSystemSshAgentForAuth(options, logPrefix = "[SSHAuth]") {
   };
 
   try {
+    if (looksLikeSkOpenSshMaterial(options.privateKey)) {
+      try {
+        const materialized = await materializeSkPrivateKeyFile(options.privateKey, {
+          certificate: options.certificate,
+          publicKey: publicKeyHint,
+        });
+        if (materialized?.keyPath) {
+          identityFilePaths.push(materialized.keyPath);
+          skTempCleanup = materialized.cleanupDir;
+        }
+      } catch (error) {
+        console.log(`${logPrefix} Could not materialize FIDO2 key handle for agent load`, {
+          error: error instanceof Error ? error.message : String(error),
+        });
+        throw error;
+      }
+    } else if (
+      isFidoFlow
+      && typeof options.certificate === "string"
+      && options.certificate.trim()
+      && Array.isArray(options.identityFilePaths)
+    ) {
+      // Path-backed SK + vault certificate: copy handle into temp and stage
+      // `<key>-cert.pub` so ssh-add advertises the certified identity. Never
+      // mutate the user's IdentityFile tree.
+      try {
+        for (const rawPath of options.identityFilePaths) {
+          const identityPath = expandIdentityFilePath(rawPath, options);
+          if (!identityPath || identityPath.endsWith(".pub")) continue;
+          let privateKeyText = "";
+          try {
+            privateKeyText = await fs.promises.readFile(identityPath, "utf8");
+          } catch {
+            continue;
+          }
+          if (!looksLikeSkOpenSshMaterial(privateKeyText)) continue;
+          const materialized = await materializeSkPrivateKeyFile(privateKeyText, {
+            certificate: options.certificate,
+            publicKey: publicKeyHint,
+          });
+          if (materialized?.keyPath) {
+            identityFilePaths.push(materialized.keyPath);
+            skTempCleanup = materialized.cleanupDir;
+          }
+          break;
+        }
+      } catch (error) {
+        console.log(`${logPrefix} Could not stage FIDO certificate for agent load`, {
+          error: error instanceof Error ? error.message : String(error),
+        });
+        throw error;
+      }
+    }
+
     const prepEnv = fidoSshAddPath
       ? { ...process.env, NETCATTY_SSH_ADD_PATH: fidoSshAddPath }
       : process.env;
-    const agent = await systemSshAgent.prepareSystemSshAgent({
-      socketPath,
-      identityFilePaths,
-      identitiesOnly: options.identitiesOnly,
-      addKeysToAgent: options.addKeysToAgent,
-      useKeychain: ownedFidoAgent ? false : options.useKeychain,
-      agentPublicKeys: isFidoFlow && options.certificate
-        ? [...(options.agentPublicKeys || []), options.certificate]
-        : options.agentPublicKeys,
-      loadIdentityFilesIntoAgent: looksLikeSkOpenSshMaterial(options.privateKey)
-        || (Array.isArray(options.agentPublicKeys)
-          && options.agentPublicKeys.some((key) => looksLikeSkOpenSshMaterial(key)))
-        || options.loadIdentityFilesIntoAgent === true
-        || ownedFidoAgent
-        // Windows system-pipe fallback still needs SK handles loaded for ssh2.
-        || (!ownedFidoAgent && acquiredFidoAgent),
-      hostname: options.hostname,
-      port: options.port,
-      username: options.username,
-    }, {
-      log: (message, details) => console.log(`${logPrefix} ${message}`, details ?? ""),
-      askpassEnv,
-      env: prepEnv,
-    });
-    if (agent) {
-      // Expose the socket so Mosh/ET/native OpenSSH can point IdentityAgent at
-      // the same agent that received ssh-add of SK handles.
-      agent._netcattyAgentSocket = socketPath;
-      newlyLoadedIdentityPaths = Array.isArray(agent._netcattyNewlyLoadedIdentityPaths)
-        ? agent._netcattyNewlyLoadedIdentityPaths
-        : [];
-      sharedAgentIdentities = Array.isArray(agent._netcattySharedAgentIdentities)
-        ? agent._netcattySharedAgentIdentities
-        : newlyLoadedIdentityPaths.map((identityPath) => ({
-          key: identityPath,
-          identityPath,
-        }));
-      if (sharedAgentIdentities.length > 0) {
-        // Reference-count identities for owned agents too: the owned agent is
-        // a long-lived singleton, so closing one session must drop only that
-        // session's hold, not leave its SK identity advertised to survivors.
-        const { retainSharedAgentIdentity } = require("./systemSshAgent.cjs");
-        let transferredSkTempCleanup = false;
-        for (const entry of sharedAgentIdentities) {
-          const cleanupDir = skTempCleanup
-            && typeof entry.identityPath === "string"
-            && entry.identityPath.startsWith(skTempCleanup)
-            ? skTempCleanup
-            : null;
-          const retained = retainSharedAgentIdentity(entry.key, entry.identityPath, cleanupDir);
-          // Only the first retainer for a public identity adopts staging cleanup.
-          // Later sessions materialize a redundant temp dir that must stay on
-          // skTempCleanup so the finally block can remove it immediately.
-          if (retained?.acceptedCleanup) {
-            transferredSkTempCleanup = true;
-          }
-        }
-        if (transferredSkTempCleanup) {
-          skTempCleanup = null;
-        }
-      }
-      const askpassLeaseId = askpassEnv?.NETCATTY_FIDO_ASKPASS_LEASE;
-      if (askpassLeaseId) {
-        const { runWithFidoSigningLease } = require("./fidoAskpass.cjs");
-        const sign = agent.sign.bind(agent);
-        agent.sign = (key, data, signOptions, callback) => {
-          if (typeof signOptions === "function") {
-            callback = signOptions;
-            signOptions = undefined;
-          }
-          runWithFidoSigningLease(askpassLeaseId, (finish, context) => {
-            if (fidoResourcesReleased) {
-              finish();
-              callback(new Error("FIDO authentication session has ended"));
-              return;
+    return await systemSshAgent.withAgentIdentityLock(socketPath, async () => {
+      const agent = await systemSshAgent.prepareSystemSshAgent({
+        socketPath,
+        identityFilePaths,
+        identitiesOnly: options.identitiesOnly,
+        addKeysToAgent: options.addKeysToAgent,
+        useKeychain: ownedFidoAgent ? false : options.useKeychain,
+        agentPublicKeys: isFidoFlow && options.certificate
+          ? [...(options.agentPublicKeys || []), options.certificate]
+          : options.agentPublicKeys,
+        loadIdentityFilesIntoAgent: looksLikeSkOpenSshMaterial(options.privateKey)
+          || (Array.isArray(options.agentPublicKeys)
+            && options.agentPublicKeys.some((key) => looksLikeSkOpenSshMaterial(key)))
+          || options.loadIdentityFilesIntoAgent === true
+          || ownedFidoAgent
+          // Windows system-pipe fallback still needs SK handles loaded for ssh2.
+          || (!ownedFidoAgent && acquiredFidoAgent),
+        hostname: options.hostname,
+        port: options.port,
+        username: options.username,
+      }, {
+        log: (message, details) => console.log(`${logPrefix} ${message}`, details ?? ""),
+        askpassEnv,
+        env: prepEnv,
+      });
+      if (agent) {
+        // Expose the socket so Mosh/ET/native OpenSSH can point IdentityAgent at
+        // the same agent that received ssh-add of SK handles.
+        agent._netcattyAgentSocket = socketPath;
+        newlyLoadedIdentityPaths = Array.isArray(agent._netcattyNewlyLoadedIdentityPaths)
+          ? agent._netcattyNewlyLoadedIdentityPaths
+          : [];
+        sharedAgentIdentities = Array.isArray(agent._netcattySharedAgentIdentities)
+          ? agent._netcattySharedAgentIdentities
+          : newlyLoadedIdentityPaths.map((identityPath) => ({
+            key: identityPath,
+            identityPath,
+          }));
+        if (sharedAgentIdentities.length > 0) {
+          // Reference-count identities for owned agents too: the owned agent is
+          // a long-lived singleton, so closing one session must drop only that
+          // session's hold, not leave its SK identity advertised to survivors.
+          const { retainSharedAgentIdentity } = require("./systemSshAgent.cjs");
+          let transferredSkTempCleanup = false;
+          for (const entry of sharedAgentIdentities) {
+            const cleanupDir = skTempCleanup
+              && typeof entry.identityPath === "string"
+              && entry.identityPath.startsWith(skTempCleanup)
+              ? skTempCleanup
+              : null;
+            const retained = retainSharedAgentIdentity(entry.key, entry.identityPath, cleanupDir, socketPath, entry.plain === true);
+            // Only the first retainer for a public identity adopts staging cleanup.
+            // Later sessions materialize a redundant temp dir that must stay on
+            // skTempCleanup so the finally block can remove it immediately.
+            if (retained?.acceptedCleanup) {
+              transferredSkTempCleanup = true;
             }
-            require("./fidoSignFlow.cjs").signWithRecovery(context, options,
-              settle => sign(key, data, signOptions, settle)).then(result => {
+          }
+          if (transferredSkTempCleanup) {
+            skTempCleanup = null;
+          }
+        }
+        const askpassLeaseId = askpassEnv?.NETCATTY_FIDO_ASKPASS_LEASE;
+        if (askpassLeaseId) {
+          const { runWithFidoSigningLease } = require("./fidoAskpass.cjs");
+          const sign = agent.sign.bind(agent);
+          agent.sign = (key, data, signOptions, callback) => {
+            if (typeof signOptions === "function") {
+              callback = signOptions;
+              signOptions = undefined;
+            }
+            runWithFidoSigningLease(askpassLeaseId, (finish, context) => {
+              if (fidoResourcesReleased) {
                 finish();
-                callback(result.error, result.signature);
-              }, error => { finish(); callback(error); });
-          });
-        };
+                callback(new Error("FIDO authentication session has ended"));
+                return;
+              }
+              require("./fidoSignFlow.cjs").signWithRecovery(context, options,
+                settle => sign(key, data, signOptions, settle)).then(result => {
+                  finish();
+                  callback(result.error, result.signature);
+                }, error => { finish(); callback(error); });
+            });
+          };
+        }
+        if (options.nativeFidoAgent === true && isFidoFlow) {
+          nativeFidoAgent = await require("./fidoNativeAgent.cjs").createNativeFidoAgent(agent, { sshBinaryPath: options.nativeSshPath });
+          agent._netcattyAgentSocket = nativeFidoAgent.socketPath;
+        }
+        if (ownedFidoAgent || askpassLeaseId || sharedAgentIdentities.length > 0 || acquiredFidoAgent) {
+          agent._netcattyOwnedFidoAgent = ownedFidoAgent === true;
+          // Shared lease; quit/exit hooks hard-kill the owned agent as a backstop.
+          agent._releaseNetcattyFidoAgent = releaseAcquiredFidoResources;
+        }
+      } else {
+        // Acquisition succeeded but preparation produced no agent — drop leases.
+        releaseAcquiredFidoResources();
       }
-      if (ownedFidoAgent || askpassLeaseId || sharedAgentIdentities.length > 0 || acquiredFidoAgent) {
-        agent._netcattyOwnedFidoAgent = ownedFidoAgent === true;
-        // Shared lease; quit/exit hooks hard-kill the owned agent as a backstop.
-        agent._releaseNetcattyFidoAgent = releaseAcquiredFidoResources;
-      }
-    } else {
-      // Acquisition succeeded but preparation produced no agent — drop leases.
-      releaseAcquiredFidoResources();
-    }
-    return agent;
+      return agent;
+    });
   } catch (error) {
     // prepareSystemSshAgent can throw after acquire (e.g. IdentitiesOnly without
     // a readable .pub selector); release owned agent + askpass before rethrowing.

@@ -10,6 +10,38 @@ const { parseKey } = require("ssh2/lib/protocol/keyParser.js");
 
 const SK_SSH_ED25519 = "sk-ssh-ed25519@openssh.com";
 
+test("identity preparation waits for deletion on the same socket, without blocking other agents", async () => {
+  const { withAgentIdentityLock } = require("./systemSshAgent.cjs");
+  let finishDelete;
+  let inspected = false;
+  const deletion = withAgentIdentityLock("agent-a", () => new Promise(resolve => { finishDelete = resolve; }));
+  await new Promise(setImmediate);
+  const preparation = withAgentIdentityLock("agent-a", async () => { inspected = true; });
+  await withAgentIdentityLock("agent-b", async () => {});
+  assert.equal(inspected, false, "a new login cannot borrow an identity pending removal");
+  finishDelete();
+  await Promise.all([deletion, preparation]);
+  assert.equal(inspected, true);
+});
+
+test("identity holds are scoped to their agent and retain staging until bare key and certificate removal finish", () => {
+  const { retainSharedAgentIdentity, releaseSharedAgentIdentity, finishSharedCleanupDir,
+    resetSharedAgentIdentityRefsForTests } = require("./systemSshAgent.cjs");
+  resetSharedAgentIdentityRefsForTests();
+  try {
+    retainSharedAgentIdentity("bare", "/tmp/key", "/tmp/stage", "agent-a", true);
+    retainSharedAgentIdentity("cert", "/tmp/cert.pub", "/tmp/stage", "agent-a");
+    retainSharedAgentIdentity("bare", "/tmp/other-key", null, "agent-b", true);
+    const bare = releaseSharedAgentIdentity("bare", "agent-a");
+    assert.equal(bare.shouldRemove, true);
+    assert.equal(bare.plain, true, "bare removal must skip companion certificates");
+    assert.equal(finishSharedCleanupDir(bare.cleanupDir), null);
+    const cert = releaseSharedAgentIdentity("cert", "agent-a");
+    assert.equal(finishSharedCleanupDir(cert.cleanupDir), "/tmp/stage");
+    assert.equal(releaseSharedAgentIdentity("bare", "agent-b").identityPath, "/tmp/other-key");
+  } finally { resetSharedAgentIdentityRefsForTests(); }
+});
+
 function makeSkPrivatePem() {
   const body = Buffer.from(`openssh-key-v1\0\0\0\0\0none\0\0\0\0\0\0\0\0\0\x01${SK_SSH_ED25519}`).toString("base64");
   const pem = `-----BEGIN OPENSSH PRIVATE KEY-----\n${body}\n-----END OPENSSH PRIVATE KEY-----\n`;
@@ -124,7 +156,7 @@ test("prepareSystemSshAgent tracks newly loaded identities for shared-agent clea
   assert.deepEqual(sshAddCalls, [[identityPath]]);
   assert.deepEqual(prepared._netcattyNewlyLoadedIdentityPaths, [identityPath]);
   assert.deepEqual(prepared._netcattySharedAgentIdentities, [
-    { key: publicKeyBlob(pubLine), identityPath },
+    { key: publicKeyBlob(pubLine), identityPath, plain: true },
   ]);
 });
 
@@ -243,7 +275,7 @@ test("prepareSystemSshAgent ssh-adds when bare identity is loaded but companion 
   };
 
   try {
-    retainSharedAgentIdentity(blob, "/tmp/id_ed25519_sk_first");
+    retainSharedAgentIdentity(blob, "/tmp/id_ed25519_sk_first", null, "/tmp/fake-agent.sock");
     const prepared = await prepareSystemSshAgent({
       socketPath: "/tmp/fake-agent.sock",
       identityFilePaths: [identityPath],
@@ -262,9 +294,10 @@ test("prepareSystemSshAgent ssh-adds when bare identity is loaded but companion 
     assert.deepEqual(sshAddCalls, [[identityPath]]);
     // Bare key was already Netcatty-owned; join that refcount (do not treat
     // the cert-only reload as a newly loaded private identity).
-    assert.equal(prepared._netcattyNewlyLoadedIdentityPaths, undefined);
+    assert.deepEqual(prepared._netcattyNewlyLoadedIdentityPaths, [certPath]);
     assert.deepEqual(prepared._netcattySharedAgentIdentities, [
-      { key: blob, identityPath },
+      { key: blob, identityPath, plain: true },
+      { key: certBlob, identityPath: certPath },
     ]);
   } finally {
     resetSharedAgentIdentityRefsForTests();
@@ -387,7 +420,7 @@ test("prepareSystemSshAgent joins Netcatty-owned already-loaded identities for s
   };
 
   try {
-    retainSharedAgentIdentity(blob, "/tmp/id_ed25519_sk_first");
+    retainSharedAgentIdentity(blob, "/tmp/id_ed25519_sk_first", null, "/tmp/fake-agent.sock");
     const prepared = await prepareSystemSshAgent({
       socketPath: "/tmp/fake-agent.sock",
       identityFilePaths: [identityPath],
@@ -406,7 +439,7 @@ test("prepareSystemSshAgent joins Netcatty-owned already-loaded identities for s
 
     assert.equal(prepared._netcattyNewlyLoadedIdentityPaths, undefined);
     assert.deepEqual(prepared._netcattySharedAgentIdentities, [
-      { key: blob, identityPath },
+      { key: blob, identityPath, plain: true },
     ]);
   } finally {
     resetSharedAgentIdentityRefsForTests();

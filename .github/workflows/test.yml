@@ -113,7 +113,7 @@ jobs:
       - name: Exercise Windows pipes, PIN bridge, SK signatures and cancellation
         env:
           NETCATTY_FIDO_WINDOWS: "1"
-        run: node --test scripts/fido-windows.live.test.cjs
+        run: node --test scripts/fido-windows.live.test.cjs electron/bridges/fidoNativeAgent.test.cjs electron/bridges/fidoAskpass.winpath.test.cjs
 
   windows-broadcast-ssh:
     name: windows-broadcast-ssh

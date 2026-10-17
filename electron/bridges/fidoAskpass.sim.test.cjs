@@ -14,7 +14,7 @@ const path = require("node:path");
 const { spawn } = require("node:child_process");
 const tempDirBridge = require("./tempDirBridge.cjs");
 // Keep the managed temp path short: Unix domain sockets reject long sun_path.
-const managedTemp = fs.mkdtempSync(path.join(tempDirBridge.getTempDir(), "fp-"));
+const managedTemp = fs.mkdtempSync(path.join(tempDirBridge.getTempDir(), "fp 'q$-"));
 const originalGetTempDir = tempDirBridge.getTempDir;
 tempDirBridge.getTempDir = () => managedTemp;
 const {

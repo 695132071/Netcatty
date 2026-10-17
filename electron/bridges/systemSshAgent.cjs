@@ -25,23 +25,51 @@ function publicKeyBlob(key) {
  * Shared (e.g. Windows system-pipe) agent identity holds. Concurrent sessions
  * that materialize the same SK key get unique temp paths, so cleanup must be
  * keyed by public identity blob and only `ssh-add -d` when the last user leaves.
- * @type {Map<string, { refCount: number, identityPath: string, cleanupDir: string|null }>}
+ * @type {Map<string, { refCount: number, identityPath: string, cleanupDir: string|null, plain?: boolean }>}
  */
 const sharedAgentIdentityRefs = new Map();
+const agentIdentityLocks = new Map();
+const sharedCleanupDirs = new Map();
+
+function withAgentIdentityLock(socketPath, operation) {
+  const previous = agentIdentityLocks.get(socketPath) || Promise.resolve();
+  const result = previous.catch(() => {}).then(operation);
+  const tail = result.catch(() => {});
+  agentIdentityLocks.set(socketPath, tail);
+  void tail.then(() => {
+    if (agentIdentityLocks.get(socketPath) === tail) agentIdentityLocks.delete(socketPath);
+  });
+  return result;
+}
+
+function identityRefKey(key, socketPath) {
+  return socketPath ? `${socketPath}\0${key}` : key;
+}
+
+function finishSharedCleanupDir(cleanupDir) {
+  if (!cleanupDir) return null;
+  const remaining = (sharedCleanupDirs.get(cleanupDir) || 1) - 1;
+  if (remaining > 0) { sharedCleanupDirs.set(cleanupDir, remaining); return null; }
+  sharedCleanupDirs.delete(cleanupDir);
+  return cleanupDir;
+}
 
 /**
  * @param {string} key Public identity blob (or path fallback)
  * @param {string} identityPath Path suitable for `ssh-add -d`
  * @param {string|null} [cleanupDir] Temp dir to remove with the last release
+ * @param {string} [socketPath] Agent owning this identity
+ * @param {boolean} [plain] Remove the bare key with ssh-add -k, preserving certificates
  * @returns {{ entry: { refCount: number, identityPath: string, cleanupDir: string|null }, acceptedCleanup: boolean }|null}
  *   `acceptedCleanup` is true only when this call recorded `cleanupDir` on a new
  *   map entry. Reuses increment refcount but do not adopt a second staging dir.
  */
-function retainSharedAgentIdentity(key, identityPath, cleanupDir = null) {
+function retainSharedAgentIdentity(key, identityPath, cleanupDir = null, socketPath = "", plain = false) {
   if (typeof key !== "string" || !key || typeof identityPath !== "string" || !identityPath) {
     return null;
   }
-  const existing = sharedAgentIdentityRefs.get(key);
+  const refKey = identityRefKey(key, socketPath);
+  const existing = sharedAgentIdentityRefs.get(refKey);
   if (existing) {
     existing.refCount += 1;
     // First retainer owns identityPath + cleanupDir for ssh-add -d / rm.
@@ -52,20 +80,24 @@ function retainSharedAgentIdentity(key, identityPath, cleanupDir = null) {
     refCount: 1,
     identityPath,
     cleanupDir: normalizedCleanup,
+    ...(plain ? { plain: true } : {}),
   };
-  sharedAgentIdentityRefs.set(key, entry);
+  sharedAgentIdentityRefs.set(refKey, entry);
+  if (normalizedCleanup) sharedCleanupDirs.set(normalizedCleanup, (sharedCleanupDirs.get(normalizedCleanup) || 0) + 1);
   return { entry, acceptedCleanup: Boolean(normalizedCleanup) };
 }
 
 /**
  * @param {string} key
+ * @param {string} [socketPath]
  * @returns {{ shouldRemove: boolean, identityPath: string|null, cleanupDir: string|null }}
  */
-function releaseSharedAgentIdentity(key) {
+function releaseSharedAgentIdentity(key, socketPath = "") {
   if (typeof key !== "string" || !key) {
     return { shouldRemove: false, identityPath: null, cleanupDir: null };
   }
-  const existing = sharedAgentIdentityRefs.get(key);
+  const refKey = identityRefKey(key, socketPath);
+  const existing = sharedAgentIdentityRefs.get(refKey);
   if (!existing) return { shouldRemove: false, identityPath: null, cleanupDir: null };
   existing.refCount -= 1;
   if (existing.refCount > 0) {
@@ -75,9 +107,10 @@ function releaseSharedAgentIdentity(key) {
       cleanupDir: existing.cleanupDir,
     };
   }
-  sharedAgentIdentityRefs.delete(key);
+  sharedAgentIdentityRefs.delete(refKey);
   return {
     shouldRemove: true,
+    ...(existing.plain ? { plain: true } : {}),
     identityPath: existing.identityPath,
     cleanupDir: existing.cleanupDir,
   };
@@ -87,12 +120,13 @@ function releaseSharedAgentIdentity(key) {
  * @param {string} key
  * @returns {boolean}
  */
-function hasSharedAgentIdentity(key) {
-  return typeof key === "string" && key.length > 0 && sharedAgentIdentityRefs.has(key);
+function hasSharedAgentIdentity(key, socketPath = "") {
+  return typeof key === "string" && key.length > 0 && sharedAgentIdentityRefs.has(identityRefKey(key, socketPath));
 }
 
 function resetSharedAgentIdentityRefsForTests() {
   sharedAgentIdentityRefs.clear();
+  sharedCleanupDirs.clear();
 }
 
 function resolveIdentityPath(rawPath, context = {}) {
@@ -133,6 +167,7 @@ function resolveIdentityPath(rawPath, context = {}) {
 
 async function loadPreferredPublicKeyBlobs(identityFilePaths, publicKeys, options, deps) {
   const preferred = new Set();
+  const identityBlobs = new Map();
   const resolvedIdentityPaths = [];
   const unavailablePublicKeyPaths = [];
   let providedPreferredCount = 0;
@@ -151,9 +186,18 @@ async function loadPreferredPublicKeyBlobs(identityFilePaths, publicKeys, option
     try {
       const contents = await deps.readFile(publicKeyPath, "utf8");
       const blob = publicKeyBlob(contents);
-      if (blob) preferred.add(blob);
+      if (blob) { preferred.add(blob); identityBlobs.set(identityPath, blob); }
       else unavailablePublicKeyPaths.push(publicKeyPath);
     } catch (error) {
+      // An unencrypted SK handle contains its public identity. Keep strict
+      // filtering even when the optional companion .pub file is absent.
+      try {
+        const key = utils.parseKey(await deps.readFile(identityPath, "utf8"));
+        if (!(key instanceof Error) && key.type?.startsWith("sk-")) {
+          const blob = publicKeyBlob(key);
+          if (blob) { preferred.add(blob); identityBlobs.set(identityPath, blob); continue; }
+        }
+      } catch { /* retain the missing-selector error below */ }
       unavailablePublicKeyPaths.push(publicKeyPath);
       deps.log?.("Configured SSH public key is unavailable", {
         publicKeyPath,
@@ -161,7 +205,7 @@ async function loadPreferredPublicKeyBlobs(identityFilePaths, publicKeys, option
       });
     }
   }
-  return { preferred, providedPreferredCount, resolvedIdentityPaths, unavailablePublicKeyPaths };
+  return { preferred, providedPreferredCount, resolvedIdentityPaths, unavailablePublicKeyPaths, identityBlobs };
 }
 
 function getIdentities(agent) {
@@ -335,7 +379,7 @@ async function prepareSystemSshAgent(options, injected = {}) {
     askpassEnv: injected.askpassEnv,
   };
   const agent = deps.createAgent(options.socketPath);
-  const { preferred, providedPreferredCount, resolvedIdentityPaths, unavailablePublicKeyPaths } = await loadPreferredPublicKeyBlobs(
+  const { preferred, providedPreferredCount, resolvedIdentityPaths, unavailablePublicKeyPaths, identityBlobs } = await loadPreferredPublicKeyBlobs(
     options.identityFilePaths,
     options.agentPublicKeys,
     { hostname: options.hostname, port: options.port, username: options.username, env: deps.env },
@@ -397,11 +441,12 @@ async function prepareSystemSshAgent(options, injected = {}) {
       const pubPath = identityPath.endsWith(".pub") ? identityPath : `${identityPath}.pub`;
       const certPath = identityPath.endsWith(".pub") ? null : `${identityPath}-cert.pub`;
       /** @type {string|null} */
-      let blob = null;
+      let blob = identityBlobs.get(identityPath) || null;
       /** @type {string|null} */
       let certBlob = null;
-      let bareAlreadyPresent = false;
+      let bareAlreadyPresent = Boolean(blob && loadedBlobs.has(blob));
       let companionCertificateMissing = false;
+      let certificateAlreadyPresent = false;
       try {
         const pub = await deps.readFile(pubPath, "utf8");
         blob = publicKeyBlob(pub);
@@ -409,14 +454,15 @@ async function prepareSystemSshAgent(options, injected = {}) {
       } catch {
         // No .pub selector — still attempt ssh-add when requested.
       }
-      if (bareAlreadyPresent && certPath) {
+      if (certPath) {
         // OpenSSH ssh-add loads `<identity>-cert.pub` with the private handle.
         // If only the bare key is already advertised, still run ssh-add so a
         // staged vault certificate reaches the agent.
         try {
           const certPub = await deps.readFile(certPath, "utf8");
           certBlob = publicKeyBlob(certPub);
-          if (certBlob && !loadedBlobs.has(certBlob)) {
+          certificateAlreadyPresent = Boolean(certBlob && loadedBlobs.has(certBlob));
+          if (certBlob && !certificateAlreadyPresent) {
             companionCertificateMissing = true;
           }
         } catch {
@@ -428,8 +474,11 @@ async function prepareSystemSshAgent(options, injected = {}) {
         // session loaded it). Pre-existing user agent identities must not be
         // adopted into cleanup — last release would ssh-add -d them.
         const key = blob || identityPath;
-        if (hasSharedAgentIdentity(key)) {
-          sharedAgentIdentities.push({ key, identityPath });
+        if (hasSharedAgentIdentity(key, options.socketPath)) {
+          sharedAgentIdentities.push({ key, identityPath, plain: true });
+        }
+        if (certBlob && hasSharedAgentIdentity(certBlob, options.socketPath)) {
+          sharedAgentIdentities.push({ key: certBlob, identityPath: certPath });
         }
         continue;
       }
@@ -465,21 +514,17 @@ async function prepareSystemSshAgent(options, injected = {}) {
           }
         }
         const key = blob || identityPath;
-        if (bareAlreadyPresent) {
-          // Reloaded only to advertise a missing companion certificate.
-          if (hasSharedAgentIdentity(key)) {
-            // Another Netcatty session already owns the bare identity; join its
-            // refcount so the last release can ssh-add -d the private handle.
-            sharedAgentIdentities.push({ key, identityPath });
-          } else if (certBlob && certPath) {
-            // Bare key was already in the shared agent (user-managed). Track the
-            // certificate alone so cleanup removes only what we added.
-            newlyLoadedIdentityPaths.push(certPath);
+        if (!bareAlreadyPresent) {
+          newlyLoadedIdentityPaths.push(identityPath);
+          sharedAgentIdentities.push({ key, identityPath, plain: true });
+        } else if (hasSharedAgentIdentity(key, options.socketPath)) {
+          sharedAgentIdentities.push({ key, identityPath, plain: true });
+        }
+        if (certBlob && certPath) {
+          if (!certificateAlreadyPresent) newlyLoadedIdentityPaths.push(certPath);
+          if (!certificateAlreadyPresent || hasSharedAgentIdentity(certBlob, options.socketPath)) {
             sharedAgentIdentities.push({ key: certBlob, identityPath: certPath });
           }
-        } else {
-          newlyLoadedIdentityPaths.push(identityPath);
-          sharedAgentIdentities.push({ key, identityPath });
         }
         deps.log?.("Loaded identity into SSH agent", { identityPath });
       } catch (error) {
@@ -499,7 +544,8 @@ async function prepareSystemSshAgent(options, injected = {}) {
     // into a shared (e.g. Windows system) agent.
     for (const identityPath of newlyLoadedIdentityPaths) {
       try {
-        const args = ["-d", identityPath];
+        const plain = sharedAgentIdentities.some(entry => entry.identityPath === identityPath && entry.plain);
+        const args = plain ? ["-d", "-k", identityPath] : ["-d", identityPath];
         if (deps.runSshAdd) await deps.runSshAdd(args);
         else {
           await defaultRunSshAdd(args, {
@@ -534,6 +580,8 @@ async function prepareSystemSshAgent(options, injected = {}) {
 
 module.exports = {
   IdentityAwareAgent,
+  withAgentIdentityLock,
+  finishSharedCleanupDir,
   prepareSystemSshAgent,
   publicKeyBlob,
   resolveIdentityPath,

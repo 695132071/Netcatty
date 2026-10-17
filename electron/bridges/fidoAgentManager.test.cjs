@@ -20,6 +20,13 @@ test("parseAgentStdout extracts sock and pid", () => {
   assert.equal(parsed.agentPid, 9999);
 });
 
+test("parseAgentStdout preserves spaces in Unix and Windows socket paths", () => {
+  for (const socket of ["/tmp/profile name/agent.sock", "C:\\Users\\First Last\\agent.sock"]) {
+    assert.equal(parseAgentStdout(`SSH_AUTH_SOCK=${socket}; export SSH_AUTH_SOCK;`).socketPath, socket);
+    assert.equal(parseAgentStdout(`SSH_AUTH_SOCK='${socket}'; export SSH_AUTH_SOCK;`).socketPath, socket);
+  }
+});
+
 test("getTempBase uses Netcatty managed temp dir (no os.tmpdir fallback)", () => {
   const tempDirBridge = require("./tempDirBridge.cjs");
   const managed = tempDirBridge.getTempDir();

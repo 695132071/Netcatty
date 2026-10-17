@@ -46,7 +46,17 @@ diff --git a/node_modules/ssh2/lib/agent.js b/node_modules/ssh2/lib/agent.js
  
                const req = new AgentInboundRequest(msgType, ctx);
                this[SYM_REQS].push(req);
-@@ -781,7 +788,11 @@
+@@ -732,6 +739,9 @@
+             default: {
+               const req = new AgentInboundRequest(msgType);
+               this[SYM_REQS].push(req);
++              // Unknown extensions can carry data. Consume their entire frame
++              // before reading the next request on this connection.
++              p = 4 + this[SYM_MSGLEN];
+               this.failureReply(req);
+             }
+           }
+@@ -781,7 +791,11 @@
        if (pubKey instanceof Error)
          throw new Error('Invalid public key argument');
  
@@ -59,7 +69,7 @@ diff --git a/node_modules/ssh2/lib/agent.js b/node_modules/ssh2/lib/agent.js
          switch (options.hash) {
            case 'sha256':
              flags = SSH_AGENT_RSA_SHA2_256;
-@@ -992,19 +1003,24 @@
+@@ -992,19 +1006,24 @@
        let p = 0;
        const sigFormat = req.getContext();
        const sigFormatLen = Buffer.byteLength(sigFormat);

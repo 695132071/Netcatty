@@ -189,6 +189,59 @@ test("materializeSkPrivateKeyFile fails closed without managed temp dir", async 
   );
 });
 
+test("failed companion writes remove the partially staged SK handle", async () => {
+  const root = fs.mkdtempSync(path.join(require("./tempDirBridge.cjs").getTempDir(), "fw-"));
+  try {
+    for (const failAt of [2, 3]) {
+      let writes = 0;
+      const injectedFs = { promises: { ...fs.promises, writeFile: async (...args) => {
+        writes += 1;
+        if (writes === failAt) throw Object.assign(new Error("fixture write denied"), { code: "EACCES" });
+        return fs.promises.writeFile(...args);
+      } } };
+      await assert.rejects(materializeSkPrivateKeyFile(makeSkPrivatePem(SK_SSH_ED25519), {
+        fs: injectedFs, publicKey: skPub, certificate: "fixture certificate",
+        tempDirBridge: { getTempDir: () => root },
+      }), { code: "EACCES" });
+      assert.deepEqual(fs.readdirSync(root), [], "partial credential directories must not remain");
+    }
+  } finally { fs.rmSync(root, { recursive: true, force: true }); }
+});
+
+test("failed staging rejects the selected-key login and releases the acquired agent", async () => {
+  const manager = require("./fidoAgentManager.cjs");
+  const askpass = require("./fidoAskpass.cjs");
+  const system = require("./systemSshAgent.cjs");
+  const saved = { acquire: manager.acquireFidoAgent, release: manager.releaseFidoAgent,
+    lease: askpass.releaseFidoAskpassLease, prepare: system.prepareSystemSshAgent, write: fs.promises.writeFile };
+  let prepared = false;
+  let releases = 0;
+  let leases = 0;
+  manager.acquireFidoAgent = async () => ({ socketPath: "/tmp/staging-failure.sock", generation: 7,
+    owned: true, askpassEnv: { NETCATTY_FIDO_ASKPASS_LEASE: "staging-failure" } });
+  manager.releaseFidoAgent = () => { releases += 1; };
+  askpass.releaseFidoAskpassLease = () => { leases += 1; };
+  system.prepareSystemSshAgent = async () => { prepared = true; return {}; };
+  fs.promises.writeFile = async (...args) => {
+    if (path.basename(args[0]) === "id_sk") throw Object.assign(new Error("fixture write denied"), { code: "EACCES" });
+    return saved.write(...args);
+  };
+  try {
+    await assert.rejects(require("./sshAuthHelper.cjs").prepareSystemSshAgentForAuth({
+      privateKey: makeSkPrivatePem(SK_SSH_ED25519),
+    }), { code: "EACCES" });
+    assert.equal(prepared, false, "staging failure must not offer other sessions' identities");
+    assert.equal(releases, 1);
+    assert.equal(leases, 1);
+  } finally {
+    manager.acquireFidoAgent = saved.acquire;
+    manager.releaseFidoAgent = saved.release;
+    askpass.releaseFidoAskpassLease = saved.lease;
+    system.prepareSystemSshAgent = saved.prepare;
+    fs.promises.writeFile = saved.write;
+  }
+});
+
 test("prepareSystemSshAgentForAuth releases FIDO resources when preparation throws", async () => {
   const fidoAgentManager = require("./fidoAgentManager.cjs");
   const fidoAskpass = require("./fidoAskpass.cjs");
@@ -307,8 +360,10 @@ test("owned FIDO agent reference-counts identities: ssh-add -d only on the last 
 
     // Closing session A must not leave A's identity advertised to session B.
     agentA._releaseNetcattyFidoAgent();
+    await new Promise(setImmediate);
     assert.deepEqual(deleted, [], "first release must keep the identity for the surviving session");
     agentB._releaseNetcattyFidoAgent();
+    await new Promise(setImmediate);
     assert.deepEqual(deleted, [pathA], "last release removes the identity from the owned agent");
   } finally {
     fidoAgentManager.acquireFidoAgent = originalAcquire;
@@ -378,6 +433,7 @@ test("prepareSystemSshAgentForAuth removes newly loaded identities from a shared
     assert.ok(agent);
     assert.equal(typeof agent._releaseNetcattyFidoAgent, "function");
     agent._releaseNetcattyFidoAgent();
+    await new Promise(setImmediate);
     assert.deepEqual(deleted, [identityPath]);
     assert.equal(releasedAgent, 1);
   } finally {
@@ -462,8 +518,10 @@ test("shared Windows agent defers ssh-add -d until the last identity user releas
     }, "[test-b]");
 
     agentA._releaseNetcattyFidoAgent();
+    await new Promise(setImmediate);
     assert.deepEqual(deleted, [], "first release must keep the shared identity loaded");
     agentB._releaseNetcattyFidoAgent();
+    await new Promise(setImmediate);
     assert.deepEqual(deleted, [pathA], "last release removes the identity via the retained path");
   } finally {
     fidoAgentManager.acquireFidoAgent = originalAcquire;
@@ -505,8 +563,8 @@ test("shared Windows agent keeps staging dir until ssh-add -d finishes", async (
   fidoAskpass.releaseFidoAskpassLease = () => {};
   // Prep is mocked (no real ssh-add); still attach staging cleanup the way
   // materializeSkPrivateKeyFile + retainSharedAgentIdentity would in production.
-  systemSshAgent.retainSharedAgentIdentity = (key, idPath, cleanupDir) => (
-    originalRetain(key, idPath, cleanupDir || stagingDir)
+  systemSshAgent.retainSharedAgentIdentity = (key, idPath, cleanupDir, socketPath) => (
+    originalRetain(key, idPath, cleanupDir || stagingDir, socketPath)
   );
   systemSshAgent.prepareSystemSshAgent = async () => ({
     getIdentities: (cb) => cb(null, []),
@@ -535,6 +593,7 @@ test("shared Windows agent keeps staging dir until ssh-add -d finishes", async (
     assert.equal(typeof agent._releaseNetcattyFidoAgent, "function");
 
     agent._releaseNetcattyFidoAgent();
+    await new Promise(setImmediate);
     assert.ok(pendingDeleteCb, "expected ssh-add -d to start");
     assert.equal(
       fs.existsSync(stagingDir),

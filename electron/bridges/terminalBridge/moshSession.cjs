@@ -145,7 +145,7 @@ function createMoshSessionApi(ctx) {
       }
     }
 
-    async function prepareMoshSshAgentOptions(options, sender) {
+    async function prepareMoshSshAgentOptions(options, sender, sshExe) {
       const {
         enhanceAuthOptionsForFido,
         resolvePreparedAgentSocket,
@@ -158,7 +158,7 @@ function createMoshSessionApi(ctx) {
       let releasePreparedAgent = null;
       try {
         if (options.useSshAgent === true || forceFido) {
-          const agent = await prepareSystemSshAgentForAuth(prepOptions, "[Mosh]");
+          const agent = await prepareSystemSshAgentForAuth({ ...prepOptions, nativeFidoAgent: true, nativeSshPath: sshExe }, "[Mosh]");
           if (typeof agent?._releaseNetcattyFidoAgent === "function") {
             releasePreparedAgent = agent._releaseNetcattyFidoAgent;
           }
@@ -412,7 +412,9 @@ function createMoshSessionApi(ctx) {
         if (options.useSshAgent === false) {
           sshArgs.push("-o", "IdentityAgent=none");
         } else if (options.useSshAgent && options._resolvedSshAgentSocket) {
-          sshArgs.push("-o", `IdentityAgent=${options._resolvedSshAgentSocket}`);
+          // -o is parsed again as ssh_config syntax, even with argv spawning.
+          const quotedSocket = `"${String(options._resolvedSshAgentSocket).replace(/(["\\])/g, "\\$1")}"`;
+          sshArgs.push("-o", `IdentityAgent=${quotedSocket}`);
           if (options.identitiesOnly && !sshArgs.includes("IdentitiesOnly=yes")) {
             sshArgs.push("-o", "IdentitiesOnly=yes");
           }
@@ -1011,7 +1013,7 @@ function createMoshSessionApi(ctx) {
         throw new Error("OpenSSH client not found. Netcatty needs ssh to start the remote mosh-server handshake.");
       }
     
-      const preparedOptions = await prepareMoshSshAgentOptions(options, event?.sender);
+      const preparedOptions = await prepareMoshSshAgentOptions(options, event?.sender, sshExe);
       return startMoshSessionViaHandshake(event, preparedOptions, { bareClient, sshExe });
     }
 

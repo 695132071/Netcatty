@@ -117,10 +117,10 @@ function resolveSshAgentBinary(env = process.env, platform = process.platform) {
 }
 
 function parseAgentStdout(stdout) {
-  const sockMatch = /SSH_AUTH_SOCK=([^;\s]+)/.exec(stdout || "");
+  const sockMatch = /SSH_AUTH_SOCK=([^;\r\n]+)/.exec(stdout || "");
   const pidMatch = /SSH_AGENT_PID=(\d+)/.exec(stdout || "");
   return {
-    socketPath: sockMatch?.[1] || null,
+    socketPath: sockMatch?.[1]?.trim().replace(/^(['"])(.*)\1$/, "$2") || null,
     agentPid: pidMatch ? Number(pidMatch[1]) : null,
   };
 }
@@ -230,7 +230,9 @@ async function acquireFidoAgent(options = {}) {
       // Caller-specific askpass lease — never reuse the starter's resolver.
       return {
         socketPath: shared.socketPath,
-        askpassEnv: buildFidoAskpassEnv({ resolveWebContents: options.resolveWebContents }),
+        askpassEnv: buildFidoAskpassEnv({ resolveWebContents: options.resolveWebContents,
+          sshBinaryPath: resolveSshAgentBinary(options.env || process.env, options.platform || process.platform),
+          env: options.env }),
         owned: shared.owned,
         generation: shared.generation,
         sshAddPath: shared.sshAddPath || null,
@@ -242,7 +244,9 @@ async function acquireFidoAgent(options = {}) {
     refCount += 1;
     return {
       socketPath: agentSocket,
-      askpassEnv: buildFidoAskpassEnv({ resolveWebContents: options.resolveWebContents }),
+      askpassEnv: buildFidoAskpassEnv({ resolveWebContents: options.resolveWebContents,
+        sshBinaryPath: resolveSshAgentBinary(options.env || process.env, options.platform || process.platform),
+        env: options.env }),
       // Preserve ownership of the live singleton (Windows system-pipe fallback is not owned).
       owned: Boolean(agentChild),
       generation: agentGeneration,
@@ -256,8 +260,10 @@ async function acquireFidoAgent(options = {}) {
   startingPromise = (async () => {
     const run = options.execFile || execFileAsync;
     const env = options.env || process.env;
-    const askpassEnv = buildFidoAskpassEnv({ resolveWebContents: options.resolveWebContents });
     const platform = options.platform || process.platform;
+    const sshAgent = resolveSshAgentBinary(env, platform);
+    const askpassEnv = buildFidoAskpassEnv({ resolveWebContents: options.resolveWebContents,
+      sshBinaryPath: sshAgent, env });
     const releaseStarterAskpassLease = () => {
       try {
         releaseFidoAskpassLease(askpassEnv?.NETCATTY_FIDO_ASKPASS_LEASE);
@@ -267,10 +273,11 @@ async function acquireFidoAgent(options = {}) {
     };
 
     try {
-      const sshAgent = resolveSshAgentBinary(env, platform);
       const sshAddPath = companionSshAddPath(sshAgent);
 
-      agentDir = path.join(getTempBase(), `netcatty-fido-agent-${randomUUID().slice(0, 8)}`);
+      // MSYS/Cygwin sockaddr_un still has the Unix 108-byte path limit. The
+      // managed base already identifies Netcatty; keep the socket suffix short.
+      agentDir = path.join(getTempBase(), `fa-${randomUUID().slice(0, 8)}`);
       fs.mkdirSync(agentDir, { recursive: true, mode: 0o700 });
 
       // Keep SSH_ASKPASS on the agent so verify-required sk-helper prompts work,
@@ -285,7 +292,7 @@ async function acquireFidoAgent(options = {}) {
       const sockCandidates = platform === "win32"
         ? [
           `\\\\.\\pipe\\netcatty-fido-agent-${randomUUID().slice(0, 8)}`,
-          path.join(agentDir, "agent.sock"),
+          path.join(agentDir, "agent.sock").replace(/\\/g, "/"),
         ]
         : [path.join(agentDir, "agent.sock")];
 

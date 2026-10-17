@@ -90,6 +90,8 @@ async function generateFidoSshKeyPair(options = {}) {
       const { buildFidoAskpassEnv } = require("./fidoAskpass.cjs");
       askpassEnv = buildFidoAskpassEnv({
         resolveWebContents: options.resolveWebContents,
+        sshBinaryPath: sshKeygen,
+        env,
       });
       askpassLeaseId = askpassEnv.NETCATTY_FIDO_ASKPASS_LEASE || null;
     } catch {
