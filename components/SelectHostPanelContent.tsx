@@ -429,7 +429,7 @@ export const SelectHostPanelContent: React.FC<SelectHostPanelContentProps> = ({
           data-active={isActive ? 'true' : undefined}
           className={cn(
             'flex h-full min-h-0 items-center gap-2.5 overflow-hidden rounded-lg px-2.5 transition-colors',
-            isActive ? 'bg-primary/10 ring-1 ring-primary/40' : 'hover:bg-muted/70',
+            isActive ? 'bg-primary/10' : 'hover:bg-muted/70',
           )}
           onClick={() => {
             if (navIndex >= 0) setActiveNavIndex(navIndex);
@@ -487,9 +487,7 @@ export const SelectHostPanelContent: React.FC<SelectHostPanelContentProps> = ({
         aria-label={t('selectHost.toggleHost', { name: host.label })}
         className={cn(
           'flex h-full min-h-0 cursor-pointer items-center gap-2.5 overflow-hidden rounded-lg px-2.5 transition-colors',
-          isSelected ? 'bg-muted' : isActive ? 'bg-primary/10' : 'hover:bg-muted/70',
-          // Keep keyboard cursor visible even when the host is already selected.
-          isActive && 'ring-1 ring-primary/40',
+          isActive ? 'bg-primary/10' : isSelected ? 'bg-muted' : 'hover:bg-muted/70',
         )}
         onClick={() => {
           if (navIndex >= 0) setActiveNavIndex(navIndex);

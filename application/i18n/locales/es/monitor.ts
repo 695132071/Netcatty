@@ -1,4 +1,5 @@
 export const esMonitorMessages = {
+  "monitor.actions": "Acciones del panel",
   "monitor.unavailable": "La monitorización no está disponible. Iníciala de nuevo cuando se restablezca la conexión.",
   "monitor.username": "Usuario",
   "monitor.password": "Contraseña (solo esta ejecución)",
@@ -43,6 +44,8 @@ export const esMonitorMessages = {
   "monitor.diskCapacityUnknown": "Capacidad no disponible",
   "monitor.rootDisk": "Partición raíz",
   "monitor.network": "Red",
+  "monitor.download": "Descarga",
+  "monitor.upload": "Subida",
   "monitor.updated": "Actualizado",
   "monitor.updatedAt": "Actualizado: {time}",
   "monitor.noSamples": "Esperando la primera lectura",

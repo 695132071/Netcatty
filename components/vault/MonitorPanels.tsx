@@ -42,7 +42,6 @@ import { Input } from "../ui/input";
 import { Label } from "../ui/label";
 import { Textarea } from "../ui/textarea";
 import { Combobox } from "../ui/combobox";
-import { ScrollArea } from "../ui/scroll-area";
 import {
   Select,
   SelectContent,
@@ -69,7 +68,7 @@ import SelectHostPanel from "../SelectHostPanel";
 import { DistroAvatar } from "../DistroAvatar";
 import { ResourceBar } from "../systemManager/ResourceBar";
 import { MonitorDiskUsage } from "./MonitorDiskUsage";
-import { VaultHeaderSearch, VaultPageHeader } from "./VaultPageHeader";
+import { VaultHeaderSearch, VaultPageHeader, vaultHeaderIconButtonClass, vaultHeaderSecondaryButtonClass } from "./VaultPageHeader";
 import { toast } from "../ui/toast";
 
 const emptyMonitorPoints: MonitorPoint[] = [];
@@ -451,19 +450,87 @@ export function MonitorPanels({
       className="relative flex min-h-0 min-w-0 flex-1 overflow-hidden"
       data-section="vault-monitor"
     >
-      <div className="flex min-h-0 min-w-0 flex-1 flex-col">
-        <VaultPageHeader>
-          <Gauge size={18} />
-          <h1 className="font-semibold text-sm">{t("monitor.title")}</h1>
-          <div className="flex-1" />
-          {!!runtime.count && (
-            <Button variant="ghost" size="sm" onClick={monitorActions.stopAll}>
-              {t("monitor.stopAll")}
+      <div className="flex min-h-0 min-w-0 flex-1 flex-col [container-type:inline-size] [container-name:monitor-main]">
+        <VaultPageHeader contentClassName="gap-2 overflow-x-auto [scrollbar-width:none]">
+          {panel && (
+            <>
+              <Combobox
+                options={panels.map((p) => ({
+                  value: p.id,
+                  label: p.name,
+                  sublabel: p.description,
+                }))}
+                value={panel.id}
+                onValueChange={(id) => {
+                  setSelected(id);
+                  setDetail(null);
+                  setEditor(null);
+                }}
+                triggerClassName="w-56 min-w-24 shrink"
+                clearable={false}
+                ariaLabel={t("monitor.choosePanel")}
+              />
+              <Button
+                variant="ghost"
+                size="icon"
+                className={cn(vaultHeaderIconButtonClass, "shrink-0")}
+                aria-label={t("monitor.edit")}
+                onClick={() => startEdit(panel)}
+              >
+                <Pencil size={15} />
+              </Button>
+              <AsideActionMenu triggerClassName={cn(vaultHeaderIconButtonClass, "shrink-0 inline-flex items-center justify-center")} ariaLabel={t("monitor.actions")}>
+                <AsideActionMenuItem
+                  onClick={() => {
+                    void duplicate();
+                  }}
+                >
+                  <Copy size={14} className="mr-2" />
+                  {t("monitor.copy")}
+                </AsideActionMenuItem>
+                <AsideActionMenuItem
+                  variant="destructive"
+                  onClick={() => setDeleting(panel)}
+                >
+                  <Trash2 size={14} className="mr-2" />
+                  {t("monitor.delete")}
+                </AsideActionMenuItem>
+                {!!runtime.count && (
+                  <AsideActionMenuItem onClick={monitorActions.stopAll}>
+                    <Square size={14} className="mr-2" />
+                    {t("monitor.stopAll")}
+                  </AsideActionMenuItem>
+                )}
+              </AsideActionMenu>
+            </>
+          )}
+          <div className="min-w-0 flex-1" />
+          {panel && (
+            <Button
+              variant="secondary"
+              size="sm"
+              className={cn(vaultHeaderSecondaryButtonClass, "shrink-0")}
+              aria-label={t(running ? "monitor.stop" : "monitor.start")}
+              title={t(running ? "monitor.stop" : "monitor.start")}
+              onClick={() =>
+                running
+                  ? monitorActions.stop(panel.id)
+                  : monitorActions.start(panel.id)
+              }
+            >
+              {running ? <Square size={13} /> : <Play size={13} />}
+              <span className="monitor-header-action-label">{t(running ? "monitor.stop" : "monitor.start")}</span>
             </Button>
           )}
-          <Button size="sm" className="gap-1.5" onClick={() => startEdit(null)}>
+          <Button
+            variant="secondary"
+            className={cn(vaultHeaderSecondaryButtonClass, "shrink-0")}
+            aria-label={t("monitor.create")}
+            title={t("monitor.create")}
+            onClick={() => startEdit(null)}
+          >
             <Plus size={14} />
-            {t("monitor.create")}
+            <span className="monitor-header-action-label">{t("monitor.create")}</span>
           </Button>
         </VaultPageHeader>
         {runtime.unavailable && (
@@ -487,63 +554,6 @@ export function MonitorPanels({
             </div>
           ) : (
             <>
-              <div className="flex flex-wrap items-center gap-2 p-4 pb-2">
-                <Combobox
-                  options={panels.map((p) => ({
-                    value: p.id,
-                    label: p.name,
-                    sublabel: p.description,
-                  }))}
-                  value={panel.id}
-                  onValueChange={(id) => {
-                    setSelected(id);
-                    setDetail(null);
-                    setEditor(null);
-                  }}
-                  triggerClassName="w-64 max-w-full shrink-0"
-                  clearable={false}
-                  ariaLabel={t("monitor.choosePanel")}
-                />
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  aria-label={t("monitor.edit")}
-                  onClick={() => startEdit(panel)}
-                >
-                  <Pencil size={15} />
-                </Button>
-                <AsideActionMenu>
-                  <AsideActionMenuItem
-                    onClick={() => {
-                      void duplicate();
-                    }}
-                  >
-                    <Copy size={14} className="mr-2" />
-                    {t("monitor.copy")}
-                  </AsideActionMenuItem>
-                  <AsideActionMenuItem
-                    variant="destructive"
-                    onClick={() => setDeleting(panel)}
-                  >
-                    <Trash2 size={14} className="mr-2" />
-                    {t("monitor.delete")}
-                  </AsideActionMenuItem>
-                </AsideActionMenu>
-                <div className="flex-1" />
-                <Button
-                  variant={running ? "secondary" : "default"}
-                  size="sm"
-                  className="gap-1.5"
-                  onClick={() =>
-                    running
-                      ? monitorActions.stop(panel.id)
-                      : monitorActions.start(panel.id)
-                  }
-                >
-                  {running ? <Square size={13} /> : <Play size={13} />}
-                  {t(running ? "monitor.stop" : "monitor.start")}
-                </Button>
-              </div>
               <div className="flex flex-wrap items-center gap-2 px-4 py-2">
                 <div className="flex h-8 rounded-md bg-muted/50 p-0.5">
                   {(["list", "charts"] as const).map((view) => (
@@ -637,7 +647,7 @@ export function MonitorPanels({
                   </SelectContent>
                 </Select>
               </div>
-              <ScrollArea className="min-h-0 min-w-0 flex-1 [&>[data-radix-scroll-area-viewport]>div]:!block [&>[data-radix-scroll-area-viewport]>div]:!min-w-0">
+              <div className="min-h-0 min-w-0 flex-1 overflow-auto" data-section="vault-monitor-list">
                 <div className="p-4">
                   {!rows.length ? (
                     <p className="p-8 text-center text-sm text-muted-foreground">
@@ -650,8 +660,8 @@ export function MonitorPanels({
                           key={id}
                           {...dragProps(id)}
                           className={cn(
-                            "flex h-full min-w-0 cursor-grab flex-col overflow-hidden rounded-xl bg-card/70 p-4 text-left shadow-sm shadow-black/[0.02] transition-colors hover:bg-card active:cursor-grabbing focus-visible:outline focus-visible:outline-primary",
-                            dragging?.panelId === panel.id && dragging.hostId === id && "opacity-40",
+                            "flex h-full min-w-0 cursor-default flex-col overflow-hidden rounded-xl bg-card/70 p-4 text-left shadow-sm shadow-black/[0.02] transition-colors hover:bg-card focus-visible:outline focus-visible:outline-primary",
+                            dragging?.panelId === panel.id && dragging.hostId === id && "cursor-grabbing opacity-40",
                             dropTarget === id && "bg-accent",
                             status(host, state) !== "live" &&
                               "text-muted-foreground",
@@ -747,8 +757,8 @@ export function MonitorPanels({
                                 key={id}
                                 {...dragProps(id)}
                                 className={cn(
-                                  "cursor-grab [&>td]:bg-card/70 [&>td]:transition-colors hover:[&>td]:bg-card [&>td:first-child]:rounded-l-xl [&>td:last-child]:rounded-r-xl",
-                                  dragging?.panelId === panel.id && dragging.hostId === id && "opacity-40",
+                                  "cursor-default [&>td]:bg-card/70 [&>td]:transition-colors hover:[&>td]:bg-card [&>td:first-child]:rounded-l-xl [&>td:last-child]:rounded-r-xl",
+                                  dragging?.panelId === panel.id && dragging.hostId === id && "cursor-grabbing opacity-40",
                                   dropTarget === id && "[&>td]:bg-accent",
                                   status(host, state) !== "live" &&
                                     "text-muted-foreground",
@@ -757,7 +767,7 @@ export function MonitorPanels({
                                 <td className="px-3 py-3">
                                   <button
                                     draggable
-                                    className="flex items-center gap-2.5 text-left hover:underline"
+                                    className="flex cursor-inherit items-center gap-2.5 text-left hover:underline"
                                     onClick={() => {
                                       setEditor(null);
                                       setDetail(id);
@@ -798,10 +808,16 @@ export function MonitorPanels({
                                   <MonitorDiskUsage stats={s} />
                                 </td>
                                 <td className="px-3 tabular-nums whitespace-nowrap">
-                                  ↓{" "}
-                                  {rate(s?.networkReady ? s.netRxSpeed : null)}
-                                  <br />↑{" "}
-                                  {rate(s?.networkReady ? s.netTxSpeed : null)}
+                                  <div className="flex items-center gap-1.5">
+                                    <ArrowDown size={13} className="shrink-0 text-sky-600 dark:text-sky-400" />
+                                    <span className="sr-only">{t("monitor.download")}: </span>
+                                    {rate(s?.networkReady ? s.netRxSpeed : null)}
+                                  </div>
+                                  <div className="flex items-center gap-1.5">
+                                    <ArrowUp size={13} className="shrink-0 text-violet-600 dark:text-violet-400" />
+                                    <span className="sr-only">{t("monitor.upload")}: </span>
+                                    {rate(s?.networkReady ? s.netTxSpeed : null)}
+                                  </div>
                                 </td>
                                 <td className="px-3 whitespace-nowrap">
                                   {state?.at
@@ -819,7 +835,7 @@ export function MonitorPanels({
                     {t("monitor.memoryOnlyHint")}
                   </p>
                 </div>
-              </ScrollArea>
+              </div>
             </>
           )}
         </div>

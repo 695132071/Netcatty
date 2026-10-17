@@ -1,4 +1,5 @@
 export const zhTWMonitorMessages = {
+  "monitor.actions": "面板操作",
   "monitor.unavailable": "監控暫時無法使用，連線恢復後請重新開始。",
   "monitor.username": "使用者名稱",
   "monitor.password": "密碼（僅本次使用）",
@@ -41,6 +42,8 @@ export const zhTWMonitorMessages = {
   "monitor.diskCapacityUnknown": "暫無容量讀數",
   "monitor.rootDisk": "根分割區",
   "monitor.network": "網路",
+  "monitor.download": "下載",
+  "monitor.upload": "上傳",
   "monitor.updated": "更新時間",
   "monitor.updatedAt": "更新於 {time}",
   "monitor.noSamples": "等待第一次讀數",

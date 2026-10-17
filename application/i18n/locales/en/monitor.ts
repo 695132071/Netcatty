@@ -1,4 +1,5 @@
 export const enMonitorMessages = {
+  "monitor.actions": "Panel actions",
   "monitor.unavailable": "Monitoring is unavailable. Try starting again when the connection is restored.",
   "monitor.username": "Username",
   "monitor.password": "Password (this run only)",
@@ -43,6 +44,8 @@ export const enMonitorMessages = {
   "monitor.diskCapacityUnknown": "Capacity unavailable",
   "monitor.rootDisk": "Root partition",
   "monitor.network": "Network",
+  "monitor.download": "Download",
+  "monitor.upload": "Upload",
   "monitor.updated": "Updated",
   "monitor.updatedAt": "Updated {time}",
   "monitor.noSamples": "Waiting for the first reading",

@@ -173,16 +173,18 @@ export const AsidePanelFooter: React.FC<{ children: ReactNode; className?: strin
 // Action Menu Component (for the ... button)
 interface AsideActionMenuProps {
     children: ReactNode;
+    triggerClassName?: string;
+    ariaLabel?: string;
 }
 
-export const AsideActionMenu: React.FC<AsideActionMenuProps> = ({ children }) => {
+export const AsideActionMenu: React.FC<AsideActionMenuProps> = ({ children, triggerClassName, ariaLabel }) => {
     const [open, setOpen] = useState(false);
     const close = useCallback(() => setOpen(false), []);
 
     return (
         <Popover open={open} onOpenChange={setOpen}>
             <PopoverTrigger asChild>
-                <button className="p-1.5 hover:bg-muted rounded-md transition-colors cursor-pointer">
+                <button aria-label={ariaLabel} className={cn("p-1.5 hover:bg-muted rounded-md transition-colors cursor-pointer", triggerClassName)}>
                     <MoreVertical size={18} />
                 </button>
             </PopoverTrigger>

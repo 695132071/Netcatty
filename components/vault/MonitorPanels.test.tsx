@@ -158,7 +158,11 @@ for (const view of ["list", "charts"] as const) {
     assert.ok(icon);
     assert.equal((icon.parentElement as HTMLElement).style.backgroundColor, "rgb(147, 51, 234)");
     assert.ok(document.querySelector('img[src="/distro/ubuntu.svg"]'));
-    assert.ok(document.querySelector(".lucide-gauge"));
+    assert.equal(document.querySelector("header .lucide-gauge"), null);
     assert.equal(document.querySelector(".lucide-activity"), null);
+    if (view === "list") {
+      const network = document.querySelector("tbody tr")!.children[5];
+      assert.deepEqual([...network.querySelectorAll(".sr-only")].map((e) => e.textContent), ["Download: ", "Upload: "]);
+    }
   });
 }

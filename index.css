@@ -2130,3 +2130,8 @@ html[data-theme-transition] *::after {
   --terminal-host-tree-drop-bg: var(--nc-term-host-tree-drop-bg, transparent);
   --terminal-host-tree-folder-fg: var(--nc-term-host-tree-folder-fg, var(--foreground));
 }
+
+/* Monitoring's single-row header follows the available pane width. */
+@container monitor-main (max-width: 760px) {
+  .monitor-header-action-label { display: none; }
+}
