@@ -26,6 +26,7 @@ const OPTIONAL_ENTITY_KEYS = new Set<CloudSyncPayloadEntityKey>([
   'portForwardingRules',
   'browserBookmarks',
   'groupConfigs',
+  'monitorPanels',
   'aiSessions',
 ]);
 

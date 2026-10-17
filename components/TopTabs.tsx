@@ -1,3 +1,4 @@
+import { MonitorRunningIndicator } from './vault/MonitorPanels';
 import { Folder, FolderLock, Lock, Menu, MoreHorizontal, Plus, Settings, Sparkles } from 'lucide-react';
 import React, { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { fromEditorTabId, isEditorTabId, toEditorTabId, useActiveTabId } from '../application/state/activeTabStore';
@@ -1237,6 +1238,7 @@ const TopTabsInner: React.FC<TopTabsProps> = ({
               <TooltipContent>{t('topTabs.lockApp')}</TooltipContent>
             </Tooltip>
           )}
+          <MonitorRunningIndicator />
           <TopTabsQuickControls
             theme={theme}
             themePreference={themePreference}

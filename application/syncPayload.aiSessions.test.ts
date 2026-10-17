@@ -1,3 +1,4 @@
+import { installBrowserLockFixture } from "./testSupport/browserLockFixture";
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import type { AISession } from '../infrastructure/ai/types';
@@ -7,6 +8,8 @@ import React from 'react';
 import { act, create, type ReactTestRenderer } from 'react-test-renderer';
 import { getAgentRuntime } from '../infrastructure/ai/harness/globalAgentRuntime';
 import { useAIChatStreaming, type UseAIChatStreamingReturn } from './state/useAIChatStreaming';
+
+installBrowserLockFixture();
 
 const storage = new Map<string, string>();
 const events = new EventTarget();

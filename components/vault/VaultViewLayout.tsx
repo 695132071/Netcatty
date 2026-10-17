@@ -1,3 +1,5 @@
+import { MonitorPanels } from './MonitorPanels';
+import { MonitorNavButton } from './MonitorNavButton';
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { Combobox } from "../ui/combobox";
 import React, { useCallback } from "react";
@@ -249,6 +251,7 @@ export function VaultViewLayout({ ctx }: { ctx: VaultViewLayoutContext }) {
     Network,
     newFolderName,
     newHostGroupPath,
+    onConnect,
     onConnectSerial,
     onCreateLocalTerminal,
     onDeleteHost,
@@ -621,6 +624,7 @@ export function VaultViewLayout({ ctx }: { ctx: VaultViewLayoutContext }) {
                 </TooltipContent>
               )}
             </Tooltip>
+            <MonitorNavButton active={currentSection === "monitor"} collapsed={sidebarCollapsed} onClick={() => setCurrentSection("monitor")} />
             <Tooltip>
               <TooltipTrigger asChild>
                 <RippleButton
@@ -1407,6 +1411,7 @@ export function VaultViewLayout({ ctx }: { ctx: VaultViewLayoutContext }) {
                 </Suspense>
               </LazyLoadBoundary>
             )}
+            {currentSection === "monitor" && <MonitorPanels hosts={hosts} customGroups={customGroups} onConnect={onConnect} />}
             {currentSection === "port" && (
               <LazyLoadBoundary
                 name="Port forwarding"

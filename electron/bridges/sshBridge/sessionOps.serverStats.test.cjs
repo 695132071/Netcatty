@@ -1422,3 +1422,30 @@ test("zmodem remote exec helpers do nothing on single-channel SSH", async () => 
   assert.equal(execCalls, 0);
 });
 
+
+test("real macOS stats shell parses the root disk without broken awk escaping", async () => {
+  const sessions = new Map([["mac", { type: "ssh", conn: {
+    exec(command, cb) {
+      const script = [
+        'uname() { printf "%s\\n" Darwin; }',
+        'sysctl() { case "$*" in *hw.logicalcpu*) echo 4;; *hw.pagesize*) echo 4096;; *hw.memsize*) echo 8589934592;; *kern.boottime*) echo "{ sec = 1700000000, usec = 0 }";; *vm.loadavg*) echo "{ 1.0 0.5 0.2 }";; esac; }',
+        'vm_stat() { printf "%s\\n" "Pages free: 10000." "Pages inactive: 20000."; }',
+        'ps() { case "$*" in *%cpu*) echo 25;; *%mem*) :;; *) command ps "$@";; esac; }',
+        'mount() { echo "/dev/disk3s1s1 on / (apfs, sealed, local, read-only)"; }',
+        'df() { printf "%s\\n" "Filesystem 1024-blocks Used Available Capacity Mounted on" "/dev/disk3s1s1 1000000 100000 500000 20% /"; }',
+        'netstat() { :; }',
+        'sw_vers() { echo macOS; }',
+        unwrapExecShC(command),
+      ].join("\n");
+      const execution = spawnSync("sh", ["-c", script], { encoding: "utf8", timeout: 5000 });
+      assert.equal(execution.status, 0, execution.stderr);
+      assert.doesNotMatch(execution.stderr, /awk:.*(syntax|regular expression)/);
+      cb(null, fakeStream(execution.stdout));
+    },
+  } }]]);
+  const result = await makeSessionOps(sessions).getServerStats({ sender: {} }, { sessionId: "mac" });
+  assert.equal(result.success, true);
+  assert.equal(result.stats.disks[0].mountPoint, "/");
+  assert.equal(result.stats.disks[0].capacityKey, "apfs:/dev/disk3");
+  assert.equal(result.stats.diskPercent, 50);
+});

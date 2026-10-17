@@ -1,3 +1,4 @@
+import { installBrowserLockFixture } from "./testSupport/browserLockFixture";
 import test from "node:test";
 import assert from "node:assert/strict";
 
@@ -37,6 +38,8 @@ function installLocalStorage(): LocalStorageMock {
   });
   return localStorage;
 }
+
+installBrowserLockFixture();
 
 const localStorage = installLocalStorage();
 const {

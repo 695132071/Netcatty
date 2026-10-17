@@ -72,6 +72,7 @@ module.exports = {
         // TypeScript under domain/ is excluded below, so the .cjs must be listed.
         'domain/singleChannelSshBanner.shared.cjs',
         'domain/singleChannelSshBanner.shared.mjs',
+        'domain/sshServerVendor.mjs',
         'lib/**/*.cjs',
         'lib/**/*.json',
         'skills/**/*',

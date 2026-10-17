@@ -320,3 +320,6 @@ export const STORAGE_KEY_AVAILABLE_PLUGIN_SYNC_PROVIDERS = 'netcatty_available_p
 // Debug Flags (no _v1 suffix — developer-only, not persisted data)
 export const STORAGE_KEY_DEBUG_HOTKEYS = 'debug.hotkeys';
 export const STORAGE_KEY_DEBUG_UPDATE_DEMO = 'debug.updateDemo';
+
+// Portable monitor configuration. Runtime samples never use storage.
+export const STORAGE_KEY_MONITOR_PANELS = 'netcatty_monitor_panels_v1';

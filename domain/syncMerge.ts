@@ -71,6 +71,8 @@ export interface MergeSyncPayloadsOptions {
 
 interface EntityMergeOptions {
   preserveDeletions?: boolean;
+  mergeFields?: boolean;
+  deleteWins?: boolean;
 }
 
 const OPTIONAL_ENTITY_KEYS = new Set<CloudSyncPayloadEntityKey>([
@@ -82,6 +84,7 @@ const OPTIONAL_ENTITY_KEYS = new Set<CloudSyncPayloadEntityKey>([
   'portForwardingRules',
   'browserBookmarks',
   'groupConfigs',
+  'monitorPanels',
   'aiSessions',
 ]);
 
@@ -199,10 +202,20 @@ function mergeEntityArrays<T extends { id: string }>(
         merged.push(remoteItem);
         modified.remote++;
       } else {
-        // Both changed — prefer local
-        merged.push(localItem);
-        if (fingerprint(localItem) !== fingerprint(remoteItem)) {
-          conflicts++;
+        if (options?.mergeFields) {
+          const combined = { ...remoteItem };
+          let conflicted = false;
+          for (const field of Object.keys(localItem) as (keyof T)[]) {
+            const localChanged = fingerprint(localItem[field]) !== fingerprint(baseItem[field]);
+            const remoteChanged = fingerprint(remoteItem[field]) !== fingerprint(baseItem[field]);
+            if (localChanged) combined[field] = localItem[field];
+            if (localChanged && remoteChanged && fingerprint(localItem[field]) !== fingerprint(remoteItem[field])) conflicted = true;
+          }
+          merged.push(combined);
+          if (conflicted) conflicts++;
+        } else {
+          merged.push(localItem);
+          if (fingerprint(localItem) !== fingerprint(remoteItem)) conflicts++;
         }
         modified.local++;
         modified.remote++;
@@ -210,7 +223,7 @@ function mergeEntityArrays<T extends { id: string }>(
     } else if (inBase && !inLocal && inRemote) {
       // Local deleted
       const remoteChanged = fingerprint(remoteItem) !== fingerprint(baseItem);
-      if (remoteChanged) {
+      if (remoteChanged && !options?.deleteWins) {
         // Remote modified + local deleted → keep modification (safer)
         merged.push(remoteItem);
         conflicts++;
@@ -226,7 +239,7 @@ function mergeEntityArrays<T extends { id: string }>(
     } else if (inBase && inLocal && !inRemote) {
       // Remote deleted
       const localChanged = fingerprint(localItem) !== fingerprint(baseItem);
-      if (localChanged) {
+      if (localChanged && !options?.deleteWins) {
         // Local modified + remote deleted → keep modification (safer)
         merged.push(localItem);
         conflicts++;
@@ -844,6 +857,8 @@ export function mergeSyncPayloads(
     mergeOptions,
   );
   const snippets = mergeEntityArrays(b.snippets ?? [], local.snippets ?? [], remote.snippets ?? [], tombstones('snippets'), mergeOptions);
+  const baseMonitorPanels = b.monitorPanels ?? [];
+  const monitorPanels = mergeEntityArrays(baseMonitorPanels, entityArray(local, 'monitorPanels', baseMonitorPanels), entityArray(remote, 'monitorPanels', baseMonitorPanels), tombstones('monitorPanels'), { ...mergeOptions, mergeFields: true, deleteWins: true });
   const baseNotes = b.notes ?? [];
   const notes = mergeEntityArrays(
     baseNotes,
@@ -895,7 +910,7 @@ export function mergeSyncPayloads(
 
   // Aggregate stats
   const entityResults: Pick<EntityMergeResult<unknown>, 'added' | 'deleted' | 'modified' | 'conflicts'>[] =
-    [hosts, keys, identities, proxyProfiles, snippets, notes, portForwardingRules, browserBookmarks, groupConfigsResult, aiSessions];
+    [hosts, keys, identities, proxyProfiles, snippets, monitorPanels, notes, portForwardingRules, browserBookmarks, groupConfigsResult, aiSessions];
   for (const r of entityResults) {
     summary.added.local += r.added.local;
     summary.added.remote += r.added.remote;
@@ -986,6 +1001,7 @@ export function mergeSyncPayloads(
     identities: identities.merged,
     proxyProfiles: proxyProfiles.merged,
     snippets: snippets.merged,
+    monitorPanels: monitorPanels.merged,
     customGroups,
     snippetPackages,
     notes: notes.merged,

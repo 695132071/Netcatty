@@ -457,6 +457,11 @@ function createBridgeRegistrar(context) {
   
     // Register all IPC handlers
     sshBridge.registerHandlers(ipcMain, { terminalWorkerManager });
+    const stopMonitoring = () => terminalWorkerManager
+      ? terminalWorkerManager.request("netcatty:monitor:stop-all", {}, {}).catch(() => {})
+      : sshBridge.stopAllMonitoring();
+    electronModule.powerMonitor?.on("suspend", stopMonitoring);
+    require("../plugins/shutdownCoordinator.cjs").registerPluginShutdown(stopMonitoring);
     sftpBridge.registerHandlers(ipcMain, { terminalWorkerManager });
     localFsBridge.registerHandlers(ipcMain);
     require("../bridges/localFileDragBridge.cjs").registerHandlers(ipcMain, {

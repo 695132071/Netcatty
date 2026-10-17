@@ -1,3 +1,5 @@
+import { readMonitorPanels, applyMonitorPanels } from './state/monitorPanelsStorage';
+import { normalizeMonitorPanels } from '../domain/monitorPanels';
 import { decryptProviderHeaders, encryptProviderHeaders } from '../infrastructure/ai/providerHeaderCredentials';
 /**
  * Sync Payload Builders - Single source of truth for constructing and applying
@@ -1090,6 +1092,7 @@ function buildVaultSyncPayload(
     notes: vault.notes,
     noteGroups: vault.noteGroups,
     groupConfigs: vault.groupConfigs,
+    monitorPanels: readMonitorPanels(),
     portForwardingRules: sanitizePortForwardingRulesForSync(portForwardingRules),
     ...(browserBookmarks !== undefined ? { browserBookmarks } : {}),
     settings: collectSyncableSettings(),
@@ -1178,6 +1181,7 @@ export async function buildCloudSyncPayload(
     notes: vault.notes,
     noteGroups: vault.noteGroups,
     groupConfigs: vault.groupConfigs,
+    monitorPanels: readMonitorPanels(),
     portForwardingRules: sanitizePortForwardingRulesForSync(portForwardingRules),
     ...(aiSessions !== undefined ? { aiSessions } : {}),
     ...(browserBookmarks !== undefined ? { browserBookmarks } : {}),
@@ -1359,6 +1363,7 @@ async function preparePayloadApply(
   // so a previously poisoned cloud/backup snapshot can still restore host
   // shells and let the user re-enter secrets (#2702).
   const sanitizedPayload = stripSyncPayloadEncryptedCredentials(payload);
+  const monitorPanelsAtPrepare = readMonitorPanels();
   // Prepare credentials before any vault or settings mutation. Encryption can
   // fail when local credential storage is unavailable; reuse the result below.
   const providers = sanitizedPayload.settings?.ai?.providers;
@@ -1400,6 +1405,7 @@ async function preparePayloadApply(
   }
 
   return () => Promise.resolve(importers.importVaultData(JSON.stringify(vaultImport))).then(async () => {
+    if (sanitizedPayload.monitorPanels !== undefined) await applyMonitorPanels(normalizeMonitorPanels(sanitizedPayload.monitorPanels), monitorPanelsAtPrepare, options.includeLocalOnlyData);
     // Only import port-forwarding rules when the payload explicitly carries
     // them.  Absent field = "payload was created before this feature existed",
     // so local rules are preserved.  Explicitly present [] = "remote has no

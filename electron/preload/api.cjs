@@ -303,6 +303,10 @@ function createPreloadApi(ctx) {
     markTerminalDataSessionOpen(result?.sessionId);
     return result.sessionId;
   },
+  monitorUpdate: (panels) => ipcRenderer.invoke("netcatty:monitor:update", panels),
+  monitorSnapshot: () => ipcRenderer.invoke("netcatty:monitor:snapshot"),
+  monitorStopAll: () => ipcRenderer.invoke("netcatty:monitor:stop-all"),
+  monitorRetry: (hostId) => ipcRenderer.invoke("netcatty:monitor:retry", hostId),
   testConnection: async (options) => {
     const result = await ipcRenderer.invoke("netcatty:test-connection", options);
     return result.sessionId;

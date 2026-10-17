@@ -52,6 +52,7 @@ export const CONVERGENT_ENTITY_COLLECTIONS = [
   'portForwardingRules',
   'browserBookmarks',
   'groupConfigs',
+  'monitorPanels',
 ] as const satisfies readonly CloudSyncPayloadEntityKey[];
 
 export const CONVERGENT_STRING_COLLECTIONS = [
@@ -225,6 +226,7 @@ export function materializeSyncPayloadFromConvergentState(
     keys: typedCollection<import('../models').SSHKey>(materialized.collections, 'keys'),
     identities: typedCollection<import('../models').Identity>(materialized.collections, 'identities'),
     proxyProfiles: typedCollection<import('../models').ProxyProfile>(materialized.collections, 'proxyProfiles'),
+    monitorPanels: typedCollection<import('../monitorPanels').MonitorPanel>(materialized.collections, 'monitorPanels'),
     snippets: typedCollection<import('../models').Snippet>(materialized.collections, 'snippets'),
     customGroups: materialized.stringCollections.customGroups ?? [],
     snippetPackages: materialized.stringCollections.snippetPackages ?? [],

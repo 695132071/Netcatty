@@ -170,6 +170,7 @@ const SnippetsManager = lazy(() => import("./SnippetsManager"));
 
 export type VaultSection =
   | "hosts"
+  | "monitor"
   | "keys"
   | "proxies"
   | "snippets"
@@ -1615,6 +1616,7 @@ const VaultViewInner: React.FC<VaultViewProps> = ({
           NotebookText,
           NotesManager,
           onCommitPluginImporterData,
+          onConnect,
           onConnectSerial,
           onCreateLocalTerminal,
           onDeleteHost,

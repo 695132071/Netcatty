@@ -1,4 +1,5 @@
 /* eslint-disable no-undef */
+const { sampleSharedStats } = require("./sharedStats.cjs");
 const { executeBoundedSshCommand } = require("../boundedSshExec.cjs");
 const { listInteractiveShellPids } = require("../sshInteractiveShells.cjs");
 function extraExecUnsupportedError(session) {
@@ -1060,10 +1061,15 @@ function createSessionOpsApi(ctx) {
     async function getServerStats(event, payload) {
       const { sessionId } = payload;
       const session = sessions.get(sessionId);
+      if (!session) return { success: false, error: 'Session not found or not connected' };
+      return getStatsForContext(session, event, sessionId);
+    }
 
-      if (!session) {
-        return { success: false, error: 'Session not found or not connected' };
-      }
+    async function getStatsForContext(session, event, sessionId) {
+      return sampleSharedStats(session, (context) => collectServerStats(context, event, sessionId));
+    }
+
+    async function collectServerStats(session, event, sessionId) {
       const bastionStatsBlock = extraExecUnsupportedError(session);
       if (bastionStatsBlock) return bastionStatsBlock;
 
@@ -1182,7 +1188,7 @@ function createSessionOpsApi(ctx) {
         `procs=$(ps -A -o pid=,%mem=,comm= 2>/dev/null | sort -k2 -rn | head -10 | awk '{gsub(/;/,"_",$3);printf "%s;%.1f;%s,",$1,$2,$3}' | sed 's/,$//')`,
         // Disk: -P keeps a stable six-column POSIX layout on macOS.
         `mounts=$(mount 2>/dev/null || true)`,
-        `disks=$({ printf "%s\n" "$mounts"; printf "__NETCATTY_DF__\n"; df -kP 2>/dev/null; } | awk '$0=="__NETCATTY_DF__"{in_df=1;next} !in_df{if($1~/^\/dev\/disk/&&(index($0,"(apfs,")||index($0,"(apfs)"))){key=$1;sub(/s[0-9].*$/,"",key);capacity[$1]="apfs:" key}next} $1=="Filesystem"{next} index($1,"/dev/")==1{m=$6;if(m=="/"||index(m,"/Volumes/")==1){t=$2/1048576;key=(($1 in capacity)?capacity[$1]:$1);if(key~/^apfs:/){u=($2-$4)/1048576;p=(t>0?int(u*100/t+0.5):0)}else{u=$3/1048576;p=$5;gsub(/%/,"",p)}printf "%s:%.6f:%.6f:%s:%s,",m,u,t,p,key}}' | sed 's/,$//')`,
+        `disks=$({ printf "%s\n" "$mounts"; printf "__NETCATTY_DF__\n"; df -kP 2>/dev/null; } | awk '$0=="__NETCATTY_DF__"{in_df=1;next} !in_df{if(index($1,"/dev/disk")==1&&(index($0,"(apfs,")||index($0,"(apfs)"))){key=$1;sub(/s[0-9].*$/,"",key);capacity[$1]="apfs:" key}next} $1=="Filesystem"{next} index($1,"/dev/")==1{m=$6;if(m=="/"||index(m,"/Volumes/")==1){t=$2/1048576;key=(($1 in capacity)?capacity[$1]:$1);if(key~/^apfs:/){u=($2-$4)/1048576;p=(t>0?int(u*100/t+0.5):0)}else{u=$3/1048576;p=$5;gsub(/%/,"",p)}printf "%s:%.6f:%.6f:%s:%s,",m,u,t,p,key}}' | sed 's/,$//')`,
         // Network: Link# lines only, exclude loopback, detect column shift (no MAC addr → cols shift left)
         `net=$(netstat -ibn 2>/dev/null | awk 'NR==1{for(i=1;i<=NF;i++){if($i=="Ibytes")ib=i;if($i=="Obytes")ob=i}next} ib&&ob&&$1~/^[[:alpha:]]/&&$1!~/^lo/&&$0~/<Link#/{name=$1;gsub(/[*]/,"",name);rx=$(ib)+0;tx=$(ob)+0;if(rx>0||tx>0){seen[name]=rx ":" tx}} END{for(name in seen)printf "%s:%s,",name,seen[name]}' | sed 's/,$//')`,
         `hostname_value=$(hostname 2>/dev/null || uname -n 2>/dev/null || echo "")`,
@@ -1193,7 +1199,7 @@ function createSessionOpsApi(ctx) {
         `uptime=$(awk -v n="$nowsec" -v b="$bootsec" 'BEGIN{if(n>0&&b>0)printf "%.0f",n-b}')`,
         `loadavg=$(sysctl -n vm.loadavg 2>/dev/null | tr -d '{}' | awk '{print $1" "$2" "$3"}')`,
         `echo "CPU:$cpupct|CORES:$cores|MEMINFO:$memtotal $memfree 0 $memcached $swaptotal $swapfree|PROCS:$procs|DISKS:$disks|NET:$net|HOST:$hostname_value|OS:$osname|KERNEL:$kernel|UPTIME:$uptime|LOAD:$loadavg"`,
-      ].join('; ');
+      ].filter(command => !session._monitorStats || (!command.startsWith('procs=') && !command.startsWith('gpustat='))).join('; ');
 
       // Prefer df's filesystem type column so FUSE mounts can be identified
       // even when their source name looks like an ordinary remote path.
@@ -1299,7 +1305,7 @@ function createSessionOpsApi(ctx) {
         `gpustat=$(gpucsv=$(timeout -s KILL 2 nvidia-smi --query-gpu=utilization.gpu,memory.used,memory.total,name --format=csv,noheader,nounits 2>/dev/null) && printf '%s\\n' "$gpucsv" | awk -F', *' 'NF >= 4 {g++; if($1 ~ /^[0-9]+$/) {n++; u+=$1} if($2 ~ /^[0-9]+$/) {mu+=$2; uc++} if($3 ~ /^[0-9]+$/) {mt+=$3; tc++} if(name=="") name=$4} END{if(n>0) printf "%.0f %s %s %s", u/n, (uc==g ? sprintf("%.0f",mu) : "N/A"), (tc==g ? sprintf("%.0f",mt) : "N/A"), name}' 2>/dev/null || echo "")`,
         // Output all stats (using CPURAW and PERCORERAW instead of CPU and PERCORE)
         `echo "CPURAW:$cpuraw|CORES:$cores|PERCORERAW:$percoreraw|MEMINFO:$meminfo|PROCS:$procs|NET:$net|GPU:$gpustat|HOST:$hostname_value|OS:$osname|KERNEL:$kernel|UPTIME:$uptime|LOAD:$loadavg"`
-      ].join('; ');
+      ].filter(command => !session._monitorStats || (!command.startsWith('procs=') && !command.startsWith('gpustat='))).join('; ');
 
       // Client-side run bound shared by the stats and disk probes; the remote
       // watchdog uses the same value so an abandoned probe self-kills instead
@@ -1329,6 +1335,8 @@ function createSessionOpsApi(ctx) {
         statsRunTimeoutMs,
       );
       const statsExecOptions = {
+        signal: session.statsSignal,
+        invalidateTransportOnAbort: false,
         openingTimeoutMs: statsRunTimeoutMs,
         runTimeoutMs: statsRunTimeoutMs,
         maxOutputBytes: 1024 * 1024,
@@ -1732,6 +1740,7 @@ function createSessionOpsApi(ctx) {
                 diskUsed,      // Disk used in GB for root partition (backward compat)
                 diskTotal,     // Total disk in GB for root partition (backward compat)
                 disks,         // Array of all mounted disks
+                networkReady: prevNet.timestamp > 0 && prevNet.interfaces.length > 0,
                 netRxSpeed,    // Total network receive speed (bytes/sec)
                 netTxSpeed,    // Total network transmit speed (bytes/sec)
                 latencyMs,      // SSH transport ping on the existing session (ms); never a second TCP dial (#3630)
@@ -1783,6 +1792,7 @@ function createSessionOpsApi(ctx) {
       restoreRemoteModes,
       listSessionDir,
       getServerStats,
+      getStatsForContext,
       setSessionEncoding,
     };
   }

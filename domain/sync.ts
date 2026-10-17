@@ -282,6 +282,8 @@ export interface SyncPayload {
   notes?: import('./models').VaultNote[];
   noteGroups?: string[];
 
+  monitorPanels?: import('./monitorPanels').MonitorPanel[];
+
   // Group configs (connection defaults per host group)
   groupConfigs?: import('./models').GroupConfig[];
 
@@ -483,6 +485,7 @@ export const SYNC_PAYLOAD_ENTITY_KEYS = [
   'browserBookmarks',
   'knownHosts',
   'groupConfigs',
+  'monitorPanels',
 ] as const;
 
 export const CLOUD_SYNC_PAYLOAD_ENTITY_KEYS = [
@@ -498,6 +501,7 @@ export const CLOUD_SYNC_PAYLOAD_ENTITY_KEYS = [
   'portForwardingRules',
   'browserBookmarks',
   'groupConfigs',
+  'monitorPanels',
   'aiSessions',
 ] as const;
 

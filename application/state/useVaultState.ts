@@ -1,3 +1,5 @@
+import { readMonitorPanels, writeMonitorPanels } from './monitorPanelsStorage';
+import type { MonitorPanel } from '../../domain/monitorPanels';
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import {
   hostsEqualForIdentityReuse,
@@ -124,6 +126,7 @@ import {
 import { commitVaultGroupMutationPersistence } from "./vaultGroupMutationPersistence";
 
 type ExportableVaultData = {
+  monitorPanels?: MonitorPanel[];
   hosts: Host[];
   keys: SSHKey[];
   identities?: Identity[];
@@ -1188,6 +1191,7 @@ export const useVaultState = () => {
   }, []);
 
   const clearVaultData = useCallback(() => {
+    void withVaultImportLock('vault', async () => writeMonitorPanels([]));
     updateHosts([]);
     updateKeys([]);
     updateIdentities([]);
@@ -1972,6 +1976,7 @@ export const useVaultState = () => {
 
   const exportData = useCallback(
     (): ExportableVaultData => ({
+      monitorPanels: readMonitorPanels(),
       hosts,
       keys,
       identities,
@@ -1990,6 +1995,7 @@ export const useVaultState = () => {
   const importData = useCallback(
     (payload: Partial<ExportableVaultData>): Promise<void> => {
       const encryptedWrites: Promise<void>[] = [];
+      if (payload.monitorPanels !== undefined) encryptedWrites.push(withVaultImportLock('vault', async () => writeMonitorPanels(payload.monitorPanels)));
       if (payload.hosts) {
         // Cloud payloads no longer carry `lastConnectedAt` (#2629), but any
         // remote reconciliation replaces the whole local host array. Re-attach

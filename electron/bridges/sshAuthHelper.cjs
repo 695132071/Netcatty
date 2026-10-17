@@ -1970,7 +1970,7 @@ function createKeyboardInteractiveHandler(options) {
       OTP_PROMPT_PATTERN.test(
         [contextText, singlePromptText].filter(Boolean).join("\n"),
       );
-    const allowSavePassword = !(skipAutoFill || singleSecondaryChallenge);
+    const allowSavePassword = options.allowSavePassword !== false && !(skipAutoFill || singleSecondaryChallenge);
 
     console.log(`${logPrefix} Showing modal for ${promptsData.length} prompts`);
     try { onPromptShown?.(); } catch (err) { console.warn(`${logPrefix} onPromptShown callback threw`, err); }

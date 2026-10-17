@@ -68,6 +68,9 @@ function unregisterTestConnectionTransport(sessionId) {
 }
 
 function cancelTestConnection(sessionId) {
+  require("../keyboardInteractiveHandler.cjs").cancelRequestsForSession(sessionId);
+  require("../passphraseHandler.cjs").cancelPassphraseRequestsForSession(sessionId);
+  require("../hostKeyVerifier.cjs").cancelRequestsForSession(sessionId);
   const transport = testConnectionTransports.get(sessionId);
   if (!transport) return { success: false, error: "Test connection not found" };
   const end = (item) => {
@@ -1305,7 +1308,8 @@ function createStartSessionApi(ctx) {
 
     async function startSSHSession(event, options) {
       const sessionId = options.sessionId || randomUUID();
-      const testMode = options.testMode === true;
+      const monitorMode = options._monitorMode === true;
+      const testMode = options.testMode === true || monitorMode;
       const sender = event.sender;
       const log = createSshDiagnosticLogger(
         !!options.sshDebugLogEnabled || process.env.NETCATTY_SSH_DEBUG === "1",
@@ -2355,6 +2359,14 @@ function createStartSessionApi(ctx) {
               // auth-method cache write above is intentionally kept so a
               // successful test warms the same cache a real connection uses.
               clearAuthReadyTimer();
+              if (monitorMode) {
+                const { createTransport } = require("../sshConnectionPool.cjs");
+                connRef = createTransport({ conn, chainConnections, endpoint: reuseEndpoint });
+                unregisterTestConnectionTransport(sessionId);
+                settled = true;
+                resolve({ transport: connRef });
+                return;
+              }
               sendConnectionTestResult(sender, sessionId, true);
               settled = true;
               try { conn.end(); } catch { /* ignore */ }
@@ -2593,7 +2605,7 @@ function createStartSessionApi(ctx) {
             // Destroy the connection to prevent further socket errors from leaking
             // as uncaught exceptions (e.g. ECONNRESET on embedded devices).
             try { conn.destroy(); } catch { }
-            if (testMode) {
+            if (testMode && !monitorMode) {
               sendConnectionTestResult(sender, sessionId, false, visibleError);
             }
             settled = true;
@@ -2624,7 +2636,7 @@ function createStartSessionApi(ctx) {
             sessionDecoders.delete(sessionId);
             teardownTransport();
             try { conn.destroy(); } catch { }
-            if (testMode) {
+            if (testMode && !monitorMode) {
               sendConnectionTestResult(sender, sessionId, false, err.message);
             }
             settled = true;
@@ -2711,7 +2723,7 @@ function createStartSessionApi(ctx) {
               }
             }
             if (!settled) {
-              if (testMode) {
+              if (testMode && !monitorMode) {
                 sendConnectionTestResult(
                   sender,
                   sessionId,
@@ -2740,6 +2752,7 @@ function createStartSessionApi(ctx) {
             // would auto-reject the prompt. Use the external scope so the
             // host-editor test dialog can still render password/2FA prompts.
             scope: testMode ? "external" : "terminal",
+            allowSavePassword: !monitorMode,
             bootEpoch: options.bootEpoch,
             getAuthBanner: () => authBanner,
             shouldSkipAutoFill: () => shouldSkipKiPasswordAutoFill(authPhase),
@@ -2791,7 +2804,7 @@ function createStartSessionApi(ctx) {
           }
           // If authHandler is a function, it already handles keyboard-interactive
 
-          if (testMode) {
+          if (testMode && !monitorMode) {
             // A connection test exercises the single configured credential,
             // skipping the full agent / ~/.ssh key / method fallback chain.
             // Password credentials still allow keyboard-interactive after
