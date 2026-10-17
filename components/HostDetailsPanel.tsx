@@ -4,6 +4,7 @@ import {
   EyeOff,
   FileText,
   FolderPlus,
+  PlugZap,
   Plus,
   Settings2,
   Tag,
@@ -61,6 +62,7 @@ import { Combobox, ComboboxOption, MultiCombobox } from "./ui/combobox";
 import { Input } from "./ui/input";
 import { Switch } from "./ui/switch";
 import { toast } from "./ui/toast";
+import { Tooltip, TooltipContent, TooltipTrigger } from "./ui/tooltip";
 
 import {
   ChainPanel,
@@ -1015,16 +1017,39 @@ const HostDetailsPanel: React.FC<HostDetailsPanelPropsWithResize> = ({
         initialData ? t("hostDetails.title.details") : t("hostDetails.title.new")
       }
       actions={
-        <Button
-          variant="ghost"
-          size="icon"
-          className="h-8 w-8"
-          onClick={handleSubmit}
-          disabled={!canSaveHost}
-          aria-label={t("hostDetails.saveAria")}
-        >
-          <Check size={16} />
-        </Button>
+        <>
+          {!pluginProtocolActive && form.protocol !== "telnet" && (
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <span className="inline-flex">
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="h-8 w-8"
+                    onClick={handleStartTest}
+                    disabled={!canSaveHost}
+                    aria-label={t("hostConnectionTest.title")}
+                  >
+                    <PlugZap size={16} />
+                  </Button>
+                </span>
+              </TooltipTrigger>
+              <TooltipContent side="bottom">
+                {t("hostConnectionTest.title")}
+              </TooltipContent>
+            </Tooltip>
+          )}
+          <Button
+            variant="ghost"
+            size="icon"
+            className="h-8 w-8"
+            onClick={handleSubmit}
+            disabled={!canSaveHost}
+            aria-label={t("hostDetails.saveAria")}
+          >
+            <Check size={16} />
+          </Button>
+        </>
       }
     >
       <AsidePanelContent>
@@ -1346,19 +1371,9 @@ const HostDetailsPanel: React.FC<HostDetailsPanelPropsWithResize> = ({
           </Button>
         )}
       </AsidePanelContent>
-      <AsidePanelFooter className="flex flex-row gap-2">
-        {!pluginProtocolActive && form.protocol !== "telnet" && (
-          <Button
-            variant="outline"
-            className="h-10 px-4"
-            onClick={handleStartTest}
-            disabled={!canSaveHost}
-          >
-            {t("hostConnectionTest.test")}
-          </Button>
-        )}
+      <AsidePanelFooter>
         <Button
-          className="flex-1 h-10"
+          className="w-full h-10"
           onClick={handleSubmit}
           disabled={!canSaveHost}
         >
