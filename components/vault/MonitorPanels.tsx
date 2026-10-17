@@ -6,6 +6,7 @@ import {
   Copy,
   Cpu,
   Gauge,
+  Gpu,
   HardDrive,
   LayoutGrid,
   List,
@@ -38,6 +39,7 @@ import type { Host } from "../../domain/models";
 import { buildMonitorTrendGeometry, findMonitorChartPoint } from "../../domain/monitorChart";
 import { cn } from "../../lib/utils";
 import { Button } from "../ui/button";
+import { ContextMenuItem } from "../ui/context-menu";
 import { Input } from "../ui/input";
 import { Label } from "../ui/label";
 import { Textarea } from "../ui/textarea";
@@ -70,6 +72,9 @@ import { ResourceBar } from "../systemManager/ResourceBar";
 import { MonitorDiskUsage } from "./MonitorDiskUsage";
 import { VaultHeaderSearch, VaultPageHeader, vaultHeaderIconButtonClass, vaultHeaderSecondaryButtonClass } from "./VaultPageHeader";
 import { toast } from "../ui/toast";
+import { TooltipProvider } from "../ui/tooltip";
+import { MonitorHostCollection } from "./MonitorHostCollection";
+import { MonitorHostLatency, MonitorHostNotes, MonitorHostTags } from "./MonitorHostMetadata";
 
 const emptyMonitorPoints: MonitorPoint[] = [];
 const percent = (n: number | null | undefined) =>
@@ -214,22 +219,15 @@ export function MonitorPanels({
   } | null>(null);
   const [selecting, setSelecting] = useState(false);
   const [detail, setDetail] = useState<string | null>(null);
+  const [recovery, setRecovery] = useState<{ hostId: string; username: string; password: string } | null>(null);
   const [deleting, setDeleting] = useState<MonitorPanel | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
-  const [login, setLogin] = useState({
-    hostId: "",
-    username: "",
-    password: "",
-  });
-  useEffect(
-    () => setLogin({ hostId: "", username: "", password: "" }),
-    [detail],
-  );
   const panel = panels.find((p) => p.id === selected) ?? panels[0];
   const running = !!panel && runtime.running.includes(panel.id);
   const startEdit = (base: MonitorPanel | null) => {
     setDetail(null);
+    setRecovery(null);
     setSelecting(false);
     setError(null);
     setEditor({
@@ -305,28 +303,39 @@ export function MonitorPanels({
       toast.error(t("monitor.saveFailed"));
     }
   };
+  const hostById = useMemo(
+    () => new Map(hosts.map((host) => [host.id, host])),
+    [hosts],
+  );
   const orderedHostIds = useMemo(() => {
     if (!panel) return [];
-    return panel.sort === "manual" ? panel.hostIds : [...panel.hostIds].sort((a, b) =>
-      (hosts.find((host) => host.id === a)?.label ?? a).localeCompare(hosts.find((host) => host.id === b)?.label ?? b),
-    );
-  }, [panel, hosts]);
+    return panel.sort === "manual"
+      ? panel.hostIds
+      : [...panel.hostIds].sort((a, b) =>
+          (hostById.get(a)?.label ?? a).localeCompare(
+            hostById.get(b)?.label ?? b,
+          ),
+        );
+  }, [panel, hostById]);
   const rows = useMemo(() => {
     if (!panel) return [];
     const q = search.trim().toLocaleLowerCase();
     const rows = orderedHostIds.map((id) => ({
       id,
-      host: hosts.find((h) => h.id === id),
+      host: hostById.get(id),
       state: monitorStateSince(runtime.hosts[id], runtime.startedAt[panel.id]),
     }));
     return rows.filter(
-      ({ host }) => !q ||
-        `${host?.label ?? ""} ${host?.hostname ?? ""} ${host?.group ?? ""}`
+      ({ host }) =>
+        !q ||
+        `${host?.label ?? ""} ${host?.hostname ?? ""} ${host?.group ?? ""} ${host?.tags.join(" ") ?? ""} ${host?.notes ?? ""}`
           .toLocaleLowerCase()
           .includes(q),
     );
-  }, [panel, orderedHostIds, hosts, runtime, search]);
-  const dragProps = (hostId: string): React.HTMLAttributes<HTMLElement> & { "data-monitor-host": string } => ({
+  }, [panel, orderedHostIds, hostById, runtime, search]);
+  const dragProps = (
+    hostId: string,
+  ): React.HTMLAttributes<HTMLElement> & { "data-monitor-host": string } => ({
     draggable: true,
     "data-monitor-host": hostId,
     onDragStart: (event) => {
@@ -336,7 +345,12 @@ export function MonitorPanels({
       setDragging({ panelId: panel.id, hostId });
     },
     onDragOver: (event) => {
-      if (!panel || dragging?.panelId !== panel.id || dragging.hostId === hostId) return;
+      if (
+        !panel ||
+        dragging?.panelId !== panel.id ||
+        dragging.hostId === hostId
+      )
+        return;
       event.preventDefault();
       event.dataTransfer.dropEffect = "move";
       setDropTarget(hostId);
@@ -344,10 +358,11 @@ export function MonitorPanels({
     onDrop: (event) => {
       if (!panel || dragging?.panelId !== panel.id) return;
       event.preventDefault();
-      if (dragging.hostId !== hostId) void patchPanel({
-        hostIds: reorderMonitorHosts(orderedHostIds, dragging.hostId, hostId),
-        sort: "manual",
-      });
+      if (dragging.hostId !== hostId)
+        void patchPanel({
+          hostIds: reorderMonitorHosts(orderedHostIds, dragging.hostId, hostId),
+          sort: "manual",
+        });
       setDragging(null);
       setDropTarget(null);
     },
@@ -362,18 +377,24 @@ export function MonitorPanels({
       : !running
         ? "stopped"
         : state?.status === "live" &&
-            Date.now() - state.at > Math.max(5000, (panel?.interval ?? DEFAULT_MONITOR_INTERVAL) * 2500)
+            Date.now() - state.at >
+              Math.max(
+                5000,
+                (panel?.interval ?? DEFAULT_MONITOR_INTERVAL) * 2500,
+              )
           ? "stale"
           : (state?.status ?? "queued");
   const stateBadge = (host: Host | undefined, state?: MonitorHostState) => (
     <span
       className={cn(
-        "inline-flex items-center gap-1.5 whitespace-nowrap text-[10px] shrink-0 font-medium",
+        "inline-flex min-w-0 max-w-full items-center gap-1.5 whitespace-nowrap text-[10px] shrink-0 font-medium",
         status(host, state) === "live"
           ? "text-emerald-700 dark:text-emerald-400"
           : ["error", "disconnected", "missing"].includes(status(host, state))
             ? "text-destructive"
-            : ["login", "stale", "unsupported", "limit"].includes(status(host, state))
+            : ["login", "stale", "unsupported", "limit"].includes(
+                  status(host, state),
+                )
               ? "text-amber-700 dark:text-amber-400"
               : "text-muted-foreground",
       )}
@@ -382,7 +403,9 @@ export function MonitorPanels({
         aria-hidden="true"
         className="h-1.5 w-1.5 rounded-full bg-current"
       />
-      {t(`monitor.status.${status(host, state)}`)}
+      <span className="truncate">
+        {t(`monitor.status.${status(host, state)}`)}
+      </span>
     </span>
   );
   const renderMetrics = (
@@ -445,6 +468,10 @@ export function MonitorPanels({
   };
   const hostDetail = hosts.find((h) => h.id === detail);
   const detailState = detail && panel ? monitorStateSince(runtime.hosts[detail], runtime.startedAt[panel.id]) : undefined;
+  const detailAvailable = status(hostDetail, detailState) === "live";
+  useEffect(() => {
+    if (detail && !detailAvailable) setDetail(null);
+  }, [detail, detailAvailable]);
   return (
     <section
       className="relative flex min-h-0 min-w-0 flex-1 overflow-hidden"
@@ -647,35 +674,76 @@ export function MonitorPanels({
                   </SelectContent>
                 </Select>
               </div>
-              <div className="min-h-0 min-w-0 flex-1 overflow-auto" data-section="vault-monitor-list">
-                <div className="p-4">
-                  {!rows.length ? (
-                    <p className="p-8 text-center text-sm text-muted-foreground">
-                      {t("monitor.noMatches")}
-                    </p>
-                  ) : panel.view === "charts" ? (
-                    <div className="grid auto-rows-fr grid-cols-[repeat(auto-fit,minmax(min(100%,280px),1fr))] gap-4">
-                      {rows.map(({ id, host, state }) => (
+              {!rows.length ? (
+                <div className="flex-1 overflow-auto p-12 text-center text-sm text-muted-foreground">
+                  {t("monitor.noMatches")}
+                </div>
+              ) : (
+                <TooltipProvider delayDuration={180}>
+                  <MonitorHostCollection
+                    items={rows}
+                    view={panel.view}
+                    layoutKey={`${panel.id}:${panel.view}:${search}`}
+                    pinnedId={
+                      dragging?.panelId === panel.id ? dragging.hostId : undefined
+                    }
+                    renderMenu={({ id, host, state }) => (
+                      <>
+                        <ContextMenuItem disabled={!host} onSelect={() => host && onConnect(host)}>
+                          {t("monitor.openTerminal")}
+                        </ContextMenuItem>
+                        {host && running && ["login", "error", "disconnected"].includes(status(host, state)) && (
+                          <ContextMenuItem data-monitor-retry={id} onSelect={() => setRecovery({hostId: id, username: host.username ?? "", password: ""})}>
+                            {t("monitor.retry")}
+                          </ContextMenuItem>
+                        )}
+                      </>
+                    )}
+                    rowProps={({ id, host, state }) => ({
+                      ...dragProps(id),
+                      className: cn(
+                        "group cursor-default [&>td]:bg-card/70 hover:[&>td]:bg-card [&>td:first-child]:rounded-l-xl [&>td]:min-w-0 [&>td]:px-3 [&>td]:py-3 [&>td]:flex [&>td]:items-center",
+                        dragging?.panelId === panel.id &&
+                          dragging.hostId === id &&
+                          "cursor-grabbing opacity-40",
+                        dropTarget === id && "[&>td]:bg-accent",
+                        status(host, state) !== "live" && "text-muted-foreground opacity-50",
+                      ),
+                    })}
+                    renderCard={({ id, host, state }) => (
+                      <article
+                        {...dragProps(id)}
+                        className={cn(
+                          "relative h-full min-w-0 overflow-hidden rounded-xl bg-card/70 shadow-sm shadow-black/[0.02] transition-colors hover:bg-card",
+                          dragging?.panelId === panel.id &&
+                            dragging.hostId === id &&
+                            "cursor-grabbing opacity-40",
+                          dropTarget === id && "bg-accent",
+                          status(host, state) !== "live" && "opacity-50",
+                        )}
+                      >
                         <button
-                          key={id}
-                          {...dragProps(id)}
-                          className={cn(
-                            "flex h-full min-w-0 cursor-default flex-col overflow-hidden rounded-xl bg-card/70 p-4 text-left shadow-sm shadow-black/[0.02] transition-colors hover:bg-card focus-visible:outline focus-visible:outline-primary",
-                            dragging?.panelId === panel.id && dragging.hostId === id && "cursor-grabbing opacity-40",
-                            dropTarget === id && "bg-accent",
-                            status(host, state) !== "live" &&
-                              "text-muted-foreground",
-                          )}
+                          type="button"
+                          className="flex h-full w-full min-w-0 cursor-default flex-col p-4 text-left outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-primary"
+                          aria-disabled={status(host, state) !== "live"}
                           onClick={() => {
+                            if (status(host, state) !== "live") return;
                             setEditor(null);
                             setDetail(id);
                           }}
                         >
-                          <div className="mb-5 flex items-center gap-3">
+                          <div className="mb-2 flex w-full min-w-0 items-center gap-3 pr-7">
                             {host ? (
-                              <DistroAvatar host={host} fallback={host.label} size="log" />
+                              <DistroAvatar
+                                host={host}
+                                fallback={host.label}
+                                size="log"
+                              />
                             ) : (
-                              <Server size={24} className="shrink-0 text-muted-foreground" />
+                              <Server
+                                size={24}
+                                className="shrink-0 text-muted-foreground"
+                              />
                             )}
                             <div className="min-w-0 flex-1">
                               <h3 className="truncate text-sm font-semibold text-foreground">
@@ -685,20 +753,39 @@ export function MonitorPanels({
                                 {host?.hostname ?? id}
                               </p>
                             </div>
-                            {stateBadge(host, state)}
                           </div>
-                          <div className={cn(status(host, state) !== "live" && "opacity-60")}>
+                          <div className="mb-2 flex h-5 w-full min-w-0 items-center gap-2">
+                            <MonitorHostLatency value={state?.stats?.latencyMs} responseValue={state?.stats?.responseLatencyMs} />
+                            <div className="min-w-0 flex-1">
+                              <MonitorHostTags tags={host?.tags} />
+                            </div>
+                            <div className="min-w-0 max-w-[40%]">
+                              {stateBadge(host, state)}
+                            </div>
+                          </div>
+                          <div
+                            className={cn(
+                              "w-full min-w-0",
+                              status(host, state) !== "live" && "opacity-60",
+                            )}
+                          >
                             {renderMetrics(state)}
-                            <div className="mt-4">
+                            <div className="mt-3">
                               <div className="mb-2 flex items-center gap-1.5 text-[11px] text-muted-foreground">
-                                <HardDrive size={13} className="text-amber-600 dark:text-amber-400" />
+                                <HardDrive
+                                  size={13}
+                                  className="text-amber-600 dark:text-amber-400"
+                                />
                                 <span>{t("monitor.disks")}</span>
                               </div>
                               <MonitorDiskUsage stats={state?.stats} limit={2} />
                             </div>
-                            <div className="mt-3 grid grid-cols-2 gap-2 text-[11px] tabular-nums">
+                            <div className="mt-2 grid grid-cols-2 gap-2 text-[11px] tabular-nums">
                               <span className="flex items-center gap-1.5 py-1">
-                                <ArrowDown size={13} className="shrink-0 text-sky-600 dark:text-sky-400" />
+                                <ArrowDown
+                                  size={13}
+                                  className="shrink-0 text-sky-600 dark:text-sky-400"
+                                />
                                 {rate(
                                   state?.stats?.networkReady
                                     ? state.stats.netRxSpeed
@@ -706,7 +793,10 @@ export function MonitorPanels({
                                 )}
                               </span>
                               <span className="flex items-center gap-1.5 py-1">
-                                <ArrowUp size={13} className="shrink-0 text-violet-600 dark:text-violet-400" />
+                                <ArrowUp
+                                  size={13}
+                                  className="shrink-0 text-violet-600 dark:text-violet-400"
+                                />
                                 {rate(
                                   state?.stats?.networkReady
                                     ? state.stats.netTxSpeed
@@ -715,127 +805,169 @@ export function MonitorPanels({
                               </span>
                             </div>
                           </div>
-                          <p className="mt-auto flex items-center gap-1.5 pt-4 text-[10px] text-muted-foreground">
-                            <Clock3 size={11} />
-                            {state?.at
-                              ? t("monitor.updatedAt", {
-                                  time: new Date(state.at).toLocaleTimeString(),
-                                })
-                              : t("monitor.noSamples")}
-                          </p>
+                          <div className="mt-auto flex w-full min-w-0 items-center gap-2 pt-2 text-[10px] text-muted-foreground">
+                            <div className="min-w-0 flex-1">
+                              <MonitorHostNotes notes={host?.notes} />
+                            </div>
+                            <span className="inline-flex shrink-0 items-center gap-1">
+                              <Clock3 size={11} />
+                              {state?.at
+                                ? new Date(state.at).toLocaleTimeString()
+                                : t("monitor.noSamples")}
+                            </span>
+                          </div>
                         </button>
-                      ))}
-                    </div>
-                  ) : (
-                    <div className="overflow-x-auto">
-                      <table className="w-full min-w-[840px] border-separate border-spacing-x-0 border-spacing-y-2 text-xs">
-                        <thead className="text-muted-foreground">
-                          <tr>
-                            {[
-                              "host",
-                              "status",
-                              "cpu",
-                              "memory",
-                              "disks",
-                              "network",
-                              "updated",
-                            ].map((k) => (
-                              <th
-                                key={k}
-                                className="px-3 py-3 text-left font-medium"
-                              >
-                                {t(`monitor.${k}`)}
-                              </th>
-                            ))}
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {rows.map(({ id, host, state }) => {
-                            const s = state?.stats;
-                            return (
-                              <tr
-                                key={id}
-                                {...dragProps(id)}
-                                className={cn(
-                                  "cursor-default [&>td]:bg-card/70 [&>td]:transition-colors hover:[&>td]:bg-card [&>td:first-child]:rounded-l-xl [&>td:last-child]:rounded-r-xl",
-                                  dragging?.panelId === panel.id && dragging.hostId === id && "cursor-grabbing opacity-40",
-                                  dropTarget === id && "[&>td]:bg-accent",
-                                  status(host, state) !== "live" &&
-                                    "text-muted-foreground",
-                                )}
-                              >
-                                <td className="px-3 py-3">
-                                  <button
-                                    draggable
-                                    className="flex cursor-inherit items-center gap-2.5 text-left hover:underline"
-                                    onClick={() => {
-                                      setEditor(null);
-                                      setDetail(id);
-                                    }}
-                                  >
-                                    {host ? (
-                                      <DistroAvatar host={host} fallback={host.label} size="md" />
-                                    ) : (
-                                      <Server size={24} className="shrink-0 text-muted-foreground" />
-                                    )}
-                                    <div className="min-w-0 max-w-52">
-                                      <div className="truncate font-medium">
-                                        {host?.label ?? t("monitor.missingHost")}
-                                      </div>
-                                      <div className="truncate text-[10px] text-muted-foreground">
-                                        {host?.hostname ?? id}
-                                      </div>
-                                    </div>
-                                  </button>
-                                </td>
-                                <td className="px-3">
-                                  {stateBadge(host, state)}
-                                </td>
-                                <td className="px-3 tabular-nums">
-                                  <ResourceBar label="" value={s?.cpu} />
-                                </td>
-                                <td className="px-3 tabular-nums">
-                                  <ResourceBar
-                                    label=""
-                                    value={
-                                      s?.memTotal && s.memUsed != null
-                                        ? (s.memUsed / s.memTotal) * 100
-                                        : null
-                                    }
-                                  />
-                                </td>
-                                <td className="min-w-[220px] px-3 py-3">
-                                  <MonitorDiskUsage stats={s} />
-                                </td>
-                                <td className="px-3 tabular-nums whitespace-nowrap">
-                                  <div className="flex items-center gap-1.5">
-                                    <ArrowDown size={13} className="shrink-0 text-sky-600 dark:text-sky-400" />
-                                    <span className="sr-only">{t("monitor.download")}: </span>
-                                    {rate(s?.networkReady ? s.netRxSpeed : null)}
-                                  </div>
-                                  <div className="flex items-center gap-1.5">
-                                    <ArrowUp size={13} className="shrink-0 text-violet-600 dark:text-violet-400" />
-                                    <span className="sr-only">{t("monitor.upload")}: </span>
-                                    {rate(s?.networkReady ? s.netTxSpeed : null)}
-                                  </div>
-                                </td>
-                                <td className="px-3 whitespace-nowrap">
-                                  {state?.at
-                                    ? new Date(state.at).toLocaleTimeString()
-                                    : "--"}
-                                </td>
-                              </tr>
-                            );
-                          })}
-                        </tbody>
-                      </table>
-                    </div>
-                  )}
-                  <p className="pt-4 text-[11px] leading-relaxed text-muted-foreground">
-                    {t("monitor.memoryOnlyHint")}
-                  </p>
-                </div>
-              </div>
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="icon"
+                          className="absolute right-3 top-3 h-7 w-7 text-muted-foreground"
+                          data-monitor-terminal={id}
+                          aria-label={`${t("monitor.openTerminal")}: ${host?.label ?? t("monitor.missingHost")}`}
+                          title={t("monitor.openTerminal")}
+                          disabled={!host}
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            if (host) onConnect(host);
+                          }}
+                        >
+                          <Terminal size={14} />
+                        </Button>
+                      </article>
+                    )}
+                    renderCells={({ id, host, state }) => ({
+                      host: (<td>
+                          <button
+                            type="button"
+                            className="flex w-full min-w-0 items-center gap-2.5 text-left aria-disabled:no-underline hover:underline"
+                            aria-disabled={status(host, state) !== "live"}
+                            onClick={() => {
+                              if (status(host, state) !== "live") return;
+                              setEditor(null);
+                              setDetail(id);
+                            }}
+                          >
+                            {host ? (
+                              <DistroAvatar
+                                host={host}
+                                fallback={host.label}
+                                size="md"
+                              />
+                            ) : (
+                              <Server
+                                size={24}
+                                className="shrink-0 text-muted-foreground"
+                              />
+                            )}
+                            <div className="min-w-0">
+                              <div className="truncate font-medium">
+                                {host?.label ?? t("monitor.missingHost")}
+                              </div>
+                              <div className="truncate text-[10px] text-muted-foreground">
+                                {host?.hostname ?? id}
+                              </div>
+                            </div>
+                          </button>
+                        </td>),
+                      latency: (<td>
+                          <MonitorHostLatency value={state?.stats?.latencyMs} responseValue={state?.stats?.responseLatencyMs} />
+                        </td>),
+                      tags: (<td>
+                          <MonitorHostTags tags={host?.tags} />
+                        </td>),
+                      notes: (<td>
+                          <div className="min-w-0 w-full">
+                            <MonitorHostNotes notes={host?.notes} focusable />
+                          </div>
+                        </td>),
+                      cpu: (<td className="tabular-nums">
+                          <ResourceBar
+                            className="w-full"
+                            label=""
+                            value={state?.stats?.cpu}
+                          />
+                        </td>),
+                      memory: (<td className="tabular-nums">
+                          <ResourceBar
+                            className="w-full"
+                            label=""
+                            value={
+                              state?.stats?.memTotal &&
+                              state.stats.memUsed != null
+                                ? (state.stats.memUsed / state.stats.memTotal) *
+                                  100
+                                : null
+                            }
+                          />
+                        </td>),
+                      disks: (<td>
+                          <div className="w-full min-w-0">
+                            <MonitorDiskUsage stats={state?.stats} />
+                          </div>
+                        </td>),
+                      network: (<td
+                          data-monitor-cell="network"
+                          className="tabular-nums whitespace-nowrap"
+                        >
+                          <div>
+                            <div className="flex items-center gap-1.5">
+                              <ArrowDown
+                                size={13}
+                                className="shrink-0 text-sky-600 dark:text-sky-400"
+                              />
+                              <span className="sr-only">
+                                {t("monitor.download")}:{" "}
+                              </span>
+                              {rate(
+                                state?.stats?.networkReady
+                                  ? state.stats.netRxSpeed
+                                  : null,
+                              )}
+                            </div>
+                            <div className="flex items-center gap-1.5">
+                              <ArrowUp
+                                size={13}
+                                className="shrink-0 text-violet-600 dark:text-violet-400"
+                              />
+                              <span className="sr-only">
+                                {t("monitor.upload")}:{" "}
+                              </span>
+                              {rate(
+                                state?.stats?.networkReady
+                                  ? state.stats.netTxSpeed
+                                  : null,
+                              )}
+                            </div>
+                          </div>
+                        </td>),
+                      updated: (<td className="whitespace-nowrap tabular-nums">
+                          {state?.at
+                            ? new Date(state.at).toLocaleTimeString()
+                            : "--"}
+                        </td>),
+                      status: (<td>{stateBadge(host, state)}</td>),
+                      terminal: (<td className="sticky right-0 z-10 justify-center !bg-background before:pointer-events-none before:absolute before:inset-0 before:rounded-r-xl before:bg-card/70 group-hover:before:bg-card">
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="icon"
+                            className="relative h-7 w-7 text-muted-foreground"
+                            data-monitor-terminal={id}
+                            aria-label={`${t("monitor.openTerminal")}: ${host?.label ?? t("monitor.missingHost")}`}
+                            title={t("monitor.openTerminal")}
+                            disabled={!host}
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              if (host) onConnect(host);
+                            }}
+                          >
+                            <Terminal size={14} />
+                          </Button>
+                        </td>)
+                    })}
+                  />
+                </TooltipProvider>
+              )}
             </>
           )}
         </div>
@@ -1006,8 +1138,9 @@ export function MonitorPanels({
             className={monitorAsideClass}
           />
         )}
-        {detail && (
+        {detail && detailAvailable && (
           <AsidePanel
+            dataSection="vault-monitor-detail"
             open
             onClose={() => setDetail(null)}
             title={hostDetail?.label ?? t("monitor.missingHost")}
@@ -1019,7 +1152,7 @@ export function MonitorPanels({
             width="w-[380px]"
             className={monitorAsideClass}
           >
-            <AsidePanelContent>
+            <AsidePanelContent scrollMode="native">
               <div className="flex items-center gap-3">
                 {hostDetail && <DistroAvatar host={hostDetail} fallback={hostDetail.label} size="lg" />}
                 <div className="min-w-0 flex-1">
@@ -1027,73 +1160,41 @@ export function MonitorPanels({
                   {stateBadge(hostDetail, detailState)}
                 </div>
               </div>
-              {["login", "error", "disconnected"].includes(
-                detailState?.status ?? "",
-              ) && (
-                <>
-                  <p className="text-xs text-muted-foreground">
-                    {t("monitor.loginHint")}
-                  </p>
-                  <div className="space-y-2">
-                    <Label htmlFor="monitor-login-user">
-                      {t("monitor.username")}
-                    </Label>
-                    <Input
-                      id="monitor-login-user"
-                      autoComplete="off"
-                      value={
-                        login.hostId === detail
-                          ? login.username
-                          : (hostDetail?.username ?? "")
-                      }
-                      onChange={(e) =>
-                        setLogin((prev) => ({
-                          hostId: detail,
-                          username: e.target.value,
-                          password: prev.hostId === detail ? prev.password : "",
-                        }))
-                      }
-                    />
-                    <Label htmlFor="monitor-login-password">
-                      {t("monitor.password")}
-                    </Label>
-                    <Input
-                      id="monitor-login-password"
-                      type="password"
-                      autoComplete="new-password"
-                      value={login.hostId === detail ? login.password : ""}
-                      onChange={(e) =>
-                        setLogin((prev) => ({
-                          hostId: detail,
-                          username:
-                            prev.hostId === detail
-                              ? prev.username
-                              : (hostDetail?.username ?? ""),
-                          password: e.target.value,
-                        }))
-                      }
-                    />
-                  </div>
-                  <Button
-                    variant="outline"
-                    onClick={() => {
-                      monitorActions.retry(
-                        detail,
-                        login.hostId === detail && login.password
-                          ? {
-                              username: login.username,
-                              password: login.password,
-                            }
-                          : undefined,
-                      );
-                      setLogin({ hostId: "", username: "", password: "" });
-                    }}
-                  >
-                    {t("monitor.retry")}
-                  </Button>
-                </>
-              )}
               {renderMetrics(detailState, true)}
+              {detailState?.stats && (
+                detailState.stats.gpu != null ||
+                detailState.stats.gpuName ||
+                (detailState.stats.gpuMemTotal ?? 0) > 0
+              ) && (
+                <section className="space-y-3" data-monitor-gpu>
+                  <h3 className="flex items-center gap-1.5 text-sm font-medium">
+                    <Gpu size={15} className="text-muted-foreground" />
+                    {t("systemManager.tabs.gpu")}
+                  </h3>
+                  {detailState.stats.gpuName && (
+                    <p className="break-words text-xs text-muted-foreground">
+                      {detailState.stats.gpuName}
+                    </p>
+                  )}
+                  <div className="space-y-1.5">
+                    <p className="text-[11px] text-muted-foreground">{t("systemManager.gpu.util")}</p>
+                    <ResourceBar label="" value={detailState.stats.gpu} />
+                  </div>
+                  <div className="space-y-1.5">
+                    <div className="flex justify-between gap-2 text-[11px] text-muted-foreground">
+                      <span>{t("systemManager.gpu.memory")}</span>
+                      <span className="tabular-nums">
+                        {capacity(detailState.stats.gpuMemUsed)} / {capacity(detailState.stats.gpuMemTotal)}
+                      </span>
+                    </div>
+                    <ResourceBar label="" value={
+                      detailState.stats.gpuMemUsed != null && (detailState.stats.gpuMemTotal ?? 0) > 0
+                        ? detailState.stats.gpuMemUsed / detailState.stats.gpuMemTotal! * 100
+                        : null
+                    } />
+                  </div>
+                </section>
+              )}
               <p className="text-xs text-muted-foreground">
                 {t("monitor.observed", {
                   count: detailState?.points.length
@@ -1188,24 +1289,6 @@ export function MonitorPanels({
                 <p>{detailState?.stats?.kernelRelease ?? "--"}</p>
                 <p>{detailState?.stats?.hostname ?? "--"}</p>
               </div>
-              {detailState?.status === "unsupported" && (
-                <p className="text-xs text-muted-foreground">
-                  {t("monitor.unsupportedHint")}
-                </p>
-              )}
-              {!hostDetail && panel && (
-                <Button
-                  variant="outline"
-                  onClick={() => {
-                    void patchPanel({
-                      hostIds: panel.hostIds.filter((id) => id !== detail),
-                    });
-                    setDetail(null);
-                  }}
-                >
-                  {t("monitor.removeHost")}
-                </Button>
-              )}
             </AsidePanelContent>
             <AsidePanelFooter>
               <Button
@@ -1219,6 +1302,32 @@ export function MonitorPanels({
             </AsidePanelFooter>
           </AsidePanel>
         )}
+      <Dialog open={!!recovery} onOpenChange={(open) => !open && setRecovery(null)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>{t("monitor.retry")}</DialogTitle>
+            <DialogDescription>{t("monitor.loginHint")}</DialogDescription>
+          </DialogHeader>
+          <form onSubmit={(event) => {
+            event.preventDefault();
+            if (!recovery) return;
+            monitorActions.retry(recovery.hostId, recovery.password ? {username: recovery.username, password: recovery.password} : undefined);
+            setRecovery(null);
+          }} className="space-y-4">
+            <p className="truncate text-sm font-medium">{hostById.get(recovery?.hostId ?? "")?.label}</p>
+            <div className="space-y-2">
+              <Label htmlFor="monitor-login-user">{t("monitor.username")}</Label>
+              <Input id="monitor-login-user" autoComplete="off" value={recovery?.username ?? ""} onChange={(event) => setRecovery(previous => previous && {...previous, username: event.target.value})} />
+              <Label htmlFor="monitor-login-password">{t("monitor.password")}</Label>
+              <Input id="monitor-login-password" type="password" autoComplete="new-password" value={recovery?.password ?? ""} onChange={(event) => setRecovery(previous => previous && {...previous, password: event.target.value})} />
+            </div>
+            <DialogFooter>
+              <Button type="button" variant="outline" onClick={() => setRecovery(null)}>{t("common.cancel")}</Button>
+              <Button type="submit">{t("monitor.retry")}</Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
       <Dialog
         open={!!deleting}
         onOpenChange={(open) => !open && setDeleting(null)}

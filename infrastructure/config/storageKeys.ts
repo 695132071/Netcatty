@@ -321,3 +321,6 @@ export const STORAGE_KEY_DEBUG_UPDATE_DEMO = 'debug.updateDemo';
 
 // Portable monitor configuration. Runtime samples never use storage.
 export const STORAGE_KEY_MONITOR_PANELS = 'netcatty_monitor_panels_v1';
+export const STORAGE_KEY_MONITOR_TABLE_COLUMNS = 'netcatty_monitor_table_columns_v1';
+
+export const STORAGE_KEY_MONITOR_HIDDEN_COLUMNS = "netcatty_monitor_hidden_columns_v1";

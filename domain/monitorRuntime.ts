@@ -22,6 +22,8 @@ export type MonitorHostState = {
     | "disconnected"
     | "limit";
   at: number;
+  /** GPU publication can advance independently of the primary sample/history. */
+  statsAt?: number;
   /** Omitted by incremental replies when the receiver already has this sample. */
   stats?: MonitorStats | null;
   points: MonitorPoint[];

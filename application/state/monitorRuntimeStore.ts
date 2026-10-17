@@ -22,7 +22,7 @@ export function getMonitorHistoryCursor(): MonitorHistoryCursor {
   return {
     runtimeId: snapshot.runtimeId,
     epoch: snapshot.epoch,
-    after: Object.fromEntries(Object.entries(snapshot.hosts).map(([id, host]) => [id, { at: host.points.at(-1)?.at ?? 0, statsAt: host.at, historyId: host.historyId }])),
+    after: Object.fromEntries(Object.entries(snapshot.hosts).map(([id, host]) => [id, { at: host.points.at(-1)?.at ?? 0, statsAt: host.statsAt ?? host.at, historyId: host.historyId }])),
   };
 }
 export function publishMonitorUnavailable() {

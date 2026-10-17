@@ -145,10 +145,16 @@ export const AsidePanelHeader: React.FC<AsidePanelHeaderProps> = ({
 };
 
 // Content Component (wraps children with scroll)
-export const AsidePanelContent: React.FC<{ children: ReactNode; className?: string }> = ({
+export const AsidePanelContent: React.FC<{ children: ReactNode; className?: string; scrollMode?: "custom" | "native" }> = ({
     children,
     className,
+    scrollMode = "custom",
 }) => {
+    if (scrollMode === "native") return (
+        <div data-aside-scroll-viewport className={cn("flex-1 min-h-0 min-w-0 overflow-y-auto overscroll-y-contain host-tree-notes-scroll", className)}>
+            <div className="p-4 space-y-4 min-w-0 overflow-hidden">{children}</div>
+        </div>
+    );
     return (
         <ScrollArea className={cn("flex-1 min-w-0 [&>[data-radix-scroll-area-viewport]>div]:!block [&>[data-radix-scroll-area-viewport]>div]:!min-w-0", className)}>
             <div className="p-4 space-y-4 min-w-0 overflow-hidden">

@@ -1,5 +1,6 @@
 "use strict";
 // One in-memory sampler per physical authenticated transport. No persistence/logging.
+const { withCachedMonitorGpu, cancelMonitorGpuProbe, monitorGpuUpdatedAt } = require("./monitorGpuStats.cjs");
 const { buildEndpointKey } = require("../sshConnectionPool.cjs");
 let states = new WeakMap();
 const identities = new Map();
@@ -100,7 +101,7 @@ async function sampleSharedStats(session, collect, now = Date.now()) {
         appendPoint(state, result, state.at, session._monitorFreshAfter);
       return result;
     }
-    // A terminal needs process/GPU fields omitted from a monitor-only query.
+    // A terminal needs process and GPU fields omitted from a monitor-only query.
     // Finish the shared lightweight query, then upgrade once for all full readers.
     await state.pending;
     return sampleSharedStats(session, collect);
@@ -156,9 +157,10 @@ function readSharedStats(conn) {
   const state = stateFor(conn);
   if (state.points[0] && Date.now() - state.points[0].at > 30 * 60000)
     state.points = state.points.filter((p) => Date.now() - p.at <= 30 * 60000);
-  return { result: state.latest, at: state.at, points: state.points };
+  return { result: state.latestFull ? state.latest : withCachedMonitorGpu(conn, state.latest), at: state.at, statsAt: Math.max(state.at, monitorGpuUpdatedAt(conn)), points: state.points };
 }
 function cancelSharedStats(conn) {
+  cancelMonitorGpuProbe(conn);
   const state = states.get(conn);
   if (state && !state.terminalJoined) state.controller?.abort();
 }

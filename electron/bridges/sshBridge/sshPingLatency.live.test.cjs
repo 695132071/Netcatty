@@ -86,6 +86,7 @@ for (const keepaliveInterval of [10000, 0]) {
         assert.equal(forwardPort, 43210);
         if (keepaliveInterval > 0) assert.equal(Number.isFinite(stats.stats.latencyMs), true);
         else assert.equal(stats.stats.latencyMs, null);
+        assert.equal(Number.isFinite(stats.stats.responseLatencyMs), true);
         await new Promise((resolve, reject) => conn.unforwardIn("127.0.0.1", forwardPort,
           (err) => err ? reject(err) : resolve()));
       }

@@ -327,6 +327,7 @@ declare global {
         netRxSpeed: number;           // Total network receive speed (bytes/sec)
         netTxSpeed: number;           // Total network transmit speed (bytes/sec)
         latencyMs: number | null;     // SSH transport ping on the existing session, not a second TCP dial
+        responseLatencyMs?: number | null; // Existing stats exec response, including remote channel setup
         netInterfaces: Array<{        // Per-interface network stats
           name: string;               // Interface name (e.g., eth0, ens33)
           rxBytes: number;            // Total received bytes

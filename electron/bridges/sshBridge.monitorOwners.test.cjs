@@ -91,6 +91,54 @@ test("worker IPC installs one owner teardown across all monitor handlers", async
   ]);
 });
 
+test("starting monitoring publishes latency even when SSH keepalives are disabled", async () => {
+  pool.resetSshTransportRegistryForTests({ defaultIdleTtlMs: 0 });
+  const { selectServerStatsFixtureOutput } = require("./sshBridge/serverStatsTestHelpers.cjs");
+  const handlers = register();
+  const e = event(93);
+  const options = {
+    hostname: "latency-fixture",
+    username: "fixture",
+    password: "fixture-only",
+    keepaliveInterval: 0,
+    verifyHostKeys: false,
+  };
+  const conn = new EventEmitter();
+  conn._sock = { destroyed: false };
+  conn.config = { keepaliveInterval: 0 };
+  conn.end = () => {};
+  conn.exec = (command, callback) => {
+    const stream = new EventEmitter();
+    stream.stderr = new EventEmitter();
+    stream.write = () => true;
+    callback(null, stream);
+    setImmediate(() => {
+      stream.emit("data", Buffer.from(selectServerStatsFixtureOutput(command,
+        "CPURAW:1000 900|CORES:4|PERCORERAW:|MEMINFO:8000 4000 100 900 0 0|PROCS:|DISKS:|NET:")));
+      stream.emit("close", 0);
+    });
+  };
+  const transport = pool.createTransport({ conn, endpoint: pool.buildConnectionReuseEndpoint(options) });
+  const holder = {};
+  pool.borrowTransport(transport, { kind: pool.LEASE_KINDS.shell, holder });
+  try {
+    await handlers.get("netcatty:monitor:update")(e, [{ id: "latency", hosts: [{ id: "host", options }] }]);
+    let snapshot;
+    const deadline = Date.now() + 2000;
+    do {
+      await tick();
+      snapshot = handlers.get("netcatty:monitor:snapshot")(e);
+    } while (snapshot.hosts.host?.status !== "live" && Date.now() < deadline);
+    assert.equal(snapshot.hosts.host?.status, "live");
+    assert.equal(snapshot.hosts.host.stats.memTotal, 8000);
+    assert.equal(snapshot.hosts.host.stats.latencyMs, null, "keepalive opt-out is preserved");
+    assert.equal(typeof snapshot.hosts.host.stats.responseLatencyMs, "number");
+  } finally {
+    bridge.stopAllMonitoring();
+    pool.returnTransport(holder);
+  }
+});
+
 
 test("worker receiving handlers accept the actual IPC sender without WebContents lifecycle methods", async () => {
   const { createWorkerSender } = require("../terminalWorker/process.cjs");

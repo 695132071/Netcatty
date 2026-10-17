@@ -280,7 +280,7 @@ test("full terminal readers upgrade a lightweight cached sample and keep subsequ
         memTotal: 100,
         memUsed: null,
         topProcesses: ctx._monitorStats ? [] : [{ name: "full-process" }],
-        gpu: ctx._monitorStats ? null : 75,
+        gpu: 75,
       },
     };
   };
@@ -751,4 +751,24 @@ test("snapshot deltas send new points only, even with 256 full retained historie
   assert.equal(fresh.hosts.h0.stats.cpu, 67);
   assert.ok(Object.entries(fresh.hosts).every(([id, host]) => id === "h0" || !Object.hasOwn(host, "stats")));
   f.service.dispose();
+});
+
+test('a completed GPU probe reaches incremental snapshots before the next CPU sample',async()=>{
+ const {cacheFullGpuStats}=require('./sshBridge/monitorGpuStats.cjs');
+ const f=fixture();
+ try {
+  f.service.reconcile(event(1),[{...demand(),interval:60}]);
+  await until(()=>f.service.snapshot(event(1)).hosts.h?.status==='live');
+  const initial=f.service.snapshot(event(1));
+  const host=initial.hosts.h;
+  const cursor={runtimeId:initial.runtimeId,epoch:initial.epoch,after:{h:{at:host.points.at(-1)?.at??0,statsAt:host.statsAt,historyId:host.historyId}}};
+  cacheFullGpuStats(f.c,{gpu:75,gpuName:'NVIDIA independent',gpuMemUsed:512,gpuMemTotal:8192});
+  const next=f.service.snapshot(event(1),cursor).hosts.h;
+  assert.equal(next.stats.gpu,75,'GPU data must not be omitted by the primary sample cursor');
+  assert.equal(next.at,host.at,'GPU publication must not change CPU freshness');
+  assert.deepEqual(next.points,[],'GPU publication must not add trend samples');
+  assert.ok(next.statsAt>host.statsAt);
+  const caughtUp={...cursor,after:{h:{...cursor.after.h,statsAt:next.statsAt}}};
+  assert.equal(f.service.snapshot(event(1),caughtUp).hosts.h.stats,undefined,'unchanged GPU data is not repeatedly sent');
+ } finally {f.service.dispose();}
 });

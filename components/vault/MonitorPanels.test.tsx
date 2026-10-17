@@ -10,6 +10,26 @@ import type { Host } from "../../domain/models";
 import type { MonitorPoint } from "../../domain/monitorRuntime";
 import { MonitorPanels, MonitorTrend } from "./MonitorPanels";
 import { MonitorDiskUsage } from "./MonitorDiskUsage";
+import { MonitorHostLatency } from "./MonitorHostMetadata";
+import { TooltipProvider } from "../ui/tooltip";
+
+test("latency signals use the stats response when transport ping is unavailable and prefer valid ping readings", () => {
+  for (const [ping, response, bars, label] of [
+    [null, 145, "2", "Response latency (includes remote processing): 145 ms"],
+    [0, 500, "4", "Latency: 0 ms"],
+    [NaN, 450, "1", "Response latency (includes remote processing): 450 ms"],
+    [null, null, "0", "Latency: --"],
+  ] as const) {
+    const document = new JSDOM(renderToStaticMarkup(
+      <I18nProvider locale="en"><TooltipProvider>
+        <MonitorHostLatency value={ping} responseValue={response} />
+      </TooltipProvider></I18nProvider>,
+    )).window.document;
+    const signal = document.querySelector("[data-monitor-latency]")!;
+    assert.equal(signal.getAttribute("data-monitor-signal-bars"), bars);
+    assert.equal(signal.getAttribute("aria-label"), label);
+  }
+});
 
 const now = 1_800_000_000_000;
 const point = (ago: number, cpu: number | null): MonitorPoint => ({
@@ -161,7 +181,7 @@ for (const view of ["list", "charts"] as const) {
     assert.equal(document.querySelector("header .lucide-gauge"), null);
     assert.equal(document.querySelector(".lucide-activity"), null);
     if (view === "list") {
-      const network = document.querySelector("tbody tr")!.children[5];
+      const network = document.querySelector("[data-monitor-cell=network]")!;
       assert.deepEqual([...network.querySelectorAll(".sr-only")].map((e) => e.textContent), ["Download: ", "Upload: "]);
     }
   });
