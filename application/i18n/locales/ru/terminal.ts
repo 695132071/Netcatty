@@ -742,6 +742,7 @@ export const ruTerminalMessages: Messages = {
 
   // Snippets
   'snippets.searchPlaceholder': 'Поиск сниппетов...',
+  'snippets.action.new': 'Создать',
   'snippets.action.newSnippet': 'Новый сниппет',
   'snippets.action.newPackage': 'Новый пакет',
   'snippets.action.import': 'Импорт',

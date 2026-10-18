@@ -813,6 +813,7 @@ export const zhCNTerminalMessages: Messages = {
 
   // Snippets
   'snippets.searchPlaceholder': '搜索脚本...',
+  'snippets.action.new': '新建',
   'snippets.action.newSnippet': '新建代码片段',
   'snippets.action.newPackage': '新建脚本包',
   'snippets.action.import': '导入',

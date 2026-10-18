@@ -813,6 +813,7 @@ export const zhTWTerminalMessages: Messages = {
 
   // Snippets
   'snippets.searchPlaceholder': '搜尋程式碼片段...',
+  'snippets.action.new': '新增',
   'snippets.action.newSnippet': '新增程式碼片段',
   'snippets.action.newPackage': '新增程式碼包',
   'snippets.action.import': '匯入',

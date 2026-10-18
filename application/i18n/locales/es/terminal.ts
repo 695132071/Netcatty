@@ -689,6 +689,7 @@ export const esTerminalMessages: Messages = {
 
   // Snippets
   'snippets.searchPlaceholder': 'Buscar scripts...',
+  'snippets.action.new': 'Nuevo',
   'snippets.action.newSnippet': 'Nuevo snippet',
   'snippets.action.newPackage': 'Nuevo paquete de scripts',
   'snippets.action.import': 'Importar',

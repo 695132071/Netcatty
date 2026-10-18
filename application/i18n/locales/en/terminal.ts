@@ -727,6 +727,7 @@ export const enTerminalMessages: Messages = {
 
   // Snippets
   'snippets.searchPlaceholder': 'Search scripts...',
+  'snippets.action.new': 'New',
   'snippets.action.newSnippet': 'New Snippet',
   'snippets.action.newPackage': 'New Script Package',
   'snippets.action.import': 'Import',
