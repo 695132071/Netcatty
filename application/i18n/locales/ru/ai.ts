@@ -485,6 +485,7 @@ export const ruAiMessages: Messages = {
   'ai.chat.searchSessions': 'Поиск по заголовкам и недавнему содержимому…',
   'ai.chat.clearSessionSearch': 'Очистить поиск сессий',
   'ai.chat.searchSessionsHint': 'Поиск по заголовкам с приоритетом более новых сообщений и записей. В длинных сообщениях и результатах инструментов поиск охватывает только ограниченную начальную часть. Это не полнотекстовый поиск.',
+  'ai.chat.searchingSessions': 'Поиск...',
   'ai.chat.noMatchingSessions': 'Нет совпадений в заголовках и недавнем сохранённом содержимом',
   'ai.chat.noSessions': 'Предыдущих сессий нет',
   'ai.chat.forkFromHere': 'Ветвление отсюда',

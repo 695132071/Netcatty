@@ -538,6 +538,7 @@ export const enAiMessages: Messages = {
   'ai.chat.searchSessions': 'Search titles and recent content…',
   'ai.chat.clearSessionSearch': 'Clear session search',
   'ai.chat.searchSessionsHint': 'Searches titles, prioritizing newer messages and entries. For long messages and tool outputs, only a limited portion at the beginning is searched. This is not full-text search.',
+  'ai.chat.searchingSessions': 'Searching...',
   'ai.chat.noMatchingSessions': 'No matches in titles or recent retained content',
   'ai.chat.noSessions': 'No previous sessions',
   'ai.chat.forkFromHere': 'Fork from here',
