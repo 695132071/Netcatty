@@ -153,6 +153,37 @@ test("foreground PTY cancellation returns only a bounded tail", async () => {
   assert.equal(result.outputTruncated, true);
 });
 
+test("PTY cancellation delivers Ctrl+C as terminal data without a channel signal request", async () => {
+  const calls = [];
+  class SignalSpyPty extends EventEmitter {
+    signal(name) {
+      calls.push(["signal", name]);
+    }
+    write(data) {
+      if (data === "\x03") calls.push(["write", data]);
+      const marker = markerFromWrite(data);
+      if (!marker || this.started) return;
+      this.started = true;
+      queueMicrotask(() => {
+        this.emit("data", Buffer.from(`${marker}_S\n`));
+      });
+    }
+  }
+
+  const pty = new SignalSpyPty();
+  const job = startPtyJob(pty, "cancel-signal-request", {
+    shellKind: "posix",
+    timeoutMs: 1_000,
+    expectedPrompt: "$ ",
+  });
+  await new Promise((resolve) => setImmediate(resolve));
+  job.cancel();
+  pty.emit("data", Buffer.from("$ "));
+  const result = await job.resultPromise;
+  assert.equal(result.error, "Cancelled");
+  assert.deepEqual(calls, [["write", "\x03"]]);
+});
+
 test("background PTY jobs preserve output that has no trailing newline", async () => {
   const job = startPtyJob(new ShellBackedPty(), "printf 'abc'", {
     shellKind: "posix",

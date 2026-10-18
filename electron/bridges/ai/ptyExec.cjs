@@ -254,17 +254,14 @@ function startPtyJob(ptyStream, command, options) {
     startupTimeoutMs: maxBufferedChars > 0 ? BG_STARTUP_TIMEOUT_MS : timeoutMs,
   });
 
+  // Deliver the interrupt as terminal data (ETX). This matches manual Ctrl+C
+  // in the terminal and terminalBridge.interruptSession: the remote line
+  // discipline turns \x03 into SIGINT. Never send an SSH "signal" channel
+  // request here — real OpenSSH rejects it ("session_signal_req: session
+  // signalling requires privilege separation"), which pollutes auth logs and
+  // makes other host-side tooling report brute-force noise (#3577).
   function sendInterrupt(trigger = null) {
-    let signalSent = false;
     let etxWritten = false;
-    try {
-      if (typeof ptyStream.signal === "function") {
-        ptyStream.signal("INT");
-        signalSent = true;
-      }
-    } catch {
-      // Ignore signal failures and fall back to ETX.
-    }
     try {
       if (typeof ptyStream.write === "function") {
         ptyStream.write("\x03");
@@ -275,7 +272,7 @@ function startPtyJob(ptyStream, command, options) {
     }
     jobDiag.emit("send-interrupt", {
       trigger,
-      signalSent,
+      signalSent: false,
       etxWritten,
       session: diagSnapshot(),
     });
