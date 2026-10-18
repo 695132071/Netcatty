@@ -29,13 +29,9 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/sponsors/binaricat">
-    <img src="https://img.shields.io/badge/GitHub-Sponsors-ea4aaa?style=for-the-badge&logo=githubsponsors&logoColor=white" height="28" alt="Sponsor on GitHub">
-  </a>
+  <a href="https://github.com/sponsors/binaricat"><img src="https://img.shields.io/badge/GitHub-Sponsors-ea4aaa?style=for-the-badge&logo=githubsponsors&logoColor=white" height="28" alt="Sponsor on GitHub"></a>
   &nbsp;
-  <a href="https://ko-fi.com/binaricat">
-    <img src="https://img.shields.io/badge/Ko--fi-Support-29abe0?style=for-the-badge&logo=kofi&logoColor=white" height="28" alt="Support on Ko-fi">
-  </a>
+  <a href="https://ko-fi.com/binaricat"><img src="https://img.shields.io/badge/Ko--fi-Support-29abe0?style=for-the-badge&logo=kofi&logoColor=white" height="28" alt="Support on Ko-fi"></a>
 </p>
 
 <p align="center">
