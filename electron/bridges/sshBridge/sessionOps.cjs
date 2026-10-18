@@ -745,7 +745,10 @@ function createSessionOpsApi(ctx) {
     home=$(id -P 2>/dev/null | awk -F: 'NR == 1 { print $9; exit }')
     emit_home "$home"
     emit_home "$HOME"
-    exit 1`;
+    exit 1`.replace(/^[ \t]*#[^\n]*\n/gm, "");
+        // Omit explanatory comments before quoting this static probe. Dropbear
+        // closes the entire transport for exec requests over 9000 bytes (#3731).
+        // Preserve the directory checks above to avoid regressing #3493.
         // Capture sshd's pid in the exec'd POSIX sh (`$PPID` is sshd because
         // `exec` replaced the login shell). Do not `exec` the inner posixScript:
         // that would skip the watchdog cleanup after it.
