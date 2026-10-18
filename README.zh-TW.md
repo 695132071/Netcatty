@@ -29,6 +29,10 @@
 </p>
 
 <p align="center">
+  <a href="https://github.com/sponsors/binaricat">
+    <img src="https://img.shields.io/badge/GitHub-Sponsors-ea4aaa?style=for-the-badge&logo=githubsponsors&logoColor=white" width="150" alt="透過 GitHub 贊助我">
+  </a>
+  &nbsp;
   <a href="https://ko-fi.com/binaricat">
     <img src="https://cdn.ko-fi.com/cdn/kofi3.png?v=2" width="150" alt="Support on Ko-fi">
   </a>
