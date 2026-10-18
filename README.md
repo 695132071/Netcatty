@@ -173,6 +173,8 @@ Organize and navigate your hosts using the view that best fits the moment: grid 
 
 ## Monitoring View
 
+Inspect CPU, memory, disk, network, and latency readings, with GPU details where available. Choose visible columns, resize them, adjust refresh controls, and open a terminal directly from a monitored host.
+
 <img width="3364" height="1982" alt="image" src="https://github.com/user-attachments/assets/d0f495b5-25c8-494f-bb9c-8c20b0a921b6" />
 
 <img width="3362" height="1980" alt="image" src="https://github.com/user-attachments/assets/245c234e-2b22-43f2-a4fd-8057d229c56f" />
