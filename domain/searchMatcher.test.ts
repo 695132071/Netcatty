@@ -276,6 +276,53 @@ test("pinyin cache stays hard-bounded by retained characters, not just entries",
   resetPinyinCacheForTests();
 });
 
+test("host ASCII fallback preserves compact matches and their complete ranking details", () => {
+  const separators = ["-", "_", " ", "/", "\\", "|", ".", ",", ";", ":", "!", "?", "(", ")", "[", "]", "{", "}", "<", ">", '"', "'", "`", "~"];
+  for (const separator of separators) {
+    assert.deepEqual(getHostSearchMatch("prefixsuffix", { label: `prefix${separator}suffix` }), {
+      matched: true, phase: "loose", score: 100525,
+      details: [{ segment: "prefixsuffix", field: "label", method: "compact", phase: "loose" }],
+    }, JSON.stringify(separator));
+  }
+  for (const separator of ["+", "&", "@", "=", "%", "$", "#", "^"]) {
+    assert.deepEqual(getHostSearchMatch("prefixsuffix", { label: `prefix${separator}suffix` }), {
+      matched: false, phase: "none", score: 0, details: [],
+    }, JSON.stringify(separator));
+  }
+  assert.deepEqual(getHostSearchMatch("ＰＲＯＤＡＰＩ", { label: "ＰＲＯＤ－ＡＰＩ" }), {
+    matched: true, phase: "loose", score: 100525,
+    details: [{ segment: "prodapi", field: "label", method: "compact", phase: "loose" }],
+  });
+});
+
+test("host ASCII bypass preserves strict source selection, IP isolation, and pinyin scoring", () => {
+  const host = { label: "Production API-01", group: "Region 99", hostname: "10.6.1.88", tags: ["production", "web", "核心"] };
+  assert.deepEqual(getHostSearchMatch("production web", host), {
+    matched: true, phase: "strict", score: 1000820,
+    details: [
+      { segment: "production", field: "label", method: "literal", phase: "strict" },
+      { segment: "web", field: "tag", method: "literal", phase: "strict" },
+    ],
+  });
+  assert.deepEqual(getHostSearchMatch("10.6.1.88", host), {
+    matched: true, phase: "strict", score: 1000430,
+    details: [{ segment: "10.6.1.88", field: "hostname", method: "literal", phase: "strict" }],
+  });
+  for (const query of ["61", "production 10.6"]) {
+    assert.deepEqual(getHostSearchMatch(query, host), { matched: false, phase: "none", score: 0, details: [] });
+  }
+  for (const [query, method, score] of [["hexin", "pinyinFull", 100232], ["hx", "pinyinInitials", 100228]] as const) {
+    assert.deepEqual(getHostSearchMatch(query, host), {
+      matched: true, phase: "loose", score,
+      details: [{ segment: query, field: "tag", method, phase: "loose" }],
+    });
+  }
+  assert.deepEqual(getHostSearchMatch("apibu", { label: "API部署" }), {
+    matched: true, phase: "loose", score: 100512,
+    details: [{ segment: "apibu", field: "label", method: "pinyinFull", phase: "loose" }],
+  });
+});
+
 
 test("word prefixes retain literal, normalized, and non-ASCII matching", () => {
   assert.equal(matchesWordPrefixQuery("", "deploy"), true);

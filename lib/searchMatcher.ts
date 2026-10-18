@@ -454,6 +454,9 @@ function matchSegmentAgainstSource(
   }
 
   if (!source.allowPinyin || !/[a-z]/i.test(segment)) return null;
+  // Literal and compact checks already cover printable ASCII host fields.
+  // Keep their ranking above; skip only redundant transliteration/cache work.
+  if (/^[\x20-\x7E]+$/.test(source.text)) return null;
 
   const { full, initials } = getPinyinVariants(source.text);
   if (full && full.includes(compactSegment)) {
