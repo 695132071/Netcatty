@@ -603,7 +603,7 @@ export const useAutoSync = (config: AutoSyncConfig) => {
     getDataHashRef.current = getDataHash;
   }, [getDataHash]);
 
-  const refreshPendingLocalSync = useCallback(async () => {
+  const refreshPendingLocalSync = useCallback(async (isCurrent = () => true) => {
     if (
       !enabled
       || convergentSyncPaused
@@ -618,6 +618,7 @@ export const useAutoSync = (config: AutoSyncConfig) => {
     }
     try {
       const currentHash = await getDataHashRef.current();
+      if (!isCurrent()) return;
       const hashDecision = resolveAutoSyncHashDecision({
         currentHash,
         lastSyncedHash: lastSyncedDataRef.current,
@@ -1148,13 +1149,27 @@ export const useAutoSync = (config: AutoSyncConfig) => {
 
   // Reflect unsynced local edits in the top-bar cloud indicator.
   useEffect(() => {
-    void refreshPendingLocalSync();
+    if (!enabled || convergentSyncPaused || !sync.hasAnyConnectedProvider || !sync.isUnlocked) {
+      manager.setPendingLocalSync(false);
+      return;
+    }
+    // Collecting the pending hash builds the same full payload as an upload.
+    // Let rapid edits settle before doing that work, even with auto-sync off.
+    let cancelled = false;
+    const timer = setTimeout(() => {
+      void refreshPendingLocalSync(() => !cancelled);
+    }, 200);
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
   }, [
     refreshPendingLocalSync,
     getDataHash,
     sync.hasAnyConnectedProvider,
     sync.isUnlocked,
     sync.isSyncing,
+    convergentSyncPaused,
     config.settingsVersion,
     enabled,
     bookmarksVersion,
