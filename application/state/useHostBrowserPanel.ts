@@ -38,9 +38,33 @@ export function useHostBrowserPanel(options: BrowserPanelOptions) {
 
   useLayoutEffect(() => {
     const bridge = netcattyBridge.get();
-    let frame = 0;
+    let frame: number | null = null;
     let previous = '';
     let disposed = false;
+    let layoutRevision = 0;
+    const element = elementRef.current;
+    const doc = element?.ownerDocument;
+    const view = doc?.defaultView;
+    const observed = new Set<Element>();
+    const animations = new Map<Animation, Element>();
+    const schedule = () => {
+      if (disposed || frame !== null) return;
+      frame = requestAnimationFrame(() => {
+        frame = null;
+        for (const [animation, target] of animations) {
+          if (!target.isConnected || (!animation.pending && animation.playState !== 'running')) animations.delete(animation);
+        }
+        update();
+        if (animations.size > 0) schedule();
+      });
+    };
+    const trackAnimations = (target: Element) => {
+      for (const animation of target.getAnimations?.() ?? []) {
+        if (!animation.pending && animation.playState !== 'running') continue;
+        animations.set(animation, target);
+      }
+    };
+    const resizeObserver = isVisible && view?.ResizeObserver ? new view.ResizeObserver(schedule) : null;
     const update = () => {
       const element = elementRef.current;
       const rect = element?.getBoundingClientRect();
@@ -48,9 +72,21 @@ export function useHostBrowserPanel(options: BrowserPanelOptions) {
       // to yield; dialogs are modal even when their content is beside the pane.
       const locked = !!document.querySelector('[data-app-lock-overlay]');
       const modal = !!document.querySelector('[role="dialog"][aria-modal="true"], [role="alertdialog"]');
-      const covered = modal || (!!rect && Array.from(document.querySelectorAll(
-        '[role="dialog"], [role="menu"][data-state="open"], [data-radix-popper-content-wrapper] > *',
-      )).some((overlay) => overlapsBrowser(rect, overlay)));
+      const overlays = Array.from(document.querySelectorAll(
+        '[role="dialog"], [role="alertdialog"], [role="menu"][data-state="open"], [data-radix-popper-content-wrapper] > *',
+      ));
+      const covered = modal || (!!rect && overlays.some((overlay) => overlapsBrowser(rect, overlay)));
+      const targets = new Set<Element>(overlays);
+      for (let target: Element | null = element; target; target = target.parentElement) targets.add(target);
+      for (const target of observed) {
+        if (!targets.has(target)) { resizeObserver?.unobserve(target); observed.delete(target); }
+      }
+      for (const target of targets) {
+        if (observed.has(target)) continue;
+        observed.add(target);
+        resizeObserver?.observe(target);
+        trackAnimations(target);
+      }
       const visible = isVisible && !!element?.isConnected && !!rect
         && rect.width > 0 && rect.height > 0 && !element?.closest('[inert]') && !locked;
       if (!visible) setSnapshot(null);
@@ -63,17 +99,59 @@ export function useHostBrowserPanel(options: BrowserPanelOptions) {
       const next = JSON.stringify(layout);
       if (next !== previous) {
         previous = next;
+        const revision = ++layoutRevision;
         void bridge?.setHostBrowserPanelLayout?.(layout).then((result) => {
-          if (disposed || previous !== next) return;
+          if (disposed || layoutRevision !== revision) return;
           setSnapshot(visible && covered && typeof result === 'object' ? { browserId, layers: result.layers } : null);
         }).catch(() => {});
       }
-      if (isVisible) frame = requestAnimationFrame(update);
     };
+    if (!isVisible) {
+      setSnapshot(null);
+      void bridge?.setHostBrowserPanelLayout?.({ browserId, visible: false }).catch(() => {});
+      return;
+    }
+
+    // Layout, theme and portal changes coalesce into a single frame. Keep
+    // following only running animations on the pane's ancestors or overlay
+    // containers; unrelated spinner/cursor animations must not restart polling.
+    const mutationObserver = view?.MutationObserver ? new view.MutationObserver(schedule) : null;
+    if (doc) mutationObserver?.observe(doc.documentElement, {
+      subtree: true, childList: true, attributes: true,
+      attributeFilter: ['style', 'class', 'hidden', 'inert', 'role', 'aria-modal', 'data-state',
+        'data-app-lock-overlay', 'data-radix-popper-content-wrapper', 'href', 'media', 'disabled'],
+    });
+    const onMotion = (event: Event) => {
+      const target = event.target;
+      if (!element || !view || !(target instanceof view.Element)) return;
+      if (!target.contains(element) && !target.matches(
+        '[role="dialog"], [role="alertdialog"], [role="menu"], [data-app-lock-overlay], '
+        + '[data-radix-popper-content-wrapper], [data-radix-popper-content-wrapper] > *',
+      )) return;
+      trackAnimations(target);
+      schedule();
+    };
+    const motionEvents = ['transitionrun', 'transitionend', 'transitioncancel', 'animationstart', 'animationend', 'animationcancel'];
+    for (const event of motionEvents) doc?.addEventListener(event, onMotion, true);
+    doc?.addEventListener('scroll', schedule, true);
+    doc?.addEventListener('load', schedule, true);
+    view?.addEventListener('resize', schedule);
+    doc?.fonts?.addEventListener('loadingdone', schedule);
+    doc?.fonts?.addEventListener('loadingerror', schedule);
+    if (doc?.fonts?.status === 'loading') void doc.fonts.ready.then(schedule);
     update();
+    if (animations.size > 0) schedule();
     return () => {
       disposed = true;
-      cancelAnimationFrame(frame);
+      if (frame !== null) cancelAnimationFrame(frame);
+      resizeObserver?.disconnect();
+      mutationObserver?.disconnect();
+      for (const event of motionEvents) doc?.removeEventListener(event, onMotion, true);
+      doc?.removeEventListener('scroll', schedule, true);
+      doc?.removeEventListener('load', schedule, true);
+      view?.removeEventListener('resize', schedule);
+      doc?.fonts?.removeEventListener('loadingdone', schedule);
+      doc?.fonts?.removeEventListener('loadingerror', schedule);
       void bridge?.setHostBrowserPanelLayout?.({ browserId, visible: false }).catch(() => {});
     };
   }, [browserId, isVisible]);

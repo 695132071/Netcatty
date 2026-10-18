@@ -35,9 +35,22 @@ async function capture(file, selector) {
   fs.writeFileSync(file, (await owner.webContents.capturePage(bounds)).toPNG());
 }
 async function click(selector) {
+  // Electron requires native focus before sendInputEvent can deliver a click.
+  app.focus({ steal: true }); owner.focus(); owner.webContents.focus();
+  await until(() => owner.isFocused(), true, 'acceptance window has native focus for click');
   const rect = await run(`(() => { const element = document.querySelector(${JSON.stringify(selector)}); element?.scrollIntoView({block:'nearest'}); const r = element?.getBoundingClientRect(); return r && {x:r.x+r.width/2,y:r.y+r.height/2}; })()`);
   assert.ok(rect, `missing ${selector}`);
+  owner.webContents.sendInputEvent({ type: 'mouseMove', x: Math.round(rect.x), y: Math.round(rect.y) });
+  await run('new Promise(resolve => requestAnimationFrame(resolve))');
   for (const type of ['mouseDown', 'mouseUp']) owner.webContents.sendInputEvent({ type, button: 'left', clickCount: 1, x: Math.round(rect.x), y: Math.round(rect.y) });
+  await run('new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))');
+}
+async function pressEscape() {
+  app.focus({ steal: true }); owner.focus(); owner.webContents.focus();
+  await until(() => owner.isFocused(), true, 'acceptance window has native focus for Escape');
+  await run('new Promise(resolve => requestAnimationFrame(resolve))');
+  owner.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'Escape' });
+  owner.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'Escape' });
   await run('new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))');
 }
 async function input(selector, value) {
@@ -93,6 +106,65 @@ async function main() {
   assert.ok(root); assert.equal(root.children.length, 1, 'only the website is a separate native view');
   const page = root.children[0].webContents;
   await page.executeJavaScript("document.getElementById('draft').value='Unsaved browser input'");
+  // A visible but stationary browser must not spend every frame reading the
+  // whole renderer. Settle startup/FontFaceSet work before observing idle time.
+  await wait(300);
+  const assertIdleLayout = async () => {
+    await run(`(() => {
+      const query=document.querySelector.bind(document),queryAll=document.querySelectorAll.bind(document),style=getComputedStyle;
+      window.layoutReads={queries:0,styles:0};
+      document.querySelector=(...args)=>{window.layoutReads.queries++;return query(...args)};
+      document.querySelectorAll=(...args)=>{window.layoutReads.queries++;return queryAll(...args)};
+      window.getComputedStyle=(...args)=>{window.layoutReads.styles++;return style(...args)};
+      window.restoreLayoutReads=()=>{document.querySelector=query;document.querySelectorAll=queryAll;window.getComputedStyle=style;};
+    })()`);
+    await wait(250);
+    const reads=await run('window.restoreLayoutReads();window.layoutReads');
+    assert.deepEqual(reads,{queries:0,styles:0},'idle browser leaves no repeated overlay/style scans');
+  };
+  await assertIdleLayout();
+
+  // Position-only CSS motion does not fire ResizeObserver on the viewport.
+  // Follow its real animation frames, then release the frame loop again.
+  await run(`(() => {const parent=document.querySelector('[data-section=host-browser-root]').parentElement;parent.id='moving-browser-fixture';parent.style.transition='transform 300ms linear';parent.style.transform='translateX(32px)';})()`);
+  const positions=[];
+  for(let index=0;index<15;index++){await wait(25);positions.push(root.getBounds().x);}
+  assert.ok(new Set(positions).size>=4,'the native browser follows intermediate transform positions');
+  const expectedX=await run('Math.round(document.querySelector("[data-section=host-browser-panel]").getBoundingClientRect().x)');
+  assert.equal(root.getBounds().x,expectedX,'native browser reaches the final CSS position');
+  await assertIdleLayout();
+  await run('document.getElementById("moving-browser-fixture").style.transform="none"');await wait(350);
+
+  // Exercise continuous pointer-driven size updates through the same hook and
+  // native view. No application session or real SSH host is involved.
+  await run(`(() => {
+    const handle=document.createElement('div');handle.id='browser-drag-fixture';handle.style.cssText='position:fixed;left:2px;top:100px;width:8px;height:200px;z-index:99999';
+    const parent=document.getElementById('moving-browser-fixture');
+    handle.onmousedown=()=>{const move=event=>{parent.style.width=Math.max(300,event.clientX-parent.getBoundingClientRect().x)+'px'};const up=()=>{window.removeEventListener('mousemove',move);window.removeEventListener('mouseup',up)};window.addEventListener('mousemove',move);window.addEventListener('mouseup',up)};
+    document.body.append(handle);
+  })()`);
+  owner.webContents.sendInputEvent({type:'mouseDown',button:'left',clickCount:1,x:6,y:150});
+  for(const x of [850,750,650,550]){owner.webContents.sendInputEvent({type:'mouseMove',x,y:150});await wait(30);}
+  owner.webContents.sendInputEvent({type:'mouseUp',button:'left',clickCount:1,x:550,y:150});await wait(80);
+  const expectedWidth=await run('Math.round(document.querySelector("[data-section=host-browser-panel]").getBoundingClientRect().width)');
+  assert.equal(root.getBounds().width,expectedWidth,'drag-driven viewport width reaches the native browser');
+  assert.ok(expectedWidth<600,'the pointer drag actually resized the fixture');
+  await run('document.getElementById("moving-browser-fixture").style.width="";document.getElementById("browser-drag-fixture").remove()');await wait(100);
+
+  await run('document.documentElement.style.colorScheme="light";document.documentElement.style.setProperty("--background","40 70% 90%")');
+  await until(()=>manager.getPanelState(event,browserId).theme,'light','theme reaches native browser without a frame poll');
+  await run('document.documentElement.style.colorScheme="dark";document.documentElement.style.setProperty("--background","210 25% 18%")');
+  await until(()=>manager.getPanelState(event,browserId).theme,'dark','theme restores');
+  await run(`document.body.insertAdjacentHTML('beforeend','<div id="modal-layout-fixture" role="dialog" aria-modal="true" style="position:fixed;left:0;top:0;width:1px;height:1px"></div>')`);
+  await until(()=>owner.contentView.children.includes(root),false,'modal beside the viewport still covers native content');
+  await run('document.getElementById("modal-layout-fixture").remove()');
+  await until(()=>owner.contentView.children.includes(root),true,'closing modal restores native content');
+  await run(`document.body.insertAdjacentHTML('beforeend','<div id="lock-layout-fixture" data-app-lock-overlay></div>')`);
+  await until(()=>owner.contentView.children.includes(root),false,'app lock hides native content');
+  await run('document.getElementById("lock-layout-fixture").remove()');
+  await until(()=>owner.contentView.children.includes(root),true,'unlock restores native content');
+  assert.equal(await page.executeJavaScript("document.getElementById('draft').value"),'Unsaved browser input');
+
   for (let index = 0; index < 2; index++) {
     app.focus({ steal: true });
     owner.focus(); owner.webContents.focus();
@@ -110,7 +182,7 @@ async function main() {
     assert.equal(owner.contentView.children.includes(root), false, 'the split menu is above the native content');
     await click(`#choice-${index}-0`);
     await until(() => run(`document.getElementById('choice-${index}-0').dataset.chosen`), 'true', 'split menu choices are clickable');
-    owner.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'Escape' });
+    await pressEscape();
     owner.webContents.sendInputEvent({ type: 'mouseMove', x: 980, y: 740 });
     await until(() => owner.contentView.children.includes(root), true, 'closing menu restores live content');
     assert.equal(await page.executeJavaScript("document.getElementById('draft').value"), 'Unsaved browser input');
@@ -204,7 +276,7 @@ async function main() {
   await until(() => owner.contentView.children.includes(root), true, 'bookmark navigation attaches the website again');
   await click('[aria-label="下载"]');
   await until(() => run('document.body.textContent.includes("暂无下载")'), true, 'downloads use the app popover');
-  owner.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'Escape' });
+  await pressEscape();
   fs.writeFileSync(path.join(downloadsPath, 'report.txt'), 'Keep the existing file');
   const activePage = root.children[0].webContents;
   await activePage.executeJavaScript("document.getElementById('download').click()");
@@ -218,15 +290,15 @@ async function main() {
   await until(() => fs.existsSync(savedCopy), true, 'Save as writes a separate copy');
   assert.equal(fs.readFileSync(savedCopy, 'utf8'), 'Netcatty automatic download\n');
   assert.equal(fs.existsSync(path.join(downloadsPath, 'report (1).txt')), true, 'Save as retains the original downloaded file');
-  owner.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'Escape' });
+  await pressEscape();
   await click('[title="在文件夹中显示"]');
   assert.deepEqual(shellActions.at(-1), ['reveal', path.join(downloadsPath, 'report (1).txt')]);
   await click('[aria-label="打开下载文件夹"]');
   assert.deepEqual(shellActions.at(-1), ['open', downloadsPath]);
-  owner.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'Escape' });
+  await pressEscape();
   await activePage.executeJavaScript("document.getElementById('download').click()");
   await until(() => run('document.body.textContent.includes("report (2).txt") && document.querySelectorAll("[data-download-id]").length === 2'), true, 'a second download also gets a new name and reopens the list');
-  owner.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'Escape' });
+  await pressEscape();
   activePage.downloadURL(`${url}slow.bin`);
   await until(() => run('!!document.querySelector("[aria-label=取消下载]") && document.body.textContent.includes("正在下载")'), true, 'progress is visible while the server is still sending the file');
   await until(() => !owner.contentView.children.includes(root), true, 'the progress popover has acquired the webpage surface');
@@ -237,7 +309,7 @@ async function main() {
   await click('[aria-label="下载"]');
   await click('[aria-label="取消下载"]');
   await until(() => run('document.body.textContent.includes("已取消")'), true, 'download can be cancelled from the list');
-  owner.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'Escape' });
+  await pressEscape();
   await activePage.executeJavaScript("(() => { const a=document.createElement('a');a.href='/inline.pdf';document.body.append(a);a.click();a.remove(); })()");
   await until(() => run('document.body.textContent.includes("慢速报告.pdf") && !!document.querySelector("[aria-label=取消下载]") && document.body.textContent.includes("正在下载")'), true, 'inline PDF navigation opens progress before the response finishes');
   assert.equal(pendingPdf.writableEnded, false, 'the server has not sent the rest of the PDF');
@@ -246,7 +318,7 @@ async function main() {
   await capture(pdfProgressScreenshot);
   await click('[aria-label="取消下载"]');
   await until(() => pendingPdf.destroyed, true, 'cancelling an inline PDF stops the network transfer');
-  owner.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'Escape' });
+  await pressEscape();
   pendingPdf = undefined;
   await input('[aria-label="输入网址"]', `${url}inline.pdf`);
   await run('document.querySelector("[aria-label=输入网址]").form.requestSubmit()');
@@ -258,11 +330,19 @@ async function main() {
   assert.equal(await run('document.body.textContent.includes("ERR_FAILED")'), false, 'address-bar downloads do not show a false page error');
   const downloadScreenshot=path.join(userData,'automatic-downloads.png');
   await capture(downloadScreenshot);
-  owner.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'Escape' });
+  // Close the list through its own trigger before testing independent
+  // navigation focus. A prior Escape may leave the baseline list open.
+  await click('[aria-label="下载"]');
+  await until(() => run('!!document.querySelector("[data-radix-popper-content-wrapper] > [role=dialog]")'), false, 'download list is closed before starting navigation');
   await input('[aria-label="输入网址"]', `${url}slow-page`);
   await run('document.querySelector("[aria-label=输入网址]").form.requestSubmit()');
   await until(() => !!pendingNavigation, true, 'slow navigation is waiting for its response to finish');
-  await click('[aria-label="新标签页"]');
+  assert.equal(activePage.isLoading(), true, 'the response remains unfinished while switching tabs');
+  // Exercise the native page shortcut while its response remains unfinished.
+  // The new-tab button is covered above with the same real mouse input helper.
+  activePage.focus();
+  activePage.sendInputEvent({ type: 'keyDown', keyCode: 'T', modifiers: [process.platform === 'darwin' ? 'meta' : 'control'] });
+  activePage.sendInputEvent({ type: 'keyUp', keyCode: 'T', modifiers: [process.platform === 'darwin' ? 'meta' : 'control'] });
   await until(() => run('document.activeElement.getAttribute("aria-label")'), '输入网址', 'new tab receives input focus while the previous page is loading');
   await input('[aria-label="输入网址"]', 'keep my address draft');
   pendingNavigation.end();
@@ -289,7 +369,7 @@ async function main() {
   const screenshot = path.join(userData, 'unified-browser.png');
   fs.writeFileSync(screenshot, (await owner.webContents.capturePage()).toPNG());
   assert.deepEqual(errors, [], 'no renderer errors');
-  console.log(JSON.stringify({ ok: true, rendererChrome: true, hoverKeepsPageLive: true, splitMenusClickable: true, tabs: true, addressAndHistory: true, shortcuts: true, bookmarks: true, iconUpload: true, imageResize: true, imageReplaceAndRemove: true, editPersistence: true, downloads: true, automaticDownloads: true, duplicateNames: true, saveAs: true, downloadProgressAndCancel: true, inlinePdfProgressAndCancel: true, hiddenRestore: true, narrowLayout: true, locales: 5, screenshot, editorScreenshot, editorTextScreenshot, downloadScreenshot, pdfProgressScreenshot }));
+  console.log(JSON.stringify({ ok: true, rendererChrome: true, idleLayout: true, animatedLayout: true, dragLayout: true, themeLayout: true, modalAndLockLayout: true, hoverKeepsPageLive: true, splitMenusClickable: true, tabs: true, addressAndHistory: true, shortcuts: true, bookmarks: true, iconUpload: true, imageResize: true, imageReplaceAndRemove: true, editPersistence: true, downloads: true, automaticDownloads: true, duplicateNames: true, saveAs: true, downloadProgressAndCancel: true, inlinePdfProgressAndCancel: true, hiddenRestore: true, narrowLayout: true, locales: 5, screenshot, editorScreenshot, editorTextScreenshot, downloadScreenshot, pdfProgressScreenshot }));
 }
 app.whenReady().then(main).catch(async (error) => { console.error(error); if (owner && !owner.isDestroyed()) { const screenshot=path.join(userData,'failure.png'); fs.writeFileSync(screenshot,(await owner.webContents.capturePage()).toPNG()); console.error(screenshot); } process.exitCode = 1; }).finally(async () => {
   clearTimeout(watchdog);
