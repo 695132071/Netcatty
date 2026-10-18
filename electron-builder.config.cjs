@@ -167,10 +167,18 @@ module.exports = {
         '!node_modules/@cursor/sdk/dist/**/*.d.ts.map',
         // sqlite3 rebuilds a native module for Electron; its upstream source
         // tarball is build-time payload only.
-        '!node_modules/sqlite3/deps/**/*'
+        '!node_modules/sqlite3/deps/**/*',
+        // Native compilation helpers are needed during install/rebuild only.
+        // Match nested copies too; keep the actual native loaders and binaries.
+        '!node_modules/**/node-gyp/**/*',
+        '!node_modules/**/node-addon-api/**/*',
+        '!node_modules/**/nan/**/*'
     ],
     asarUnpack: [
         'node_modules/node-pty/**/*',
+        // afterPack removes prebuilds for other platforms/architectures. Keep
+        // these outside ASAR so removing them also removes their payload.
+        'node_modules/@serialport/bindings-cpp/prebuilds/**/*',
         'node_modules/ssh2/**/*',
         'node_modules/cpu-features/**/*',
         'node_modules/@vscode/windows-process-tree/**/*',
