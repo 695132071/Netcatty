@@ -8,6 +8,7 @@ import {
   getHostSearchMatch,
   matchesHostSearchQuery,
   matchesSearchQuery,
+  matchesWordPrefixQuery,
   matchesWorkspaceHostPickerQuery,
   resetPinyinCacheForTests,
 } from "../lib/searchMatcher.ts";
@@ -273,4 +274,20 @@ test("pinyin cache stays hard-bounded by retained characters, not just entries",
   assert.ok(getPinyinCacheStatsForTests().chars <= PINYIN_CACHE_MAX_CHARS);
   assert.ok(getPinyinCacheStatsForTests().size > 0);
   resetPinyinCacheForTests();
+});
+
+
+test("word prefixes retain literal, normalized, and non-ASCII matching", () => {
+  assert.equal(matchesWordPrefixQuery("", "deploy"), true);
+  assert.equal(matchesWordPrefixQuery("DEP", "deploy-service"), true);
+  assert.equal(matchesWordPrefixQuery("ser", "deploy-service"), true);
+  assert.equal(matchesWordPrefixQuery("123", "item-1234"), true);
+  assert.equal(matchesWordPrefixQuery("dep", "ＤＥＰＬＯＹ"), true);
+  assert.equal(matchesWordPrefixQuery("caf", "café"), true);
+  assert.equal(matchesWordPrefixQuery("mail", "gmail"), false);
+  assert.equal(matchesWordPrefixQuery("zz", "deploy-service"), false);
+  assert.equal(matchesWordPrefixQuery("--de", "deploy-service"), false);
+  assert.equal(matchesWordPrefixQuery("bushu", "部署服务"), true);
+  assert.equal(matchesWordPrefixQuery("bsfw", "部署服务"), true);
+  assert.equal(matchesWordPrefixQuery("apibu", "API部署"), true);
 });
