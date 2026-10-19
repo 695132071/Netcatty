@@ -36,6 +36,10 @@ function stateFor(conn, endpoint) {
       history,
     };
     states.set(conn, state);
+  } else if (key && !state.pending && !state.history.latest) {
+    // A panel may read a snapshot before its first sample supplies the endpoint.
+    // Attach that empty runtime to the existing history without moving live work.
+    state.history = history;
   }
   // Share measurements/history by identity, but in-flight requests, abort
   // controllers and CPU/network baselines belong to the physical transport.

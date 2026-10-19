@@ -63,3 +63,13 @@ test('readers sharing one physical transport still coalesce an active sample', a
   resolve(result(42));
   assert.deepEqual(await a, await b);
 });
+
+test('a snapshot read before sampling still joins the existing endpoint history', async () => {
+  resetSharedStatsForTests();
+  const terminal = {}, monitor = {};
+  await sampleSharedStats({ conn: terminal, _reuseEndpoint: endpoint }, async () => result(42));
+  assert.equal(readSharedStats(monitor).result, null);
+  await sampleSharedStats({ conn: monitor, _reuseEndpoint: endpoint }, async () => result(80));
+  assert.equal(readSharedStats(monitor).points, readSharedStats(terminal).points);
+  assert.equal(readSharedStats(monitor).result.stats.cpu, 42);
+});
