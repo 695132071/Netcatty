@@ -142,3 +142,53 @@ test("execOnSession refuses extra channels when singleChannelSsh is set", async 
   assert.equal(result.code, "ERR_SINGLE_CHANNEL_BASTION");
   assert.equal(execCalls, 0);
 });
+
+test("auxiliary exec timeout preserves the terminal and manual retry recovers after late open", async () => {
+  let opens = 0;
+  let destroyed = 0;
+  let callback;
+  const conn = {
+    _sock: { destroyed: false },
+    exec(_command, next) { opens++; callback = next; },
+    end() { destroyed++; },
+    destroy() { destroyed++; },
+  };
+  const api = createExecOnSessionApi({ sessions: new Map([['ssh', { conn, type: 'ssh' }]]) });
+  assert.equal((await api.execOnSession(null, 'ssh', 'docker ps', 5)).success, false);
+  assert.equal(destroyed, 0);
+  const fenced = await api.execOnSession(null, 'ssh', 'docker ps', 5);
+  assert.equal(fenced.success, false);
+  assert.match(fenced.error, /still pending/);
+  assert.equal(opens, 1);
+  const late = new EventEmitter();
+  let closed = 0;
+  late.close = () => { closed++; };
+  callback(null, late);
+  assert.equal(closed, 1);
+  conn.exec = (_command, next) => {
+    opens++;
+    const stream = new EventEmitter();
+    stream.stderr = new EventEmitter();
+    next(null, stream);
+    queueMicrotask(() => {
+      stream.emit('data', Buffer.from('container recovered'));
+      stream.emit('close', 0);
+    });
+  };
+  const recovered = await api.execOnSession(null, 'ssh', 'docker ps', 1000);
+  assert.equal(recovered.success, true);
+  assert.equal(recovered.stdout, 'container recovered');
+  assert.equal(opens, 2);
+  assert.equal(destroyed, 0);
+});
+
+test("auxiliary exec still reclaims an unresponsive dedicated Mosh companion", async () => {
+  let destroys = 0;
+  const conn = { exec() {}, destroy() { destroys++; } };
+  const api = createExecOnSessionApi({
+    sessions: new Map([['mosh', { type: 'mosh', moshStatsConn: conn }]]),
+  });
+  const result = await api.execOnSession(null, 'mosh', 'docker ps', 5);
+  assert.equal(result.success, false);
+  assert.equal(destroys, 1);
+});

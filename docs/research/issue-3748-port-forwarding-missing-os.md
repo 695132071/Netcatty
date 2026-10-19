@@ -71,6 +71,21 @@ Additional checks against upstream commit `786a317`:
   checkout paths; none of the changed files has a diagnostic. This is not a
   claim that full-project type checking passes.
 
+### Upstream CI follow-up
+
+The original PR CI run [39215269619, attempt 2](https://github.com/binaricat/Netcatty/actions/runs/39215269619/attempts/2)
+passes all 96 new regression cases and fails only the existing README paste
+assertion. Upstream commit `b366967` fixes that assertion by removing its
+coupling to changing screenshot dimensions. The branch incorporates this fix
+through a normal merge of upstream `main` at `42b8e2f`, without rewriting the
+original fix commit or adding an independent change to the unrelated test.
+
+After synchronization, the focused run including the entire clipboard-paste
+test file passes 149 tests. Lint and the production build also pass; lint keeps
+the same eight existing warnings. The earlier full-suite and type-check
+comparison above describes the original `786a317` baseline, not the updated
+base. Current remote CI results are tracked on the PR.
+
 ## Alternatives considered
 
 - Remove the unused fallback prop from the four calls: the shared avatar still

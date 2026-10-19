@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { reconcileAutocompletePopupState } from "./autocomplete/useTerminalAutocomplete.ts";
+import { DEFAULT_AUTOCOMPLETE_SETTINGS, reconcileAutocompletePopupState } from "./autocomplete/useTerminalAutocomplete.ts";
 import type { AutocompleteState } from "./autocomplete/useTerminalAutocomplete.ts";
 import { handleTerminalAutocompleteKeyEvent } from "./autocomplete/terminalAutocompleteKeyEvent.ts";
 
@@ -58,6 +58,7 @@ function createContext(overrides: Record<string, unknown> = {}) {
     context: {
       settingsRef: {
         current: {
+          ...DEFAULT_AUTOCOMPLETE_SETTINGS,
           enabled: true,
           showGhostText: false,
           showPopupMenu: true,
@@ -378,4 +379,20 @@ for (const edited of [false, true]) {
     handleTerminalAutocompleteKeyEvent(keyEvent("Enter"), context);
     assert.equal(runs, edited ? 0 : 1);
   });
+}
+
+for (const key of ['Enter', 'ArrowUp', 'ArrowDown', 'ArrowRight', 'Escape', 'Tab']) {
+  for (const sentinel of ['isComposing', 'keyCode'] as const) {
+    test(`IME ${sentinel} ${key} passes through autocomplete without accepting or rewriting input`, () => {
+      const { context, writes, previews, accepted, clears } = createContext();
+      context.stateRef.current.selectedIndex = 0;
+      const original = context.stateRef.current;
+      const event = keyEvent(key);
+      Object.defineProperty(event, sentinel, { value: sentinel === 'isComposing' ? true : 229 });
+      assert.equal(handleTerminalAutocompleteKeyEvent(event, context), true);
+      assert.equal(event.defaultPrevented, false);
+      assert.equal(context.stateRef.current, original);
+      assert.deepEqual([...writes, ...previews, ...accepted, ...clears], []);
+    });
+  }
 }

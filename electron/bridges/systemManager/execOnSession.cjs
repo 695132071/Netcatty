@@ -92,12 +92,15 @@ function createExecOnSessionApi(ctx) {
       return conn;
     }
 
-    function execOnConnection(conn, command, timeoutMs, execOptions = {}) {
+    function execOnConnection(conn, command, timeoutMs, execOptions = {}, sharedTransport = true) {
       const maxBuffer = normalizeExecMaxBuffer(execOptions.maxBuffer);
       return executeBoundedSshCommand(conn, command, {
         openingTimeoutMs: timeoutMs,
         runTimeoutMs: timeoutMs,
         maxOutputBytes: maxBuffer,
+        // A slow auxiliary channel must not tear down the interactive shell
+        // or SFTP transfers on the same transport. The executor fences retries.
+        invalidateOnOpenTimeout: !sharedTransport,
         onStream(stream) {
           if (typeof execOptions.stdin === "string") {
             stream.write(execOptions.stdin);
@@ -144,7 +147,7 @@ function createExecOnSessionApi(ctx) {
         return { success: false, error: "Session not found or not connected" };
       }
 
-      const result = await execOnConnection(conn, command, timeoutMs, execOptions);
+      const result = await execOnConnection(conn, command, timeoutMs, execOptions, !!session.conn);
       if (
         allowCompanionRetry
         && !result.success
