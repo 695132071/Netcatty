@@ -80,6 +80,10 @@ export function handleTerminalAutocompleteKeyEvent(
     now = Date.now,
   } = context;
   if (!settingsRef.current.enabled || e.type !== "keydown") return true;
+  // Enter/arrows belong to the IME candidate window during composition.
+  // Consuming them here can accept/execute a stale terminal suggestion and
+  // prevent the input method from committing the user's characters.
+  if (e.isComposing || e.keyCode === 229) return true;
 
   const metaFollowUp = autocompleteEscMetaFollowUpSequence(e);
   if (metaFollowUp && now() < escMetaPrefixUntilRef.current) {

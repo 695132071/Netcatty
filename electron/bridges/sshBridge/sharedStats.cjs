@@ -7,42 +7,48 @@ const identities = new Map();
 const MAX_SAMPLERS = 512;
 function prune() {
   const now = Date.now();
-  for (const [key, state] of identities) {
-    state.points = state.points.filter((p) => now - p.at <= 30 * 60000);
-    if (!state.pending && now - state.at > 30 * 60000) identities.delete(key);
+  for (const [key, history] of identities) {
+    history.points = history.points.filter((p) => now - p.at <= 30 * 60000);
+    if (now - history.at > 30 * 60000) identities.delete(key);
   }
 }
 const cleanupTimer = setInterval(prune, 60000);
 cleanupTimer.unref?.();
 function stateFor(conn, endpoint) {
   const key = endpoint ? buildEndpointKey(endpoint) : null;
-  let state = (key ? identities.get(key) : null) || states.get(conn);
+  let state = states.get(conn);
+  const history = (key ? identities.get(key) : null) || state?.history || {
+    latest: null,
+    at: 0,
+    points: [],
+    latestFull: false,
+    fullResult: null,
+    fullAt: 0,
+    sequence: 0,
+  };
   if (!state) {
     state = {
-      context: { conn },
+      context: { conn: null },
       pending: null,
-      latest: null,
-      at: 0,
-      points: [],
       controller: null,
-      latestFull: false,
       pendingFull: false,
-      fullResult: null,
-      fullAt: 0,
+      history,
     };
+    states.set(conn, state);
+  } else if (key && !state.pending && !state.history.latest) {
+    // A panel may read a snapshot before its first sample supplies the endpoint.
+    // Attach that empty runtime to the existing history without moving live work.
+    state.history = history;
   }
-  states.set(conn, state);
+  // Share measurements/history by identity, but in-flight requests, abort
+  // controllers and CPU/network baselines belong to the physical transport.
+  // A reconnect must never join (or cancel) work on an older connection.
   if (key) {
     identities.delete(key);
-    identities.set(key, state);
+    identities.set(key, state.history);
     if (identities.size > MAX_SAMPLERS) {
-      for (const [oldKey, oldState] of identities) {
-        if (!oldState.pending && oldKey !== key) {
-          oldState.points = [];
-          identities.delete(oldKey);
-          break;
-        }
-      }
+      const oldKey = identities.keys().next().value;
+      identities.delete(oldKey);
     }
   }
   return state;
@@ -51,11 +57,11 @@ function appendPoint(state, result, now, freshAfter = 0) {
   if (
     !result.success ||
     !result.stats ||
-    (now - (state.points.at(-1)?.at ?? 0) < 1000 && (state.points.at(-1)?.at ?? 0) > freshAfter)
+    (now - (state.history.points.at(-1)?.at ?? 0) < 1000 && (state.history.points.at(-1)?.at ?? 0) > freshAfter)
   )
     return;
   const s = result.stats;
-  state.points.push({
+  state.history.points.push({
     at: now,
     cpu: s.cpu,
     memory:
@@ -66,7 +72,7 @@ function appendPoint(state, result, now, freshAfter = 0) {
     rx: s.networkReady ? s.netRxSpeed : null,
     tx: s.networkReady ? s.netTxSpeed : null,
   });
-  state.points = state.points
+  state.history.points = state.history.points
     .filter((p) => now - p.at <= 30 * 60000)
     .slice(-1800);
 }
@@ -79,26 +85,26 @@ async function sampleSharedStats(session, collect, now = Date.now()) {
       const state = stateFor(companion);
       state.context.prevNetStats = session.prevNetStats;
       state.context.prevCpuStats = session.prevCpuStats;
-      state.latest = result;
-      state.at = Date.now();
-      state.latestFull = true;
-      state.fullResult = result;
-      state.fullAt = state.at;
+      state.history.latest = result;
+      state.history.at = Date.now();
+      state.history.latestFull = true;
+      state.history.fullResult = result;
+      state.history.fullAt = state.history.at;
     }
     return result;
   }
   const state = stateFor(conn, session._reuseEndpoint);
   const full = !session._monitorStats;
   const cacheMs = full ? 4000 : Math.min(4000, session._monitorIntervalMs ?? 5000);
-  if (full && state.fullResult?.success && now - state.fullAt < 4000)
-    return state.fullResult;
+  if (full && state.history.fullResult?.success && now - state.history.fullAt < 4000)
+    return state.history.fullResult;
   if (state.pending) {
     if (full) state.terminalJoined = true;
     if (!full || state.pendingFull) {
       const result = await state.pending;
       // A reset can join a terminal query that began before the new boundary.
-      if (!full && state.at > session._monitorFreshAfter)
-        appendPoint(state, result, state.at, session._monitorFreshAfter);
+      if (!full && state.history.at > session._monitorFreshAfter)
+        appendPoint(state, result, state.history.at, session._monitorFreshAfter);
       return result;
     }
     // A terminal needs process and GPU fields omitted from a monitor-only query.
@@ -107,12 +113,12 @@ async function sampleSharedStats(session, collect, now = Date.now()) {
     return sampleSharedStats(session, collect);
   }
   if (
-    state.latest?.success &&
-    now - state.at < cacheMs &&
-    (full || state.at > (session._monitorFreshAfter ?? 0)) &&
-    (!full || state.latestFull)
+    state.history.latest?.success &&
+    now - state.history.at < cacheMs &&
+    (full || state.history.at > (session._monitorFreshAfter ?? 0)) &&
+    (!full || state.history.latestFull)
   )
-    return state.latest;
+    return state.history.latest;
   const collectFull = full;
   // Keep transport capabilities on the collection context; baseline is independent of a terminal.
   const companion = !session.conn;
@@ -125,21 +131,23 @@ async function sampleSharedStats(session, collect, now = Date.now()) {
     hostname: session.hostname,
     _monitorStats: !collectFull,
   });
+  // Starting a replacement retires older samples even if the new attempt fails.
+  const sequence = ++state.history.sequence;
   state.controller = new AbortController();
   state.terminalJoined = full;
   state.pendingFull = collectFull;
   state.context.statsSignal = state.controller.signal;
   state.pending = Promise.resolve(collect(state.context))
     .then((result) => {
-      if (!state.controller.signal.aborted && result.success) {
-        state.latest = result;
-        state.latestFull = collectFull;
-        state.at = Date.now();
+      if (!state.controller.signal.aborted && result.success && sequence === state.history.sequence) {
+        state.history.latest = result;
+        state.history.latestFull = collectFull;
+        state.history.at = Date.now();
         if (collectFull) {
-          state.fullResult = result;
-          state.fullAt = state.at;
+          state.history.fullResult = result;
+          state.history.fullAt = state.history.at;
         }
-        appendPoint(state, result, state.at, session._monitorFreshAfter);
+        appendPoint(state, result, state.history.at, session._monitorFreshAfter);
       }
       return result;
     })
@@ -155,9 +163,9 @@ async function sampleSharedStats(session, collect, now = Date.now()) {
 }
 function readSharedStats(conn) {
   const state = stateFor(conn);
-  if (state.points[0] && Date.now() - state.points[0].at > 30 * 60000)
-    state.points = state.points.filter((p) => Date.now() - p.at <= 30 * 60000);
-  return { result: state.latestFull ? state.latest : withCachedMonitorGpu(conn, state.latest), at: state.at, statsAt: Math.max(state.at, monitorGpuUpdatedAt(conn)), points: state.points };
+  if (state.history.points[0] && Date.now() - state.history.points[0].at > 30 * 60000)
+    state.history.points = state.history.points.filter((p) => Date.now() - p.at <= 30 * 60000);
+  return { result: state.history.latestFull ? state.history.latest : withCachedMonitorGpu(conn, state.history.latest), at: state.history.at, statsAt: Math.max(state.history.at, monitorGpuUpdatedAt(conn)), points: state.history.points };
 }
 function cancelSharedStats(conn) {
   cancelMonitorGpuProbe(conn);

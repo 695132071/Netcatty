@@ -762,6 +762,7 @@ export function useTerminalAutocomplete(
       candidate: newCommand,
       os: hostOsRef.current,
     });
+    if (seq === null) return;
     if (seq) writeToTerminal(seq);
     typedInputBufferRef.current = newCommand;
     typedBufferReliableRef.current = true;

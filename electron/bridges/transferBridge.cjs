@@ -5107,6 +5107,7 @@ async function downloadFile(
           await new Promise((resolve, reject) => {
             let settled = false;
             let onFastSftpError = null;
+            const onFastSftpClose = () => finish(new Error("SFTP channel closed during download"));
             const finish = (err) => {
               if (settled) return;
               settled = true;
@@ -5117,6 +5118,8 @@ async function downloadFile(
                 try { fastSftp.removeListener("error", onFastSftpError); } catch { }
                 onFastSftpError = null;
               }
+              fastSftp.removeListener("end", onFastSftpClose);
+              fastSftp.removeListener("close", onFastSftpClose);
               releaseIsolatedDownloadChannel(client, fastSftp, {
                 dispose: !!err || transfer.cancelled,
               });
@@ -5133,6 +5136,8 @@ async function downloadFile(
             transfer.abort = abortFastTransfer;
             onFastSftpError = (err) => finish(err);
             fastSftp.once("error", onFastSftpError);
+            fastSftp.once("end", onFastSftpClose);
+            fastSftp.once("close", onFastSftpClose);
 
             if (transfer.cancelled) {
               finish(new Error("Transfer cancelled"));
@@ -6173,13 +6178,15 @@ async function startTransferNow(event, payload, onProgress) {
         lastObservedTotal = fileSize;
         lastObservedTransferred = Math.min(lastObservedTransferred, fileSize);
       }
+      // fastGet's success callback alone does not establish a complete file.
+      // Enforce the planned size for direct/non-resumable downloads as well.
+      if (transfer.cancelled) throw new Error("Transfer cancelled");
+      const downloadedStat = await fs.promises.stat(downloadTargetPath);
+      if (transfer.cancelled) throw new Error("Transfer cancelled");
+      if (downloadedStat.size !== fileSize) {
+        throw new Error(`Downloaded file size mismatch: expected ${fileSize}, got ${downloadedStat.size}`);
+      }
       if (stageLocalDownload) {
-        if (transfer.cancelled) throw new Error("Transfer cancelled");
-        const stagedStat = await fs.promises.stat(downloadTargetPath);
-        if (transfer.cancelled) throw new Error("Transfer cancelled");
-        if (stagedStat.size !== fileSize) {
-          throw new Error(`Downloaded file size mismatch: expected ${fileSize}, got ${stagedStat.size}`);
-        }
         if (transfer.cancelled) throw new Error("Transfer cancelled");
         const {
           promotionTargetPath,
