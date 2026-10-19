@@ -919,7 +919,7 @@ test("getServerStats closes a stats stream delivered after timeout", async () =>
   assert.equal(closeCalls, 1);
 });
 
-test("three stats retries on an unresponsive exec open leave no pooled transport or channel callbacks", async () => {
+test("stats open timeout preserves shared transport and fences repeated probes", async () => {
   resetSshTransportRegistryForTests({ defaultIdleTtlMs: 0 });
   const endpoint = { hostId: "stats-host", hostname: "wedged.example", username: "root" };
   const conn = new EventEmitter();
@@ -962,9 +962,16 @@ test("three stats retries on an unresponsive exec open leave no pooled transport
   results.push(await api.getServerStats({ sender: {} }, { sessionId: "sid" }));
 
   assert.ok(results.every((result) => result.success === false));
-  assert.equal(conn.pendingChannelCallbacks.length, 0);
-  assert.equal(getTransportStats().transports, 0);
-  assert.equal(findTransportByEndpoint(endpoint), null);
+  assert.equal(conn.pendingChannelCallbacks.length, 1, "retries must not accumulate opens");
+  assert.equal(getTransportStats().transports, 1);
+  assert.equal(findTransportByEndpoint(endpoint), transport);
+  assert.equal(conn._sock.destroyed, false);
+  const lateStream = fakeStream("");
+  let lateClosed = 0;
+  lateStream.close = () => { lateClosed++; };
+  conn.pendingChannelCallbacks.shift()(null, lateStream);
+  assert.equal(lateClosed, 1);
+  conn.destroy();
 
   const replacement = new EventEmitter();
   replacement._sock = { destroyed: false };

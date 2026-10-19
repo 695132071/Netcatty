@@ -349,3 +349,42 @@ test("bounded SSH exec still honors the channel close when no exit-status is rep
   stream.emit("close", 7);
   assert.deepEqual(await result, { stdout: "done", stderr: "", code: 7 });
 });
+
+for (const abandon of ['timeout', 'abort']) {
+  test(`preserved ${abandon} fences exec retries until the late callback settles`, async () => {
+    let callback;
+    let opens = 0;
+    let destroyed = 0;
+    const client = {
+      exec(_command, next) { opens++; callback = next; },
+      end() { destroyed++; },
+      destroy() { destroyed++; },
+    };
+    const controller = new AbortController();
+    const request = executeBoundedSshCommand(client, 'probe', {
+      openingTimeoutMs: 5,
+      invalidateOnOpenTimeout: false,
+      invalidateTransportOnAbort: false,
+      signal: controller.signal,
+    });
+    if (abandon === 'abort') controller.abort();
+    await assert.rejects(request);
+    for (let i = 0; i < 10; i++) {
+      await assert.rejects(executeBoundedSshCommand(client, 'probe'),
+        { code: 'SSH_EXEC_OPEN_PENDING' });
+    }
+    assert.equal(opens, 1);
+    assert.equal(destroyed, 0);
+    const lateStream = createStream();
+    callback(null, lateStream);
+    assert.equal(lateStream.closed, 1);
+    const retry = executeBoundedSshCommand(client, 'probe');
+    const stream = createStream();
+    callback(null, stream);
+    stream.emit('data', Buffer.from('recovered'));
+    stream.emit('close', 0);
+    assert.equal((await retry).stdout, 'recovered');
+    assert.equal(opens, 2);
+    assert.equal(destroyed, 0);
+  });
+}

@@ -98,6 +98,9 @@ function createExecOnSessionApi(ctx) {
         openingTimeoutMs: timeoutMs,
         runTimeoutMs: timeoutMs,
         maxOutputBytes: maxBuffer,
+        // A slow auxiliary channel must not tear down the interactive shell
+        // or SFTP transfers on the same transport. The executor fences retries.
+        invalidateOnOpenTimeout: false,
         onStream(stream) {
           if (typeof execOptions.stdin === "string") {
             stream.write(execOptions.stdin);
