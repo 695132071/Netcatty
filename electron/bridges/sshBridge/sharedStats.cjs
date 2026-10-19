@@ -25,7 +25,6 @@ function stateFor(conn, endpoint) {
     fullResult: null,
     fullAt: 0,
     sequence: 0,
-    appliedSequence: 0,
   };
   if (!state) {
     state = {
@@ -132,6 +131,7 @@ async function sampleSharedStats(session, collect, now = Date.now()) {
     hostname: session.hostname,
     _monitorStats: !collectFull,
   });
+  // Starting a replacement retires older samples even if the new attempt fails.
   const sequence = ++state.history.sequence;
   state.controller = new AbortController();
   state.terminalJoined = full;
@@ -139,8 +139,7 @@ async function sampleSharedStats(session, collect, now = Date.now()) {
   state.context.statsSignal = state.controller.signal;
   state.pending = Promise.resolve(collect(state.context))
     .then((result) => {
-      if (!state.controller.signal.aborted && result.success && sequence >= state.history.appliedSequence) {
-        state.history.appliedSequence = sequence;
+      if (!state.controller.signal.aborted && result.success && sequence === state.history.sequence) {
         state.history.latest = result;
         state.history.latestFull = collectFull;
         state.history.at = Date.now();

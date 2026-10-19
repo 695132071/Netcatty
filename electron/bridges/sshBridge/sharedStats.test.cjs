@@ -30,6 +30,26 @@ test('new transport samples without waiting for an old same-endpoint request', a
   assert.equal(readSharedStats(oldConn).points, readSharedStats(newConn).points);
 });
 
+test('a failed replacement sample still retires pending results from the old transport', async () => {
+  resetSharedStatsForTests();
+  const oldConn = {}, newConn = {};
+  await sampleSharedStats({ conn: oldConn, _reuseEndpoint: endpoint }, async () => result(42));
+  const before = readSharedStats(oldConn);
+  const now = Date.now() + 5000;
+  let finishOld;
+  const old = sampleSharedStats({ conn: oldConn, _reuseEndpoint: endpoint }, () =>
+    new Promise(resolve => { finishOld = resolve; }), now);
+  const failed = await sampleSharedStats({ conn: newConn, _reuseEndpoint: endpoint }, async () =>
+    ({ success: false, error: 'Connection closed' }), now);
+  assert.equal(failed.success, false);
+  finishOld(result(10));
+  await old;
+  const after = readSharedStats(newConn);
+  assert.equal(after.result.stats.cpu, 42, 'keep the last published measurement');
+  assert.equal(after.at, before.at);
+  assert.deepEqual(after.points.map(point => point.cpu), [42], 'do not publish a late old sample');
+});
+
 test('cancelling a monitor on one transport cannot abort another transport', async () => {
   resetSharedStatsForTests();
   const a = {}, b = {};
