@@ -36,3 +36,20 @@ for (const method of ['getSessionDistroInfo', 'readRemoteHistory', 'getSessionPw
     assert.equal(destroys, 0);
   });
 }
+
+for (const method of ['getSessionDistroInfo', 'readRemoteHistory', 'getServerStats']) {
+  test(`${method} still tears down an unresponsive dedicated companion`, async t => {
+    t.mock.timers.enable({ apis: ['setTimeout'] });
+    let destroys = 0;
+    const conn = { exec() {}, destroy() { destroys++; } };
+    const api = createSessionOpsApi({
+      sessions: new Map([['mosh', { type: 'mosh', moshStatsConn: conn }]]),
+      quoteShellArg: value => "'" + String(value).replace(/'/g, "'\\''") + "'",
+      setTimeout, clearTimeout, Buffer, log() {},
+    });
+    const request = api[method]({}, { sessionId: 'mosh', limit: 5 });
+    t.mock.timers.tick(10_000);
+    assert.equal((await request).success, false);
+    assert.equal(destroys, 1);
+  });
+}

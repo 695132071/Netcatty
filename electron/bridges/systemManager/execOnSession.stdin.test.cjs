@@ -181,3 +181,14 @@ test("auxiliary exec timeout preserves the terminal and manual retry recovers af
   assert.equal(opens, 2);
   assert.equal(destroyed, 0);
 });
+
+test("auxiliary exec still reclaims an unresponsive dedicated Mosh companion", async () => {
+  let destroys = 0;
+  const conn = { exec() {}, destroy() { destroys++; } };
+  const api = createExecOnSessionApi({
+    sessions: new Map([['mosh', { type: 'mosh', moshStatsConn: conn }]]),
+  });
+  const result = await api.execOnSession(null, 'mosh', 'docker ps', 5);
+  assert.equal(result.success, false);
+  assert.equal(destroys, 1);
+});

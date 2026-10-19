@@ -190,7 +190,7 @@ function createSessionOpsApi(ctx) {
           openingTimeoutMs: 5000,
           runTimeoutMs: 5000,
           maxOutputBytes: 256 * 1024,
-          invalidateOnOpenTimeout: false,
+          invalidateOnOpenTimeout: !session.conn,
         });
         return { success: true, stdout, stderr };
       } catch (err) {
@@ -308,7 +308,7 @@ function createSessionOpsApi(ctx) {
           openingTimeoutMs: 8000,
           runTimeoutMs: 8000,
           maxOutputBytes: 10 * 1024 * 1024,
-          invalidateOnOpenTimeout: false,
+          invalidateOnOpenTimeout: !session.conn,
         });
         return { success: true, ...parse(stdout) };
       } catch (err) {
@@ -1355,7 +1355,9 @@ function createSessionOpsApi(ctx) {
       const statsExecOptions = {
         signal: session.statsSignal,
         invalidateTransportOnAbort: false,
-        invalidateOnOpenTimeout: false,
+        // Preserve shared terminal transports; dedicated Mosh/ET companions
+        // still need timeout teardown so their existing recovery can reconnect.
+        invalidateOnOpenTimeout: !session.conn,
         openingTimeoutMs: statsRunTimeoutMs,
         runTimeoutMs: statsRunTimeoutMs,
         maxOutputBytes: 1024 * 1024,
