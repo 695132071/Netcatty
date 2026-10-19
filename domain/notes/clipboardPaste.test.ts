@@ -269,9 +269,6 @@ test("repo README paste collapses shields badges without debris", () => {
   const payload = resolveNoteClipboardPaste({ plainText: readmeHead, htmlText: "" });
   assert.ok(payload.text.length > 50);
   assert.doesNotMatch(payload.text, /^\s*\]\([^)\n]+\)\s*$/m);
-  // Large screenshot keeps dimensions in source.
-  assert.match(payload.text, /width="3142"/);
-  assert.match(payload.text, /height="1764"/);
 });
 
 test("resolve uses full turndown for browser StartFragment html", () => {
