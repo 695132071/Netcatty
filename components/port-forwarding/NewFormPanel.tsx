@@ -134,7 +134,7 @@ export const NewFormPanel: React.FC<NewFormPanelProps> = ({
                             <div className="flex items-center gap-2">
                                 <DistroAvatar
                                     host={selectedHost}
-                                    fallback={selectedHost.os[0].toUpperCase()}
+                                    fallback={(selectedHost.os || 'unknown').charAt(0).toUpperCase()}
                                     size="tree"
                                 />
                                 <span>{selectedHost.label}</span>
