@@ -2,7 +2,7 @@ name: spam-comments
 
 on:
   issue_comment:
-    types: [created]
+    types: [created, edited]
 
 permissions:
   contents: read
@@ -10,13 +10,13 @@ permissions:
   pull-requests: write
 
 jobs:
-  delete-spam:
+  hide-spam:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout filter rules
         uses: actions/checkout@v7
 
-      - name: Delete suspected malware spam
+      - name: Hide suspected malware spam
         uses: actions/github-script@v9
         with:
           script: |
@@ -25,26 +25,59 @@ jobs:
               path.join(process.env.GITHUB_WORKSPACE, 'scripts/spam-comment-filter.cjs')
             );
 
-            const comment = context.payload.comment;
+            const comment = context.payload.comment || {};
+            const issue = context.payload.issue || {};
+            const login = (comment.user && comment.user.login) || 'unknown';
             const result = detectSpamComment({
               body: comment.body || '',
               authorAssociation: comment.author_association,
               userType: comment.user && comment.user.type,
+              commentAuthor: comment.user && comment.user.login,
+              issueAuthor: issue.user && issue.user.login,
             });
 
             core.info(JSON.stringify(result, null, 2));
 
             if (!result.spam) {
-              core.info('Comment did not match the zip/dangerous-file spam filter.');
+              core.info('Comment did not match the risky-download spam filter.');
               return;
             }
 
-            await github.rest.issues.deleteComment({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              comment_id: comment.id,
-            });
+            const matchedUrl = result.matchedUrls.join(', ');
+            if (!comment.node_id) {
+              core.setFailed(
+                `Comment ${comment.id} by @${login} on #${issue.number} matched ${matchedUrl} but has no node_id.`
+              );
+              return;
+            }
+
+            try {
+              await github.graphql(
+                `mutation($input: MinimizeCommentInput!) {
+                  minimizeComment(input: $input) {
+                    minimizedComment {
+                      isMinimized
+                    }
+                  }
+                }`,
+                {
+                  input: {
+                    subjectId: comment.node_id,
+                    classifier: 'SPAM',
+                  },
+                }
+              );
+            } catch (error) {
+              const message = String((error && error.message) || error);
+              if (/already minimized/i.test(message)) {
+                core.info(
+                  `Comment ${comment.id} by @${login} on #${issue.number} is already minimized. Matched URL: ${matchedUrl}`
+                );
+                return;
+              }
+              throw error;
+            }
 
             core.notice(
-              `Deleted comment with zip/dangerous attachment by @${comment.user.login} on #${context.payload.issue.number}: ${result.reasons.join('; ')}`
+              `Hid comment ${comment.id} by @${login} on #${issue.number} as spam. Matched URL: ${matchedUrl}`
             );

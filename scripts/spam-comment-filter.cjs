@@ -6,21 +6,32 @@ const TRUSTED_AUTHOR_ASSOCIATIONS = new Set([
   "COLLABORATOR",
 ]);
 
-const DANGEROUS_FILE_EXTENSION =
-  "(?:zip|7z|rar|tar\\.gz|tgz|exe|msi|dmg|pkg|deb|rpm|appimage|bat|cmd|ps1|scr|vbs)";
+const RISKY_EXTENSIONS = [
+  ".tar.gz",
+  ".tar.xz",
+  ".appimage",
+  ".msix",
+  ".zip",
+  ".7z",
+  ".rar",
+  ".tgz",
+  ".exe",
+  ".msi",
+  ".dmg",
+  ".pkg",
+  ".deb",
+  ".rpm",
+  ".bat",
+  ".cmd",
+  ".ps1",
+  ".scr",
+  ".vbs",
+  ".jar",
+  ".iso",
+  ".lnk",
+];
 
-const dangerousFilePattern = new RegExp(
-  `(?:^|[\\s([<"'=])([^\\s()[\\]<>\"']+\\.${DANGEROUS_FILE_EXTENSION})(?=$|[\\s)\\]>\"']|[.,!?;:](?:$|\\s))`,
-  "gi"
-);
-
-const zipFilePattern = new RegExp(
-  `(?:^|[\\s([<"'=])([^\\s()[\\]<>\"']+\\.zip)(?=$|[\\s)\\]>\"']|[.,!?;:](?:$|\\s))`,
-  "gi"
-);
-
-const githubUserAttachmentPattern =
-  /^https:\/\/github\.com\/user-attachments\/files\/\d+\//i;
+const URL_PATTERN = /https?:\/\/[^\s<>"'`]+/gi;
 
 function normalizeAssociation(authorAssociation) {
   return String(authorAssociation || "").trim().toUpperCase();
@@ -30,65 +41,107 @@ function isTrustedAuthor(authorAssociation) {
   return TRUSTED_AUTHOR_ASSOCIATIONS.has(normalizeAssociation(authorAssociation));
 }
 
-function extractMatches(body, pattern) {
-  const files = [];
-  for (const match of body.matchAll(pattern)) {
-    files.push(match[1]);
+function isSameLogin(left, right) {
+  const a = String(left || "").trim().toLowerCase();
+  const b = String(right || "").trim().toLowerCase();
+  return a.length > 0 && a === b;
+}
+
+function trimUrlCandidate(raw) {
+  let value = String(raw || "");
+  while (value.length > 0) {
+    const last = value[value.length - 1];
+    if (".,;:!?\"']".includes(last)) {
+      value = value.slice(0, -1);
+      continue;
+    }
+    if (last === ")") {
+      const opens = (value.match(/\(/g) || []).length;
+      const closes = (value.match(/\)/g) || []).length;
+      if (closes > opens) {
+        value = value.slice(0, -1);
+        continue;
+      }
+    }
+    break;
   }
-  return [...new Set(files)];
+  return value;
 }
 
-function extractDangerousFiles(body) {
-  return extractMatches(body, dangerousFilePattern);
+function hasRiskyExtension(segment) {
+  const name = String(segment || "").toLowerCase();
+  if (!name || name === "." || name === "..") return false;
+  return RISKY_EXTENSIONS.some((extension) => name.endsWith(extension));
 }
 
-function extractZipFiles(body) {
-  return extractMatches(body, zipFilePattern);
+function urlHasRiskyPath(raw) {
+  let parsed;
+  try {
+    parsed = new URL(raw);
+  } catch {
+    return false;
+  }
+  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return false;
+
+  let pathname = parsed.pathname || "";
+  try {
+    pathname = decodeURIComponent(pathname);
+  } catch {
+    // Keep the raw pathname when it is not valid percent-encoding.
+  }
+
+  return pathname.split("/").some((segment) => hasRiskyExtension(segment));
 }
 
-function isGitHubUserAttachment(file) {
-  return githubUserAttachmentPattern.test(file);
+function extractRiskyUrls(body) {
+  const text = String(body || "");
+  const found = [];
+  const seen = new Set();
+  for (const match of text.matchAll(URL_PATTERN)) {
+    const raw = trimUrlCandidate(match[0]);
+    if (!raw || seen.has(raw) || !urlHasRiskyPath(raw)) continue;
+    seen.add(raw);
+    found.push(raw);
+  }
+  return found;
 }
 
-function detectSpamComment({ body, authorAssociation, userType } = {}) {
-  const normalizedBody = String(body || "").replace(/\s+/g, " ").trim();
-  const dangerousFiles = extractDangerousFiles(normalizedBody);
-  const zipFiles = extractZipFiles(normalizedBody);
+function detectSpamComment({
+  body,
+  authorAssociation,
+  userType,
+  commentAuthor,
+  issueAuthor,
+} = {}) {
   const trustedAuthor = isTrustedAuthor(authorAssociation);
-  const botAuthor = String(userType || "").toLowerCase() === "bot";
+  const botAuthor = String(userType || "").trim().toLowerCase() === "bot";
+  const authorIsIssueAuthor = isSameLogin(commentAuthor, issueAuthor);
+  const matchedUrls = extractRiskyUrls(body);
 
-  const reasons = [];
-  let score = 0;
-
-  if (zipFiles.length > 0) {
-    score += 10;
-    reasons.push(`zip attachment or link: ${zipFiles.join(", ")}`);
-  } else if (dangerousFiles.length > 0) {
-    score += 10;
-    reasons.push(`dangerous downloadable file: ${dangerousFiles.join(", ")}`);
-  }
-
-  // Hard rule: any zip (or other dangerous downloadable) from an untrusted
-  // human is deleted. Maintainers and bots are exempt.
+  // Hard rule: hide when an untrusted human who is not the issue author posts
+  // an http(s) URL whose path contains a risky archive or executable.
+  // Maintainers, bots, and the issue author are exempt. Bare filenames and
+  // local paths are not links, so they do not match.
   const spam =
     !trustedAuthor &&
     !botAuthor &&
-    (zipFiles.length > 0 || dangerousFiles.length > 0);
+    !authorIsIssueAuthor &&
+    matchedUrls.length > 0;
 
   return {
     spam,
-    score: spam ? score : 0,
-    reasons: spam ? reasons : [],
-    dangerousFiles: zipFiles.length > 0 ? zipFiles : dangerousFiles,
+    score: spam ? 10 : 0,
+    reasons: spam ? [`risky download URL: ${matchedUrls.join(", ")}`] : [],
+    matchedUrls,
     trustedAuthor,
     botAuthor,
+    authorIsIssueAuthor,
   };
 }
 
 module.exports = {
   detectSpamComment,
-  extractDangerousFiles,
-  extractZipFiles,
-  isGitHubUserAttachment,
+  extractRiskyUrls,
   isTrustedAuthor,
+  RISKY_EXTENSIONS,
 };

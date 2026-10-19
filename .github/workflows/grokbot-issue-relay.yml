@@ -4,7 +4,7 @@ on:
   issues:
     types: [opened, reopened, edited]
   issue_comment:
-    types: [created]
+    types: [created, edited]
 
 permissions: {}
 
@@ -24,14 +24,48 @@ jobs:
             echo "Grok Bot webhook secrets not set; skipping."
             exit 0
           fi
-          jq --arg event "$GITHUB_EVENT_NAME" '{
-            event: $event,
-            action: .action,
-            repository: .repository.full_name,
-            sender: .sender.login,
-            issue: {number: .issue.number, title: .issue.title, author: .issue.user.login, url: .issue.html_url},
-            comment: (if .comment then {id: .comment.id, author: .comment.user.login, url: .comment.html_url} else null end)
-          }' "$GITHUB_EVENT_PATH" \
+          jq --arg event "$GITHUB_EVENT_NAME" '
+            def clip:
+              if type == "string" then .[0:4000] else . end;
+            {
+              event: $event,
+              action: .action,
+              repository: .repository.full_name,
+              sender: .sender.login,
+              issue: (
+                {
+                  number: .issue.number,
+                  title: .issue.title,
+                  author: .issue.user.login,
+                  url: .issue.html_url
+                } + (
+                  if $event == "issues" then {
+                    author_association: .issue.author_association,
+                    body: (.issue.body | clip)
+                  } else {} end
+                )
+              ),
+              comment: (
+                if .comment then
+                  {
+                    id: .comment.id,
+                    author: .comment.user.login,
+                    url: .comment.html_url,
+                    node_id: .comment.node_id,
+                    author_association: .comment.author_association,
+                    user_type: .comment.user.type,
+                    created_at: .comment.created_at,
+                    updated_at: .comment.updated_at,
+                    body: (.comment.body | clip)
+                  } + (
+                    if .action == "edited" then {
+                      previous_body: (.changes.body.from | clip)
+                    } else {} end
+                  )
+                else null end
+              )
+            }
+          ' "$GITHUB_EVENT_PATH" \
           | curl -fsS --max-time 20 -X POST \
               -H "Authorization: Bearer $WEBHOOK_KEY" \
               -H "Content-Type: application/json" \
