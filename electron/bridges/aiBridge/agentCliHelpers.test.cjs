@@ -10,6 +10,7 @@ const {
   CODEX_AUTH_VALIDATION_TIMEOUT_MS,
   DEFAULT_CODEX_CLI_TIMEOUT_MS,
   MAX_AGENT_CLI_BUFFER_CHARS,
+  VERSION_PROBE_TIMEOUT_MS,
 } = require("./agentCliHelpers.cjs");
 
 function createHungChild() {
@@ -53,6 +54,37 @@ test("runCodexCli applies a default timeout to short status commands", async () 
   }
   assert.equal(scheduled[0], DEFAULT_CODEX_CLI_TIMEOUT_MS);
   assert.deepEqual(child.kills, ["SIGTERM", "SIGKILL"]);
+});
+
+test("probeCliVersion allows slow-starting CLIs beyond the old 5s probe limit", async () => {
+  const child = createHungChild();
+  const scheduled = [];
+  const helpers = createAgentCliHelpers({
+    prepareCommandForSpawn: (command, args) => ({ command, args, shell: false }),
+    spawn: () => {
+      queueMicrotask(() => {
+        child.stdout.emit("data", Buffer.from("0.1.15\n"));
+        child.emit("close", 0);
+      });
+      return child;
+    },
+    stripAnsi: (value) => value,
+    getShellEnv: async () => ({}),
+    normalizeCliPathForPlatform: (value) => value,
+    resolveCliFromPathAsync: async () => "/fake/mimo",
+    setTimeout: (callback, delay) => {
+      scheduled.push(delay);
+      return { unref() {} };
+    },
+    clearTimeout() {},
+  });
+
+  const result = await helpers.probeCliVersion("/fake/mimo", ["--version"], {});
+  assert.equal(result.launched, true);
+  assert.equal(result.exitCode, 0);
+  assert.equal(result.version, "0.1.15");
+  assert.equal(scheduled[0], VERSION_PROBE_TIMEOUT_MS);
+  assert.ok(scheduled[0] > 5000, "version probe timeout must exceed 5s for bun-compiled OpenCode-family CLIs");
 });
 
 test("runCodexCli slices a single oversized output chunk to the hard limit", async () => {

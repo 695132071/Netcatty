@@ -5,6 +5,12 @@ const { StringDecoder } = require("node:string_decoder");
 const DEFAULT_CODEX_CLI_TIMEOUT_MS = 10_000;
 const CODEX_AUTH_VALIDATION_TIMEOUT_MS = 10_000;
 const MAX_AGENT_CLI_BUFFER_CHARS = 10 * 1024 * 1024;
+// Bun-compiled OpenCode-family CLIs start slowly: `mimo --version` takes
+// 3.9–5.1s warm (6s+ cold) and `opencode --version` can exceed 5s on a cold
+// cache, so a 5s timeout killed healthy CLIs and dropped them from discovery.
+// 15s only affects CLIs that exist but are slow to answer — a missing command
+// fails spawn immediately.
+const VERSION_PROBE_TIMEOUT_MS = 15_000;
 
 function createAgentCliHelpers(ctx) {
   with (ctx) {
@@ -120,7 +126,7 @@ function createAgentCliHelpers(ctx) {
 
   async function probeCliVersion(probeCmd, probeArgs, env) {
     try {
-      const result = await runCommand(probeCmd, probeArgs, { env, timeoutMs: 5000 });
+      const result = await runCommand(probeCmd, probeArgs, { env, timeoutMs: VERSION_PROBE_TIMEOUT_MS });
       return {
         launched: true,
         exitCode: result.exitCode,
@@ -430,4 +436,5 @@ module.exports = {
   CODEX_AUTH_VALIDATION_TIMEOUT_MS,
   DEFAULT_CODEX_CLI_TIMEOUT_MS,
   MAX_AGENT_CLI_BUFFER_CHARS,
+  VERSION_PROBE_TIMEOUT_MS,
 };
