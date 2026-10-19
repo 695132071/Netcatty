@@ -310,13 +310,19 @@ export const WindowControls: React.FC = memo(() => {
 
   const controlClassName = 'window-control-btn app-no-drag';
   const closeControlClassName = 'window-control-btn window-control-btn--close app-no-drag';
+  // Mouse press would move DOM focus onto minimize/maximize. After restore
+  // that leaves the terminal textarea unfocused, so keystrokes do nothing.
+  // Close skips this so the active field still blurs (inline rename commits on blur).
+  const preventWindowControlFocus: React.MouseEventHandler<HTMLButtonElement> = (event) => {
+    event.preventDefault();
+  };
 
   return (
     <div className="ml-2 flex h-7 items-center overflow-visible app-no-drag">
-      <button type="button" className={controlClassName} onClick={handleMinimize}>
+      <button type="button" className={controlClassName} onMouseDown={preventWindowControlFocus} onClick={handleMinimize}>
         <Minus size={16} />
       </button>
-      <button type="button" className={controlClassName} onClick={handleMaximize}>
+      <button type="button" className={controlClassName} onMouseDown={preventWindowControlFocus} onClick={handleMaximize}>
         {isMaximized ? <Copy size={14} /> : <Square size={14} />}
       </button>
       <button type="button" className={closeControlClassName} onClick={handleClose}>
