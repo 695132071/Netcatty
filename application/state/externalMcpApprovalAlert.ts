@@ -1,9 +1,32 @@
 import type { ApprovalRequest } from '../../infrastructure/ai/shared/approvalGate';
+import cattyToolSpecs from '../../infrastructure/ai/harness/generated/cattyToolSpecs.json';
 import { netcattyBridge } from '../../infrastructure/services/netcattyBridge';
 import {
   readExternalMcpApprovalAlertMode,
   type ExternalMcpApprovalAlertMode,
 } from './useExternalMcpToggleState';
+
+type CatalogToolSpec = {
+  toolName?: string;
+  rpcMethod?: string | null;
+};
+
+const mcpToolNameByRpcMethod = new Map<string, string>();
+for (const spec of cattyToolSpecs as CatalogToolSpec[]) {
+  if (!spec.rpcMethod || !spec.toolName || mcpToolNameByRpcMethod.has(spec.rpcMethod)) continue;
+  mcpToolNameByRpcMethod.set(spec.rpcMethod, spec.toolName);
+}
+
+/**
+ * Name shown on the External MCP approval card.
+ * Catalog MCP tool names win over internal RPC ids such as `netcatty/exec`.
+ * An id with no catalog tool name is shown as-is.
+ */
+export function externalMcpApprovalToolLabel(toolName: string | undefined): string {
+  const raw = toolName?.trim() || '';
+  if (!raw) return '';
+  return mcpToolNameByRpcMethod.get(raw) || raw;
+}
 
 export type ExternalMcpApprovalNotification = {
   title: string;
@@ -31,7 +54,7 @@ export function presentExternalMcpApprovalNotification(options: {
   notify: (payload: ExternalMcpApprovalNotification) => void;
 }): boolean {
   if (options.mode === 'off') return false;
-  const tool = options.toolName || '';
+  const tool = externalMcpApprovalToolLabel(options.toolName);
   const host = options.hostLabel?.trim() || '';
   const body = host
     ? options.t('ai.externalMcp.approvalAlert.notificationBodyOnHost', { tool, host })

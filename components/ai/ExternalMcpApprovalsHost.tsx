@@ -22,6 +22,7 @@ import {
 import { useI18n } from '../../application/i18n/I18nProvider';
 import { AI_STATE_CHANGED_EVENT } from '../../application/state/aiStateEvents';
 import {
+  externalMcpApprovalToolLabel,
   notifyExternalMcpApproval,
   publishExternalMcpApprovalAlertMode,
 } from '../../application/state/externalMcpApprovalAlert';
@@ -153,7 +154,7 @@ export const ExternalMcpApprovalsHost: React.FC = () => {
           {entries.map(([id, req]) => (
             <div key={id} className="space-y-1.5">
               <ToolCall
-                name={req.toolName}
+                name={externalMcpApprovalToolLabel(req.toolName)}
                 args={req.args}
                 approvalTarget={req.target}
                 isLoading={false}

@@ -44,6 +44,34 @@ test('unfocused approval alerts name the tool and host and defer focus to the ma
   }]);
 });
 
+test('approval alerts show the MCP tool name for an internal rpc id', () => {
+  const calls: Array<{ body: string }> = [];
+  const shown = presentExternalMcpApprovalNotification({
+    toolName: 'netcatty/exec',
+    hostLabel: '127.0.0.1',
+    dedupeKey: 'mcp_approval_exec',
+    mode: 'always',
+    t,
+    notify: (payload) => calls.push(payload),
+  });
+  assert.equal(shown, true);
+  assert.equal(calls.length, 1);
+  assert.match(calls[0].body, /terminal_execute/);
+  assert.equal(calls[0].body, 'terminal_execute on 127.0.0.1 is waiting for approval');
+});
+
+test('approval alerts keep an id that has no MCP tool name', () => {
+  const calls: Array<{ body: string }> = [];
+  presentExternalMcpApprovalNotification({
+    toolName: 'netcatty/not-a-tool',
+    dedupeKey: 'mcp_approval_unknown',
+    mode: 'unfocused',
+    t,
+    notify: (payload) => calls.push(payload),
+  });
+  assert.equal(calls[0].body, 'netcatty/not-a-tool is waiting for approval');
+});
+
 test('always approval alerts notify even while a window may be focused', () => {
   const calls: Array<{ title: string; body: string; whenUnfocused: boolean; dedupeKey: string }> = [];
   presentExternalMcpApprovalNotification({
