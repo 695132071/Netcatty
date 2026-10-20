@@ -712,7 +712,7 @@ Highlight the focused split pane:
     'Send configured text instead of normal Enter when pressing Shift+Enter in the terminal.',
   'settings.terminal.behavior.shiftEnterNewlineText': 'Text to send',
   'settings.terminal.behavior.shiftEnterNewlineText.desc':
-    'Use \\n for newline, \\t for tab, \\e for Escape, and \\\\ for backslash.',
+    'Use \\n for newline, \\t for tab, \\e for Escape, and \\\\ for backslash. Defaults to \\e\\r (Escape + Enter, the legacy Alt+Enter encoding), which most TUI CLIs treat as a newline.',
   'settings.terminal.behavior.shiftEnterForceText': 'Send text in Win32 input mode',
   'settings.terminal.behavior.shiftEnterForceText.desc':
     'Also send the text above when a local Windows ConPTY session negotiates Win32 input mode. Needed for Node/Bun CLIs (Claude Code, CodeBuddy) that cannot read modifier keys from console input records.',

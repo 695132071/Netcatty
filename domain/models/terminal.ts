@@ -522,7 +522,7 @@ const DEFAULT_TERMINAL_SETTINGS: TerminalSettings = {
   altAsMeta: false,
   optionArrowWordJump: false,
   shiftEnterNewlineEnabled: true,
-  shiftEnterNewlineText: '\\n',
+  shiftEnterNewlineText: '\\e\\r',
   shiftEnterForceText: false,
   kittyKeyboardProtocolEnabled: false,
   scrollOnInput: true,

@@ -352,7 +352,7 @@ export const zhCNTerminalMessages: Messages = {
     '在终端中按 Shift+Enter 时发送配置的文本，而不是普通回车。',
   'settings.terminal.behavior.shiftEnterNewlineText': '发送内容',
   'settings.terminal.behavior.shiftEnterNewlineText.desc':
-    '使用 \\n 表示换行，\\t 表示 Tab，\\e 表示 ESC，\\\\ 表示反斜杠。',
+    '使用 \\n 表示换行，\\t 表示 Tab，\\e 表示 ESC，\\\\ 表示反斜杠。默认 \\e\\r（ESC+回车，传统 Alt+Enter 编码），大多数 TUI CLI 会将其识别为换行。',
   'settings.terminal.behavior.shiftEnterForceText': '在 Win32 输入模式下也发送文本',
   'settings.terminal.behavior.shiftEnterForceText.desc':
     '本机 Windows ConPTY 会话协商 Win32 输入模式时，仍然发送上面的文本。Node/Bun 写的 CLI（Claude Code、CodeBuddy）读不到控制台输入记录里的修饰键，需要这个开关才能区分 Shift+Enter。',

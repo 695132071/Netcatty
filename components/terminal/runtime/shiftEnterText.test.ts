@@ -26,8 +26,8 @@ const keyEvent = (overrides: Partial<KeyboardEvent> = {}) => ({
   ...overrides,
 }) as KeyboardEvent;
 
-test("shift enter text defaults to newline", () => {
-  assert.equal(resolveShiftEnterText(), "\n");
+test("shift enter text defaults to the legacy Alt+Enter encoding (ESC + CR)", () => {
+  assert.equal(resolveShiftEnterText(), "\u001b\r");
 });
 
 test("shift enter text decodes newline, tab, carriage return, and backslash escapes", () => {
@@ -69,6 +69,20 @@ test("shift enter submitted input detects single command text with a line ending
   });
   assert.equal(getShiftEnterSubmittedInput(" \\\n"), null);
   assert.equal(getShiftEnterSubmittedInput("foo\nbar\n"), null);
+});
+
+test("Alt+Enter ESC+CR is a non-submitting logical line break", () => {
+  assert.equal(getShiftEnterSubmittedInput("\u001b\r"), null);
+  assert.equal(getShiftEnterSubmittedInput("echo hi\u001b\r"), null);
+  assert.equal(getShiftEnterSubmittedInput("echo hi\u001b\r\n"), null);
+  assert.deepEqual(getShiftEnterSubmittedInput("echo hi\r"), {
+    text: "echo hi",
+    lineEnding: "\r",
+  });
+  assert.deepEqual(getShiftEnterSubmittedInput("\u001b\n"), {
+    text: "\u001b",
+    lineEnding: "\n",
+  });
 });
 
 test("shift enter handler only matches plain Shift+Enter keydown", () => {

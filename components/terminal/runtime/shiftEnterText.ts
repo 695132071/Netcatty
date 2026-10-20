@@ -1,6 +1,6 @@
 import type { TerminalSettings } from "../../../domain/models";
 
-export const DEFAULT_SHIFT_ENTER_TEXT = "\\n";
+export const DEFAULT_SHIFT_ENTER_TEXT = "\\e\\r";
 
 /** Kitty CSI-u encoding for Shift+Enter (keycode 13, modifier shift → 2). */
 export const SHIFT_ENTER_CSI_U_SEQUENCE = "\u001b[13;2u";
@@ -109,10 +109,15 @@ export type ShiftEnterSubmittedInput = {
   lineEnding: "\r\n" | "\r" | "\n";
 };
 
+/** ESC immediately before a terminating CR is the legacy Alt+Enter line break. */
+function isAltEnterLineBreak(text: string): boolean {
+  return text.endsWith("\u001b\r") || text.endsWith("\u001b\r\n");
+}
+
 export function getShiftEnterSubmittedInput(
   text: string,
 ): ShiftEnterSubmittedInput | null {
-  if (isShiftEnterLineContinuationText(text)) return null;
+  if (isShiftEnterLineContinuationText(text) || isAltEnterLineBreak(text)) return null;
   const match = text.match(/^([^\r\n]*)(\r\n|\r|\n)$/);
   if (!match) return null;
   return {

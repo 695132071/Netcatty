@@ -627,7 +627,7 @@ Resalta el panel dividido enfocado:
     'Envía el texto configurado en lugar del Enter normal al presionar Shift+Enter en la terminal.',
   'settings.terminal.behavior.shiftEnterNewlineText': 'Texto a enviar',
   'settings.terminal.behavior.shiftEnterNewlineText.desc':
-    'Usa \\n para nueva línea, \\t para tabulación, \\e para Escape y \\\\ para barra invertida.',
+    'Usa \\n para nueva línea, \\t para tabulación, \\e para Escape y \\\\ para barra invertida. Por defecto \\e\\r (Escape + Enter, la codificación clásica de Alt+Enter), que la mayoría de las CLI TUI interpretan como nueva línea.',
   'settings.terminal.behavior.shiftEnterForceText': 'Enviar texto también en modo de entrada Win32',
   'settings.terminal.behavior.shiftEnterForceText.desc':
     'Envía también el texto anterior cuando una sesión ConPTY local de Windows negocia el modo de entrada Win32. Necesario para CLI escritas en Node/Bun (Claude Code, CodeBuddy) que no pueden leer modificadores desde los registros de entrada de la consola.',

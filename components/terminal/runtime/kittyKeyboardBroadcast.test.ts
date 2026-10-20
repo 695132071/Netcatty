@@ -541,7 +541,7 @@ test("Shift+Enter broadcast uses CSI-u only after the target negotiated a preser
     applicationCursorMode: false,
     encodedKeys: new Set<string>(),
   }), {
-    data: "\n",
+    data: "\u001b\r",
     kittyEncoded: false,
     urgentInterrupt: false,
   });
@@ -552,7 +552,7 @@ test("Shift+Enter broadcast uses CSI-u only after the target negotiated a preser
     applicationCursorMode: false,
     encodedKeys: new Set<string>(),
   }), {
-    data: "\n",
+    data: "\u001b\r",
     kittyEncoded: false,
     urgentInterrupt: false,
   });

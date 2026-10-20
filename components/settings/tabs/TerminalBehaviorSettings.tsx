@@ -224,9 +224,9 @@ export const TerminalBehaviorSettings: React.FC<TerminalBehaviorSettingsProps> =
           description={t("settings.terminal.behavior.shiftEnterNewlineText.desc")}
         >
           <Input
-            value={terminalSettings.shiftEnterNewlineText ?? "\\n"}
+            value={terminalSettings.shiftEnterNewlineText ?? "\\e\\r"}
             onChange={(e) => updateTerminalSetting("shiftEnterNewlineText", e.target.value)}
-            placeholder="\\n"
+            placeholder="\\e\\r"
             className="w-56 font-mono"
             spellCheck={false}
           />

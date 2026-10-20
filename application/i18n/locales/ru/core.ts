@@ -663,7 +663,7 @@ export const ruCoreMessages: Messages = {
     'Отправлять настроенный текст вместо обычного Enter при нажатии Shift+Enter в терминале.',
   'settings.terminal.behavior.shiftEnterNewlineText': 'Отправляемый текст',
   'settings.terminal.behavior.shiftEnterNewlineText.desc':
-    'Используйте \\n для перевода строки, \\t для табуляции, \\e для Escape и \\\\ для обратной косой черты.',
+    'Используйте \\n для перевода строки, \\t для табуляции, \\e для Escape и \\\\ для обратной косой черты. По умолчанию \\e\\r (Escape + Enter, классическая кодировка Alt+Enter), которую большинство TUI-CLI распознают как перевод строки.',
   'settings.terminal.behavior.shiftEnterForceText': 'Отправлять текст и в режиме ввода Win32',
   'settings.terminal.behavior.shiftEnterForceText.desc':
     'Отправлять указанный выше текст даже когда локальная сессия Windows ConPTY согласует режим ввода Win32. Нужно для CLI на Node/Bun (Claude Code, CodeBuddy), которые не читают модификаторы из записей ввода консоли.',
