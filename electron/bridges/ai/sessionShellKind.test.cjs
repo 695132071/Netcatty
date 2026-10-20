@@ -775,6 +775,71 @@ test("createSshConnExecProbe closes a channel that arrives after timeout", async
   assert.equal(closed, true);
 });
 
+test("terminal shell-kind probe open timeout keeps the SSH connection (#1181)", async () => {
+  let execCallback;
+  let execCalls = 0;
+  let endCalls = 0;
+  let destroyCalls = 0;
+  const conn = {
+    exec(_command, cb) {
+      execCalls += 1;
+      execCallback = cb;
+    },
+    end() { endCalls += 1; },
+    destroy() { destroyCalls += 1; },
+  };
+  const probe = createSessionExecProbe({ conn });
+  assert.equal(await probe("true", 15), null);
+  assert.equal(execCalls, 1);
+  assert.equal(endCalls, 0);
+  assert.equal(destroyCalls, 0);
+
+  // The hung open stays fenced until ssh2 delivers the late callback.
+  assert.equal(await probe("true", 1000), null);
+  assert.equal(execCalls, 1);
+  assert.equal(endCalls, 0);
+  assert.equal(destroyCalls, 0);
+
+  let closed = false;
+  const stream = {
+    on() { return stream; },
+    stderr: { on() { return this; } },
+    close() { closed = true; },
+  };
+  execCallback(null, stream);
+  assert.equal(closed, true);
+  assert.equal(endCalls, 0);
+  assert.equal(destroyCalls, 0);
+});
+
+test("sshClient shell-kind probe open timeout keeps the terminal connection (#1181)", async () => {
+  let ended = false;
+  const sshClient = {
+    exec() {},
+    end() { ended = true; },
+    destroy() { ended = true; },
+  };
+  const probe = createSessionExecProbe({ sshClient });
+  assert.equal(await probe("true", 15), null);
+  assert.equal(ended, false);
+});
+
+test("helper shell-kind probe open timeout still tears down Mosh and ET connections", async () => {
+  for (const key of ["moshStatsConn", "etStatsConn"]) {
+    let endCalls = 0;
+    let destroyCalls = 0;
+    const helper = {
+      exec() {},
+      end() { endCalls += 1; },
+      destroy() { destroyCalls += 1; },
+    };
+    const probe = createSessionExecProbe({ [key]: helper });
+    assert.equal(await probe("true", 15), null);
+    assert.equal(endCalls, 1, key);
+    assert.equal(destroyCalls, 1, key);
+  }
+});
+
 test("createSessionExecProbe prefers session.conn over companions", () => {
   const session = {
     conn: { exec() {} },

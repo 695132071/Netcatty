@@ -177,15 +177,21 @@ function parseRemoteWindowsLoginShellProbeOutput(stdout) {
 /**
  * Build an execProbe(command, timeoutMs) => Promise<string|null> from an
  * ssh2-like connection (conn.exec(command, cb)).
+ *
+ * `invalidateOnOpenTimeout` defaults to true so a stuck open on a dedicated
+ * Mosh/ET helper connection still tears that helper down. Pass false when
+ * `conn` is the terminal's own SSH client (#1181).
  */
-function createSshConnExecProbe(conn) {
+function createSshConnExecProbe(conn, options = {}) {
   if (!conn || typeof conn.exec !== "function") return null;
+  const invalidateOnOpenTimeout = options.invalidateOnOpenTimeout !== false;
   return async function execProbe(command, timeoutMs = DEFAULT_PROBE_TIMEOUT_MS) {
     try {
       const result = await executeBoundedSshCommand(conn, command, {
         openingTimeoutMs: timeoutMs,
         runTimeoutMs: timeoutMs,
         maxOutputBytes: 64 * 1024,
+        invalidateOnOpenTimeout,
       });
       // Include stderr so Windows `reg query` missing-value diagnostics
       // (and any probe that only prints errors) still reach the parser.
@@ -212,9 +218,11 @@ function createSessionExecProbe(session) {
   // would disconnect them before the command ever runs, so skip it and let the
   // PTY live shell probe (probeLiveShell) determine the wrapper (#3146).
   if (sessionDisallowsExtraSshChannel(session)) return null;
+  // A slow login-shell probe must not Client.end() the interactive transport.
+  // Dedicated Mosh/ET companions keep timeout teardown so recovery can reconnect.
   return (
-    createSshConnExecProbe(session.conn)
-    || createSshConnExecProbe(session.sshClient)
+    createSshConnExecProbe(session.conn, { invalidateOnOpenTimeout: false })
+    || createSshConnExecProbe(session.sshClient, { invalidateOnOpenTimeout: false })
     || createSshConnExecProbe(session.moshStatsConn)
     || createSshConnExecProbe(session.etStatsConn)
     || null
