@@ -3,12 +3,59 @@ const assert = require("node:assert/strict");
 const { EventEmitter } = require("node:events");
 const { once } = require("node:events");
 const net = require("node:net");
+const { Client } = require("ssh2");
 
 const {
   createProxySocket,
   runWhenProxyConnectionReady,
   substituteProxyCommand,
 } = require("./proxyUtils.cjs");
+
+const SSH_BANNER = Buffer.from("SSH-2.0-Fixture\r\n");
+
+function listen(server) {
+  return new Promise((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", () => resolve(server.address().port));
+  });
+}
+
+function closeServer(server) {
+  return new Promise((resolve) => server.close(resolve));
+}
+
+// ssh2 only records the peer banner after it parses an identification line.
+// "Connection lost before handshake" means those bytes never reached it.
+function remoteIdent(socket) {
+  return new Promise((resolve, reject) => {
+    const client = new Client();
+    let settled = false;
+    const finish = (error, ident) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      setImmediate(() => {
+        try { client.destroy(); } catch { /* ignore */ }
+      });
+      if (error) reject(error);
+      else resolve(ident);
+    };
+    const timer = setTimeout(() => finish(new Error("Timed out waiting for remote SSH ident")), 1500);
+    timer.unref();
+    client.on("error", (err) => {
+      if (/Connection lost before handshake/.test(err.message)) finish(err);
+    });
+    client.connect({
+      sock: socket,
+      username: "fixture",
+      readyTimeout: 1500,
+      debug(message) {
+        const match = /Remote ident: (.*)/.exec(message);
+        if (match) finish(null, match[1]);
+      },
+    });
+  });
+}
 
 test("substituteProxyCommand replaces OpenSSH-style host and port tokens for POSIX shells", () => {
   assert.equal(
@@ -182,4 +229,58 @@ test("createProxySocket times out stalled HTTP proxy handshakes", async (t) => {
     /Proxy connection timeout to server\.example\.com:22/,
   );
   assert.equal(socketDestroyed, true);
+});
+
+test("HTTP CONNECT keeps an SSH banner coalesced with the proxy reply", async (t) => {
+  const sockets = new Set();
+  const proxy = net.createServer((socket) => {
+    sockets.add(socket);
+    socket.on("error", () => {});
+    socket.once("data", () => {
+      socket.write(Buffer.concat([
+        Buffer.from("HTTP/1.1 200 Connection Established\r\n\r\n"),
+        SSH_BANNER,
+      ]));
+    });
+  });
+  t.after(async () => {
+    for (const socket of sockets) socket.destroy();
+    await closeServer(proxy);
+  });
+  const port = await listen(proxy);
+  const socket = await createProxySocket(
+    { type: "http", host: "127.0.0.1", port },
+    "203.0.113.10",
+    22,
+  );
+  sockets.add(socket);
+  assert.match(await remoteIdent(socket), /SSH-2\.0-Fixture/);
+});
+
+test("SOCKS5 keeps an SSH banner coalesced with the connect reply", async (t) => {
+  const sockets = new Set();
+  const proxy = net.createServer((socket) => {
+    sockets.add(socket);
+    socket.on("error", () => {});
+    socket.once("data", () => {
+      socket.write(Buffer.from([0x05, 0x00]));
+      socket.once("data", () => {
+        // IPv4 bind address is 10 bytes; the banner shares this write.
+        const reply = Buffer.from([0x05, 0x00, 0x00, 0x01, 127, 0, 0, 1, 0, 22]);
+        socket.write(Buffer.concat([reply, SSH_BANNER]));
+      });
+    });
+  });
+  t.after(async () => {
+    for (const socket of sockets) socket.destroy();
+    await closeServer(proxy);
+  });
+  const port = await listen(proxy);
+  const socket = await createProxySocket(
+    { type: "socks5", host: "127.0.0.1", port },
+    "203.0.113.10",
+    22,
+  );
+  sockets.add(socket);
+  assert.match(await remoteIdent(socket), /SSH-2\.0-Fixture/);
 });

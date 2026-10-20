@@ -98,6 +98,34 @@ function runWhenProxyConnectionReady(socket, callback) {
     callback();
 }
 
+// Bytes after the proxy reply (often the SSH banner) can share the reply's
+// TCP packet. Put them back for ssh2. Pause first so the tail stays queued
+// until the SSH client resumes the socket.
+function restoreTrailingSocketBytes(socket, trailing) {
+    if (!trailing || trailing.length === 0) return;
+    socket.pause();
+    socket.unshift(Buffer.from(trailing));
+}
+
+// SOCKS5 connect reply: VER REP RSV ATYP BND.ADDR BND.PORT.
+// Returns the reply size, null when the buffer is short, or -1 when ATYP is
+// not a form we can bound.
+function socks5ConnectReplyLength(buffer) {
+    if (buffer.length < 4) return null;
+    const addressType = buffer[3];
+    let addressLength;
+    if (addressType === 0x01) addressLength = 4;
+    else if (addressType === 0x04) addressLength = 16;
+    else if (addressType === 0x03) {
+        if (buffer.length < 5) return null;
+        addressLength = 1 + buffer[4];
+    } else {
+        return -1;
+    }
+    const total = 4 + addressLength + 2;
+    return buffer.length < total ? null : total;
+}
+
 function createProxyCommandSocket(proxy, targetHost, targetPort, options = {}) {
     const command = substituteProxyCommand(proxy.command, targetHost, targetPort, { platform: process.platform }).trim();
     if (!command) return Promise.reject(new Error("ProxyCommand is required"));
@@ -238,16 +266,18 @@ function createProxySocket(proxy, targetHost, targetPort, options = {}) {
                 const connectRequest = `CONNECT ${targetHost}:${targetPort} HTTP/1.1\r\nHost: ${targetHost}:${targetPort}\r\n${authHeader}\r\n`;
                 socket.write(connectRequest);
 
-                let response = '';
+                let pending = Buffer.alloc(0);
                 const onData = (data) => {
-                    response += data.toString();
-                    if (response.includes('\r\n\r\n')) {
-                        socket.removeListener('data', onData);
-                        if (response.startsWith('HTTP/1.1 200') || response.startsWith('HTTP/1.0 200')) {
-                            settleResolve();
-                        } else {
-                            settleReject(new Error(`HTTP proxy error: ${response.split('\r\n')[0]}`));
-                        }
+                    pending = pending.length === 0 ? data : Buffer.concat([pending, data]);
+                    const headerEnd = pending.indexOf('\r\n\r\n');
+                    if (headerEnd === -1) return;
+                    socket.removeListener('data', onData);
+                    const header = pending.toString('latin1', 0, headerEnd);
+                    if (header.startsWith('HTTP/1.1 200') || header.startsWith('HTTP/1.0 200')) {
+                        restoreTrailingSocketBytes(socket, pending.subarray(headerEnd + 4));
+                        settleResolve();
+                    } else {
+                        settleReject(new Error(`HTTP proxy error: ${header.split('\r\n')[0]}`));
                     }
                 };
                 socket.on('data', onData);
@@ -265,6 +295,7 @@ function createProxySocket(proxy, targetHost, targetPort, options = {}) {
                 socket.write(Buffer.from([0x05, authMethods.length, ...authMethods]));
 
                 let step = 'greeting';
+                let connectReply = Buffer.alloc(0);
                 const onData = (data) => {
                     if (step === 'greeting') {
                         if (data[0] !== 0x05) {
@@ -298,8 +329,18 @@ function createProxySocket(proxy, targetHost, targetPort, options = {}) {
                         step = 'connect';
                         sendConnectRequest();
                     } else if (step === 'connect') {
+                        connectReply = connectReply.length === 0
+                            ? data
+                            : Buffer.concat([connectReply, data]);
+                        const replyLength = socks5ConnectReplyLength(connectReply);
+                        if (replyLength === null) return;
                         socket.removeListener('data', onData);
-                        if (data[1] === 0x00) {
+                        if (replyLength < 0) {
+                            settleReject(new Error('Invalid SOCKS5 connect reply'));
+                            return;
+                        }
+                        if (connectReply[1] === 0x00) {
+                            restoreTrailingSocketBytes(socket, connectReply.subarray(replyLength));
                             settleResolve();
                         } else {
                             const errors = {
@@ -312,7 +353,7 @@ function createProxySocket(proxy, targetHost, targetPort, options = {}) {
                                 0x07: 'Command not supported',
                                 0x08: 'Address type not supported',
                             };
-                            settleReject(new Error(`SOCKS5 error: ${errors[data[1]] || 'Unknown'}`));
+                            settleReject(new Error(`SOCKS5 error: ${errors[connectReply[1]] || 'Unknown'}`));
                         }
                     }
                 };
