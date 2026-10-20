@@ -1,8 +1,15 @@
-import type { HotkeyScheme, SessionLogFormat, TerminalSettings } from '../../domain/models';
+import {
+  DEFAULT_SHIFT_ENTER_NEWLINE_TEXT,
+  isLegacyDefaultShiftEnterNewlineText,
+  type HotkeyScheme,
+  type SessionLogFormat,
+  type TerminalSettings,
+} from '../../domain/models';
 import {
   STORAGE_KEY_TERM_AUTO_CLOSE_EXIT_MIGRATED,
   STORAGE_KEY_TERM_FONT_FAMILY,
   STORAGE_KEY_TERM_SETTINGS,
+  STORAGE_KEY_TERM_SHIFT_ENTER_NEWLINE_MIGRATED,
 } from '../../infrastructure/config/storageKeys';
 import {
   isDeprecatedPrimaryFontId,
@@ -89,6 +96,26 @@ export function migrateMaterializedAutoCloseOnExitDefault(): void {
     localStorageAdapter.write(STORAGE_KEY_TERM_SETTINGS, { ...stored, autoCloseOnExit: false });
   }
   localStorageAdapter.writeBoolean(STORAGE_KEY_TERM_AUTO_CLOSE_EXIT_MIGRATED, true);
+}
+
+/**
+ * One-time migration for the Shift+Enter default flip (#3770). Builds before
+ * that change materialized `\\n` into saved settings, so upgraders kept a
+ * bare newline and TUI CLIs still submitted. Rewrite only that old default
+ * (escaped or raw) to ESC+CR, then persist the marker. A later explicit `\\n`
+ * is left alone. Custom text is never rewritten. Sync and import do not
+ * read this marker; an old `\\n` from another device stays as stored.
+ */
+export function migrateMaterializedShiftEnterNewlineDefault(): void {
+  if (localStorageAdapter.readBoolean(STORAGE_KEY_TERM_SHIFT_ENTER_NEWLINE_MIGRATED)) return;
+  const stored = localStorageAdapter.read<Partial<TerminalSettings>>(STORAGE_KEY_TERM_SETTINGS);
+  if (stored && isLegacyDefaultShiftEnterNewlineText(stored.shiftEnterNewlineText)) {
+    localStorageAdapter.write(STORAGE_KEY_TERM_SETTINGS, {
+      ...stored,
+      shiftEnterNewlineText: DEFAULT_SHIFT_ENTER_NEWLINE_TEXT,
+    });
+  }
+  localStorageAdapter.writeBoolean(STORAGE_KEY_TERM_SHIFT_ENTER_NEWLINE_MIGRATED, true);
 }
 
 // Auto-detect default hotkey scheme based on platform

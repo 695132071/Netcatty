@@ -10,12 +10,14 @@ import {
   resolveThemeAccentForeground,
   migrateIncomingTerminalFontId,
   migrateMaterializedAutoCloseOnExitDefault,
+  migrateMaterializedShiftEnterNewlineDefault,
 } from "./settingsStateDefaults.ts";
 import { TERMINAL_FONT_AUTO } from "../../infrastructure/config/fonts.ts";
 import {
   STORAGE_KEY_TERM_AUTO_CLOSE_EXIT_MIGRATED,
   STORAGE_KEY_TERM_FONT_FAMILY,
   STORAGE_KEY_TERM_SETTINGS,
+  STORAGE_KEY_TERM_SHIFT_ENTER_NEWLINE_MIGRATED,
 } from "../../infrastructure/config/storageKeys.ts";
 import type { UiThemeTokens } from "../../infrastructure/config/uiThemes.ts";
 
@@ -210,6 +212,79 @@ test("migrateMaterializedAutoCloseOnExitDefault leaves fresh installs and explic
     assert.deepEqual(JSON.parse(store2.get(STORAGE_KEY_TERM_SETTINGS)!), {
       scrollback: 500,
     });
+  } finally {
+    delete (globalThis as { localStorage?: unknown }).localStorage;
+  }
+});
+
+test("migrateMaterializedShiftEnterNewlineDefault rewrites the old default once", () => {
+  const store = installMemoryLocalStorage();
+  try {
+    store.set(
+      STORAGE_KEY_TERM_SETTINGS,
+      JSON.stringify({ scrollback: 3000, shiftEnterNewlineText: "\\n" }),
+    );
+    migrateMaterializedShiftEnterNewlineDefault();
+    const migrated = JSON.parse(store.get(STORAGE_KEY_TERM_SETTINGS)!);
+    assert.equal(migrated.shiftEnterNewlineText, "\\e\\r");
+    assert.equal(migrated.scrollback, 3000);
+    assert.equal(store.get(STORAGE_KEY_TERM_SHIFT_ENTER_NEWLINE_MIGRATED), "true");
+
+    store.set(
+      STORAGE_KEY_TERM_SETTINGS,
+      JSON.stringify({ scrollback: 3000, shiftEnterNewlineText: "\\n" }),
+    );
+    migrateMaterializedShiftEnterNewlineDefault();
+    assert.equal(
+      JSON.parse(store.get(STORAGE_KEY_TERM_SETTINGS)!).shiftEnterNewlineText,
+      "\\n",
+    );
+  } finally {
+    delete (globalThis as { localStorage?: unknown }).localStorage;
+  }
+});
+
+test("migrateMaterializedShiftEnterNewlineDefault rewrites a raw stored newline", () => {
+  const store = installMemoryLocalStorage();
+  try {
+    store.set(
+      STORAGE_KEY_TERM_SETTINGS,
+      JSON.stringify({ shiftEnterNewlineText: "\n" }),
+    );
+    migrateMaterializedShiftEnterNewlineDefault();
+    assert.equal(
+      JSON.parse(store.get(STORAGE_KEY_TERM_SETTINGS)!).shiftEnterNewlineText,
+      "\\e\\r",
+    );
+  } finally {
+    delete (globalThis as { localStorage?: unknown }).localStorage;
+  }
+});
+
+test("migrateMaterializedShiftEnterNewlineDefault keeps custom Shift+Enter text", () => {
+  const store = installMemoryLocalStorage();
+  try {
+    store.set(
+      STORAGE_KEY_TERM_SETTINGS,
+      JSON.stringify({ shiftEnterNewlineText: "\\r", scrollback: 1000 }),
+    );
+    migrateMaterializedShiftEnterNewlineDefault();
+    assert.deepEqual(JSON.parse(store.get(STORAGE_KEY_TERM_SETTINGS)!), {
+      shiftEnterNewlineText: "\\r",
+      scrollback: 1000,
+    });
+    assert.equal(store.get(STORAGE_KEY_TERM_SHIFT_ENTER_NEWLINE_MIGRATED), "true");
+  } finally {
+    delete (globalThis as { localStorage?: unknown }).localStorage;
+  }
+});
+
+test("migrateMaterializedShiftEnterNewlineDefault leaves a fresh install without a settings blob", () => {
+  const store = installMemoryLocalStorage();
+  try {
+    migrateMaterializedShiftEnterNewlineDefault();
+    assert.equal(store.has(STORAGE_KEY_TERM_SETTINGS), false);
+    assert.equal(store.get(STORAGE_KEY_TERM_SHIFT_ENTER_NEWLINE_MIGRATED), "true");
   } finally {
     delete (globalThis as { localStorage?: unknown }).localStorage;
   }

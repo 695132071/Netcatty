@@ -111,6 +111,17 @@ test("normalizeTerminalSettings preserves Shift+Enter text", () => {
   );
 });
 
+test("normalizeTerminalSettings keeps an explicit legacy Shift+Enter newline", () => {
+  assert.equal(
+    normalizeTerminalSettings({ shiftEnterNewlineText: "\\n" }).shiftEnterNewlineText,
+    "\\n",
+  );
+  assert.equal(
+    normalizeTerminalSettings({ shiftEnterNewlineText: "\n" }).shiftEnterNewlineText,
+    "\n",
+  );
+});
+
 test("normalizeTerminalSettings falls back when Shift+Enter text is not a string", () => {
   assert.equal(
     normalizeTerminalSettings({ shiftEnterNewlineText: null as never }).shiftEnterNewlineText,

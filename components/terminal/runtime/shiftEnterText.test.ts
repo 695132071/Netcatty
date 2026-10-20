@@ -6,6 +6,7 @@ import {
   decodeTerminalTextEscapes,
   doesKittyEncodingPreserveShiftEnter,
   getShiftEnterSubmittedInput,
+  nativeKittyKeyboardPreservesShiftEnter,
   isBareShiftEnterLineEnding,
   isShiftEnterLineContinuationText,
   resolveShiftEnterText,
@@ -161,6 +162,41 @@ test("force-text opt-out only overrides the Win32 hand-off", () => {
   assert.equal(shouldClaimShiftEnterForText(keyEvent({ ctrlKey: true }), forced, win32), false);
 });
 
+test("native kitty Shift+Enter steps aside only for CSI-u flag sets", () => {
+  assert.equal(nativeKittyKeyboardPreservesShiftEnter(0), false);
+  assert.equal(nativeKittyKeyboardPreservesShiftEnter(0b0001), true);
+  assert.equal(nativeKittyKeyboardPreservesShiftEnter(0b0010), true);
+  assert.equal(nativeKittyKeyboardPreservesShiftEnter(0b1000), true);
+  assert.equal(nativeKittyKeyboardPreservesShiftEnter(0b0100), false);
+  assert.equal(nativeKittyKeyboardPreservesShiftEnter(0b10000), false);
+
+  const settings = { shiftEnterNewlineEnabled: true, shiftEnterForceText: false };
+  assert.equal(
+    shouldClaimShiftEnterForText(keyEvent(), settings, {
+      win32InputMode: false,
+      kittySequenceForKeyDown: null,
+      nativeKittyPreservesShiftEnter: true,
+    }),
+    false,
+  );
+  assert.equal(
+    shouldClaimShiftEnterForText(keyEvent(), settings, {
+      win32InputMode: false,
+      kittySequenceForKeyDown: null,
+      nativeKittyPreservesShiftEnter: false,
+    }),
+    true,
+  );
+  assert.equal(
+    shouldClaimShiftEnterForText(keyEvent(), { ...settings, shiftEnterForceText: true }, {
+      win32InputMode: true,
+      kittySequenceForKeyDown: null,
+      nativeKittyPreservesShiftEnter: true,
+    }),
+    true,
+  );
+});
+
 test("Win32 forced Shift+Enter text requires the opt-out and non-empty text", () => {
   const settings = {
     shiftEnterNewlineEnabled: true,
@@ -193,7 +229,7 @@ test("runtime routes Shift+Enter text through the shared input handler", () => {
   // skipping the ConPTY Win32 hand-off only when the force-text opt-out is on.
   assert.match(
     source,
-    /if \(\s*shouldClaimShiftEnterForText\(e, ctx\.terminalSettingsRef\.current, \{\s*win32InputMode: term\.modes\.win32InputMode,\s*kittySequenceForKeyDown,\s*\}\)\s*\) \{[\s\S]*?const shiftEnterText = resolveShiftEnterText\([\s\S]*?\)[\s\S]*?\}\s*if \(kittySequenceForKeyDown\)/s,
+    /if \(\s*shouldClaimShiftEnterForText\(e, ctx\.terminalSettingsRef\.current, \{\s*win32InputMode: term\.modes\.win32InputMode,\s*kittySequenceForKeyDown,\s*nativeKittyPreservesShiftEnter: !kittyKeyboardProtocolEnabled\s*&& nativeKittyKeyboardPreservesShiftEnter\(readNativeKittyKeyboardFlags\(term\)\),\s*\}\)\s*\) \{[\s\S]*?const shiftEnterText = resolveShiftEnterText\([\s\S]*?\)[\s\S]*?\}\s*if \(kittySequenceForKeyDown\)/s,
   );
   // The gate above only decides whether Shift+Enter is *eligible* for send-text.
   // It must then claim the keydown only when resolveShiftEnterText() returned
@@ -221,7 +257,7 @@ test("runtime routes Shift+Enter text through the shared input handler", () => {
   );
   assert.match(
     source,
-    /vtExtensions: \{\s*win32InputMode: windowsPty\?\.backend === "conpty",\s*\},/s,
+    /vtExtensions: \{\s*win32InputMode: windowsPty\?\.backend === "conpty",\s*kittyKeyboard: true,\s*\},/s,
   );
   assert.match(
     source,
@@ -237,7 +273,7 @@ test("runtime routes Shift+Enter text through the shared input handler", () => {
   );
   assert.match(
     source,
-    /resolveOptions: \(\) => \(\{[\s\S]*?shiftEnterSettings: ctx\.terminalSettingsRef\.current,[\s\S]*?\}\),/s,
+    /resolveOptions: \(\) => \(\{[\s\S]*?shiftEnterSettings: ctx\.terminalSettingsRef\.current,[\s\S]*?nativeKittyPreservesShiftEnter: !kittyKeyboardProtocolEnabled\s*&& nativeKittyKeyboardPreservesShiftEnter\(readNativeKittyKeyboardFlags\(term\)\),[\s\S]*?\}\),/s,
   );
   assert.doesNotMatch(source, /resolveShiftEnterText\([\s\S]*?alternateScreen:/s);
   assert.match(source, /getShiftEnterSubmittedInput\(logicalData\)/);

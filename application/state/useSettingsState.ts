@@ -157,6 +157,7 @@ import {
   isValidUiThemeId,
   migrateIncomingTerminalFontId,
   migrateMaterializedAutoCloseOnExitDefault,
+  migrateMaterializedShiftEnterNewlineDefault,
   readStoredString,
   serializeTerminalSettings,
   type HostClickBehavior,
@@ -366,6 +367,7 @@ export const useSettingsState = (options: { enableSettingsSync?: boolean; enable
     // One-time reset of the pre-flip materialized autoCloseOnExit: true before
     // it is ingested; afterwards stored values are the user's own and win.
     migrateMaterializedAutoCloseOnExitDefault();
+    migrateMaterializedShiftEnterNewlineDefault();
     const stored = localStorageAdapter.read<TerminalSettings>(STORAGE_KEY_TERM_SETTINGS);
     return normalizeTerminalSettings(stored);
   });

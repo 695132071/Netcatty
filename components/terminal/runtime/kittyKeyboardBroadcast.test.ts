@@ -571,6 +571,61 @@ test("Shift+Enter broadcast uses CSI-u only after the target negotiated a preser
   });
 });
 
+test("native kitty broadcast targets keep Shift+Enter as CSI-u when custom kitty is off", () => {
+  const shiftEnter = {
+    kind: "key" as const,
+    fallbackToLegacy: true,
+    event: {
+      type: "keydown" as const,
+      key: "Enter",
+      code: "Enter",
+      shiftKey: true,
+    },
+  };
+  const encodedKeys = new Set<string>();
+  const legacySuppressedKeys = new Set<string>();
+  const base = {
+    kittyProtocolEnabled: false,
+    kittyMode: createKittyKeyboardModeState(),
+    applicationCursorMode: false,
+    shiftEnterSettings: {
+      shiftEnterNewlineEnabled: true,
+      shiftEnterNewlineText: "\\e\\r",
+    },
+  };
+
+  assert.deepEqual(resolveKittyKeyboardBroadcastInput(shiftEnter, {
+    ...base,
+    encodedKeys,
+    legacySuppressedKeys,
+    nativeKittyPreservesShiftEnter: true,
+  }), {
+    data: SHIFT_ENTER_CSI_U_SEQUENCE,
+    kittyEncoded: true,
+    urgentInterrupt: false,
+  });
+  assert.equal(resolveKittyKeyboardBroadcastInput({
+    kind: "legacy",
+    data: SHIFT_ENTER_CSI_U_SEQUENCE,
+    keyIdentity: "Enter",
+  }, {
+    ...base,
+    encodedKeys,
+    legacySuppressedKeys,
+    nativeKittyPreservesShiftEnter: true,
+  }), null);
+
+  assert.deepEqual(resolveKittyKeyboardBroadcastInput(shiftEnter, {
+    ...base,
+    encodedKeys: new Set<string>(),
+    nativeKittyPreservesShiftEnter: false,
+  }), {
+    data: "\u001b\r",
+    kittyEncoded: false,
+    urgentInterrupt: false,
+  });
+});
+
 test("Win32 broadcast targets resolve Shift+Enter from their own force-text setting", () => {
   const shiftEnterRecord = "\u001b[13;28;13;1;16;1_";
   const press = { type: "keydown" as const, key: "Enter", code: "Enter", shiftKey: true };

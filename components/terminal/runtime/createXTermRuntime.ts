@@ -114,6 +114,8 @@ import { handleSerialLineModeInput } from "./serialLineInput";
 import { isTerminalReportSequence } from "./terminalReportSequence";
 import {
   getShiftEnterSubmittedInput,
+  nativeKittyKeyboardPreservesShiftEnter,
+  readNativeKittyKeyboardFlags,
   resolveShiftEnterText,
   shouldClaimShiftEnterForText,
   shouldSendShiftEnterText,
@@ -596,8 +598,12 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
     // ConPTY asks the frontend for Win32 INPUT_RECORD encoding with DECSET
     // 9001. Preserve browser key modifiers for native Windows applications
     // instead of collapsing them into legacy VT bytes.
+    // kittyKeyboard lets an app opt into xterm's CSI u. Netcatty's own
+    // handlers, when that setting is on, register later and consume those
+    // sequences first, so the two parsers do not both apply the protocol.
     vtExtensions: {
       win32InputMode: windowsPty?.backend === "conpty",
+      kittyKeyboard: true,
     },
     // Override ignoreBracketedPasteMode if user explicitly disables bracketed paste
     ignoreBracketedPasteMode: settings?.disableBracketedPaste ?? performanceConfig.options.ignoreBracketedPasteMode,
@@ -2528,6 +2534,8 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
       shouldClaimShiftEnterForText(e, ctx.terminalSettingsRef.current, {
         win32InputMode: term.modes.win32InputMode,
         kittySequenceForKeyDown,
+        nativeKittyPreservesShiftEnter: !kittyKeyboardProtocolEnabled
+          && nativeKittyKeyboardPreservesShiftEnter(readNativeKittyKeyboardFlags(term)),
       })
     ) {
       const id = ctx.sessionRef.current;
@@ -3123,6 +3131,8 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
       legacySuppressedKeys: broadcastLegacySuppressedKeys,
       win32InputMode: term.modes.win32InputMode,
       shiftEnterSettings: ctx.terminalSettingsRef.current,
+      nativeKittyPreservesShiftEnter: !kittyKeyboardProtocolEnabled
+        && nativeKittyKeyboardPreservesShiftEnter(readNativeKittyKeyboardFlags(term)),
       win32ShiftEnterTextKeys: broadcastWin32ShiftEnterTextKeys,
     }),
     getSessionId: () => ctx.sessionRef.current,

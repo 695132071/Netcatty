@@ -100,6 +100,24 @@ export function doesKittyEncodingPreserveShiftEnter(
     && !isBareShiftEnterLineEnding(encoded);
 }
 
+/**
+ * xterm 6.1 flag bits that encode Shift+Enter as CSI 13;2u.
+ * Disambiguate (1), report event types (2), and report all keys (8).
+ * Alternate-key (4) or associated-text (16) alone still emit a bare CR.
+ */
+const NATIVE_KITTY_SHIFT_ENTER_CSI_U_FLAGS = 0b0001 | 0b0010 | 0b1000;
+
+export function nativeKittyKeyboardPreservesShiftEnter(flags: number): boolean {
+  return (flags & NATIVE_KITTY_SHIFT_ENTER_CSI_U_FLAGS) !== 0;
+}
+
+export function readNativeKittyKeyboardFlags(term: {
+  _core?: { coreService?: { kittyKeyboard?: { flags?: unknown } } };
+}): number {
+  const flags = term._core?.coreService?.kittyKeyboard?.flags;
+  return typeof flags === "number" && Number.isFinite(flags) ? flags : 0;
+}
+
 export function isShiftEnterLineContinuationText(text: string): boolean {
   return /\\(?:\r\n|\r|\n)$/.test(text);
 }
@@ -150,6 +168,8 @@ export function resolveWin32ForcedShiftEnterText(
  * opted out with shiftEnterForceText; elsewhere the text is used only when the
  * negotiated Kitty encoding would collapse the chord to a bare CR/LF, so the
  * Win32 opt-out can never override a Kitty encoding that preserves it.
+ * xterm's own CSI-u mode is the same kind of preserving encoding: step aside
+ * so the app receives CSI 13;2u.
  */
 export function shouldClaimShiftEnterForText(
   event: ShiftEnterEvent,
@@ -157,10 +177,15 @@ export function shouldClaimShiftEnterForText(
     TerminalSettings,
     "shiftEnterNewlineEnabled" | "shiftEnterForceText"
   > | undefined,
-  mode: { win32InputMode: boolean; kittySequenceForKeyDown: string | null },
+  mode: {
+    win32InputMode: boolean;
+    kittySequenceForKeyDown: string | null;
+    nativeKittyPreservesShiftEnter?: boolean;
+  },
 ): boolean {
   if (!shouldSendShiftEnterText(event, settings)) return false;
-  return mode.win32InputMode
-    ? settings?.shiftEnterForceText === true
-    : !doesKittyEncodingPreserveShiftEnter(mode.kittySequenceForKeyDown);
+  if (mode.win32InputMode) return settings?.shiftEnterForceText === true;
+  if (doesKittyEncodingPreserveShiftEnter(mode.kittySequenceForKeyDown)) return false;
+  if (mode.nativeKittyPreservesShiftEnter) return false;
+  return true;
 }

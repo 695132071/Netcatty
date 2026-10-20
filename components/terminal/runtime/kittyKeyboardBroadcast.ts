@@ -11,6 +11,7 @@ import {
   isBareShiftEnterLineEnding,
   resolveShiftEnterText,
   resolveWin32ForcedShiftEnterText,
+  SHIFT_ENTER_CSI_U_SEQUENCE,
   shouldSendShiftEnterText,
 } from "./shiftEnterText";
 
@@ -254,6 +255,11 @@ type ResolveKittyKeyboardBroadcastOptions = {
     "shiftEnterNewlineEnabled" | "shiftEnterNewlineText" | "shiftEnterForceText"
   >;
   /**
+   * Target xterm negotiated native kitty flags that encode Shift+Enter as
+   * CSI 13;2u, while Netcatty's custom kitty setting is off.
+   */
+  nativeKittyPreservesShiftEnter?: boolean;
+  /**
    * Presses this Win32 target turned into its configured Shift+Enter text
    * instead of a native record. Their paired releases are dropped so ConPTY
    * never sees a native key-up without the matching key-down.
@@ -417,6 +423,18 @@ export const resolveKittyKeyboardBroadcastInput = (
     const remapped = resolveShiftEnterBroadcastPayload(input, options, encoded);
     if (remapped) return remapped;
     return { data: encoded, kittyEncoded: true, urgentInterrupt: false };
+  }
+  // Custom kitty is off. A target whose xterm already negotiated a preserving
+  // native mode must get CSI 13;2u, and the source's follow-up legacy packet
+  // (the same sequence) must not be written again.
+  if (options.nativeKittyPreservesShiftEnter && shouldSendShiftEnterText(input.event)) {
+    options.encodedKeys.add(identity);
+    legacySuppressedKeys.add(identity);
+    return {
+      data: SHIFT_ENTER_CSI_U_SEQUENCE,
+      kittyEncoded: true,
+      urgentInterrupt: false,
+    };
   }
   if (!input.fallbackToLegacy || input.event.type === "keyup") return null;
   const legacy = encodeLegacyKeyboardEvent(input.event, options.applicationCursorMode);

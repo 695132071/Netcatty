@@ -503,6 +503,17 @@ export const normalizeTerminalSettings = (
 /** Default scrollback rows for new installs (VS Code uses 1000; we keep a modest headroom). */
 export const DEFAULT_TERMINAL_SCROLLBACK = 3000;
 
+/** Backslash-escaped Shift+Enter text for a fresh install (legacy Alt+Enter). */
+export const DEFAULT_SHIFT_ENTER_NEWLINE_TEXT = '\\e\\r';
+
+/**
+ * Stored forms of the pre-#3770 Shift+Enter default. `\\n` is the escaped
+ * setting string; `\n` is a raw newline if one was ever persisted.
+ */
+export function isLegacyDefaultShiftEnterNewlineText(value: unknown): boolean {
+  return value === '\\n' || value === '\n';
+}
+
 const DEFAULT_TERMINAL_SETTINGS: TerminalSettings = {
   scrollback: DEFAULT_TERMINAL_SCROLLBACK,
   drawBoldInBrightColors: true,
@@ -522,7 +533,7 @@ const DEFAULT_TERMINAL_SETTINGS: TerminalSettings = {
   altAsMeta: false,
   optionArrowWordJump: false,
   shiftEnterNewlineEnabled: true,
-  shiftEnterNewlineText: '\\e\\r',
+  shiftEnterNewlineText: DEFAULT_SHIFT_ENTER_NEWLINE_TEXT,
   shiftEnterForceText: false,
   kittyKeyboardProtocolEnabled: false,
   scrollOnInput: true,
