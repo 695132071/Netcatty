@@ -51,3 +51,17 @@ test("Vault import entry is disabled while an import is running", () => {
   assert.match(vaultViewLayoutSource, /disabled=\{importProgress\?\.status === "running"\}/);
   assert.match(vaultViewLayoutSource, /if \(importProgress\?\.status === "running"\) return;/);
 });
+
+test("new host menu keeps the local shell icon at the same size as its siblings", () => {
+  const menuStart = vaultViewLayoutSource.indexOf('<DropdownContent className="flex w-max min-w-44 flex-col" align="end" alignToParent>');
+  assert.ok(menuStart >= 0);
+  const menuEnd = vaultViewLayoutSource.indexOf("</DropdownContent>", menuStart);
+  const menu = vaultViewLayoutSource.slice(menuStart, menuEnd);
+  assert.match(menu, /className="flex w-max min-w-44 flex-col"/);
+  assert.doesNotMatch(menu, /className="w-44"/);
+  assert.match(menu, /<TerminalSquare size=\{14\} className="shrink-0" \/>/);
+  assert.match(menu, /<FolderTree size=\{14\} className="shrink-0" \/>/);
+  assert.match(menu, /<Upload size=\{14\} className="shrink-0" \/>/);
+  assert.match(menu, /<Download size=\{14\} className="shrink-0" \/>/);
+  assert.doesNotMatch(menu, /className="w-full justify-start gap-2"/);
+});

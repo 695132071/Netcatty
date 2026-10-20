@@ -1007,42 +1007,43 @@ export function VaultViewLayout({ ctx }: { ctx: VaultViewLayoutContext }) {
                       </Button>
                     </DropdownTrigger>
                   </div>
-                  <DropdownContent className="w-44" align="end" alignToParent>
+                  {/* Fixed w-44 flex-shrinks the shell icon when the label is longer than the siblings. */}
+                  <DropdownContent className="flex w-max min-w-44 flex-col" align="end" alignToParent>
                     <Button
                       variant="ghost"
-                      className="w-full justify-start gap-2"
+                      className="justify-start gap-2"
                       onClick={handleNewLocalShellHost}
                     >
-                      <TerminalSquare size={14} /> {t("vault.hosts.newLocalShell")}
+                      <TerminalSquare size={14} className="shrink-0" /> {t("vault.hosts.newLocalShell")}
                     </Button>
                     <Button
                       variant="ghost"
-                      className="w-full justify-start gap-2"
+                      className="justify-start gap-2"
                       onClick={() => {
                         setTargetParentPath(selectedGroupPath);
                         setNewFolderName("");
                         setIsNewFolderOpen(true);
                       }}
                     >
-                      <FolderTree size={14} /> {t("vault.hosts.newGroup")}
+                      <FolderTree size={14} className="shrink-0" /> {t("vault.hosts.newGroup")}
                     </Button>
                     <Button
                       variant="ghost"
-                      className="w-full justify-start gap-2"
+                      className="justify-start gap-2"
                       disabled={importProgress?.status === "running"}
                       onClick={() => {
                         if (importProgress?.status === "running") return;
                         setIsImportOpen(true);
                       }}
                     >
-                      <Upload size={14} /> {t("vault.hosts.import")}
+                      <Upload size={14} className="shrink-0" /> {t("vault.hosts.import")}
                     </Button>
                     <Button
                       variant="ghost"
-                      className="w-full justify-start gap-2"
+                      className="justify-start gap-2"
                       onClick={handleExportHosts}
                     >
-                      <Download size={14} /> {t("vault.hosts.export")}
+                      <Download size={14} className="shrink-0" /> {t("vault.hosts.export")}
                     </Button>
                   </DropdownContent>
                 </Dropdown>

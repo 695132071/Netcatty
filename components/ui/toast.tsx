@@ -82,11 +82,15 @@ const TOAST_ICONS: Record<ToastType, React.ReactNode> = {
     info: <Info className="h-4 w-4 text-blue-500" />,
 };
 
+// Colored `bg-*-50` / `dark:bg-*-950` fills follow the OS color scheme.
+// Title and body use `.dark` tokens (`text-foreground`, `text-muted-foreground`),
+// so an app-dark / OS-light session paints light text on a pale fill.
+// The container's `bg-card` tracks the app theme; the border and icon mark the variant.
 const TOAST_STYLES: Record<ToastType, string> = {
-    success: 'border-emerald-600 bg-emerald-50 dark:bg-emerald-950',
-    error: 'border-red-600 bg-red-50 dark:bg-red-950',
-    warning: 'border-yellow-600 bg-yellow-50 dark:bg-yellow-950',
-    info: 'border-blue-600 bg-blue-50 dark:bg-blue-950',
+    success: 'border-emerald-600',
+    error: 'border-red-600',
+    warning: 'border-yellow-600',
+    info: 'border-blue-600',
 };
 
 export const ToastProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
