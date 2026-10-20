@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import {
+  STORAGE_KEY_AI_EXTERNAL_MCP_APPROVAL_ALERT,
   STORAGE_KEY_AI_EXTERNAL_MCP_ENABLED,
   STORAGE_KEY_AI_EXTERNAL_MCP_FOCUS_ON_HOST_OPEN,
   STORAGE_KEY_AI_EXTERNAL_MCP_IDLE_TIMEOUT_MINUTES,
@@ -14,6 +15,9 @@ import { netcattyBridge } from '../../infrastructure/services/netcattyBridge';
 import { AI_STATE_CHANGED_EVENT, emitAIStateChanged } from './aiStateEvents';
 
 export type ExternalMcpMode = 'temporary' | 'persistent';
+export type ExternalMcpApprovalAlertMode = 'off' | 'unfocused' | 'always';
+
+export const DEFAULT_EXTERNAL_MCP_APPROVAL_ALERT_MODE: ExternalMcpApprovalAlertMode = 'unfocused';
 
 const DEFAULT_EXTERNAL_MCP_IDLE_TIMEOUT_MINUTES = 10;
 const MIN_EXTERNAL_MCP_IDLE_TIMEOUT_MINUTES = 1;
@@ -181,6 +185,26 @@ export function readExternalMcpFocusOnHostOpen(): boolean {
 export function writeExternalMcpFocusOnHostOpen(focusOnHostOpen: boolean): void {
   localStorageAdapter.writeBoolean(STORAGE_KEY_AI_EXTERNAL_MCP_FOCUS_ON_HOST_OPEN, focusOnHostOpen);
   emitAIStateChanged(STORAGE_KEY_AI_EXTERNAL_MCP_FOCUS_ON_HOST_OPEN);
+}
+
+export function normalizeExternalMcpApprovalAlertMode(value: string | null): ExternalMcpApprovalAlertMode {
+  return value === 'off' || value === 'always' || value === 'unfocused'
+    ? value
+    : DEFAULT_EXTERNAL_MCP_APPROVAL_ALERT_MODE;
+}
+
+/** System notification preference for confirm-mode External MCP approvals. */
+export function readExternalMcpApprovalAlertMode(): ExternalMcpApprovalAlertMode {
+  return normalizeExternalMcpApprovalAlertMode(
+    localStorageAdapter.readString(STORAGE_KEY_AI_EXTERNAL_MCP_APPROVAL_ALERT),
+  );
+}
+
+export function writeExternalMcpApprovalAlertMode(mode: ExternalMcpApprovalAlertMode): ExternalMcpApprovalAlertMode {
+  const normalized = normalizeExternalMcpApprovalAlertMode(mode);
+  localStorageAdapter.writeString(STORAGE_KEY_AI_EXTERNAL_MCP_APPROVAL_ALERT, normalized);
+  emitAIStateChanged(STORAGE_KEY_AI_EXTERNAL_MCP_APPROVAL_ALERT);
+  return normalized;
 }
 
 /** Whether host_open sessions stay hidden from the tab bar. Defaults to false (existing behavior). */

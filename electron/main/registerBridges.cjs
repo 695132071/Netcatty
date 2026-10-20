@@ -4,6 +4,10 @@ let bridgesRegistered = false;
 let cloudSyncSessionPassword = null;
 const { readClipboardFiles, readClipboardImage, hasClipboardImage } = require("../bridges/clipboardFiles.cjs");
 const { registerSystemNotificationHandlers } = require("../bridges/systemNotification.cjs");
+const {
+  installWindowAttention,
+  registerExternalMcpApprovalAlertHandlers,
+} = require("../bridges/windowAttention.cjs");
 
 const excludedFigSpecPrefixes = ["aws", "gcloud", "az"];
 
@@ -992,7 +996,26 @@ function createBridgeRegistrar(context) {
     );
   
     // OSC 9/777/99 desktop notifications (Codex, iTerm2, kitty, rxvt)
-    registerSystemNotificationHandlers(ipcMain, { electronModule, BrowserWindow });
+    // and External MCP approval alerts, which reuse the same click-to-focus channel.
+    registerSystemNotificationHandlers(ipcMain, {
+      electronModule,
+      BrowserWindow,
+      getAppFocused: () => BrowserWindow.getAllWindows().some(
+        (win) => win && !win.isDestroyed?.() && win.isFocused?.(),
+      ),
+    });
+    installWindowAttention({
+      app,
+      platform: process.platform,
+      getWindows: () => {
+        try {
+          return BrowserWindow.getAllWindows();
+        } catch {
+          return [];
+        }
+      },
+    });
+    registerExternalMcpApprovalAlertHandlers(ipcMain);
 
     // Clipboard helpers for renderer fallback paths (e.g. Monaco paste in Electron)
     ipcMain.handle("netcatty:clipboard:readText", async () => {

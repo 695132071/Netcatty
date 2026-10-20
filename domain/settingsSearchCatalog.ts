@@ -715,6 +715,15 @@ export const SETTINGS_SEARCH_CATALOG: readonly SettingsSearchEntry[] = [
     keywords: ["mcp"],
   },
   {
+    id: "ai-external-mcp-approval-alert",
+    tab: "ai",
+    aiSubTab: "tools",
+    labelKey: "ai.externalMcp.approvalAlert",
+    descriptionKey: "ai.externalMcp.approvalAlert.description",
+    sectionKey: "ai.externalMcp.title",
+    keywords: ["notification", "approval", "dock"],
+  },
+  {
     id: "ai-user-skills",
     tab: "ai",
     aiSubTab: "tools",

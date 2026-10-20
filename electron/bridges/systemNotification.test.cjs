@@ -72,6 +72,67 @@ test("showSystemNotification reports unsupported platforms", () => {
   );
 });
 
+test("registerSystemNotificationHandlers skips unfocused alerts while the app is focused", async () => {
+  const handlers = new Map();
+  const shown = [];
+  function FakeNotification(payload) {
+    shown.push(payload);
+  }
+  FakeNotification.isSupported = () => true;
+  FakeNotification.prototype.on = () => {};
+  FakeNotification.prototype.show = () => {};
+
+  registerSystemNotificationHandlers({
+    handle(channel, handler) { handlers.set(channel, handler); },
+  }, {
+    electronModule: { Notification: FakeNotification },
+    BrowserWindow: { fromWebContents: () => null },
+    getAppFocused: () => true,
+  });
+
+  const skipped = await handlers.get("netcatty:notification:show")(
+    { sender: { isDestroyed: () => false, send() {} } },
+    { title: "External MCP approval", body: "sftp.write is waiting", whenUnfocused: true, dedupeKey: "a1" },
+  );
+  assert.deepEqual(skipped, { shown: false, reason: "focused" });
+  assert.equal(shown.length, 0);
+
+  const forced = await handlers.get("netcatty:notification:show")(
+    { sender: { isDestroyed: () => false, send() {} } },
+    { title: "External MCP approval", body: "sftp.write is waiting", whenUnfocused: false, dedupeKey: "a1" },
+  );
+  assert.deepEqual(forced, { shown: true });
+  assert.equal(shown.length, 1);
+});
+
+test("registerSystemNotificationHandlers dedupes the same approval across windows", async () => {
+  const handlers = new Map();
+  const shown = [];
+  function FakeNotification(payload) {
+    shown.push(payload);
+  }
+  FakeNotification.isSupported = () => true;
+  FakeNotification.prototype.on = () => {};
+  FakeNotification.prototype.show = () => {};
+
+  registerSystemNotificationHandlers({
+    handle(channel, handler) { handlers.set(channel, handler); },
+  }, {
+    electronModule: { Notification: FakeNotification },
+    BrowserWindow: { fromWebContents: () => null },
+    getAppFocused: () => false,
+  });
+
+  const show = (dedupeKey) => handlers.get("netcatty:notification:show")(
+    { sender: { isDestroyed: () => false, send() {} } },
+    { title: "External MCP approval", body: "tool", dedupeKey },
+  );
+  assert.deepEqual(await show("mcp_approval_1"), { shown: true });
+  assert.deepEqual(await show("mcp_approval_1"), { shown: false, reason: "duplicate" });
+  assert.deepEqual(await show("mcp_approval_2"), { shown: true });
+  assert.equal(shown.length, 2);
+});
+
 test("registerSystemNotificationHandlers exposes the IPC channel", async () => {
   const handlers = new Map();
   const shown = [];

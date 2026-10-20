@@ -4,7 +4,7 @@
  * even when the Catty AI side panel has never been opened.
  */
 
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { ToolCall } from '../ai-elements/tool-call';
 import { Button } from '../ui/button';
 import {
@@ -20,6 +20,12 @@ import {
   resolveCapabilityId,
 } from '../../infrastructure/ai/harness/permissionGrants';
 import { useI18n } from '../../application/i18n/I18nProvider';
+import { AI_STATE_CHANGED_EVENT } from '../../application/state/aiStateEvents';
+import {
+  notifyExternalMcpApproval,
+  publishExternalMcpApprovalAlertMode,
+} from '../../application/state/externalMcpApprovalAlert';
+import { STORAGE_KEY_AI_EXTERNAL_MCP_APPROVAL_ALERT } from '../../infrastructure/config/storageKeys';
 
 const EXTERNAL_MCP_CHAT_SESSION_ID = '__external_mcp__';
 
@@ -31,19 +37,37 @@ function isExternalMcpApproval(request: ApprovalRequest): boolean {
 export const ExternalMcpApprovalsHost: React.FC = () => {
   const { t } = useI18n();
   const [pendingApprovals, setPendingApprovals] = useState<Map<string, ApprovalRequest>>(new Map());
+  const alertedIdsRef = useRef(new Set<string>());
+
+  useEffect(() => {
+    const pushMode = () => {
+      publishExternalMcpApprovalAlertMode();
+    };
+    pushMode();
+    const onChange = (event: Event) => {
+      const key = (event as CustomEvent<{ key?: string }>).detail?.key;
+      if (key === STORAGE_KEY_AI_EXTERNAL_MCP_APPROVAL_ALERT) pushMode();
+    };
+    window.addEventListener(AI_STATE_CHANGED_EVENT, onChange);
+    return () => window.removeEventListener(AI_STATE_CHANGED_EVENT, onChange);
+  }, []);
 
   useEffect(() => {
     const handler = (request: ApprovalRequest) => {
       if (!isExternalMcpApproval(request)) return;
       setPendingApprovals((prev) => new Map(prev).set(request.toolCallId, request));
+      if (alertedIdsRef.current.has(request.toolCallId)) return;
+      alertedIdsRef.current.add(request.toolCallId);
+      notifyExternalMcpApproval(request, t);
     };
     const unsub = onApprovalRequest(handler);
     replayPendingApprovals(handler);
     return unsub;
-  }, []);
+  }, [t]);
 
   useEffect(() => {
     return onApprovalCleared((clearedIds) => {
+      for (const id of clearedIds) alertedIdsRef.current.delete(id);
       setPendingApprovals((prev) => {
         const next = new Map(prev);
         for (const id of clearedIds) next.delete(id);

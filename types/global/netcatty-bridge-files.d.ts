@@ -139,7 +139,14 @@ declare global {
       title: string;
       body: string;
       sessionId?: string;
+      /** Skip a second notification for the same approval across windows. */
+      dedupeKey?: string;
+      /** Show only when no Netcatty window is focused. */
+      whenUnfocused?: boolean;
     }): Promise<{ shown: boolean; reason?: string }>;
+    setExternalMcpApprovalAlertMode?(payload: {
+      mode: 'off' | 'unfocused' | 'always';
+    }): Promise<{ mode: 'off' | 'unfocused' | 'always' }>;
     readClipboardText?(): Promise<string>;
     writeClipboardText?(text: string): Promise<boolean>;
     readClipboardFiles?(): Promise<Array<{ path: string; name: string; isDirectory: boolean; size?: number }>>;

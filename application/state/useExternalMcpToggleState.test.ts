@@ -11,9 +11,11 @@ import {
   getExternalMcpStartupReadyWaiterCountForTests,
   isExternalMcpStartupReady,
   markExternalMcpStartupReady,
+  normalizeExternalMcpApprovalAlertMode,
   normalizeExternalMcpIdleTimeoutMinutes,
   normalizeExternalMcpMode,
   normalizeSessionIdleTimeoutMinutes,
+  readExternalMcpApprovalAlertMode,
   readExternalMcpFocusOnHostOpen,
   readExternalMcpSilentSessions,
   readExternalMcpStoredEnabled,
@@ -25,6 +27,7 @@ import {
   syncExternalMcpStartupState,
   syncExternalMcpStartupStateOnce,
   waitForExternalMcpStartupReady,
+  writeExternalMcpApprovalAlertMode,
   writeExternalMcpFocusOnHostOpen,
   writeExternalMcpSilentSessions,
 } from './useExternalMcpToggleState.ts';
@@ -69,6 +72,22 @@ describe('useExternalMcpToggleState helpers', () => {
     assert.equal(normalizeExternalMcpIdleTimeoutMinutes(99999), 24 * 60);
     assert.equal(normalizeSessionIdleTimeoutMinutes(null), 8 * 60);
     assert.equal(normalizeSessionIdleTimeoutMinutes(0), 1);
+    assert.equal(normalizeExternalMcpApprovalAlertMode(null), 'unfocused');
+    assert.equal(normalizeExternalMcpApprovalAlertMode('always'), 'always');
+    assert.equal(normalizeExternalMcpApprovalAlertMode('nope'), 'unfocused');
+  });
+
+  it('stores the approval alert preference and defaults to unfocused', () => {
+    const restore = installMemoryLocalStorage();
+    try {
+      assert.equal(readExternalMcpApprovalAlertMode(), 'unfocused');
+      assert.equal(writeExternalMcpApprovalAlertMode('off'), 'off');
+      assert.equal(readExternalMcpApprovalAlertMode(), 'off');
+      assert.equal(writeExternalMcpApprovalAlertMode('always'), 'always');
+      assert.equal(readExternalMcpApprovalAlertMode(), 'always');
+    } finally {
+      restore();
+    }
   });
 
   for (const savedMinutes of [null, 30]) {

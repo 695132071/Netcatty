@@ -2,16 +2,19 @@ import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { Check, Copy, HelpCircle, RefreshCw } from "lucide-react";
 import { useI18n } from "../../../../application/i18n/I18nProvider";
 import {
+  readExternalMcpApprovalAlertMode,
   readExternalMcpFocusOnHostOpen,
   readExternalMcpIdleTimeoutMinutes,
   readExternalMcpMode,
   readExternalMcpSilentSessions,
   readSessionIdleTimeoutMinutes,
+  writeExternalMcpApprovalAlertMode,
   writeExternalMcpFocusOnHostOpen,
   writeExternalMcpIdleTimeoutMinutes,
   writeExternalMcpMode,
   writeExternalMcpSilentSessions,
   writeSessionIdleTimeoutMinutes,
+  type ExternalMcpApprovalAlertMode,
   type ExternalMcpMode,
   useExternalMcpToggleState,
 } from "../../../../application/state/useExternalMcpToggleState";
@@ -297,6 +300,9 @@ export const ExternalMcpCard: React.FC = () => {
   const [mode, setModeRaw] = useState<ExternalMcpMode>(() => readExternalMcpMode());
   const [idleTimeoutMinutes, setIdleTimeoutRaw] = useState<number>(() => readExternalMcpIdleTimeoutMinutes());
   const [focusOnHostOpen, setFocusOnHostOpenRaw] = useState<boolean>(() => readExternalMcpFocusOnHostOpen());
+  const [approvalAlert, setApprovalAlertRaw] = useState<ExternalMcpApprovalAlertMode>(
+    () => readExternalMcpApprovalAlertMode(),
+  );
   const [sessionIdleTimeoutMinutes, setSessionIdleTimeoutRaw] = useState<number>(() => readSessionIdleTimeoutMinutes());
   const [silentSessions, setSilentSessionsRaw] = useState<boolean>(() => readExternalMcpSilentSessions());
   const [status, setStatus] = useState<ExternalMcpStatus | null>(null);
@@ -342,6 +348,10 @@ export const ExternalMcpCard: React.FC = () => {
   const setFocusOnHostOpen = useCallback((nextFocusOnHostOpen: boolean) => {
     setFocusOnHostOpenRaw(nextFocusOnHostOpen);
     writeExternalMcpFocusOnHostOpen(nextFocusOnHostOpen);
+  }, []);
+
+  const setApprovalAlert = useCallback((next: ExternalMcpApprovalAlertMode) => {
+    setApprovalAlertRaw(writeExternalMcpApprovalAlertMode(next));
   }, []);
 
   const setSilentSessions = useCallback((nextSilentSessions: boolean) => {
@@ -698,6 +708,24 @@ export const ExternalMcpCard: React.FC = () => {
       </div>
 
       <SettingCard divided className="rounded-md border-border/60 bg-background/70">
+        <SettingRow
+          anchorId="ai-external-mcp-approval-alert"
+          label={t("ai.externalMcp.approvalAlert")}
+          description={t("ai.externalMcp.approvalAlert.description")}
+        >
+          <Select
+            value={approvalAlert}
+            options={[
+              { value: "always", label: t("ai.externalMcp.approvalAlert.always") },
+              { value: "unfocused", label: t("ai.externalMcp.approvalAlert.unfocused") },
+              { value: "off", label: t("ai.externalMcp.approvalAlert.off") },
+            ]}
+            onChange={(value) => setApprovalAlert(
+              value === "always" || value === "off" ? value : "unfocused",
+            )}
+            className="w-40"
+          />
+        </SettingRow>
         <SettingRow
           label={t("ai.externalMcp.mode")}
           description={t("ai.externalMcp.mode.description")}

@@ -1840,6 +1840,9 @@ function createPreloadApi(ctx) {
   showSystemNotification: async (payload) => {
     return ipcRenderer.invoke("netcatty:notification:show", payload ?? {});
   },
+  setExternalMcpApprovalAlertMode: async (payload) => {
+    return ipcRenderer.invoke("netcatty:mcp:approval-alert-mode", payload ?? {});
+  },
 
   // Clipboard fallback helpers
   readClipboardText: async () => {

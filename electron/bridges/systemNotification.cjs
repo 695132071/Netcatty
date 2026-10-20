@@ -55,10 +55,18 @@ function showSystemNotification({
   return { shown: true };
 }
 
-function registerSystemNotificationHandlers(ipcMain, { electronModule, BrowserWindow }) {
+function registerSystemNotificationHandlers(ipcMain, { electronModule, BrowserWindow, getAppFocused }) {
+  const shownKeys = new Set();
   ipcMain.handle("netcatty:notification:show", async (event, payload) => {
     try {
-      return showSystemNotification({
+      if (payload?.whenUnfocused === true && typeof getAppFocused === "function" && getAppFocused()) {
+        return { shown: false, reason: "focused" };
+      }
+      const dedupeKey = typeof payload?.dedupeKey === "string" ? payload.dedupeKey : "";
+      if (dedupeKey && shownKeys.has(dedupeKey)) {
+        return { shown: false, reason: "duplicate" };
+      }
+      const result = showSystemNotification({
         Notification: electronModule?.Notification,
         BrowserWindow,
         sender: event?.sender,
@@ -66,6 +74,8 @@ function registerSystemNotificationHandlers(ipcMain, { electronModule, BrowserWi
         body: payload?.body,
         sessionId: payload?.sessionId,
       });
+      if (result?.shown && dedupeKey) shownKeys.add(dedupeKey);
+      return result;
     } catch (err) {
       return { shown: false, reason: err?.message || "failed" };
     }
