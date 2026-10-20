@@ -28,7 +28,7 @@ function createHarness() {
     isDev: false,
     readSshDeepLinkEnabledPreference: () => true,
     readJmsDeepLinkEnabledPreference: () => false,
-    resolveOpenTerminalPathsFromArgs: () => [],
+    resolveOpenTerminalRequestsFromArgs: () => [],
     resolveExplorerContextMenuEnabled: () => ({ enabled: false }),
     applySshProtocolClientPreference: () => true,
     writeSshDeepLinkEnabledPreference: () => true,

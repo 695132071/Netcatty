@@ -3,7 +3,7 @@ const { readFileSync } = require("node:fs");
 const test = require("node:test");
 const vm = require("node:vm");
 const deepLink = require("./deepLink.cjs");
-const { collectOpenTerminalPathArgs } = require("./openTerminalPath.cjs");
+const { hasOpenTerminalLaunchArgs } = require("./openTerminalPath.cjs");
 
 function createHarness() {
   const source = readFileSync(require.resolve("./main.cjs"), "utf8");
@@ -22,8 +22,8 @@ function createHarness() {
     queueSshDeepLink: (url) => queued.push(url),
     queueTelnetDeepLink: (url) => queued.push(url),
     queueJmsDeepLink: (url) => queued.push(url),
-    collectOpenTerminalPathArgs,
-    resolveOpenTerminalPathsFromArgs: (argv, { baseDirectory }) => {
+    hasOpenTerminalLaunchArgs,
+    resolveOpenTerminalRequestsFromArgs: (argv, { baseDirectory }) => {
       paths.push({ argv: Array.from(argv), baseDirectory });
       return ["/resolved"];
     },

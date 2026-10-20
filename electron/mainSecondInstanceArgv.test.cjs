@@ -4,11 +4,16 @@ const test = require("node:test");
 const { readFileSync } = require("node:fs");
 const path = require("node:path");
 const vm = require("node:vm");
+const deepLink = require("./deepLink.cjs");
 const {
   collectSshDeepLinkQueueItems,
   redactPuttyCommandLinePasswords,
   redactSecureCrtCommandLinePasswords,
-} = require("./deepLink.cjs");
+} = deepLink;
+const {
+  hasOpenTerminalLaunchArgs,
+  resolveOpenTerminalRequestsFromArgs,
+} = require("./openTerminalPath.cjs");
 
 test("second instance forwards its raw argv through the single-instance lock", () => {
   const source = readFileSync(path.join(__dirname, "main.cjs"), "utf8");
@@ -79,6 +84,77 @@ test("failed protocol registration keeps command-line launch intents queued", ()
   const callSource = source.slice(initialIndex, initialIndex + 500);
   assert.match(callSource, /clearPending: \(\) => \{/);
   assert.match(callSource, /dropSchemePendingDeepLinks\(\)/);
+});
+
+function createOpenTerminalHarness() {
+  const source = readFileSync(path.join(__dirname, "main.cjs"), "utf8");
+  const start = source.indexOf('app.on("second-instance"');
+  const end = source.indexOf("// Application lifecycle", start);
+  assert.ok(start >= 0 && end > start);
+  let handle;
+  const queued = [];
+  let focusCount = 0;
+  const context = vm.createContext({
+    ...deepLink,
+    app: { on: (_event, handler) => { handle = handler; } },
+    sshDeepLinkEnabled: false,
+    jmsDeepLinkEnabled: false,
+    queueSshDeepLink: (url) => queued.push({ kind: "ssh", url }),
+    queueTelnetDeepLink: (url) => queued.push({ kind: "telnet", url }),
+    queueJmsDeepLink: (url) => queued.push({ kind: "jms", url }),
+    hasOpenTerminalLaunchArgs,
+    resolveOpenTerminalRequestsFromArgs: (argv, options) => resolveOpenTerminalRequestsFromArgs(argv, {
+      ...options,
+      fsModule: {
+        statSync: (target) => {
+          if (String(target).includes("missing")) throw new Error("missing");
+          return { isDirectory: () => true, isFile: () => false };
+        },
+      },
+      logWarn: () => {},
+    }),
+    queueResolvedOpenTerminalPaths: (resolved) => queued.push(Array.from(resolved)),
+    focusMainWindow: () => {
+      focusCount += 1;
+      return true;
+    },
+    createAndShowMainWindow: () => Promise.resolve(),
+    console: { warn: () => {}, error: () => {} },
+  });
+  vm.runInContext(source.slice(start, end), context);
+  return { handle, queued, focused: () => focusCount };
+}
+
+test("second-instance shell flag queues a local terminal without a path", () => {
+  const h = createOpenTerminalHarness();
+  const args = ["--open-terminal-shell", "pwsh"];
+  const argv = ["netcatty", ...args];
+  h.handle(null, argv, "/working-directory", { rawLaunchArgv: [...args] });
+  assert.deepEqual(h.queued, [[{ shell: "pwsh" }]]);
+  assert.equal(h.focused(), 0);
+  assert.equal(argv.length, 0);
+});
+
+test("second-instance path flag still queues a path-only terminal request", () => {
+  const h = createOpenTerminalHarness();
+  const args = ["--open-terminal-path", "proj"];
+  h.handle(null, ["netcatty", ...args], "/working-directory", { rawLaunchArgv: [...args] });
+  assert.deepEqual(h.queued, [[{ path: "/working-directory/proj" }]]);
+});
+
+test("second-instance shell and path flags queue one combined request", () => {
+  const h = createOpenTerminalHarness();
+  const args = ["--open-terminal-shell=pwsh", "--open-terminal-path", "proj"];
+  h.handle(null, ["netcatty", ...args], "/working-directory", { rawLaunchArgv: [...args] });
+  assert.deepEqual(h.queued, [[{ shell: "pwsh", path: "/working-directory/proj" }]]);
+});
+
+test("second-instance rejects an unsafe shell and still focuses the window", () => {
+  const h = createOpenTerminalHarness();
+  const args = ["--open-terminal-shell", "pwsh\0"];
+  h.handle(null, ["netcatty", ...args], "/working-directory", { rawLaunchArgv: [...args] });
+  assert.deepEqual(h.queued, []);
+  assert.equal(h.focused(), 1);
 });
 
 for (const secureCrt of [false, true]) {

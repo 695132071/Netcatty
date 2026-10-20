@@ -87,6 +87,7 @@ Watch Catty Agent orchestrate a Docker Swarm cluster across two servers in one c
   - [Split Terminals](#split-terminals)
 - [Supported Distros](#supported-distros)
 - [Getting Started](#getting-started)
+  - [Open a local terminal from the command line](#open-a-local-terminal-from-the-command-line)
 - [Build & Package](#build--package)
 - [Tech Stack](#tech-stack)
 - [Contributing](#contributing)
@@ -240,6 +241,24 @@ application and integration are complete.
 > **Open folders in Netcatty on Windows:** The installed version adds **Open in Netcatty** to Explorer's folder context menu and folder-background context menu. It opens a local terminal in that folder. On Windows 11, choose **Show more options** first. Turn the menu off or on in **Settings → System → Windows Explorer**. ZIP and portable versions do not add this menu by default.
 
 > **macOS Users:** Current releases are expected to be code-signed and notarized. If Gatekeeper still warns, make sure you downloaded the latest official build from GitHub Releases.
+
+<a name="open-a-local-terminal-from-the-command-line"></a>
+### Open a local terminal from the command line
+
+`--open-terminal-path <dir>` opens a local terminal in that folder. `--open-terminal-shell <id-or-path>` selects the shell: a discovered id such as `pwsh`, `cmd`, or `wsl-ubuntu`, or a path to a shell executable. Either flag is enough. A shell alone opens a local tab in the default directory. A path alone uses the configured local shell. If Netcatty is already running, the tab opens in that window.
+
+Windows needs an extra `--` so Electron forwards the flags:
+
+```bat
+Netcatty.exe -- --open-terminal-shell=pwsh --open-terminal-path="D:\\proj"
+```
+
+On macOS, start a new instance with `open`, or run the binary directly:
+
+```bash
+open -n -a Netcatty --args --open-terminal-shell=zsh --open-terminal-path="$HOME/proj"
+/Applications/Netcatty.app/Contents/MacOS/Netcatty --open-terminal-shell=zsh --open-terminal-path="$HOME/proj"
+```
 
 ### Scoop (Windows x64, community-maintained)
 

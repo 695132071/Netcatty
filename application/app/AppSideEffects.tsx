@@ -94,6 +94,7 @@ import { resolveSnippetCommand } from '../../components/SnippetExecutionProvider
 import { isScriptSnippet } from '../../domain/snippetScript.ts';
 import { collectSnippetDeleteIds } from '../../domain/snippetSelection.ts';
 import { shouldOpenLocalTerminalOnStartup, resolveStartupLandingSetting } from '../../domain/startupLanding';
+import { createOpenTerminalQueue } from './openTerminalQueue';
 import { useAppStartupEffects } from './useAppStartupEffects';
 import { handleTrayJumpToSessionImpl, handleTrayTogglePortForwardImpl, handleTrayPanelConnectImpl, handleTrayPanelConnectRequestImpl, flushQueuedTrayPanelConnectHostsImpl, handleGlobalHotkeyKeyDownImpl, handleEscapeKeyDownImpl, handleKeyboardInteractiveSubmitImpl, handleKeyboardInteractiveCancelImpl, handlePassphraseSubmitImpl, handlePassphraseCancelImpl, handlePassphraseSkipImpl, handleFidoPromptSubmitImpl, handleFidoPromptCancelImpl, createLocalTerminalWithCurrentShellImpl, splitSessionWithCurrentShellImpl, copySessionWithCurrentShellImpl, duplicateSessionWithCurrentShellImpl, copyWorkspaceWithCurrentShellImpl, copySessionToNewWindowWithCurrentShellImpl, confirmIfBusyLocalTerminalImpl, closeTabsBatchImpl, executeHotkeyActionImpl, handleCreateLocalTerminalImpl, handleConnectToHostImpl, handleTerminalDataCaptureImpl, hasMultipleProtocolsImpl, handleHostConnectWithProtocolCheckImpl, handleProtocolSelectImpl, handleRootContextMenuImpl, markForwardedNativeShortcutEvent } from './AppHandlers';
 
@@ -1557,7 +1558,7 @@ export function AppSideEffects() {
     | { kind: 'ssh'; payload: DeepLinkPayload }
     | { kind: 'telnet'; payload: DeepLinkPayload }
     | { kind: 'jms'; payload: { url?: string } }
-    | { kind: 'open-terminal-path'; payload: { path?: string } }
+    | { kind: 'open-terminal-path'; payload: { path?: string; shell?: string } }
   >>([]);
 
   const _processSshDeepLink = useEffectEvent((payload: DeepLinkPayload) => {
@@ -1721,14 +1722,44 @@ export function AppSideEffects() {
     });
   }, [isPeerSessionWindow]);
 
-  const _processOpenTerminalPath = useEffectEvent((payload: { path?: string }) => {
+  // Shell discovery is part of this queue. A later path-only request, including
+  // one drained after App Lock, cannot create its tab ahead of an in-flight shell.
+  const openTerminalQueueRef = useRef(createOpenTerminalQueue());
+
+  const _processOpenTerminalPath = useEffectEvent((payload: { path?: string; shell?: string }) => {
     startupLaunchIntentReceivedRef.current = true;
     const localStartDir = typeof payload?.path === 'string' ? payload.path : '';
-    if (!localStartDir.trim()) return;
-    handleCreateLocalTerminal(undefined, { localStartDir });
+    const shellSetting = typeof payload?.shell === 'string' ? payload.shell.trim() : '';
+    void openTerminalQueueRef.current.enqueue(() => {
+      if (!shellSetting) {
+        if (!localStartDir.trim()) return;
+        handleCreateLocalTerminal(undefined, { localStartDir });
+        return;
+      }
+
+      return (async () => {
+        const shells = await ensureDiscoveredShells();
+        const resolved = resolveShellSetting(shellSetting, shells);
+        if (!resolved?.command) {
+          if (!localStartDir.trim()) return;
+          handleCreateLocalTerminal(undefined, { localStartDir });
+          return;
+        }
+        const matchedShell = shells.find((shell) => shell.id === shellSetting);
+        handleCreateLocalTerminal(
+          {
+            command: resolved.command,
+            args: resolved.args,
+            name: matchedShell?.name,
+            icon: matchedShell?.icon,
+          },
+          localStartDir.trim() ? { localStartDir } : undefined,
+        );
+      })();
+    });
   });
 
-  const _handleOpenTerminalPath = useEffectEvent((payload: { path?: string }) => {
+  const _handleOpenTerminalPath = useEffectEvent((payload: { path?: string; shell?: string }) => {
     if (shouldDeferExternalActionWhileAppLocked({ locked: appLockLocked })) {
       pendingDeepLinksWhileLockedRef.current.push({
         kind: 'open-terminal-path',
