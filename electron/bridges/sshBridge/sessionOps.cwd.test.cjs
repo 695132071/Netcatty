@@ -38,6 +38,31 @@ function makeApi(session, siblingSessions = [], overrides = {}) {
   });
 }
 
+test("getSessionPwd reads a local PTY cwd without an SSH connection", { skip: process.platform !== "linux" }, async () => {
+  const api = makeApi({
+    protocol: "local",
+    type: "local",
+    proc: { pid: process.pid },
+  });
+
+  const result = await api.getSessionPwd(null, {
+    sessionId: "session-1",
+    allowHomeFallback: false,
+  });
+
+  assert.equal(result.success, true);
+  assert.equal(result.cwd, fs.realpathSync(process.cwd()));
+});
+
+test("getSessionPwd does not require an SSH connection for a local session", async () => {
+  const api = makeApi({ protocol: "local", type: "local" });
+
+  const result = await api.getSessionPwd(null, { sessionId: "session-1" });
+
+  assert.equal(result.success, false);
+  assert.equal(result.error, "Local session has no process");
+});
+
 test("shared terminal cwd probe refuses to guess without a shell pid", async () => {
   let execCalls = 0;
   const connRef = { count: 2 };

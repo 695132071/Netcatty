@@ -13,10 +13,11 @@ type CaptureSession = Pick<TerminalSession, "id" | "protocol" | "status" | "last
 
 export interface CaptureInheritedCwdOptions {
   /**
-   * The session's live tracked cwd (OSC 7), sourced from the terminal-state
-   * cwd map rather than the session object. This is the freshest value and the
-   * only one that reflects `cd`s in a running LOCAL terminal (whose live cwd is
-   * never mirrored onto `TerminalSession.lastCwd`).
+   * The session's live tracked cwd (OSC 7 or the post-command cwd probe),
+   * sourced from the terminal-state cwd map rather than the session object.
+   * This is the freshest value and the one that reflects `cd`s in a running
+   * local terminal. The live value stays off `TerminalSession.lastCwd` until
+   * session restore persists it.
    */
   liveCwd?: string;
   /**
@@ -35,7 +36,7 @@ export const DEFAULT_INHERITED_CWD_PROBE_TIMEOUT_MS = 1500;
 /**
  * Resolve the working directory a clone/split should inherit from its source.
  *
- * Priority: live tracked cwd (OSC 7) -> live SSH `/proc` probe (when allowed)
+ * Priority: live tracked cwd (OSC 7 or post-command probe) -> live SSH `/proc` probe (when allowed)
  * -> tracked `lastCwd` snapshot -> local `localStartDir`. The probe is raced
  * against a short timeout so a slow/wedged connection can't block tab creation,
  * and is skipped entirely when `allowSshProbe` is false. Returns undefined when

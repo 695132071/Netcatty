@@ -6,7 +6,6 @@ import { FolderTree, History, MessageSquare, PanelLeft, PanelRight, Palette, X, 
 import React, { memo, startTransition, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { activeTabStore } from '../application/state/activeTabStore';
 import { getScriptRecordingSnapshot } from '../application/state/scriptRecordingStore.ts';
-import { canReuseTerminalConnection } from '../application/state/terminalConnectionReuse';
 import { resolveTerminalSessionExitIntent, type TerminalSessionExitEvent } from '../application/state/resolveTerminalSessionExitIntent';
 import { prewarmAIStateStorageSnapshots } from '../application/state/aiStateSnapshots';
 import {
@@ -114,7 +113,7 @@ import {
   DEFAULT_TERMINAL_SIDE_PANEL_AUTO_OPEN_TAB,
   resolveSessionSidePanelAutoOpen,
 } from '../domain/terminalSidePanelAutoOpen';
-import { shouldProbeCommandCwd } from './terminalLayer/commandCwdProbe';
+import { canScheduleCommandCwdProbe, shouldProbeCommandCwd } from './terminalLayer/commandCwdProbe';
 import {
   resolvePreferredTerminalCwd,
   scheduleBackendCwdProbeAfterCommand,
@@ -1348,7 +1347,12 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
 
     const tabId = activeTabIdRef.current;
     const session = sessionsRef.current.find((candidate) => candidate.id === sessionId);
-    if (!session || !canReuseTerminalConnection(session)) return;
+    // Local POSIX shells do not emit OSC 7. They share this probe so session
+    // restore can `cd` back after restart (#1952). Prompt return calls this
+    // again with an empty command once the shell is idle, so a slow command
+    // such as `sleep 1; cd /tmp` is not recorded at the 150ms snapshot.
+    // SSH keeps the extra-exec eligibility check inside canScheduleCommandCwdProbe.
+    if (!session || !canScheduleCommandCwdProbe(session)) return;
     const sessionHost = sessionHostsMapRef.current.get(sessionId);
     const visibleSftpHost = tabId && sidePanelLayoutHasTool(sidePanelLayoutsRef.current.get(tabId), 'sftp')
       ? sftpHostForTabRef.current.get(tabId) ?? null
@@ -1372,6 +1376,8 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
       getSessionPwd: (id, options) => terminalBackend.getSessionPwd(id, options),
       canProbe: async () => {
         if (cwdProbeGenerationRef.current.get(sessionId) !== probeGeneration) return false;
+        // Local cwd is the PTY process directory, not an extra SSH channel.
+        if (session.protocol === "local") return true;
         const host = sessionHostsMapRef.current.get(sessionId);
         if (!host) return false;
         const hostDeviceClass = classifyDistroId(host.distro);

@@ -534,9 +534,10 @@ async function captureCtxInheritedCwd(getCtx: AppContextGetter, sessionId: strin
   const source = sessions?.find((s: { id: string }) => s.id === sessionId);
   if (!source) return undefined;
 
-  // Freshest cwd: the live OSC 7 value tracked in terminal state (the only
-  // source that reflects `cd`s in a running local terminal — lastCwd is a
-  // startup snapshot). Falls through to the SSH probe / lastCwd when absent.
+  // Freshest cwd: the live value tracked in terminal state (OSC 7 or the
+  // post-command probe, including local shells). lastCwd on the session object
+  // is only the startup snapshot. Falls through to the SSH probe / lastCwd
+  // when absent.
   const liveCwd: string | undefined = getSessionRestoreCwd?.(sessionId);
 
   const bridge = netcattyBridge?.get?.();

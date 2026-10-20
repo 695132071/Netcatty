@@ -229,9 +229,21 @@ export function useTerminalEffects(ctx: TerminalEffectsContext) {
     publishPluginTerminalRuntimeLifecycleEvent(pluginTerminalLifecycle, 'commandSubmitted');
     void xtermRuntimeRef.current?.pluginProviderHost?.commandSubmitted(args[0]);
   };
+  // The xterm runtime captures this callback at boot. Read the latest layer
+  // handler through a ref so a prompt-return refresh sees the current
+  // restore-cwd setting (#1952).
+  const onCommandSettledRef = useRef(ctx.onCommandSettled);
+  onCommandSettledRef.current = ctx.onCommandSettled;
   const pluginAwareOnCommandCompleted = () => {
     publishPluginTerminalRuntimeLifecycleEvent(pluginTerminalLifecycle, 'commandCompleted');
     void xtermRuntimeRef.current?.pluginProviderHost?.commandCompleted();
+    // Stock local shells update cwd when the command finishes, which can be
+    // long after the 150ms post-submit probe. Prompt return (and OSC 133)
+    // already call this hook; re-run the probe then. Empty command text keeps
+    // coding-CLI detection from treating the refresh as a new launch.
+    if (isLocalConnection) {
+      onCommandSettledRef.current?.("", host.id, host.label, sessionId);
+    }
   };
   const isRendererActive = isVisible || !hibernateHiddenTabs;
   const isRendererActiveRef = useRef(isRendererActive);

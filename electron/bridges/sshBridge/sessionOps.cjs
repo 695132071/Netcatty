@@ -2,6 +2,7 @@
 const { sampleSharedStats } = require("./sharedStats.cjs");
 const { GPU_ASSIGNMENT, parseGpuStats, withCachedMonitorGpu, cacheFullGpuStats, startMonitorGpuProbe } = require("./monitorGpuStats.cjs");
 const { executeBoundedSshCommand } = require("../boundedSshExec.cjs");
+const { readLocalSessionCwd } = require("../localSessionCwd.cjs");
 const { listInteractiveShellPids } = require("../sshInteractiveShells.cjs");
 function extraExecUnsupportedError(session) {
   if (!session?.singleChannelSsh) return null;
@@ -330,6 +331,12 @@ function createSessionOpsApi(ctx) {
         ? Math.min(Math.max(requestedTimeoutMs, 100), 5000)
         : 5000;
       const session = sessions.get(sessionId);
+
+      // Local shells have no SSH exec channel. Read the PTY process cwd so a
+      // stock bash `cd` is recorded for session restore without OSC 7 (#1952).
+      if (session && (session.protocol === "local" || session.type === "local")) {
+        return readLocalSessionCwd(session);
+      }
     
       if (!session || !session.conn) {
         return { success: false, error: 'Session not found or not connected' };
