@@ -2817,6 +2817,7 @@ function createStartSessionApi(ctx) {
             hostId: options.hostId,
             hostname: options.hostname,
             password: options.password,
+            totp: options.totp,
             logPrefix,
             // A test has no terminal session registered in the renderer's
             // session list, so the terminal-scoped keyboard-interactive queue
@@ -2827,8 +2828,9 @@ function createStartSessionApi(ctx) {
             bootEpoch: options.bootEpoch,
             getAuthBanner: () => authBanner,
             shouldSkipAutoFill: () => shouldSkipKiPasswordAutoFill(authPhase),
-            onAutoFill: () => sendProgress(
-              totalHops, totalHops, options.hostname, 'auth-attempt', 'using saved password',
+            onAutoFill: (kind) => sendProgress(
+              totalHops, totalHops, options.hostname, 'auth-attempt',
+              kind === 'totp' ? 'using authenticator code' : 'using saved password',
             ),
             onPromptShown: () => sendProgress(
               totalHops, totalHops, options.hostname, 'auth-attempt', 'waiting for user input...',
@@ -2881,10 +2883,13 @@ function createStartSessionApi(ctx) {
             // Password credentials still allow keyboard-interactive after
             // "password" so PAM/2FA hosts (which reject the raw "password"
             // method) are covered without re-prompting the user. Hosts marked
-            // `requiresMfa` always get keyboard-interactive, including key /
-            // certificate-only credentials where the server accepts the key as
-            // the first factor and then asks for an OTP (matching the terminal
-            // auth handler, which always appends keyboard-interactive).
+            // `requiresMfa` and a configured TOTP secret always get
+            // keyboard-interactive, including key / certificate-only credentials
+            // where the server accepts the key as the first factor and then
+            // asks for an OTP (matching the terminal auth handler, which always
+            // appends keyboard-interactive).
+            const totpUri = typeof options.totp?.uri === "string" ? options.totp.uri : "";
+            const hasTotp = totpUri.length > 0 && !totpUri.startsWith("enc:v1:");
             const order = [];
             if (connectOpts.privateKey) {
               order.push("publickey");
@@ -2894,7 +2899,7 @@ function createStartSessionApi(ctx) {
             if (connectOpts.password && !options.requiresMfa) {
               order.push("password");
             }
-            if (connectOpts.password || options.requiresMfa || order.length === 0) {
+            if (connectOpts.password || options.requiresMfa || hasTotp || order.length === 0) {
               order.push("keyboard-interactive");
             }
             connectOpts.authHandler = order;

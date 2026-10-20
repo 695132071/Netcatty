@@ -6,7 +6,9 @@ import {
   isSafePluginAuthenticationUrl,
   pluginProtocolForProvider,
   sanitizePluginConnection,
+  stripBuiltInConnectionFieldsForPluginHost,
 } from './pluginConnection.ts';
+import type { Host } from './models';
 
 test('plugin connection profiles preserve opaque configuration when their provider is absent', () => {
   const providerId = 'com.example.transport.connection';
@@ -57,6 +59,30 @@ test('plugin credentials are selectable only after secure catalog publication', 
     isPluginCredentialCatalogEntryAvailable(credentialId, 'x'.repeat((64 * 1024) + 1), published),
     false,
   );
+});
+
+test('plugin hosts drop a built-in TOTP secret the plugin UI cannot manage', () => {
+  const totp = { uri: 'otpauth://totp/Example:root?secret=GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ' };
+  const base = {
+    id: 'host-1',
+    label: 'Host',
+    hostname: 'host.test',
+    username: 'root',
+    tags: [],
+    os: 'linux',
+    password: 'secret',
+    requiresMfa: true,
+    totp,
+  } as Host;
+  const pluginHost = stripBuiltInConnectionFieldsForPluginHost({
+    ...base,
+    protocol: pluginProtocolForProvider('com.example.transport.connection'),
+  });
+  assert.equal(pluginHost.totp, undefined);
+  assert.equal(pluginHost.password, undefined);
+  assert.equal(pluginHost.requiresMfa, undefined);
+  assert.equal(pluginHost.hostname, 'host.test');
+  assert.equal(stripBuiltInConnectionFieldsForPluginHost({ ...base, protocol: 'ssh' }).totp, totp);
 });
 
 test('plugin authentication URLs require HTTPS except for loopback HTTP callbacks', () => {

@@ -5,6 +5,7 @@
  */
 import { Eye, EyeOff, KeyRound, Loader2 } from "lucide-react";
 import React, { useCallback, useEffect, useMemo, useState } from "react";
+import { NON_TOTP_PROMPT } from "../domain/totpPrompt.shared.mjs";
 import { useI18n } from "../application/i18n/I18nProvider";
 import { Button } from "./ui/button";
 import {
@@ -34,35 +35,54 @@ export interface KeyboardInteractiveRequest {
   savedPassword?: string | null;
   /** When false, hide save-password UI (second-factor / EDR challenges). Default true. */
   allowSavePassword?: boolean;
+  /** otpauth URI from the connection attempt that opened this dialog. */
+  totpUri?: string;
 }
 
-type KeyboardInteractiveServerPromptInput = Pick<
-  KeyboardInteractiveRequest,
-  "name" | "instructions" | "prompts" | "hostname"
->;
+/** Last meaningful line of a server prompt, without the raw banner. */
+export function keyboardInteractiveFieldLabel(prompt: string | undefined, fallback: string): string {
+  const lines = String(prompt || "").split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+  const last = lines.at(-1) || "";
+  const cleaned = last
+    .replace(/^[\s|｜>•*-]+/, "")
+    .replace(/[:：]\s*$/, "")
+    .trim()
+    .replace(/^\[(.+)\]$/, "$1")
+    .trim();
+  return cleaned || fallback;
+}
 
-/** Formats the server-supplied keyboard-interactive prompt block for display. */
-export function formatKeyboardInteractiveServerPrompt(request: KeyboardInteractiveServerPromptInput): string {
-  const lines: string[] = [];
-  const name = request.name?.trim();
-  const hostname = request.hostname?.trim();
-  const instructions = request.instructions?.trim();
-  const hasServerText = !!instructions || !!(name && name !== hostname);
-  if (!hasServerText) return "";
-  if (name && name !== hostname) {
-    lines.push(name.endsWith(":") ? name : `${name}:`);
-  }
-  if (instructions) {
-    for (const line of instructions.split(/\r?\n/).map((part) => part.trim()).filter(Boolean)) {
-      lines.push(`| ${line}`);
-    }
-  }
+function guidanceKeys(text: string): string[] {
+  const trimmed = text.trim().toLowerCase();
+  const label = keyboardInteractiveFieldLabel(text, "").toLowerCase();
+  return [trimmed, label].filter(Boolean);
+}
+
+/** Server directions that are not already the field label. Plain text, not a prompt dump. */
+export function keyboardInteractiveGuidance(request: Pick<KeyboardInteractiveRequest, "name" | "instructions" | "prompts" | "hostname">): string {
+  const labelKeys = new Set<string>();
+  const promptLines: string[] = [];
   for (const prompt of request.prompts || []) {
-    const promptText = prompt.prompt?.trim();
-    if (promptText) {
-      lines.push(`| ${promptText}`);
-    }
+    const parts = String(prompt?.prompt || "").split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+    const last = parts.at(-1) || "";
+    for (const key of guidanceKeys(last)) labelKeys.add(key);
+    promptLines.push(...parts.slice(0, -1));
   }
+  const seen = new Set<string>();
+  const lines: string[] = [];
+  const push = (text: string) => {
+    const line = text.trim().replace(/^\|\s*/, "");
+    if (!line) return;
+    const keys = guidanceKeys(line);
+    if (keys.some((key) => labelKeys.has(key) || seen.has(key))) return;
+    for (const key of keys) seen.add(key);
+    lines.push(line);
+  };
+  const hostname = (request.hostname || "").trim().toLowerCase();
+  const name = (request.name || "").trim();
+  if (name && name.toLowerCase() !== hostname) push(name);
+  for (const part of String(request.instructions || "").split(/\r?\n/)) push(part);
+  for (const part of promptLines) push(part);
   return lines.join("\n");
 }
 
@@ -107,12 +127,43 @@ interface KeyboardInteractiveModalProps {
   request: KeyboardInteractiveRequest | null;
   onSubmit: (requestId: string, responses: string[], savePassword?: string) => boolean | Promise<boolean>;
   onCancel: (requestId: string) => boolean | Promise<boolean>;
+  canFillTotp?: boolean;
+  onFillTotp?: () => Promise<string | null> | string | null;
+}
+
+const OTP_PROMPT = /otp|one[-\s]?time|totp|verification|passcode|authenticator|\bmfa\b|\b2fa\b|two[-\s]?factor|验证码|驗證碼|动态口令|動態口令|二次认证|二次認證|二次验证|二次驗證/i;
+
+export type TotpFillPlacement = "preferred" | "available" | "hidden";
+
+function lastPromptLine(prompt: string | undefined): string {
+  const lines = String(prompt || "").split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+  return lines.at(-1) || "";
+}
+
+/** Where a TOTP fill action may appear. Password prompts never receive the code. */
+export function totpFillPlacement(prompt: KeyboardInteractivePrompt): TotpFillPlacement {
+  const rawLast = lastPromptLine(prompt.prompt);
+  const label = keyboardInteractiveFieldLabel(prompt.prompt, "");
+  if (!label || NON_TOTP_PROMPT.test(rawLast) || NON_TOTP_PROMPT.test(label)) return "hidden";
+  if (OTP_PROMPT.test(label)) return "preferred";
+  if (isAPasswordPrompt({ prompt: label, echo: prompt.echo })) return "hidden";
+  if (/\b(password|passwd|passphrase)\b/i.test(label)) return "hidden";
+  return "available";
+}
+
+export function visibleTotpFillPlacements(prompts: KeyboardInteractivePrompt[]): TotpFillPlacement[] {
+  const placements = prompts.map(totpFillPlacement);
+  const hasPreferred = placements.some((placement) => placement === "preferred");
+  if (!hasPreferred) return placements;
+  return placements.map((placement) => (placement === "preferred" ? placement : "hidden"));
 }
 
 export const KeyboardInteractiveModal: React.FC<KeyboardInteractiveModalProps> = ({
   request,
   onSubmit,
   onCancel,
+  canFillTotp = false,
+  onFillTotp,
 }) => {
   const { t } = useI18n();
   const [responses, setResponses] = useState<string[]>([]);
@@ -185,6 +236,15 @@ export const KeyboardInteractiveModal: React.FC<KeyboardInteractiveModalProps> =
     }
   }, [request, onCancel, isSubmitting]);
 
+  const handleFillTotp = useCallback(async (index: number) => {
+    if (!request || isSubmitting || !onFillTotp) return;
+    const prompt = request.prompts[index];
+    if (!prompt || totpFillPlacement(prompt) === "hidden") return;
+    const code = await onFillTotp();
+    if (!code) return;
+    handleResponseChange(index, code);
+  }, [request, isSubmitting, onFillTotp, handleResponseChange]);
+
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent) => {
       if (e.key === "Enter" && !isSubmitting) {
@@ -197,12 +257,14 @@ export const KeyboardInteractiveModal: React.FC<KeyboardInteractiveModalProps> =
 
   if (!request) return null;
 
-  const serverPromptText = formatKeyboardInteractiveServerPrompt(request);
   const title = t("keyboard.interactive.title");
   const description =
     request.hostname
       ? t("keyboard.interactive.descWithHost", { hostname: request.hostname })
       : t("keyboard.interactive.desc");
+  const fillPlacements = canFillTotp ? visibleTotpFillPlacements(request.prompts) : [];
+  const preferredFillIndex = fillPlacements.findIndex((placement) => placement === "preferred");
+  const guidance = keyboardInteractiveGuidance(request);
 
   return (
     <Dialog open={!!request} onOpenChange={() => {/* intentionally non-dismissable */}}>
@@ -227,26 +289,40 @@ export const KeyboardInteractiveModal: React.FC<KeyboardInteractiveModalProps> =
         </DialogHeader>
 
         <div className="space-y-4 py-2">
-          {serverPromptText && (
-            <pre className="max-h-36 overflow-auto rounded-md border border-border/60 bg-muted/45 px-3 py-2 text-xs leading-relaxed text-foreground whitespace-pre-wrap [overflow-wrap:anywhere]">
-              {serverPromptText}
-            </pre>
-          )}
-
+          {guidance ? (
+            <p className="max-h-36 overflow-auto whitespace-pre-wrap text-sm leading-relaxed text-muted-foreground [overflow-wrap:anywhere]">
+              {guidance}
+            </p>
+          ) : null}
           {request.prompts.map((prompt, index) => {
             const isPassword = !prompt.echo;
             const showPassword = showPasswords[index];
-            const showPromptLabel = !(serverPromptText && request.prompts.length === 1);
-            // Clean up prompt text (remove trailing colon and whitespace)
-            const promptLabel = prompt.prompt.replace(/:\s*$/, "").trim();
+            const promptLabel = keyboardInteractiveFieldLabel(
+              prompt.prompt,
+              t("keyboard.interactive.verificationCode"),
+            );
+            const fillPlacement = fillPlacements[index] ?? "hidden";
 
             return (
               <div key={index} className="space-y-2">
-                {showPromptLabel && (
+                <div className="flex items-center justify-between gap-2">
                   <Label htmlFor={`ki-prompt-${index}`}>
-                    {promptLabel || t("keyboard.interactive.response")}
+                    {promptLabel}
                   </Label>
-                )}
+                  {fillPlacement !== "hidden" && (
+                    <Button
+                      type="button"
+                      variant="secondary"
+                      size="sm"
+                      className="h-7 shrink-0 px-2 font-normal focus:bg-secondary focus:text-secondary-foreground focus-visible:bg-secondary focus-visible:text-secondary-foreground"
+                      data-totp-fill={fillPlacement}
+                      onClick={() => { void handleFillTotp(index); }}
+                      disabled={isSubmitting}
+                    >
+                      {t("keyboard.interactive.fillTotp")}
+                    </Button>
+                  )}
+                </div>
                 <div className="relative">
                   <Input
                     id={`ki-prompt-${index}`}
@@ -256,7 +332,7 @@ export const KeyboardInteractiveModal: React.FC<KeyboardInteractiveModalProps> =
                     onKeyDown={handleKeyDown}
                     placeholder=""
                     className={isPassword ? "pr-10" : undefined}
-                    autoFocus={index === 0}
+                    autoFocus={preferredFillIndex >= 0 ? index === preferredFillIndex : index === 0}
                     disabled={isSubmitting}
                   />
                   {isPassword && (
@@ -288,7 +364,7 @@ export const KeyboardInteractiveModal: React.FC<KeyboardInteractiveModalProps> =
               </div>
             );
           })}
-</div>
+        </div>
 
         <div className="flex items-center justify-between pt-2">
           <Button

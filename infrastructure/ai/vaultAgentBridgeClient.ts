@@ -79,6 +79,7 @@ const SENSITIVE_HOST_KEYS = new Set([
   'telnetPassword',
   'privateKey',
   'passphrase',
+  'totp',
 ]);
 
 /**

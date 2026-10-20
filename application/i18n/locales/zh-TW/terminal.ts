@@ -1003,11 +1003,13 @@ export const zhTWTerminalMessages: Messages = {
   'keyboard.interactive.desc': '伺服器需要額外的身分驗證。',
   'keyboard.interactive.descWithHost': '伺服器 {hostname} 需要額外的身分驗證。',
   'keyboard.interactive.response': '回應',
+  'keyboard.interactive.verificationCode': '驗證碼',
   'keyboard.interactive.enterCode': '輸入驗證碼',
   'keyboard.interactive.enterResponse': '輸入回應',
-  'keyboard.interactive.submit': '提交',
+  'keyboard.interactive.submit': '送出',
   'keyboard.interactive.verifying': '驗證中...',
   'keyboard.interactive.savePassword': '儲存密碼',
+  'keyboard.interactive.fillTotp': '填入驗證碼',
 
   // Passphrase Modal for encrypted SSH keys
   'passphrase.title': 'SSH 金鑰密碼',

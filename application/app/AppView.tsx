@@ -377,6 +377,14 @@ function AppViewInner({ domains }: AppViewProps) {
     appendHostToWorkspace(workspaceId, resolveWorkspaceAppendHost(host), rootDir);
   }, [appendHostToWorkspace, hosts, resolveWorkspaceAppendHost, workspaces]);
 
+  const pendingKeyboardRequest = keyboardInteractiveQueue[0] || null;
+  const pendingTotpUri = pendingKeyboardRequest?.totpUri;
+  const handleFillTotp = useCallback(async () => {
+    if (!pendingTotpUri) return null;
+    const result = await netcattyBridge.get()?.previewTotp?.({ uri: pendingTotpUri });
+    return result?.ok && result.code ? result.code : null;
+  }, [pendingTotpUri]);
+
   const isPeerSessionWindow = typeof window !== 'undefined'
     && window.location.hash.startsWith('#/session-window');
   const externalMcpToggle = useExternalMcpToggleState();
@@ -1024,6 +1032,8 @@ function AppViewInner({ domains }: AppViewProps) {
         request={keyboardInteractiveQueue[0] || null}
         onSubmit={handleKeyboardInteractiveSubmit}
         onCancel={handleKeyboardInteractiveCancel}
+        canFillTotp={Boolean(pendingTotpUri)}
+        onFillTotp={handleFillTotp}
       />
       {/* Indicator when more 2FA requests are pending */}
       {keyboardInteractiveQueue.length > 1 && (

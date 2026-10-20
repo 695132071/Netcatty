@@ -157,6 +157,15 @@ export interface SftpBookmark {
 
 export type HostAuthMethod = 'auto' | 'password' | 'key' | 'certificate';
 
+/** Per-host TOTP authenticator. `uri` is an otpauth://totp URI and holds the secret. */
+export interface HostTotpConfig {
+  uri: string;
+  /** Defaults to true. False keeps the dialog fill button and skips auto-submit. */
+  autoSubmit?: boolean;
+  /** Extra RE2 regular expression matched against the KI prompt. */
+  promptPattern?: string;
+}
+
 export type HostOperatingSystem = 'linux' | 'windows' | 'macos' | 'freebsd' | 'unknown';
 export type HostOsSelection = 'auto' | HostOperatingSystem;
 
@@ -198,6 +207,9 @@ export interface Host {
   authPolicyVersion?: 1;
   // Prefer keyboard-interactive before the password method for MFA/PAM hosts.
   requiresMfa?: boolean;
+  // Optional per-host TOTP authenticator. The secret lives in `uri` and is
+  // encrypted and synced with the same path as `password`.
+  totp?: HostTotpConfig;
   // Use the local SSH agent for login. This is separate from agentForwarding,
   // which exposes the local agent to the remote host after login.
   useSshAgent?: boolean;

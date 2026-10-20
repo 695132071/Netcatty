@@ -8,6 +8,7 @@ import {
   resolveProxyConfigAuth,
 } from "./proxyProfiles";
 import { isEncryptedCredentialPlaceholder, sanitizeCredentialValue } from "./credentials";
+import { connectionTotpFields } from "./totpConfig";
 import { resolveEffectiveTerminalHost, resolveTerminalChainHosts } from "./terminalHostResolution";
 
 /** Test-mode connection timeouts — a probe should fail fast, not wait out the
@@ -158,6 +159,7 @@ const buildTestJumpHost = (
     authMethod: jumpAuth.authMethod,
     requiresMfa: !!chainHost.requiresMfa,
     password: sanitizeCredentialValue(jumpAuth.password),
+    ...connectionTotpFields(chainHost),
     privateKey: jumpKey?.source === "reference" ? undefined : sanitizeCredentialValue(jumpKey?.privateKey),
     certificate: jumpKey?.certificate,
     passphrase: sanitizeCredentialValue(jumpAuth.passphrase || jumpKey?.passphrase),
@@ -308,6 +310,7 @@ export const buildHostConnectionTestPlan = (
     requiresMfa: !!effectiveHost.requiresMfa,
     port: effectiveHost.port || 22,
     password: effectivePassword,
+    ...connectionTotpFields(effectiveHost),
     privateKey: key?.source === "reference" ? undefined : sanitizeCredentialValue(key?.privateKey),
     certificate: key?.certificate,
     publicKey: key?.publicKey,

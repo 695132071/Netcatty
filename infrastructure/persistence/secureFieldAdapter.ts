@@ -301,6 +301,9 @@ export async function encryptHostSecrets(host: Host): Promise<Host> {
   if (out.proxyConfig?.password) {
     out.proxyConfig = { ...out.proxyConfig, password: await encryptField(out.proxyConfig.password) };
   }
+  if (out.totp?.uri) {
+    out.totp = { ...out.totp, uri: (await encryptField(out.totp.uri)) ?? out.totp.uri };
+  }
   return out;
 }
 
@@ -312,6 +315,12 @@ export async function decryptHostSecrets(host: Host): Promise<Host> {
     out.proxyConfig = {
       ...out.proxyConfig,
       password: persistDecryptedSecret(out.proxyConfig.password, await decryptField(out.proxyConfig.password)),
+    };
+  }
+  if (out.totp?.uri) {
+    out.totp = {
+      ...out.totp,
+      uri: persistDecryptedSecret(out.totp.uri, await decryptField(out.totp.uri)) ?? out.totp.uri,
     };
   }
   return out;

@@ -525,6 +525,8 @@ function createBridgeRegistrar(context) {
     compressUploadBridge.registerHandlers(ipcMain, { terminalWorkerManager });
     globalShortcutBridge.registerHandlers(ipcMain);
     credentialBridge.registerHandlers(ipcMain, electronModule);
+    const { registerTotpHandlers } = require("../bridges/totpBridge.cjs");
+    registerTotpHandlers(ipcMain, electronModule);
     autoUpdateBridge.init(deps);
     autoUpdateBridge.registerHandlers(ipcMain);
     aiBridge.registerHandlers(ipcMain);

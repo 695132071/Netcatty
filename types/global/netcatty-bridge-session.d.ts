@@ -218,6 +218,7 @@ declare global {
       authMethod?: import("../../domain/models").HostAuthMethod;
       requiresMfa?: boolean;
       password?: string;
+      totp?: NetcattyTotpConfig;
       privateKey?: string;
       certificate?: string;
       publicKey?: string;
@@ -591,6 +592,7 @@ declare global {
         savedPassword?: string | null;
         /** When false, UI must not offer saving the response as the host password. */
         allowSavePassword?: boolean;
+        totpUri?: string;
         scope?: "terminal" | "external";
         bootEpoch?: number;
       }) => void

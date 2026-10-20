@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
 import { fitLargeToolResultForModel } from './harness/toolResultFitting';
 import type { GroupConfig, Host, ManagedSource, PortForwardingRule, ProxyProfile, Snippet, VaultNote } from '../../domain/models';
-import { handleVaultAgentOp, runSerializedVaultAgentRequest, type VaultAgentApiDeps } from './vaultAgentBridgeClient';
+import { handleVaultAgentOp, runSerializedVaultAgentRequest, sanitizeHostForAgent, type VaultAgentApiDeps } from './vaultAgentBridgeClient';
 
 type DepsSeed = {
   hosts?: Host[];
@@ -402,6 +402,20 @@ describe('handleVaultAgentOp vault hosts', () => {
     assert.equal(hosts?.length, 1);
     assert.equal(hosts?.[0]?.hostname, '10.0.0.1');
     assert.equal('password' in (hosts?.[0] ?? {}), false);
+  });
+
+  it('sanitizeHostForAgent omits TOTP secrets', () => {
+    const sanitized = sanitizeHostForAgent({
+      id: 'host-1',
+      label: 'prod',
+      hostname: '10.0.0.1',
+      username: 'root',
+      port: 22,
+      tags: [],
+      os: 'linux',
+      totp: { uri: 'otpauth://totp/Example:alice?secret=GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ' },
+    });
+    assert.equal('totp' in sanitized, false);
   });
 
   it('host.open creates a terminal session for a vault host', async () => {

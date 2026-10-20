@@ -554,6 +554,9 @@ export function useAppStartupEffects(ctx: StartupEffectsContext) {
         hostname: request.hostname,
         savedPassword: request.savedPassword,
         allowSavePassword: request.allowSavePassword !== false,
+        ...(typeof request.totpUri === "string" && request.totpUri && !request.totpUri.startsWith("enc:v1:")
+          ? { totpUri: request.totpUri }
+          : {}),
       }]);
     });
     const unsubscribeCancelled = bridge.onKeyboardInteractiveCancelled?.((event) => {

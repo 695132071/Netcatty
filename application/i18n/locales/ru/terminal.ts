@@ -919,11 +919,13 @@ export const ruTerminalMessages: Messages = {
   'keyboard.interactive.desc': 'Сервер требует дополнительную аутентификацию.',
   'keyboard.interactive.descWithHost': 'Сервер {hostname} требует дополнительную аутентификацию.',
   'keyboard.interactive.response': 'Ответ',
+  'keyboard.interactive.verificationCode': 'Код подтверждения',
   'keyboard.interactive.enterCode': 'Введите код подтверждения',
   'keyboard.interactive.enterResponse': 'Введите ответ',
   'keyboard.interactive.submit': 'Отправить',
   'keyboard.interactive.verifying': 'Проверка...',
   'keyboard.interactive.savePassword': 'Сохранить пароль',
+  'keyboard.interactive.fillTotp': 'Подставить код подтверждения',
 
   // Passphrase Modal for encrypted SSH keys
   'passphrase.title': 'Парольная фраза SSH-ключа',

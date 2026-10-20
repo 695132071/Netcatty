@@ -157,6 +157,30 @@ declare global {
     credentialsAvailable?(): Promise<boolean>;
     credentialsEncrypt?(plaintext: string): Promise<string>;
     credentialsDecrypt?(value: string): Promise<string>;
+    previewTotp?(payload: { text?: string; uri?: string }): Promise<{
+      ok: boolean;
+      uri?: string;
+      code?: string;
+      secondsRemaining?: number;
+      period?: number;
+      algorithm?: string;
+      digits?: number;
+      issuer?: string;
+      label?: string;
+      error?: string;
+    }>;
+    scanTotpQrFromScreen?(): Promise<{
+      ok: boolean;
+      uri?: string;
+      code?: string;
+      secondsRemaining?: number;
+      period?: number;
+      algorithm?: string;
+      digits?: number;
+      issuer?: string;
+      label?: string;
+      error?: string;
+    }>;
   }
 }
 

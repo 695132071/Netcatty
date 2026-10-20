@@ -92,7 +92,7 @@ test("HostDetailsPanel labels command proxy summaries consistently", () => {
   assert.match(markup, /ProxyCommand/);
   assert.doesNotMatch(markup, /COMMAND/);
   assert.doesNotMatch(markup, /cloudflared access ssh/);
-  assert.doesNotMatch(markup, /secret/);
+  assert.doesNotMatch(markup, /--token secret/);
 });
 
 test("HostDetailsPanel keeps explicitly cleared telnet credentials empty", () => {

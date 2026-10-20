@@ -15,6 +15,7 @@ import { isEncryptedCredentialPlaceholder, sanitizeCredentialValue } from '../..
 import { isPortForwardingAutoReconnectEnabled } from '../../domain/portForwardingReconnect';
 import { resolveBridgeKeyAuth, resolveBridgeSshAgentAuth, resolveHostAuth } from '../../domain/sshAuth';
 import { resolveHostKeepalive } from '../../domain/host';
+import { connectionTotpFields } from '../../domain/totpConfig';
 import { resolveHostSshConnectionTimeouts } from '../../domain/sshConnectionTimeouts';
 import {
   findIncompleteProxyIdentityId,
@@ -998,6 +999,7 @@ export const startPortForward = async (
             authMethod: jumpResolved.authMethod,
             requiresMfa: !!jumpHost.requiresMfa,
             password: jumpPassword,
+            ...connectionTotpFields(jumpHost),
             privateKey: jumpKeyAuth.privateKey,
             certificate: jumpKey?.certificate,
             passphrase: jumpKeyAuth.passphrase,
@@ -1133,6 +1135,7 @@ export const startPortForward = async (
       authMethod: resolved.authMethod,
       requiresMfa: !!host.requiresMfa,
       password,
+      ...connectionTotpFields(host),
       privateKey: keyAuth.privateKey,
       certificate: key?.certificate,
       keyId: resolved.keyId,

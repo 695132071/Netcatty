@@ -109,6 +109,29 @@ test("stripSyncPayloadEncryptedCredentials clears device-bound placeholders for 
   assert.equal(findSyncPayloadEncryptedCredentialPaths(stripped).length, 0);
 });
 
+test("TOTP secrets follow the same encrypted sync recovery path as passwords", () => {
+  const withTotp = samplePayload({
+    hosts: [{
+      ...samplePayload().hosts[0]!,
+      totp: { uri: ENC, autoSubmit: true },
+    }],
+  });
+  assert.deepEqual(findSyncPayloadEncryptedCredentialPaths(withTotp), [
+    "hosts[0].password",
+    "hosts[0].totp.uri",
+    "keys[0].privateKey",
+  ]);
+  const stripped = stripSyncPayloadEncryptedCredentials(withTotp);
+  assert.equal(stripped.hosts[0]?.totp, undefined);
+  const healed = healPoisonedSecretsForMerge(withTotp, samplePayload({
+    hosts: [{
+      ...samplePayload().hosts[0]!,
+      totp: { uri: "otpauth://totp/Example:alice?secret=GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ" },
+    }],
+  }), null);
+  assert.match(healed.hosts[0]?.totp?.uri || "", /^otpauth:\/\/totp\//);
+});
+
 test("healPoisonedSecretsForMerge keeps usable preferred passwords over poisoned enc:v1", () => {
   const poisoned = samplePayload();
   const preferred = samplePayload({

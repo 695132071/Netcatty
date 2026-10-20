@@ -4,6 +4,7 @@ import { applyGroupDefaults, resolveGroupDefaults } from "../domain/groupConfig"
 import { sanitizeCredentialValue } from "../domain/credentials";
 import { hasBridgeSshCredentials, resolveBridgeKeyAuth, resolveBridgeSshAgentAuth, resolveHostAuth } from "../domain/sshAuth";
 import { resolveHostSshConnectionTimeouts } from "../domain/sshConnectionTimeouts";
+import { connectionTotpFields } from "../domain/totpConfig";
 import { cn } from "../lib/utils";
 import { Button } from "./ui/button";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "./ui/collapsible";
@@ -258,6 +259,7 @@ export const KeychainExportPanel: React.FC<KeychainExportPanelProps> = ({
                         sshAuthReadyTimeoutMs: connectionTimeouts.authReadyTimeoutSeconds * 1000,
                         enableKeyboardInteractive: true,
                         requiresMfa: !!effectiveExportHost.requiresMfa,
+                        ...connectionTotpFields(effectiveExportHost),
                         sessionId: `export-key:${effectiveExportHost.id}:${panel.key.id}`,
                       });
 

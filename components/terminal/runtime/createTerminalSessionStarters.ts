@@ -37,6 +37,7 @@ import {
   sanitizeCredentialValue,
 } from "../../../domain/credentials";
 import { resolveBridgeSshAgentAuth, resolveHostAuth } from "../../../domain/sshAuth";
+import { connectionTotpFields } from "../../../domain/totpConfig";
 import { requiresFidoSshAgentAuth } from "../../../domain/fidoSsh";
 import {
   hostRestrictsExtraSshChannels,
@@ -478,6 +479,7 @@ export const createTerminalSessionStarters = (ctx: TerminalSessionStartersContex
         authMethod: jumpAuth.authMethod,
         requiresMfa: !!jumpHost.requiresMfa,
         password: jumpPassword,
+        ...connectionTotpFields(jumpHost),
         privateKey: resolveBridgePrivateKeyMaterial(jumpKey, {
           forceAgent: jumpAgentAuth.useSshAgent === true && !jumpKey?.certificate,
         }),
@@ -705,6 +707,7 @@ export const createTerminalSessionStarters = (ctx: TerminalSessionStartersContex
           requiresMfa: !!ctx.host.requiresMfa,
           port: ctx.host.port || 22,
           password: attempt.password,
+          ...connectionTotpFields(ctx.host),
           sftpReuseOptions: sftpReuseOptions?.password || sftpReuseOptions?.username !== effectiveUsername
             ? undefined
             : sftpReuseOptions,

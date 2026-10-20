@@ -6,7 +6,7 @@ const path = require("node:path");
 const { PLUGIN_LOG_MAX_BYTES, PLUGIN_LOG_MAX_FILES } = require("./constants.cjs");
 const { assertPluginStorageSegment } = require("./paths.cjs");
 
-const SENSITIVE_KEY = /(?:password|passwd|token|secret|private.?key|credential|authorization|cookie)/iu;
+const SENSITIVE_KEY = /(?:password|passwd|token|secret|private.?key|credential|authorization|cookie|totp|otpauth)/iu;
 
 function redactLogValue(value, key = "", depth = 0) {
   if (SENSITIVE_KEY.test(key)) return "[REDACTED]";

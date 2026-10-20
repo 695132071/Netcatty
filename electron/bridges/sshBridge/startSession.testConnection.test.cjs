@@ -313,6 +313,26 @@ test("test mode keeps key-only non-MFA hosts on the single key credential", asyn
   assert.deepEqual(calls.connectOptions.authHandler, ["publickey"]);
 });
 
+test("test mode includes keyboard-interactive for key-only hosts with TOTP", async () => {
+  const { api, calls, sender } = keyOnlyHarness();
+
+  await api.startSSHSession({ sender }, keyOnlyOptions({
+    totp: { uri: "otpauth://totp/Example:root?secret=GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ&issuer=Example" },
+  }));
+
+  assert.deepEqual(calls.connectOptions.authHandler, ["publickey", "keyboard-interactive"]);
+});
+
+test("test mode ignores an encrypted TOTP placeholder", async () => {
+  const { api, calls, sender } = keyOnlyHarness();
+
+  await api.startSSHSession({ sender }, keyOnlyOptions({
+    totp: { uri: "enc:v1:placeholder" },
+  }));
+
+  assert.deepEqual(calls.connectOptions.authHandler, ["publickey"]);
+});
+
 test("test mode skips the raw password method for password MFA hosts", async () => {
   const { api, calls, sender } = createHarness({
     onConnect: (conn) => {

@@ -38,6 +38,12 @@ declare global {
     isDefault?: boolean;
   }
 
+  interface NetcattyTotpConfig {
+    uri: string;
+    autoSubmit?: boolean;
+    promptPattern?: string;
+  }
+
   // Jump host configuration for SSH tunneling
   interface NetcattyJumpHost {
     hostname: string;
@@ -47,6 +53,7 @@ declare global {
     authMethod?: import("./domain/models").HostAuthMethod;
     requiresMfa?: boolean;
     password?: string;
+    totp?: NetcattyTotpConfig;
     privateKey?: string;
     certificate?: string;
     passphrase?: string;
@@ -103,6 +110,7 @@ declare global {
     requiresMfa?: boolean;
     port?: number;
     password?: string;
+    totp?: NetcattyTotpConfig;
     privateKey?: string;
     // Optional OpenSSH user certificate
     certificate?: string;
@@ -221,6 +229,7 @@ declare global {
     authMethod?: import("./domain/models").HostAuthMethod;
     requiresMfa?: boolean;
     password?: string;
+    totp?: NetcattyTotpConfig;
     privateKey?: string;
     certificate?: string;
     keyId?: string;

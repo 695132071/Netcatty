@@ -874,11 +874,13 @@ export const esTerminalMessages: Messages = {
   'keyboard.interactive.desc': 'El servidor requiere autenticación adicional.',
   'keyboard.interactive.descWithHost': 'El servidor {hostname} requiere autenticación adicional.',
   'keyboard.interactive.response': 'Respuesta',
+  'keyboard.interactive.verificationCode': 'Código de verificación',
   'keyboard.interactive.enterCode': 'Ingresa el código de verificación',
   'keyboard.interactive.enterResponse': 'Ingresa la respuesta',
   'keyboard.interactive.submit': 'Enviar',
   'keyboard.interactive.verifying': 'Verificando...',
   'keyboard.interactive.savePassword': 'Guardar contraseña',
+  'keyboard.interactive.fillTotp': 'Rellenar código de verificación',
 
   // Passphrase Modal for encrypted SSH keys
   'passphrase.title': 'Frase de contraseña de la clave SSH',

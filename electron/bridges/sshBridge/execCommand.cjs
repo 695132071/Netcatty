@@ -201,6 +201,7 @@ function createExecCommandApi(ctx) {
             hostId: payload.hostId,
             hostname: payload.hostname,
             password: payload.password,
+            totp: payload.totp,
             logPrefix: "[SSH Exec]",
             scope: "external",
             getAuthBanner: () => authBanner,

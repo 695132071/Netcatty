@@ -912,11 +912,13 @@ export const enTerminalMessages: Messages = {
   'keyboard.interactive.desc': 'The server requires additional authentication.',
   'keyboard.interactive.descWithHost': 'The server {hostname} requires additional authentication.',
   'keyboard.interactive.response': 'Response',
+  'keyboard.interactive.verificationCode': 'Verification code',
   'keyboard.interactive.enterCode': 'Enter verification code',
   'keyboard.interactive.enterResponse': 'Enter response',
   'keyboard.interactive.submit': 'Submit',
   'keyboard.interactive.verifying': 'Verifying...',
   'keyboard.interactive.savePassword': 'Save password',
+  'keyboard.interactive.fillTotp': 'Fill verification code',
 
   // Passphrase Modal for encrypted SSH keys
   'passphrase.title': 'SSH Key Passphrase',

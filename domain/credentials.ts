@@ -151,6 +151,9 @@ export const findSyncPayloadEncryptedCredentialPaths = (
     if (isEncryptedCredentialPlaceholder(host.proxyConfig?.password)) {
       issues.push(`hosts[${index}].proxyConfig.password`);
     }
+    if (isEncryptedCredentialPlaceholder(host.totp?.uri)) {
+      issues.push(`hosts[${index}].totp.uri`);
+    }
   });
 
   payload.keys.forEach((key, index) => {
@@ -207,6 +210,9 @@ export const stripSyncPayloadEncryptedCredentials = (
     if (next.proxyConfig && isEncryptedCredentialPlaceholder(next.proxyConfig.password)) {
       const { password: _removed, ...proxyRest } = next.proxyConfig;
       next.proxyConfig = proxyRest;
+    }
+    if (next.totp && isEncryptedCredentialPlaceholder(next.totp.uri)) {
+      delete next.totp;
     }
     return next;
   });
@@ -329,6 +335,15 @@ export const healPoisonedSecretsForMerge = (
         const { password: _removed, ...proxyRest } = next.proxyConfig;
         next.proxyConfig = proxyRest;
       }
+    }
+    if (next.totp && isEncryptedCredentialPlaceholder(next.totp.uri)) {
+      const healed = healPoisonedCredential(
+        preferredHost,
+        preferredHost?.totp?.uri,
+        fallbackHost?.totp?.uri,
+      );
+      if (healed !== undefined) next.totp = { ...next.totp, uri: healed };
+      else delete next.totp;
     }
     return next;
   });
