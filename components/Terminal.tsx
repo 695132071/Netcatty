@@ -1162,7 +1162,17 @@ const TerminalComponent: React.FC<TerminalProps> = ({
     allowRendererFallback?: boolean;
     requireActiveShellCwd?: boolean;
   }): Promise<string | undefined> => {
-    const skipBackendPwd = hostRestrictsExtraSshChannels(host);
+    // The backend pwd probe opens an exec channel on the terminal connection;
+    // network devices (mode, detected distro, or vendor banner such as Huawei
+    // `-`) can drop the whole session for it (#1043, #3631).
+    let skipBackendPwd = hostRestrictsExtraSshChannels(host);
+    if (!skipBackendPwd && sessionRef.current) {
+      const info = await terminalBackend.getSessionRemoteInfo?.(sessionRef.current).catch(() => null);
+      skipBackendPwd = !shouldProbeSessionCwd({
+        isNetworkDevice: classifyDistroId(host.distro) === 'network-device',
+        remoteSshVersion: info?.remoteSshVersion,
+      });
+    }
     const cwd = await resolvePreferredTerminalCwd({
       rendererCwd: terminalCwdTracker.getRendererCwd(),
       rendererCwdSource: terminalCwdTracker.getRendererCwdSource(),
@@ -1175,7 +1185,7 @@ const TerminalComponent: React.FC<TerminalProps> = ({
       requireActiveShellCwd: options?.requireActiveShellCwd,
     });
     return cwd ?? undefined;
-  }, [terminalBackend, terminalCwdTracker]);
+  }, [host, terminalBackend, terminalCwdTracker]);
 
   const clearTerminalCwd = useCallback((options?: { persistRestoreMetadata?: boolean }) => {
     terminalCwdTracker.clearRendererCwd();

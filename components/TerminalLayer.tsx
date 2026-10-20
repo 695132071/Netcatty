@@ -1594,7 +1594,15 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
   }): Promise<string | null> => {
     const sessionId = getActiveTerminalSessionId();
     const host = sessionId ? sessionHostsMapRef.current.get(sessionId) : undefined;
-    const skipBackendPwd = hostRestrictsExtraSshChannels(host);
+    // Same rule as the terminal's own SFTP path lookup (#3631).
+    let skipBackendPwd = hostRestrictsExtraSshChannels(host);
+    if (!skipBackendPwd && sessionId && host) {
+      const info = await terminalBackend.getSessionRemoteInfo?.(sessionId).catch(() => null);
+      skipBackendPwd = !shouldProbeSessionCwd({
+        isNetworkDevice: classifyDistroId(host.distro) === 'network-device',
+        remoteSshVersion: info?.remoteSshVersion,
+      });
+    }
     return resolvePreferredTerminalCwd({
       rendererCwd: sessionId ? terminalRendererCwdBySessionRef.current.get(sessionId) : undefined,
       rendererCwdSource: sessionId

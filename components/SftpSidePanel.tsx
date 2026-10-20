@@ -76,8 +76,8 @@ import {
   resolveLocateSftpPathInTerminalAction,
   resolveLocateSftpPathSessionId,
 } from "../domain/sftpLocatePathInTerminal";
+import { sftpRequiresDedicatedLogin } from "../domain/sftpDedicatedLogin";
 import { classifyDistroId } from "../domain/host";
-import { remoteSoftwareRequiresSingleChannel } from "../domain/singleChannelSshBanner.shared.mjs";
 import { useTerminalBackend } from "../application/state/useTerminalBackend";
 import { isTerminalSensitiveInputActive } from "./terminal/runtime/terminalSensitiveInputRegistry";
 import { isTerminalReadyForCommandInjection } from "./terminal/runtime/terminalCommandInjectionReadyRegistry";
@@ -577,7 +577,7 @@ const SftpSidePanelInner: React.FC<SftpSidePanelProps> = ({
   const terminalBackend = useTerminalBackend();
   const [sftpBannerDecision, setSftpBannerDecision] = useState<{
     sessionId: string;
-    singleChannel: boolean;
+    remoteSshVersion?: string;
   } | null>(null);
   const activeSessionStatusForBanner = activeSessionId
     ? sessions.find((session) => session.id === activeSessionId)?.status ?? null
@@ -590,7 +590,7 @@ const SftpSidePanelInner: React.FC<SftpSidePanelProps> = ({
     }
     const readRemoteInfo = terminalBackend.getSessionRemoteInfo;
     if (!readRemoteInfo) {
-      setSftpBannerDecision({ sessionId: activeSessionId, singleChannel: false });
+      setSftpBannerDecision({ sessionId: activeSessionId });
       return;
     }
     let cancelled = false;
@@ -598,11 +598,11 @@ const SftpSidePanelInner: React.FC<SftpSidePanelProps> = ({
       if (cancelled) return;
       setSftpBannerDecision({
         sessionId: activeSessionId,
-        singleChannel: remoteSoftwareRequiresSingleChannel(info?.remoteSshVersion),
+        remoteSshVersion: info?.remoteSshVersion,
       });
     }).catch(() => {
       if (!cancelled) {
-        setSftpBannerDecision({ sessionId: activeSessionId, singleChannel: false });
+        setSftpBannerDecision({ sessionId: activeSessionId });
       }
     });
     return () => {
@@ -733,8 +733,8 @@ const SftpSidePanelInner: React.FC<SftpSidePanelProps> = ({
       nextStatus: activeSessionStatus ?? (activeSessionId ? "connected" : null),
     });
     // The peer banner is known only after the terminal handshake. Wait for it
-    // before choosing a shared terminal channel, so a one-channel bastion
-    // dials its file login directly.
+    // before choosing a shared terminal channel, so a one-channel bastion or
+    // network-vendor switch dials its file login directly.
     if (
       activeSessionId
       && activeSessionStatus === "connected"
@@ -935,8 +935,14 @@ const SftpSidePanelInner: React.FC<SftpSidePanelProps> = ({
 
     connectedKeyRef.current = connectionKey;
     connectedHostObjRef.current = activeHost;
-    const dedicatedSftpLogin = sftpBannerDecision?.sessionId === activeSessionId
-      && sftpBannerDecision.singleChannel;
+    // Independent login: network-device mode, a network-vendor banner, or a
+    // one-channel bastion. Do not open SFTP on the terminal connection.
+    const dedicatedSftpLogin = sftpRequiresDedicatedLogin({
+      host: activeHost,
+      remoteSshVersion: sftpBannerDecision?.sessionId === activeSessionId
+        ? sftpBannerDecision.remoteSshVersion
+        : undefined,
+    });
     const reuseTerminalTransport = !dedicatedSftpLogin && (
       Boolean(pendingStrictSourceSessionId) || activeSessionStatus === "connected"
     );
@@ -1382,10 +1388,12 @@ const SftpSidePanelInner: React.FC<SftpSidePanelProps> = ({
         sftpDefaultViewMode={sftpDefaultViewMode}
         activeHost={activeHost}
         activeSessionId={activeSessionId}
-        bannerRequiresSingleChannel={
-          sftpBannerDecision?.sessionId === activeSessionId
-          && sftpBannerDecision.singleChannel
-        }
+        bannerRequiresSingleChannel={sftpRequiresDedicatedLogin({
+          host: activeHost,
+          remoteSshVersion: sftpBannerDecision?.sessionId === activeSessionId
+            ? sftpBannerDecision.remoteSshVersion
+            : undefined,
+        })}
         focusedSessionId={focusedSessionId}
         showWorkspaceHostHeader={showWorkspaceHostHeader}
         renderOverlays={renderOverlays}

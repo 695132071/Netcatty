@@ -17,8 +17,13 @@ test("SFTP side panel rebinds after same-tab SSH start-over", () => {
     /previousStatus:\s*lastSourceSessionStatusRef\.current/,
   );
   // Reuse the terminal transport only when SSH is connected, or when a strict
-  // pending source id is already pinned. A dedicated single-channel login never
-  // reuses that transport. A linked id may arrive while reconnecting.
+  // pending source id is already pinned. A dedicated login (bastion banner,
+  // network-vendor banner, or network-device mode) never reuses that
+  // transport. A linked id may arrive while reconnecting.
+  assert.match(
+    sidePanelSource,
+    /const dedicatedSftpLogin = sftpRequiresDedicatedLogin\(\{/,
+  );
   assert.match(
     sidePanelSource,
     /const reuseTerminalTransport = !dedicatedSftpLogin && \(\s*Boolean\(pendingStrictSourceSessionId\) \|\| activeSessionStatus === "connected"\s*\);/,
