@@ -77,11 +77,60 @@ function isConfirmedTerminalShellPrompt(promptText, options = {}) {
     if (code >= 0xE000 && code <= 0xF8FF) return true;
   }
   if (/[$#%]$/u.test(prompt)) return true;
+  // POSIX sh/bash/ksh default PS2. Trusted only with heredoc context (#3796).
+  if (prompt === ">") return isHeredocPs2Continuation(promptText, options);
   if (!prompt.endsWith(">")) return false;
   if (/^(?:PS\s+)?[A-Za-z]:[\\/].*>$/u.test(prompt)) return true;
   if (/[@\\/~:]\S*>$/u.test(prompt)) return true;
   return options.allowHostStyleGreaterThan === true
     && /^[A-Za-z0-9_.-]+(?:\([^)]{1,128}\))?>$/u.test(prompt);
+}
+
+function splitTerminalLogicalLines(value) {
+  const lines = [];
+  let start = 0;
+  for (let i = 0; i < value.length; i += 1) {
+    const ch = value[i];
+    if (ch !== "\n" && ch !== "\r") continue;
+    lines.push(value.slice(start, i));
+    if (ch === "\r" && value[i + 1] === "\n") i += 1;
+    start = i + 1;
+  }
+  lines.push(value.slice(start));
+  return lines;
+}
+
+function isBashPs2ContinuationLine(line) {
+  const trimmed = line.trim();
+  return trimmed === ">" || trimmed.startsWith("> ");
+}
+
+function commandAfterConfirmedShellPrompt(line, options) {
+  const text = line.trim();
+  for (let i = 0; i < text.length - 1; i += 1) {
+    const ch = text[i];
+    if (ch !== "$" && ch !== "#" && ch !== "%" && ch !== ">") continue;
+    const rest = text.slice(i + 1);
+    if (!/^\s+\S/u.test(rest)) continue;
+    const candidate = text.slice(0, i + 1);
+    if (!isConfirmedTerminalShellPrompt(candidate, options)) continue;
+    if ((ch === "$" || ch === "#" || ch === "%") && !isPlausibleShellPromptBody(candidate.slice(0, -1))) {
+      continue;
+    }
+    return rest;
+  }
+  return null;
+}
+
+// Bare ">" is bash PS2 only inside a heredoc opened by a confirmed shell
+// command (#3796). read -s -p '> ' and other origins stay fail-closed.
+function isHeredocPs2Continuation(value, options) {
+  const lines = splitTerminalLogicalLines(stripTerminalControlSequences(value));
+  let index = lines.length - 2;
+  while (index >= 0 && isBashPs2ContinuationLine(lines[index])) index -= 1;
+  if (index < 0) return false;
+  const command = commandAfterConfirmedShellPrompt(lines[index], options);
+  return command != null && command.includes("<<");
 }
 
 function isPlausibleShellPromptBody(body) {
@@ -117,7 +166,8 @@ function isUntrustedTerminalInputPrompt(value, options = {}) {
   if (options.alternateScreen && /^:\s*$/.test(prompt)) return false;
   if (!/[:：>›»]\s*$/u.test(prompt)) return false;
   if (hasTypedInputAfterConfirmedPrompt(prompt, options)) return false;
-  return !isConfirmedTerminalShellPrompt(prompt, options);
+  // Pass the original text so a bare ">" can see heredoc lines above it.
+  return !isConfirmedTerminalShellPrompt(value, options);
 }
 
 module.exports = { isUntrustedTerminalInputPrompt };

@@ -59,7 +59,7 @@ import { MULTILINE_PASTE_CONFIRM_MIN_LINES_DEFAULT } from "../domain/terminalPas
 import { isPluginHostProtocol } from "../domain/pluginConnection";
 import { clearTerminalBootEpoch, setTerminalBootEpoch } from "../domain/terminalBootEpoch";
 import {
-  appendTerminalPromptSecurityTail,
+  foldTerminalPromptSecurityOutput,
   isConfirmedTerminalShellPrompt,
   isUntrustedTerminalInputPrompt,
 } from "../domain/terminalPromptSecurity";
@@ -452,6 +452,8 @@ const TerminalComponent: React.FC<TerminalProps> = ({
   ), [sessionId]);
   useEffect(() => () => clearTerminalBroadcastUserInput(sessionId), [sessionId]);
   const sensitivePromptOutputTailRef = useRef("");
+  const heredocPromptOriginRef = useRef("");
+  const promptSecurityPendingCrRef = useRef(false);
   const [activeScriptRun, setActiveScriptRun] = useState<import('@/types/global/netcatty-bridge-script.d.ts').ScriptRun | undefined>(undefined);
   const dismissedScriptRunIdsRef = useRef(new Set<string>());
 
@@ -2011,10 +2013,14 @@ const TerminalComponent: React.FC<TerminalProps> = ({
     chunk: string,
     meta?: TerminalSessionDataMeta,
   ) => {
-    sensitivePromptOutputTailRef.current = appendTerminalPromptSecurityTail(
-      sensitivePromptOutputTailRef.current,
-      chunk,
-    );
+    const folded = foldTerminalPromptSecurityOutput({
+      origin: heredocPromptOriginRef.current,
+      current: sensitivePromptOutputTailRef.current,
+      pendingCr: promptSecurityPendingCrRef.current,
+    }, chunk);
+    heredocPromptOriginRef.current = folded.origin;
+    sensitivePromptOutputTailRef.current = folded.current;
+    promptSecurityPendingCrRef.current = folded.pendingCr;
     const promptSecurityOptions = {
       allowHostStyleGreaterThan: isNetworkDevice,
       alternateScreen: termRef.current
@@ -2030,17 +2036,19 @@ const TerminalComponent: React.FC<TerminalProps> = ({
         autocompleteCloseRef.current?.();
       } else {
         sensitivePromptOutputTailRef.current = "";
+        heredocPromptOriginRef.current = "";
+        promptSecurityPendingCrRef.current = false;
       }
       return;
     } else if (isUntrustedTerminalInputPrompt(
-      sensitivePromptOutputTailRef.current,
+      folded.promptText,
       promptSecurityOptions,
     )) {
       passwordPromptActiveRef.current = true;
       passwordPromptActiveRef.source = "heuristic";
       autocompleteCloseRef.current?.();
     } else if (isConfirmedTerminalShellPrompt(
-      sensitivePromptOutputTailRef.current,
+      folded.promptText,
       promptSecurityOptions,
     )) {
       passwordPromptActiveRef.current = false;

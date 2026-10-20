@@ -72,6 +72,45 @@ export function appendTerminalPromptSecurityTail(previous: string, chunk: string
   return combined.slice(boundary + 1).slice(-MAX_PROMPT_SECURITY_TAIL_CHARS);
 }
 
+function nextHeredocPromptOrigin(origin: string, completedLine: string): string {
+  const plain = stripTerminalControlSequences(completedLine).trim();
+  // A blank line ends the continuation. A PS2 echo (">" or "> ...") does not.
+  if (isBashPs2ContinuationLine(plain)) return origin;
+  return plain.slice(0, MAX_PROMPT_SECURITY_TAIL_CHARS);
+}
+
+/**
+ * Current logical line, plus the heredoc opener when the line is a bare ">".
+ * `appendTerminalPromptSecurityTail` keeps only the current line, which is all
+ * `observeTerminalInputPrompt` used to pass in. The opener is the last
+ * completed non-PS2 line, so a long heredoc body does not have to be retained.
+ */
+export function foldTerminalPromptSecurityOutput(
+  state: { origin: string; current: string; pendingCr?: boolean },
+  chunk: string,
+): { origin: string; current: string; promptText: string; pendingCr: boolean } {
+  // A PTY can split CRLF across chunks. The LF is the rest of that break,
+  // not a second empty line that would drop the heredoc opener.
+  let pendingCr = state.pendingCr === true;
+  let input = chunk;
+  if (pendingCr && input.startsWith('\n')) {
+    input = input.slice(1);
+    pendingCr = false;
+  }
+  const combined = `${state.current}${input}`;
+  let origin = state.origin;
+  for (const line of splitTerminalLogicalLines(combined).slice(0, -1)) {
+    origin = nextHeredocPromptOrigin(origin, line);
+  }
+  const current = appendTerminalPromptSecurityTail(state.current, input);
+  const promptText = lastLogicalLine(current).trim() === '>' && origin
+    ? `${origin}\n${current}`
+    : current;
+  if (input.endsWith('\r')) pendingCr = true;
+  else if (input.length > 0) pendingCr = false;
+  return { origin, current, promptText, pendingCr };
+}
+
 /**
  * Detect a prompt-shaped authentication challenge. Vocabulary intentionally
  * matches the SSH keyboard-interactive boundary and also covers PIN/auth-code
@@ -120,6 +159,8 @@ export function isConfirmedTerminalShellPrompt(
     if (code >= 0xE000 && code <= 0xF8FF) return true;
   }
   if (/[$#%]$/u.test(prompt)) return true;
+  // POSIX sh/bash/ksh default PS2. Trusted only with heredoc context (#3796).
+  if (prompt === '>') return isHeredocPs2Continuation(promptText, options);
   if (!prompt.endsWith('>')) return false;
   if (/^(?:PS\s+)?[A-Za-z]:[\\/].*>$/u.test(prompt)) return true;
   if (/[@\\/~:]\S*>$/u.test(prompt)) return true;
@@ -137,6 +178,64 @@ export function shouldUsePluginTerminalCompletionProvider(input: {
     && isConfirmedTerminalShellPrompt(input.promptText, {
       allowHostStyleGreaterThan: input.allowHostStyleGreaterThan,
     });
+}
+
+function splitTerminalLogicalLines(value: string): string[] {
+  const lines: string[] = [];
+  let start = 0;
+  for (let i = 0; i < value.length; i += 1) {
+    const ch = value[i];
+    if (ch !== '\n' && ch !== '\r') continue;
+    lines.push(value.slice(start, i));
+    if (ch === '\r' && value[i + 1] === '\n') i += 1;
+    start = i + 1;
+  }
+  lines.push(value.slice(start));
+  return lines;
+}
+
+/** Bash default PS2 echo: ">" or "> ...". Not "heredoc>" / "Custom>". */
+function isBashPs2ContinuationLine(line: string): boolean {
+  const trimmed = line.trim();
+  return trimmed === '>' || trimmed.startsWith('> ');
+}
+
+/**
+ * Command text after the first confirmed shell prompt on this line.
+ * Returns null when the line is not a confirmed prompt plus typed input.
+ */
+function commandAfterConfirmedShellPrompt(
+  line: string,
+  options: ConfirmedPromptOptions,
+): string | null {
+  const text = line.trim();
+  for (let i = 0; i < text.length - 1; i += 1) {
+    const ch = text[i];
+    if (ch !== '$' && ch !== '#' && ch !== '%' && ch !== '>') continue;
+    const rest = text.slice(i + 1);
+    if (!/^\s+\S/u.test(rest)) continue;
+    const candidate = text.slice(0, i + 1);
+    if (!isConfirmedTerminalShellPrompt(candidate, options)) continue;
+    if ((ch === '$' || ch === '#' || ch === '%') && !isPlausibleShellPromptBody(candidate.slice(0, -1))) {
+      continue;
+    }
+    return rest;
+  }
+  return null;
+}
+
+/**
+ * Bare ">" is bash PS2 only while output is still inside a heredoc opened by
+ * a confirmed shell command (#3796). Any other origin, including
+ * `read -s -p '> '`, stays fail-closed.
+ */
+function isHeredocPs2Continuation(value: string, options: ConfirmedPromptOptions): boolean {
+  const lines = splitTerminalLogicalLines(stripTerminalControlSequences(value));
+  let index = lines.length - 2;
+  while (index >= 0 && isBashPs2ContinuationLine(lines[index])) index -= 1;
+  if (index < 0) return false;
+  const command = commandAfterConfirmedShellPrompt(lines[index], options);
+  return command != null && command.includes('<<');
 }
 
 /**
@@ -204,7 +303,8 @@ export function isUntrustedTerminalInputPrompt(
   // Mid-command punctuation after a real shell prompt must keep broadcasting
   // (#2709). Standalone `Label:` / `Custom>` challenges still fail closed.
   if (hasTypedInputAfterConfirmedPrompt(prompt, options)) return false;
-  return !isConfirmedTerminalShellPrompt(prompt, options);
+  // Pass the original text so a bare ">" can see heredoc lines above it.
+  return !isConfirmedTerminalShellPrompt(value, options);
 }
 
 export { MAX_PROMPT_SECURITY_TAIL_CHARS };
