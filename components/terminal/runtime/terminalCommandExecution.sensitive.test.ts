@@ -113,6 +113,32 @@ test('acknowledged pasted commands enter history over output without becoming tr
   }
 });
 
+test('colon shell prompts still record the submitted command (#3622)', () => {
+  const executed: string[] = [];
+  const result = recordTerminalCommandExecution('ls', {
+    host: { id: 'host-1', label: 'Host' },
+    sessionId: 'session-1',
+    onCommandExecuted: (command) => executed.push(command),
+    commandBufferRef: { current: 'ls' },
+  }, createFakeTerm('dev: ls') as never);
+  assert.equal(result, 'ls');
+  assert.deepEqual(executed, ['ls']);
+});
+
+test('program input replies are not stored as shell commands (#3622)', () => {
+  for (const line of ['Email: use', 'Password: use', 'Secret: use']) {
+    const executed: string[] = [];
+    const result = recordTerminalCommandExecution('use', {
+      host: { id: 'host-1', label: 'Host' },
+      sessionId: 'session-1',
+      onCommandExecuted: (command) => executed.push(command),
+      commandBufferRef: { current: 'use' },
+    }, createFakeTerm(line) as never);
+    assert.equal(result, null, line);
+    assert.deepEqual(executed, [], line);
+  }
+});
+
 test('acknowledged writes retain both live challenge and explicit sensitive checks', () => {
   for (const [line, sensitive] of [['Password: ', false], ['OTP> ', false], ['output', true]] as const) {
     const history: string[] = [];

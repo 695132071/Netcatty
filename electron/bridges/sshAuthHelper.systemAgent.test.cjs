@@ -271,7 +271,13 @@ test("Cygwin agent validation closes a stalled negotiation socket", async (t) =>
     fs.rmSync(dir, { recursive: true, force: true });
   });
 
-  assert.equal(await cygwinAgentConnectable(descriptorPath, { timeoutMs: 20 }), false);
+  // The timeout covers a stalled negotiation. Reading the descriptor from
+  // memory keeps a slow filesystem from expiring that budget before the
+  // socket exists, which otherwise looks like a connection that stayed open.
+  assert.equal(await cygwinAgentConnectable(descriptorPath, {
+    timeoutMs: 20,
+    readFileImpl: async () => fs.readFileSync(descriptorPath, "utf8"),
+  }), false);
   await Promise.race([
     closed,
     new Promise((_, reject) => setTimeout(() => reject(new Error("Cygwin probe connection stayed open")), 2_000)),

@@ -31,10 +31,55 @@ export function isNonPromptLine(lineText: string): boolean {
   return NON_PROMPT_PATTERNS.some((pattern) => pattern.test(lineText));
 }
 
+const PROGRAM_INPUT_LABEL = /^(?=[\p{L}\p{N}])[\p{L}\p{N} ._'()-]{1,60}$/u;
+
+/** Identity prompts this feature targets. A custom PS1 like `dev: ` is not one. */
+const ORDINARY_INPUT_LABEL =
+  /^(?:e-?mail(?: address)?|user(?: ?name| ?id)?|login(?: name)?|(?:full )?name|account(?: name)?|\u90ae\u7bb1|\u7535\u5b50\u90ae\u7bb1|\u7535\u5b50\u90ae\u4ef6|\u7528\u6237\u540d|\u7528\u6237|\u59d3\u540d|\u8d26\u53f7|\u5e10\u6237|\u8d26\u6237|\u767b\u5f55\u540d)$/u;
+
+function colonLabelText(promptText: string): string | null {
+  if (!promptText || promptText.length > 80) return null;
+  if (isSensitiveTerminalChallenge(promptText)) return null;
+  if (/\b(?:secret|passphrase|password|pin)\b/iu.test(promptText)) return null;
+
+  const trimmedEnd = promptText.trimEnd();
+  const marker = trimmedEnd.at(-1);
+  if (marker !== ":" && marker !== "\uFF1A") return null;
+
+  const label = trimmedEnd.slice(0, -1).trim();
+  if (!PROGRAM_INPUT_LABEL.test(label)) return null;
+  if (startsWithCommonShellCommand(label)) return null;
+  return label;
+}
+
+/** Colon label shape, including a custom shell PS1 (`dev: `). */
+function isColonLabelPromptText(promptText: string): boolean {
+  return colonLabelText(promptText) !== null;
+}
+
+/**
+ * A program waiting for ordinary input (`read -p 'Email: '`).
+ * Password, passphrase, PIN, and secret prompts stay closed.
+ * Only the identity-label allowlist matches, so `PS1='dev: '` stays a shell prompt.
+ */
+export function isProgramInputPromptText(promptText: string): boolean {
+  const label = colonLabelText(promptText);
+  if (!label) return false;
+  const normalized = label
+    .replace(/\s+/g, " ")
+    .toLowerCase()
+    .replace(/^(?:please\s+)?(?:enter|input|type)\s+(?:your\s+)?/u, "")
+    .replace(/^your\s+/u, "")
+    .replace(/^(?:\u8bf7\u8f93\u5165|\u8bf7|\u8f93\u5165)/u, "")
+    .trim();
+  return ORDINARY_INPUT_LABEL.test(normalized);
+}
+
 function isSpecificShellPromptCandidate(
   promptText: string,
   options: { allowGreaterThanTerminator?: boolean } = {},
 ): boolean {
+  if (isProgramInputPromptText(promptText)) return true;
   const trimmed = promptText.trim();
   if (
     !options.allowGreaterThanTerminator &&
@@ -157,6 +202,9 @@ function inferPromptTextBeforeTypedInput(
     const promptText = cursorPrefix.slice(0, cursorPrefix.length - echoLength);
     if (isLikelyNoSpaceShellPromptText(promptText)) return promptText;
   }
+
+  // `Email: ` with the reply still in the keystroke buffer (echo not painted yet).
+  if (isProgramInputPromptText(cursorPrefix)) return cursorPrefix;
 
   return null;
 }
@@ -388,6 +436,11 @@ function alignTypedInputFromCursorPrefix(
     return null;
   }
 
+  // Program read-prompts are snippet queries only. Do not override a real shell
+  // prompt, and do not authorize Enter history recording.
+  const programInput = isProgramInputPromptText(promptText);
+  if (programInput && raw.isAtPrompt) return null;
+
   return {
     prompt: {
       isAtPrompt: true,
@@ -395,7 +448,7 @@ function alignTypedInputFromCursorPrefix(
       userInput: typedBuffer,
       cursorOffset: typedBuffer.length,
     },
-    alignedTyped: typedBuffer,
+    alignedTyped: programInput ? null : typedBuffer,
   };
 }
 
@@ -571,7 +624,9 @@ export function detectPrompt(term: XTerm): PromptDetectionResult {
     ? lineText
     : cursorLinePrefix;
   const promptEnd = findPromptBoundary(promptScanText);
-  if (promptEnd >= 0) {
+  // Colon read-prompts (`Email: `) stay out of shell prompt detection. Autocomplete
+  // opts in later via alignTypedInputFromCursorPrefix.
+  if (promptEnd >= 0 && !isProgramInputPromptText(lineText.substring(0, promptEnd))) {
     const promptText = lineText.substring(0, promptEnd);
     // Input is whatever sits between the prompt and the cursor on the cell-
     // accurate prefix — don't use cursorX as a character index.
@@ -601,7 +656,7 @@ export function detectPrompt(term: XTerm): PromptDetectionResult {
       const promptLineText = promptLine.translateToString(false);
       if (isSensitiveTerminalChallenge(promptLineText) || isNonPromptLine(promptLineText)) return NO_PROMPT;
       const pEnd = findPromptBoundary(promptLineText);
-      if (pEnd >= 0) {
+      if (pEnd >= 0 && !isProgramInputPromptText(promptLineText.substring(0, pEnd))) {
         const promptText = promptLineText.substring(0, pEnd);
         // Concatenate all rows from promptRow to cursorY to get full input
         let fullInput = promptLineText.substring(pEnd);
@@ -817,7 +872,24 @@ function findPromptBoundary(lineText: string): number {
     }
   }
 
-  return lastStandardBoundary >= 0 ? lastStandardBoundary : lastPuaBoundary;
+  if (lastStandardBoundary >= 0) return lastStandardBoundary;
+  if (lastPuaBoundary >= 0) return lastPuaBoundary;
+  return findProgramInputPromptBoundary(lineText);
+}
+
+function findProgramInputPromptBoundary(lineText: string): number {
+  const scanLimit = Math.min(lineText.trimEnd().length, 200);
+  let last = -1;
+  for (let i = 0; i < scanLimit; i++) {
+    const ch = lineText[i];
+    if (ch !== ":" && ch !== "\uFF1A") continue;
+    const next = i + 1 < lineText.length ? lineText[i + 1] : null;
+    if (next !== null && next !== " ") continue;
+    const boundary = next === " " ? i + 2 : i + 1;
+    if (!isColonLabelPromptText(lineText.slice(0, boundary))) continue;
+    last = boundary;
+  }
+  return last;
 }
 
 /**

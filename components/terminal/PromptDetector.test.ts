@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { detectPrompt, getAlignedPrompt } from "./autocomplete/promptDetector.ts";
+import { detectPrompt, getAlignedPrompt, isProgramInputPromptText } from "./autocomplete/promptDetector.ts";
 import { resolveAutocompleteQueryInput } from "./autocomplete/terminalAutocompletePrompt.ts";
 import { getSnippetSuggestions } from "./autocomplete/snippetCompleter.ts";
 import { stringCellWidth } from "./autocomplete/terminalStringCellWidth.ts";
@@ -816,4 +816,64 @@ test("CMD path prompts with CJK directories do not absorb padding into echoed Ch
     } as never], {})[0]?.snippet?.id,
     "zh",
   );
+});
+
+test("program input prompts expose snippet text and stay out of shell history (#3622)", () => {
+  const line = "Email: use";
+  const term = createFakeTerm(line, line.length);
+  const snippet = { id: "mail", label: "邮箱", command: "user@example.com", noAutoRun: true };
+
+  assert.equal(detectPrompt(term as never).isAtPrompt, false);
+
+  const echoed = getAlignedPrompt(term as never, "use", true);
+  assert.equal(echoed.prompt.isAtPrompt, true);
+  assert.equal(echoed.prompt.promptText, "Email: ");
+  assert.equal(echoed.prompt.userInput, "use");
+  assert.equal(echoed.alignedTyped, null);
+  assert.equal(resolveAutocompleteQueryInput(echoed.prompt, "use", true), "use");
+  assert.equal(
+    getSnippetSuggestions(echoed.prompt.userInput, [snippet as never])[0]?.snippet?.command,
+    "user@example.com",
+  );
+  assert.equal(getCommandToRecordOnEnter(echoed.prompt, echoed.alignedTyped, "use", true), null);
+
+  const pending = getAlignedPrompt(createFakeTerm("Email: ", "Email: ".length) as never, "use", true);
+  assert.equal(pending.prompt.promptText, "Email: ");
+  assert.equal(resolveAutocompleteQueryInput(pending.prompt, "use", true), "use");
+  assert.equal(pending.alignedTyped, null);
+
+  const shell = "user@host:~$ git pull use";
+  const shellPrompt = getAlignedPrompt(createFakeTerm(shell, shell.length) as never, "git pull use", true);
+  assert.equal(shellPrompt.prompt.promptText, "user@host:~$ ");
+  assert.equal(shellPrompt.prompt.userInput, "git pull use");
+  assert.equal(shellPrompt.alignedTyped, "git pull use");
+});
+
+test("a colon shell prompt is not a program input prompt (#3622)", () => {
+  for (const prompt of ["dev: ", "development: ", "PS1: "]) {
+    assert.equal(isProgramInputPromptText(prompt), false, prompt);
+    const line = `${prompt}ls`;
+    const term = createFakeTerm(line, line.length);
+    const aligned = getAlignedPrompt(term as never, "ls", true);
+    assert.equal(aligned.prompt.isAtPrompt, true, prompt);
+    assert.equal(aligned.prompt.promptText, prompt, prompt);
+    assert.equal(aligned.prompt.userInput, "ls", prompt);
+    assert.equal(
+      getCommandToRecordOnEnter(aligned.prompt, aligned.alignedTyped, "ls", true),
+      "ls",
+      prompt,
+    );
+  }
+
+  assert.equal(isProgramInputPromptText("Email: "), true);
+  assert.equal(isProgramInputPromptText("Enter your username: "), true);
+  assert.equal(isProgramInputPromptText("用户名: "), true);
+});
+
+test("password, passphrase, PIN, and secret prompts stay uncompletable (#3622)", () => {
+  for (const line of ["Password: use", "Passphrase: use", "PIN: use", "Secret: use", "Enter secret: use"]) {
+    const result = getAlignedPrompt(createFakeTerm(line, line.length) as never, "use", true);
+    assert.equal(result.prompt.isAtPrompt, false, line);
+    assert.equal(resolveAutocompleteQueryInput(result.prompt, "use", true), null, line);
+  }
 });

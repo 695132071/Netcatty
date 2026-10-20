@@ -12,6 +12,7 @@ import {
 import {
   getAlignedPrompt,
   isNonPromptLine,
+  isProgramInputPromptText,
   reconcilePromptWithExternalCommand,
   reconcilePromptWithTypedInput,
   type PromptDetectionResult,
@@ -384,6 +385,7 @@ export const shouldRecordShellHistory = (
 
   const trimmed = command.trim();
   const alignedResult = getAlignedPrompt(term, command, true);
+  if (isProgramInputPromptText(alignedResult.prompt.promptText)) return false;
   const prompt = expandPromptUserInputToFullLine(term, alignedResult.prompt, command);
   if (!prompt.isAtPrompt) return false;
   if (alignedResult.alignedTyped?.trim() === trimmed) return true;

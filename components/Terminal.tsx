@@ -165,6 +165,7 @@ import { registerTerminalSensitiveInputReader } from "./terminal/runtime/termina
 import { registerTerminalCommandInjectionReadyReader } from "./terminal/runtime/terminalCommandInjectionReadyRegistry";
 import { isIdleShellReadyForCommandInjection } from "../domain/terminalCommandInjectionReady";
 import { detectPrompt } from "./terminal/autocomplete/promptDetector";
+import type { SensitiveInputActiveRef } from "./terminal/autocomplete/terminalAutocompletePrompt";
 import {
   applyUserCursorPreference,
   applyUserCursorWidthPreference,
@@ -439,7 +440,7 @@ const TerminalComponent: React.FC<TerminalProps> = ({
   const recorder = useScriptRecorder(sessionId);
   const recorderRef = useRef(recorder);
   recorderRef.current = recorder;
-  const passwordPromptActiveRef = useRef(false);
+  const passwordPromptActiveRef = useRef(false) as SensitiveInputActiveRef;
   const terminalTitleRef = useRef<string | undefined>(undefined);
   const pluginTerminalLifecycleRef = useRef<ReturnType<typeof usePluginTerminalSessionLifecycle> | null>(null);
   useEffect(() => registerTerminalSensitiveInputReader(
@@ -1695,6 +1696,9 @@ const TerminalComponent: React.FC<TerminalProps> = ({
         }
         if (typeof payload.passwordPromptActive === "boolean") {
           passwordPromptActiveRef.current = payload.passwordPromptActive;
+          // The snapshot boolean has no source. A restored true latch stays
+          // explicit so Email:/Username: cannot bypass a plugin-marked field.
+          if (payload.passwordPromptActive) passwordPromptActiveRef.source = "explicit";
         }
         if (payload.cwd !== undefined) {
           const cwd = terminalCwdTracker.setRendererCwd(payload.cwd, "snapshot");
@@ -2013,6 +2017,9 @@ const TerminalComponent: React.FC<TerminalProps> = ({
     };
     if (typeof meta?.pluginPipelineSensitiveInput === "boolean") {
       passwordPromptActiveRef.current = meta.pluginPipelineSensitiveInput;
+      // Authoritative metadata must not be downgraded to the heuristic latch,
+      // or trusted labels such as Email: would bypass snippet blocking.
+      passwordPromptActiveRef.source = meta.pluginPipelineSensitiveInput ? "explicit" : "heuristic";
       if (meta.pluginPipelineSensitiveInput) {
         autocompleteCloseRef.current?.();
       } else {
@@ -2024,12 +2031,14 @@ const TerminalComponent: React.FC<TerminalProps> = ({
       promptSecurityOptions,
     )) {
       passwordPromptActiveRef.current = true;
+      passwordPromptActiveRef.source = "heuristic";
       autocompleteCloseRef.current?.();
     } else if (isConfirmedTerminalShellPrompt(
       sensitivePromptOutputTailRef.current,
       promptSecurityOptions,
     )) {
       passwordPromptActiveRef.current = false;
+      passwordPromptActiveRef.source = "heuristic";
     }
   }, [isNetworkDevice]);
 

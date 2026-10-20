@@ -1,10 +1,12 @@
 import { isSensitiveTerminalChallenge } from "../../../domain/terminalPromptSecurity";
 import {
   isNonPromptLine,
+  isProgramInputPromptText,
   reconcilePromptWithExternalCommand,
   type PromptDetectionResult,
 } from "./promptDetector";
-import { computeLivePreviewWrite } from "./livePreviewSequence";
+import { parseCommandLine, type CompletionSuggestion } from "./completionEngine";
+import { computeLivePreviewWrite, isWindowsShellLineInput } from "./livePreviewSequence";
 
 const THEMED_PROMPT_MARKERS = /[❯❮→➜➤⟩»›]/;
 
@@ -103,9 +105,86 @@ export function isSameAutocompleteQuery(options: {
   return options.previewActive && options.previewBaseline === options.queryInput;
 }
 
+const TRUSTED_ORDINARY_INPUT_LABELS = new Set([
+  "email",
+  "e-mail",
+  "email address",
+  "e-mail address",
+  "username",
+  "user name",
+  "user",
+  "userid",
+  "user id",
+  "login",
+  "login name",
+  "name",
+  "full name",
+  "account",
+  "account name",
+  "\u90ae\u7bb1",
+  "\u7535\u5b50\u90ae\u7bb1",
+  "\u7535\u5b50\u90ae\u4ef6",
+  "\u7528\u6237\u540d",
+  "\u7528\u6237",
+  "\u59d3\u540d",
+  "\u8d26\u53f7",
+  "\u5e10\u6237",
+  "\u8d26\u6237",
+  "\u767b\u5f55\u540d",
+]);
+
+const UNTRUSTED_INPUT_LABEL = /(?:\b(?:secret|passphrase|password|passcode|token|key|pin|otp)\b|\u5bc6\u7801|\u53e3\u4ee4|\u4ee4\u724c|\u5bc6\u94a5|\u9a8c\u8bc1\u7801)/iu;
+
+function trustedOrdinaryInputLabel(promptText: string): string | null {
+  const trimmedEnd = promptText.trimEnd();
+  const marker = trimmedEnd.at(-1);
+  if (marker !== ":" && marker !== "\uFF1A") return null;
+  return trimmedEnd
+    .slice(0, -1)
+    .trim()
+    .replace(/\s+/g, " ")
+    .toLowerCase()
+    .replace(/^(?:please\s+)?(?:enter|input|type)\s+(?:your\s+)?/u, "")
+    .replace(/^your\s+/u, "")
+    .replace(/^(?:\u8bf7\u8f93\u5165|\u8bf7|\u8f93\u5165)/u, "")
+    .trim();
+}
+
+/**
+ * Positively identified ordinary identity prompts (`Email:`, `Username:`).
+ * Unknown labels stay fail-closed so they cannot bypass the sensitive latch.
+ */
+function isTrustedOrdinaryInputPromptText(promptText: string): boolean {
+  if (UNTRUSTED_INPUT_LABEL.test(promptText)) return false;
+  const label = trustedOrdinaryInputLabel(promptText);
+  if (!label || UNTRUSTED_INPUT_LABEL.test(label)) return false;
+  return TRUSTED_ORDINARY_INPUT_LABELS.has(label);
+}
+
+/**
+ * Why `sensitiveInputActive` is latched.
+ *
+ * `heuristic` is the untrusted-prompt detector (`Email:`, unknown `Label:`).
+ * `explicit` is authoritative metadata such as `pluginPipelineSensitiveInput`.
+ * Omitted means heuristic, so existing callers keep the trusted-label bypass.
+ */
+export type SensitiveAutocompleteLatchSource = "heuristic" | "explicit";
+
+export type SensitiveInputActiveRef = {
+  current: boolean;
+  source?: SensitiveAutocompleteLatchSource;
+};
+
 /**
  * Whether fetchSuggestions must refuse to query/render for an already-known
  * sensitive line (host latch or auth-challenge prompt text).
+ *
+ * The heuristic latch is set for every untrusted input boundary, including
+ * safe program prompts such as `Email:`. Only a small allowlist of plain
+ * identity labels may bypass that latch so snippet candidates can render.
+ * An explicit latch (plugin pipeline or other authoritative sensitive
+ * metadata) stays closed for those labels too. Unknown labels, and anything
+ * password/token/key/PIN/OTP-like, stay closed.
  *
  * This is *not* a substitute for the empty-echo / `allowExternalProviders:
  * false` wait in useTerminalAutocomplete: `read -s -p '$ '` still looks like
@@ -115,7 +194,16 @@ export function isSameAutocompleteQuery(options: {
 export function shouldBlockAutocompleteForSensitivePrompt(options: {
   sensitiveInputActive: boolean;
   promptText: string;
+  sensitiveSource?: SensitiveAutocompleteLatchSource;
 }): boolean {
+  const explicitLatch = options.sensitiveInputActive && options.sensitiveSource === "explicit";
+  if (
+    options.sensitiveInputActive
+    && !explicitLatch
+    && isTrustedOrdinaryInputPromptText(options.promptText)
+  ) {
+    return false;
+  }
   if (options.sensitiveInputActive) return true;
   return isSensitiveTerminalChallenge(options.promptText);
 }
@@ -169,6 +257,7 @@ export function getCommandToRecordOnEnter(
   typedBufferReliable: boolean,
 ): string | null {
   if (!livePrompt.isAtPrompt) return null;
+  if (isProgramInputPromptText(livePrompt.promptText)) return null;
   const alignedCommand = alignedTyped?.trim();
   if (alignedCommand) return alignedCommand;
 
@@ -207,5 +296,48 @@ export function getCommandToRecordOnEnter(
   if (typedBufferReliable && hasThemedPromptDecorationInInput(livePrompt)) return null;
 
   return liveCommand;
+}
+
+/**
+ * Keystrokes that remove the text a snippet acceptance replaces.
+ * Line-start keeps the shell kill-line (Ctrl+U, or backspaces on Windows).
+ * Mid-line and program read-prompts delete only the word being typed.
+ * POSIX word delete sends DEL, the tty erase character. Ctrl-H is literal
+ * input to canonical `read` when erase is ^?, while readline still deletes
+ * on DEL. Windows line editing keeps backspace.
+ * Script snippets run automation and do not replace the line, so they keep
+ * the full-line clear.
+ */
+export function computeSnippetAcceptClearSequence(options: {
+  line: string | null;
+  os: string;
+  promptText: string;
+  snippetKind?: "snippet" | "script";
+}): string {
+  const line = options.line ?? "";
+  if (line.length === 0) return "";
+
+  const { currentWord, wordIndex } = parseCommandLine(line);
+  const replaceWord = options.snippetKind !== "script"
+    && currentWord.length > 0
+    && line.endsWith(currentWord)
+    && (wordIndex > 0 || isProgramInputPromptText(options.promptText));
+  if (replaceWord) {
+    const eraseChar = isWindowsShellLineInput(options.os, options.promptText) ? "\b" : "\x7f";
+    return eraseChar.repeat(Array.from(currentWord).length);
+  }
+
+  return isWindowsShellLineInput(options.os, options.promptText)
+    ? "\b".repeat(line.length)
+    : "\x15";
+}
+
+/** Program read-prompts offer snippets only; shell lines keep every source. */
+export function limitSuggestionsForPrompt(
+  promptText: string,
+  suggestions: CompletionSuggestion[],
+): CompletionSuggestion[] {
+  if (!isProgramInputPromptText(promptText)) return suggestions;
+  return suggestions.filter((suggestion) => suggestion.source === "snippet");
 }
 

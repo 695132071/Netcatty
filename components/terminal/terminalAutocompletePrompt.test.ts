@@ -3,10 +3,13 @@ import assert from "node:assert/strict";
 
 import {
   computeAutocompleteAcceptWrite,
+  computeSnippetAcceptClearSequence,
   isSameAutocompleteQuery,
+  limitSuggestionsForPrompt,
   resolveAutocompleteQueryInput,
   shouldBlockAutocompleteForSensitivePrompt,
 } from "./autocomplete/terminalAutocompletePrompt.ts";
+import type { CompletionSuggestion } from "./autocomplete/completionEngine.ts";
 import type { PromptDetectionResult } from "./autocomplete/promptDetector.ts";
 
 function atPrompt(userInput: string, promptText = "$ "): PromptDetectionResult {
@@ -55,6 +58,97 @@ test("shouldBlockAutocompleteForSensitivePrompt blocks auth-challenge prompts", 
     }),
     true,
   );
+});
+
+test("shouldBlockAutocompleteForSensitivePrompt lets safe program prompts past the untrusted latch", () => {
+  // observeTerminalInputPrompt latches every untrusted colon prompt, including
+  // `Email:`, before limitSuggestionsForPrompt can offer snippets.
+  for (const promptText of [
+    "Email: ",
+    "email:",
+    "E-mail: ",
+    "EMAIL ADDRESS: ",
+    "Enter your username: ",
+    "user: ",
+    "User Name: ",
+    "Login: ",
+    "Name: ",
+    "\u90ae\u7bb1: ",
+    "\u90ae\u7bb1\uFF1A",
+    "\u7528\u6237\u540d: ",
+  ]) {
+    assert.equal(
+      shouldBlockAutocompleteForSensitivePrompt({
+        sensitiveInputActive: true,
+        promptText,
+      }),
+      false,
+      promptText,
+    );
+  }
+  assert.equal(
+    shouldBlockAutocompleteForSensitivePrompt({
+      sensitiveInputActive: true,
+      promptText: "Password: ",
+    }),
+    true,
+  );
+});
+
+test("shouldBlockAutocompleteForSensitivePrompt keeps explicit plugin sensitivity closed for trusted labels", () => {
+  // pluginPipelineSensitiveInput (and any other authoritative latch) must not
+  // use the Email:/Username: bypass. A heuristic-only latch still may.
+  assert.equal(
+    shouldBlockAutocompleteForSensitivePrompt({
+      sensitiveInputActive: true,
+      sensitiveSource: "explicit",
+      promptText: "Email:",
+    }),
+    true,
+  );
+  assert.equal(
+    shouldBlockAutocompleteForSensitivePrompt({
+      sensitiveInputActive: true,
+      sensitiveSource: "explicit",
+      promptText: "Username:",
+    }),
+    true,
+  );
+  assert.equal(
+    shouldBlockAutocompleteForSensitivePrompt({
+      sensitiveInputActive: true,
+      sensitiveSource: "heuristic",
+      promptText: "Email:",
+    }),
+    false,
+  );
+});
+
+test("shouldBlockAutocompleteForSensitivePrompt keeps the latch for unknown and secret labels", () => {
+  for (const promptText of [
+    "API key:",
+    "API key: ",
+    "Recovery key: ",
+    "Token: ",
+    "TOKEN:",
+    "Password: ",
+    "Passphrase: ",
+    "Secret: ",
+    "PIN: ",
+    "OTP: ",
+    "One-time password: ",
+    "Favorite color: ",
+    "SSH key: ",
+  ]) {
+    assert.equal(
+      shouldBlockAutocompleteForSensitivePrompt({
+        sensitiveInputActive: true,
+        promptText,
+      }),
+      true,
+      promptText,
+    );
+  }
 });
 
 test("isSameAutocompleteQuery keeps late paths alive during live preview", () => {
@@ -224,6 +318,126 @@ test("computeAutocompleteAcceptWrite refuses line replacement when disabled", ()
     }),
     null,
   );
+});
+
+test("snippet accept deletes only the mid-line word (#3622)", () => {
+  // POSIX erase is DEL (0x7f). Ctrl-H is literal under canonical `read`.
+  assert.equal(
+    computeSnippetAcceptClearSequence({
+      line: "git pull use",
+      os: "linux",
+      promptText: "user@host:~$ ",
+    }),
+    "\x7f\x7f\x7f",
+  );
+  assert.equal(
+    computeSnippetAcceptClearSequence({
+      line: "git pull use",
+      os: "windows",
+      promptText: "C:\\Users\\me>",
+    }),
+    "\b\b\b",
+  );
+  assert.equal(
+    computeSnippetAcceptClearSequence({
+      line: "use",
+      os: "linux",
+      promptText: "user@host:~$ ",
+    }),
+    "\x15",
+  );
+  assert.equal(
+    computeSnippetAcceptClearSequence({
+      line: "deploy",
+      os: "windows",
+      promptText: "C:\\Users\\me>",
+    }),
+    "\b".repeat("deploy".length),
+  );
+  const emailClear = computeSnippetAcceptClearSequence({
+    line: "use",
+    os: "linux",
+    promptText: "Email: ",
+  });
+  assert.equal(emailClear, "\x7f".repeat(3));
+  assert.deepEqual([...emailClear].map((ch) => ch.charCodeAt(0)), [0x7f, 0x7f, 0x7f]);
+  assert.equal(
+    computeSnippetAcceptClearSequence({
+      line: "foo use",
+      os: "linux",
+      promptText: "Email: ",
+    }),
+    "\x7f\x7f\x7f",
+  );
+  assert.equal(
+    computeSnippetAcceptClearSequence({
+      line: "use",
+      os: "windows",
+      promptText: "Email: ",
+    }),
+    "\b\b\b",
+  );
+  assert.equal(
+    computeSnippetAcceptClearSequence({
+      line: "git pull \u{1F680}",
+      os: "linux",
+      promptText: "user@host:~$ ",
+    }),
+    "\x7f",
+  );
+});
+
+test("script snippet accept still clears the whole line (#3622)", () => {
+  assert.equal(
+    computeSnippetAcceptClearSequence({
+      line: "echo sm",
+      os: "linux",
+      promptText: "user@host:~$ ",
+      snippetKind: "script",
+    }),
+    "\x15",
+  );
+  assert.equal(
+    computeSnippetAcceptClearSequence({
+      line: "echo sm",
+      os: "windows",
+      promptText: "C:\\Users\\me>",
+      snippetKind: "script",
+    }),
+    "\b".repeat("echo sm".length),
+  );
+  assert.equal(
+    computeSnippetAcceptClearSequence({
+      line: "hello use",
+      os: "linux",
+      promptText: "Email: ",
+      snippetKind: "script",
+    }),
+    "\x15",
+  );
+  assert.equal(
+    computeSnippetAcceptClearSequence({
+      line: "echo sm",
+      os: "linux",
+      promptText: "user@host:~$ ",
+      snippetKind: "snippet",
+    }),
+    "\x7f\x7f",
+  );
+});
+
+test("program input prompts keep snippet suggestions only (#3622)", () => {
+  const suggestions = [
+    { text: "useradd", displayText: "useradd", source: "history", score: 10 },
+    { text: "邮箱", displayText: "邮箱", source: "snippet", score: 20 },
+  ] as CompletionSuggestion[];
+
+  assert.deepEqual(
+    limitSuggestionsForPrompt("Email: ", suggestions).map((suggestion) => suggestion.source),
+    ["snippet"],
+  );
+  assert.equal(limitSuggestionsForPrompt("user@host:~$ ", suggestions).length, 2);
+  assert.equal(limitSuggestionsForPrompt("Password: ", suggestions).length, 2);
 });
 
 test("computeAutocompleteAcceptWrite clears with backspaces on a mislabeled Windows shell (#3184)", () => {

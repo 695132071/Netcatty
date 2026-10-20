@@ -27,7 +27,7 @@ import {
   shouldPreferRemoteShellCwd,
 } from "./remotePathCompleter";
 import { decideGhostSuggestion } from "./ghostSuggestionPolicy";
-import { isWindowsShellLineInput, shouldWriteAutocompleteLivePreview } from "./livePreviewSequence";
+import { shouldWriteAutocompleteLivePreview } from "./livePreviewSequence";
 import {
   areSubDirPanelsEqual,
   areSuggestionsEqual,
@@ -41,9 +41,12 @@ import { handleTerminalAutocompleteInput } from "./terminalAutocompleteInput";
 import { handleTerminalAutocompleteKeyEvent } from "./terminalAutocompleteKeyEvent";
 import {
   computeAutocompleteAcceptWrite,
+  computeSnippetAcceptClearSequence,
   isSameAutocompleteQuery,
+  limitSuggestionsForPrompt,
   resolveAutocompleteQueryInput,
   shouldBlockAutocompleteForSensitivePrompt,
+  type SensitiveInputActiveRef,
 } from "./terminalAutocompletePrompt";
 import { sliceStringByCellColumns } from "./terminalStringCellWidth";
 import { isTerminalAlternateScreenActive } from "../terminalHibernateRuntime";
@@ -234,7 +237,7 @@ interface UseTerminalAutocompleteOptions {
    * Host-owned password/auth prompt latch. When true, suppress autocomplete
    * even if the PS1 still looks like a normal shell (e.g. `read -s -p '$ '`).
    */
-  sensitiveInputActiveRef?: RefObject<boolean>;
+  sensitiveInputActiveRef?: SensitiveInputActiveRef;
   /** Host-owned completion Provider adapter; defaults to Netcatty's built-in Provider. */
   provideCompletions?: (
     input: string,
@@ -876,6 +879,7 @@ export function useTerminalAutocomplete(
     if (
       shouldBlockAutocompleteForSensitivePrompt({
         sensitiveInputActive: sensitiveInputActiveRef?.current === true,
+        sensitiveSource: sensitiveInputActiveRef?.source,
         promptText: prompt.promptText,
       })
     ) {
@@ -1004,10 +1008,11 @@ export function useTerminalAutocomplete(
     };
 
     const applyCompletions = (
-      completions: CompletionSuggestion[],
+      incomingCompletions: CompletionSuggestion[],
       currentPrompt: ReturnType<typeof getAlignedPrompt>["prompt"],
       options?: { preserveSelection?: boolean },
     ) => {
+      const completions = limitSuggestionsForPrompt(currentPrompt.promptText, incomingCompletions);
       // Echo-lag-aware logical caret: resolved query `input` can be ahead of
       // the live xterm cursor / currentPrompt.userInput. When a late path
       // refresh lands while live-preview has already rewritten the shell line,
@@ -1340,8 +1345,8 @@ export function useTerminalAutocomplete(
     [handleCommandHistoryCleared],
   );
 
-  /** Accept a snippet: clear the user's typed input, then run it via the
-   *  host-canonical send path (onAcceptSnippet). */
+  /** Accept a snippet: clear the matched word (or the whole line for a script
+   *  or a shell prompt), then run it via onAcceptSnippet. */
   const acceptSnippet = useCallback((snippet: Snippet): boolean => {
     const term = termRef.current;
     if (term) {
@@ -1353,10 +1358,13 @@ export function useTerminalAutocomplete(
       );
       if (line !== null && line.length > 0) {
         if (!settingsRef.current.allowLineReplacement) return false;
-        const clearSequence = isWindowsShellLineInput(hostOsRef.current, prompt.promptText)
-          ? "\b".repeat(line.length)
-          : "\x15"; // Ctrl+U (readline kill-line)
-        writeToTerminal(clearSequence);
+        const clearSequence = computeSnippetAcceptClearSequence({
+          line,
+          os: hostOsRef.current,
+          promptText: prompt.promptText,
+          snippetKind: snippet.kind,
+        });
+        if (clearSequence) writeToTerminal(clearSequence);
       }
     }
     typedInputBufferRef.current = "";
