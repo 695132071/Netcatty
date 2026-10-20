@@ -723,6 +723,15 @@ export const SETTINGS_SEARCH_CATALOG: readonly SettingsSearchEntry[] = [
     keywords: ["mcp"],
   },
   {
+    id: "ai-external-mcp-http",
+    tab: "ai",
+    aiSubTab: "tools",
+    labelKey: "ai.externalMcp.http.title",
+    descriptionKey: "ai.externalMcp.http.description",
+    sectionKey: "ai.externalMcp.title",
+    keywords: ["http", "sse", "streamable", "wsl", "codex"],
+  },
+  {
     id: "ai-external-mcp-approval-alert",
     tab: "ai",
     aiSubTab: "tools",

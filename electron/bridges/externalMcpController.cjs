@@ -25,6 +25,18 @@ const {
   DEFAULT_SESSION_IDLE_TIMEOUT_MINUTES,
   normalizeSessionIdleTimeoutMinutes,
 } = require("./mcpServerBridge/sessionIdleManager.cjs");
+const { createExternalMcpHttpServer } = require("./externalMcp/httpServer.cjs");
+const {
+  DEFAULT_EXTERNAL_MCP_HTTP_HOST,
+  DEFAULT_EXTERNAL_MCP_HTTP_PORT,
+  buildClientUrl,
+  describeListenError,
+  isWildcardBind,
+  normalizeClientHost,
+  normalizeHttpPort,
+  normalizeListenAddress,
+  resolveEffectiveListenAddress,
+} = require("./externalMcp/httpSecurity.cjs");
 
 const EXTERNAL_MCP_MODE_TEMPORARY = "temporary";
 const EXTERNAL_MCP_MODE_PERSISTENT = "persistent";
@@ -60,6 +72,7 @@ function createExternalMcpController(options = {}) {
     readSkillContent: options.readSkillContent || readBundledNetcattySkillContent,
     buildUniversalSetupPrompt: options.buildUniversalSetupPrompt || buildUniversalSetupPrompt,
     randomBytes: options.randomBytes || ((size) => crypto.randomBytes(size)),
+    createHttpServer: options.createHttpServer || createExternalMcpHttpServer,
     Date: options.Date || Date,
     setTimeout: options.setTimeout || setTimeout,
     clearTimeout: options.clearTimeout || clearTimeout,
@@ -86,6 +99,17 @@ function createExternalMcpController(options = {}) {
   let codexSetup = null;
   let claudeSetup = null;
   let grokSetup = null;
+  let httpEnabled = false;
+  let httpPort = DEFAULT_EXTERNAL_MCP_HTTP_PORT;
+  let httpAllowCustomBind = false;
+  let httpListenAddress = "0.0.0.0";
+  let httpClientHost = "";
+  let httpListening = false;
+  let httpError = null;
+  let httpErrorCode = null;
+  let httpRuntime = null;
+  let httpApplyTail = Promise.resolve();
+  let httpGeneration = 0;
 
   function getNow() {
     return deps.Date.now();
@@ -143,6 +167,133 @@ function createExternalMcpController(options = {}) {
     return bridge.getScopedSessionIds(deps.chatSessionId).length;
   }
 
+  function getHttpRuntime() {
+    if (!httpRuntime) {
+      httpRuntime = deps.createHttpServer({
+        chatSessionId: deps.chatSessionId,
+        getToken: () => lastKnownToken || "",
+        isEnabled: () => isEnabled(),
+        recordActivity,
+        getPermissionMode: () => getBridge()?.getPermissionMode?.() || "confirm",
+        attachExternalClient: (client) => {
+          const bridge = getBridge();
+          if (typeof bridge?.attachExternalMcpClient === "function") {
+            return bridge.attachExternalMcpClient(client);
+          }
+          return () => client?.destroy?.();
+        },
+        dispatchRpc: async (method, params, context) => {
+          const bridge = getBridge();
+          if (typeof bridge?.dispatchBuiltinRpc !== "function") {
+            throw new Error("MCP bridge dispatch is unavailable.");
+          }
+          return await bridge.dispatchBuiltinRpc(method, {
+            ...(params || {}),
+            chatSessionId: deps.chatSessionId,
+          }, {
+            externalSocket: context?.externalClient || null,
+          });
+        },
+      });
+    }
+    return httpRuntime;
+  }
+
+  function effectiveHttpListenAddress() {
+    try {
+      return resolveEffectiveListenAddress({
+        allowCustomBind: httpAllowCustomBind,
+        listenAddress: httpListenAddress,
+      });
+    } catch {
+      return httpAllowCustomBind ? httpListenAddress : DEFAULT_EXTERNAL_MCP_HTTP_HOST;
+    }
+  }
+
+  function buildHttpStatus() {
+    let httpState = "disabled";
+    if (httpEnabled && httpError) httpState = "error";
+    else if (httpEnabled && httpListening) httpState = "running";
+    else if (httpEnabled && enabled) httpState = "starting";
+    const listenAddress = effectiveHttpListenAddress();
+    const url = buildClientUrl(listenAddress, httpPort, httpClientHost);
+    let error = httpError;
+    let errorCode = httpErrorCode;
+    if (!errorCode && isWildcardBind(listenAddress) && !url) {
+      errorCode = "client_host_required";
+      error = "Enter the IP clients should connect to. 0.0.0.0 is not a reachable address.";
+    }
+    return {
+      enabled: httpEnabled,
+      listening: httpListening,
+      port: httpPort,
+      listenAddress,
+      allowCustomBind: httpAllowCustomBind,
+      clientHost: httpClientHost,
+      url,
+      bearerToken: httpEnabled && enabled && lastKnownToken ? lastKnownToken : null,
+      state: httpState,
+      error,
+      errorCode,
+    };
+  }
+
+  function scheduleHttpApply() {
+    const generation = ++httpGeneration;
+    const run = () => applyHttpOnce(generation);
+    httpApplyTail = httpApplyTail.then(run, run);
+    return httpApplyTail;
+  }
+
+  async function applyHttpOnce(generation) {
+    if (!enabled || !httpEnabled) {
+      if (httpRuntime) {
+        try {
+          await httpRuntime.stop();
+        } catch {
+          // Stopping a listener that never bound is best-effort.
+        }
+      }
+      if (generation !== httpGeneration) return;
+      httpListening = false;
+      if (!httpEnabled) {
+        httpError = null;
+        httpErrorCode = null;
+      }
+      return;
+    }
+    let host = DEFAULT_EXTERNAL_MCP_HTTP_HOST;
+    try {
+      host = resolveEffectiveListenAddress({
+        allowCustomBind: httpAllowCustomBind,
+        listenAddress: httpListenAddress,
+      });
+      await getHttpRuntime().start({ host, port: httpPort });
+      if (generation !== httpGeneration) {
+        await getHttpRuntime().stop();
+        return;
+      }
+      httpListening = true;
+      httpError = null;
+      httpErrorCode = null;
+    } catch (listenError) {
+      if (generation !== httpGeneration) return;
+      httpListening = false;
+      const described = describeListenError(listenError, httpPort);
+      httpError = described.error;
+      httpErrorCode = described.errorCode;
+      try {
+        await getHttpRuntime().stop();
+      } catch {
+        // The failed bind should not leave a socket behind.
+      }
+    }
+  }
+
+  function whenHttpSettled() {
+    return httpApplyTail;
+  }
+
   function buildStatus() {
     const bridge = getBridge();
     const hostRunning = Boolean(bridge && typeof bridge.getOrCreateHost === "function" && lastKnownPort);
@@ -164,6 +315,7 @@ function createExternalMcpController(options = {}) {
       permissionMode: bridge?.getPermissionMode?.() || "confirm",
       hostRunning,
       error,
+      http: buildHttpStatus(),
     };
   }
 
@@ -215,6 +367,7 @@ function createExternalMcpController(options = {}) {
     if (typeof sessionSyncHandler === "function") {
       await sessionSyncHandler();
     }
+    await scheduleHttpApply();
   }
 
   async function stopActiveRuntime() {
@@ -290,6 +443,7 @@ function createExternalMcpController(options = {}) {
         // Best-effort cancel flag.
       }
     }
+    await scheduleHttpApply();
   }
 
   async function setEnabledUnlocked(nextEnabled) {
@@ -408,6 +562,51 @@ function createExternalMcpController(options = {}) {
       scheduleIdleShutdown();
     }
 
+    let httpChanged = false;
+    if (config.httpEnabled != null && Boolean(config.httpEnabled) !== httpEnabled) {
+      httpEnabled = Boolean(config.httpEnabled);
+      httpChanged = true;
+    }
+    if (config.httpPort != null) {
+      const normalizedPort = normalizeHttpPort(config.httpPort);
+      if (normalizedPort.ok && normalizedPort.port !== httpPort) {
+        httpPort = normalizedPort.port;
+        httpError = null;
+        httpErrorCode = null;
+        httpChanged = true;
+      }
+    }
+    if (config.httpAllowCustomBind != null && Boolean(config.httpAllowCustomBind) !== httpAllowCustomBind) {
+      httpAllowCustomBind = Boolean(config.httpAllowCustomBind);
+      httpChanged = true;
+    }
+    if (config.httpListenAddress != null) {
+      const normalizedAddress = normalizeListenAddress(config.httpListenAddress);
+      if (normalizedAddress.ok && normalizedAddress.address !== httpListenAddress) {
+        httpListenAddress = normalizedAddress.address;
+        httpChanged = true;
+      } else if (!normalizedAddress.ok && (httpAllowCustomBind || config.httpAllowCustomBind)) {
+        httpError = normalizedAddress.error;
+        httpErrorCode = normalizedAddress.errorCode;
+      }
+    }
+    if (config.httpClientHost != null) {
+      const normalizedClientHost = normalizeClientHost(config.httpClientHost);
+      if (normalizedClientHost.ok && normalizedClientHost.address !== httpClientHost) {
+        httpClientHost = normalizedClientHost.address;
+      }
+    }
+    if (config.rotateHttpToken === true && isEnabled()) {
+      const bridge = getBridge();
+      if (typeof bridge?.issueExternalMcpAuthToken === "function") {
+        lastKnownToken = bridge.issueExternalMcpAuthToken();
+        writeDiscoveryFromBridge();
+      }
+    }
+    if (httpChanged) {
+      void scheduleHttpApply();
+    }
+
     return buildStatus();
   }
 
@@ -482,6 +681,7 @@ function createExternalMcpController(options = {}) {
     state = "disabled";
     lastKnownPort = null;
     lastKnownToken = null;
+    void scheduleHttpApply();
   }
 
   async function getCodexStatus() {
@@ -550,7 +750,9 @@ function createExternalMcpController(options = {}) {
     });
     ipcMain.handle("netcatty:external-mcp:set-config", async (event, payload) => {
       if (!guard(event)) return { ok: false, error: "Unauthorized IPC sender" };
-      return setConfig(payload || {});
+      setConfig(payload || {});
+      await whenHttpSettled();
+      return getStatus();
     });
     ipcMain.handle("netcatty:external-mcp:get-universal-setup-prompt", async (event) => {
       if (!guard(event)) return { ok: false, error: "Unauthorized IPC sender" };
@@ -602,6 +804,7 @@ function createExternalMcpController(options = {}) {
     getGrokStatus,
     addToGrok,
     getUniversalSetupPrompt,
+    whenHttpSettled,
     EXTERNAL_MCP_CHAT_SESSION_ID: deps.chatSessionId,
   };
 }

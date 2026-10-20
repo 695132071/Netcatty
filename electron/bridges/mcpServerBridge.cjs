@@ -83,6 +83,19 @@ function markExternalMcpSocket(socket) {
   }
 }
 
+function attachExternalMcpClient(client) {
+  markExternalMcpSocket(client);
+  return () => {
+    if (!client || client.destroyed) return;
+    client.destroyed = true;
+    try {
+      client.emit?.("close");
+    } catch {
+      // Synthetic HTTP clients may not be emitters.
+    }
+  };
+}
+
 function issueExternalMcpAuthToken() {
   externalAuthToken = crypto.randomBytes(32).toString("hex");
   return externalAuthToken;
@@ -2549,6 +2562,7 @@ module.exports = {
   setExternalMcpHooks,
   disconnectExternalMcpClients,
   issueExternalMcpAuthToken,
+  attachExternalMcpClient,
   revokeExternalMcpAuthToken,
   getExternalMcpAuthToken,
   syncLiveSessionsToExternalScope,

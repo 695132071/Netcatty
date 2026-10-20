@@ -233,6 +233,16 @@ export const STORAGE_KEY_AI_SESSION_IDLE_TIMEOUT_MINUTES = 'netcatty_ai_session_
 export const STORAGE_KEY_AI_EXTERNAL_MCP_SILENT_SESSIONS = 'netcatty_ai_external_mcp_silent_sessions_v1';
 /** External MCP confirm-mode approval alert: off, unfocused, or always. Default unfocused. */
 export const STORAGE_KEY_AI_EXTERNAL_MCP_APPROVAL_ALERT = 'netcatty_ai_external_mcp_approval_alert_v1';
+/** External MCP Streamable HTTP listener. Off unless the user enables it. */
+export const STORAGE_KEY_AI_EXTERNAL_MCP_HTTP_ENABLED = 'netcatty_ai_external_mcp_http_enabled_v1';
+/** Fixed Streamable HTTP port so client configs stay stable across restarts. */
+export const STORAGE_KEY_AI_EXTERNAL_MCP_HTTP_PORT = 'netcatty_ai_external_mcp_http_port_v1';
+/** When true, HTTP may bind an address other than 127.0.0.1. */
+export const STORAGE_KEY_AI_EXTERNAL_MCP_HTTP_ALLOW_CUSTOM_BIND = 'netcatty_ai_external_mcp_http_allow_custom_bind_v1';
+/** IP address used only when custom bind is enabled. */
+export const STORAGE_KEY_AI_EXTERNAL_MCP_HTTP_LISTEN_ADDRESS = 'netcatty_ai_external_mcp_http_listen_address_v1';
+/** Address copied into client configs when the listener is a wildcard bind. */
+export const STORAGE_KEY_AI_EXTERNAL_MCP_HTTP_CLIENT_HOST = 'netcatty_ai_external_mcp_http_client_host_v1';
 /** AI panel diagnostic hide list (comma-separated part names). */
 export const STORAGE_KEY_AI_PANEL_DIAGNOSTIC_HIDE = 'netcatty.aiDebug.hide';
 /** AI panel React profiler toggle. */

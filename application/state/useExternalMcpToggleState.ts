@@ -3,6 +3,11 @@ import {
   STORAGE_KEY_AI_EXTERNAL_MCP_APPROVAL_ALERT,
   STORAGE_KEY_AI_EXTERNAL_MCP_ENABLED,
   STORAGE_KEY_AI_EXTERNAL_MCP_FOCUS_ON_HOST_OPEN,
+  STORAGE_KEY_AI_EXTERNAL_MCP_HTTP_ALLOW_CUSTOM_BIND,
+  STORAGE_KEY_AI_EXTERNAL_MCP_HTTP_CLIENT_HOST,
+  STORAGE_KEY_AI_EXTERNAL_MCP_HTTP_ENABLED,
+  STORAGE_KEY_AI_EXTERNAL_MCP_HTTP_LISTEN_ADDRESS,
+  STORAGE_KEY_AI_EXTERNAL_MCP_HTTP_PORT,
   STORAGE_KEY_AI_EXTERNAL_MCP_IDLE_TIMEOUT_MINUTES,
   STORAGE_KEY_AI_EXTERNAL_MCP_MODE,
   STORAGE_KEY_AI_EXTERNAL_MCP_SILENT_SESSIONS,
@@ -10,6 +15,7 @@ import {
   STORAGE_KEY_AI_SESSION_IDLE_TIMEOUT_MINUTES,
 } from '../../infrastructure/config/storageKeys';
 import type { AIPermissionMode } from '../../infrastructure/ai/types';
+import { DEFAULT_EXTERNAL_MCP_HTTP_PORT } from '../../domain/externalMcpHttp';
 import { localStorageAdapter } from '../../infrastructure/persistence/localStorageAdapter';
 import { netcattyBridge } from '../../infrastructure/services/netcattyBridge';
 import { AI_STATE_CHANGED_EVENT, emitAIStateChanged } from './aiStateEvents';
@@ -104,10 +110,23 @@ export function waitForExternalMcpStartupReady(hash?: string): Promise<void> {
   return externalMcpStartupReadyWaitPromise;
 }
 
+export type ExternalMcpHttpSettings = {
+  enabled: boolean;
+  port: number;
+  allowCustomBind: boolean;
+  listenAddress: string;
+  clientHost: string;
+};
+
 type ExternalMcpConfig = {
   mode: ExternalMcpMode;
   idleTimeoutMinutes: number;
   sessionIdleTimeoutMinutes: number;
+  httpEnabled?: boolean;
+  httpPort?: number;
+  httpAllowCustomBind?: boolean;
+  httpListenAddress?: string;
+  httpClientHost?: string;
 };
 
 type ExternalMcpBridge = {
@@ -241,6 +260,109 @@ export function writeSessionIdleTimeoutMinutes(minutes: number): number {
   return normalized;
 }
 
+const MIN_EXTERNAL_MCP_HTTP_PORT = 1024;
+const MAX_EXTERNAL_MCP_HTTP_PORT = 65535;
+
+export function normalizeExternalMcpHttpPort(value: number | null): number {
+  if (!Number.isInteger(value)) return DEFAULT_EXTERNAL_MCP_HTTP_PORT;
+  if (value < MIN_EXTERNAL_MCP_HTTP_PORT || value > MAX_EXTERNAL_MCP_HTTP_PORT) {
+    return DEFAULT_EXTERNAL_MCP_HTTP_PORT;
+  }
+  return value;
+}
+
+export function normalizeExternalMcpHttpListenAddress(value: string | null): string {
+  const address = (value ?? '').trim();
+  if (!address) return '0.0.0.0';
+  return address;
+}
+
+export function readExternalMcpHttpEnabled(): boolean {
+  return localStorageAdapter.readBoolean(STORAGE_KEY_AI_EXTERNAL_MCP_HTTP_ENABLED) ?? false;
+}
+
+export function writeExternalMcpHttpEnabled(enabled: boolean): boolean {
+  localStorageAdapter.writeBoolean(STORAGE_KEY_AI_EXTERNAL_MCP_HTTP_ENABLED, enabled);
+  emitAIStateChanged(STORAGE_KEY_AI_EXTERNAL_MCP_HTTP_ENABLED);
+  return enabled;
+}
+
+export function readExternalMcpHttpPort(): number {
+  return normalizeExternalMcpHttpPort(
+    localStorageAdapter.readNumber(STORAGE_KEY_AI_EXTERNAL_MCP_HTTP_PORT),
+  );
+}
+
+export function writeExternalMcpHttpPort(port: number): number {
+  const normalized = normalizeExternalMcpHttpPort(port);
+  localStorageAdapter.writeNumber(STORAGE_KEY_AI_EXTERNAL_MCP_HTTP_PORT, normalized);
+  emitAIStateChanged(STORAGE_KEY_AI_EXTERNAL_MCP_HTTP_PORT);
+  return normalized;
+}
+
+export function readExternalMcpHttpAllowCustomBind(): boolean {
+  return localStorageAdapter.readBoolean(STORAGE_KEY_AI_EXTERNAL_MCP_HTTP_ALLOW_CUSTOM_BIND) ?? false;
+}
+
+export function writeExternalMcpHttpAllowCustomBind(allowCustomBind: boolean): boolean {
+  localStorageAdapter.writeBoolean(STORAGE_KEY_AI_EXTERNAL_MCP_HTTP_ALLOW_CUSTOM_BIND, allowCustomBind);
+  emitAIStateChanged(STORAGE_KEY_AI_EXTERNAL_MCP_HTTP_ALLOW_CUSTOM_BIND);
+  return allowCustomBind;
+}
+
+export function readExternalMcpHttpListenAddress(): string {
+  return normalizeExternalMcpHttpListenAddress(
+    localStorageAdapter.readString(STORAGE_KEY_AI_EXTERNAL_MCP_HTTP_LISTEN_ADDRESS),
+  );
+}
+
+export function writeExternalMcpHttpListenAddress(listenAddress: string): string {
+  const normalized = normalizeExternalMcpHttpListenAddress(listenAddress);
+  localStorageAdapter.writeString(STORAGE_KEY_AI_EXTERNAL_MCP_HTTP_LISTEN_ADDRESS, normalized);
+  emitAIStateChanged(STORAGE_KEY_AI_EXTERNAL_MCP_HTTP_LISTEN_ADDRESS);
+  return normalized;
+}
+
+export function normalizeExternalMcpHttpClientHost(value: string | null): string {
+  return (value ?? '').trim();
+}
+
+export function readExternalMcpHttpClientHost(): string {
+  return normalizeExternalMcpHttpClientHost(
+    localStorageAdapter.readString(STORAGE_KEY_AI_EXTERNAL_MCP_HTTP_CLIENT_HOST),
+  );
+}
+
+export function writeExternalMcpHttpClientHost(clientHost: string): string {
+  const normalized = normalizeExternalMcpHttpClientHost(clientHost);
+  localStorageAdapter.writeString(STORAGE_KEY_AI_EXTERNAL_MCP_HTTP_CLIENT_HOST, normalized);
+  emitAIStateChanged(STORAGE_KEY_AI_EXTERNAL_MCP_HTTP_CLIENT_HOST);
+  return normalized;
+}
+
+export function readExternalMcpHttpSettings(): ExternalMcpHttpSettings {
+  return {
+    enabled: readExternalMcpHttpEnabled(),
+    port: readExternalMcpHttpPort(),
+    allowCustomBind: readExternalMcpHttpAllowCustomBind(),
+    listenAddress: readExternalMcpHttpListenAddress(),
+    clientHost: readExternalMcpHttpClientHost(),
+  };
+}
+
+function httpConfigFromSettings(settings: ExternalMcpHttpSettings): Pick<
+  ExternalMcpConfig,
+  'httpEnabled' | 'httpPort' | 'httpAllowCustomBind' | 'httpListenAddress' | 'httpClientHost'
+> {
+  return {
+    httpEnabled: settings.enabled,
+    httpPort: settings.port,
+    httpAllowCustomBind: settings.allowCustomBind,
+    httpListenAddress: settings.listenAddress,
+    httpClientHost: settings.clientHost,
+  };
+}
+
 export function shouldStartExternalMcpOnStartup({
   enabled,
   mode,
@@ -263,11 +385,19 @@ export function createExternalMcpStartupSyncPlan({
   mode,
   idleTimeoutMinutes,
   sessionIdleTimeoutMinutes,
+  http = {
+    enabled: false,
+    port: DEFAULT_EXTERNAL_MCP_HTTP_PORT,
+    allowCustomBind: false,
+    listenAddress: '0.0.0.0',
+    clientHost: '',
+  },
 }: {
   enabled: boolean;
   mode: ExternalMcpMode;
   idleTimeoutMinutes: number;
   sessionIdleTimeoutMinutes: number;
+  http?: ExternalMcpHttpSettings;
 }): ExternalMcpStartupSyncPlan {
   const runtimeEnabled = shouldStartExternalMcpOnStartup({ enabled, mode });
   const storedEnabled = runtimeEnabled;
@@ -276,6 +406,7 @@ export function createExternalMcpStartupSyncPlan({
       mode,
       idleTimeoutMinutes,
       sessionIdleTimeoutMinutes,
+      ...httpConfigFromSettings(http),
     },
     runtimeEnabled,
     storedEnabled,
@@ -289,14 +420,17 @@ export function readExternalMcpStartupSyncPlan(): ExternalMcpStartupSyncPlan {
     mode: readExternalMcpMode(),
     idleTimeoutMinutes: readExternalMcpIdleTimeoutMinutes(),
     sessionIdleTimeoutMinutes: readSessionIdleTimeoutMinutes(),
+    http: readExternalMcpHttpSettings(),
   });
 }
 
 export function syncExternalMcpConfig(bridge: ExternalMcpBridge | undefined = netcattyBridge.get()): void {
+  const http = readExternalMcpHttpSettings();
   void bridge?.externalMcpSetConfig?.({
     mode: readExternalMcpMode(),
     idleTimeoutMinutes: readExternalMcpIdleTimeoutMinutes(),
     sessionIdleTimeoutMinutes: readSessionIdleTimeoutMinutes(),
+    ...httpConfigFromSettings(http),
   });
 }
 
