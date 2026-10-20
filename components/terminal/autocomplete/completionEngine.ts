@@ -274,8 +274,9 @@ export async function getCompletions(
      */
     onLatePathSuggestions?: (suggestions: CompletionSuggestion[]) => void;
     /**
-     * UI locale. zh-CN overlays bundled spec descriptions; any other locale
-     * keeps the original English text. Cached specs are not rewritten.
+     * UI locale. zh-CN and zh-TW overlay bundled spec descriptions from their
+     * own dictionaries; any other locale keeps the original English text.
+     * Cached specs are not rewritten.
      */
     locale?: string;
   } = {},
