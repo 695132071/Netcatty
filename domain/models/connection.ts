@@ -427,6 +427,7 @@ export interface GroupConfig {
   protocol?: 'ssh' | 'telnet';
   deviceType?: 'general' | 'network';
   agentForwarding?: boolean;
+  x11Forwarding?: boolean;
   proxyProfileId?: string;
   proxyConfig?: ProxyConfig;
   hostChain?: HostChainConfig;

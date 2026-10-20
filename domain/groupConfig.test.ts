@@ -595,6 +595,58 @@ test("applyGroupDefaults keeps host-level skipEcdsaHostKey instead of group defa
   assert.equal(result.skipEcdsaHostKey, false);
 });
 
+test("resolveGroupDefaults uses the nearest group X11 toggle and stays off otherwise", () => {
+  const configs: GroupConfig[] = [
+    { path: "prod", x11Forwarding: true },
+    { path: "prod/edge", x11Forwarding: false },
+  ];
+  assert.equal(resolveGroupDefaults("prod", configs).x11Forwarding, true);
+  assert.equal(resolveGroupDefaults("prod/web", configs).x11Forwarding, true);
+  assert.equal(resolveGroupDefaults("prod/edge", configs).x11Forwarding, false);
+  assert.equal(resolveGroupDefaults("prod/edge/api", configs).x11Forwarding, false);
+  assert.equal(resolveGroupDefaults("other", configs).x11Forwarding, undefined);
+});
+
+test("applyGroupDefaults inherits group X11 forwarding when the host leaves it unset", () => {
+  assert.equal(applyGroupDefaults(host(), { x11Forwarding: true }).x11Forwarding, true);
+});
+
+test("applyGroupDefaults keeps an explicit host X11 toggle ahead of the group", () => {
+  assert.equal(
+    applyGroupDefaults(host({ x11Forwarding: false }), { x11Forwarding: true }).x11Forwarding,
+    false,
+  );
+  assert.equal(
+    applyGroupDefaults(host({ x11Forwarding: true }), { x11Forwarding: false }).x11Forwarding,
+    true,
+  );
+});
+
+test("applyGroupDefaults leaves X11 forwarding off when neither host nor group sets it", () => {
+  assert.equal(applyGroupDefaults(host(), {}).x11Forwarding, undefined);
+});
+
+test("applyGroupDefaults does not inherit X11 forwarding onto non-SSH transports", () => {
+  const groupDefaults = { x11Forwarding: true as const };
+  assert.equal(applyGroupDefaults(host({ moshEnabled: true }), groupDefaults).x11Forwarding, undefined);
+  assert.equal(applyGroupDefaults(host({ etEnabled: true }), groupDefaults).x11Forwarding, undefined);
+  assert.equal(applyGroupDefaults(host({ protocol: "telnet" }), groupDefaults).x11Forwarding, undefined);
+  assert.equal(applyGroupDefaults(host({ protocol: "serial" }), groupDefaults).x11Forwarding, undefined);
+  assert.equal(applyGroupDefaults(host({ protocol: "local" }), groupDefaults).x11Forwarding, undefined);
+  assert.equal(
+    applyGroupDefaults(host(), { ...groupDefaults, moshEnabled: true }).x11Forwarding,
+    undefined,
+  );
+  assert.equal(
+    applyGroupDefaults(host(), { ...groupDefaults, protocol: "telnet" }).x11Forwarding,
+    undefined,
+  );
+  assert.equal(
+    applyGroupDefaults(host({ moshEnabled: false }), { ...groupDefaults, moshEnabled: true }).x11Forwarding,
+    true,
+  );
+});
+
 test("applyGroupDefaults inherits algorithm overrides from the group", () => {
   const overrides = { serverHostKey: ["ssh-rsa", "ssh-dss"] };
   const result = applyGroupDefaults(host(), { algorithms: overrides });
@@ -678,6 +730,7 @@ test("applyGroupDefaults does not inherit SSH transport/input defaults into loca
     legacyAlgorithms: true,
     skipEcdsaHostKey: true,
     agentForwarding: true,
+    x11Forwarding: true,
     hostChain: { hostIds: ["bastion-1"] },
     charset: "UTF-8",
     fontSize: 14,
@@ -702,6 +755,7 @@ test("applyGroupDefaults does not inherit SSH transport/input defaults into loca
   assert.equal(result.legacyAlgorithms, undefined);
   assert.equal(result.skipEcdsaHostKey, undefined);
   assert.equal(result.agentForwarding, undefined);
+  assert.equal(result.x11Forwarding, undefined);
   assert.equal(result.hostChain, undefined);
   // Display/appearance defaults still apply to local shells.
   assert.equal(result.charset, "UTF-8");

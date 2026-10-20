@@ -1,4 +1,5 @@
 import { getHostOsSelection, HOST_OS_SELECTIONS, resolveHostOs } from '../domain/host';
+import { applyGroupDefaults } from "../domain/groupConfig";
 import React from "react";
 import { AlertTriangle, ChevronDown, ChevronUp, Forward, Globe, HeartPulse, KeyRound, Link2, Palette, Plus, Router, ShieldAlert, TerminalSquare, Timer, Wifi, X, Variable } from "lucide-react";
 import { customThemeStore } from "../application/state/customThemeStore";
@@ -63,6 +64,15 @@ export const HostDetailsAdvancedSections: React.FC<HostDetailsAdvancedSectionsPr
   const systemSshAgentEnabled = effectiveAuthMethod === "auto"
     ? form.useSshAgent !== false
     : effectiveAuthMethod === "key" && form.useSshAgent === true;
+  // Match the connection: inherited X11 is dropped when the effective transport
+  // is Mosh, Eternal Terminal, or anything other than plain SSH.
+  const effectiveConnectionHost = effectiveGroupDefaults
+    ? applyGroupDefaults(form, effectiveGroupDefaults)
+    : form;
+  const showX11Forwarding = (!effectiveConnectionHost.protocol || effectiveConnectionHost.protocol === "ssh")
+    && !effectiveConnectionHost.moshEnabled
+    && !effectiveConnectionHost.etEnabled;
+  const effectiveX11Forwarding = !!effectiveConnectionHost.x11Forwarding;
 
   return (
   <>
@@ -337,7 +347,7 @@ export const HostDetailsAdvancedSections: React.FC<HostDetailsAdvancedSectionsPr
         </HostDetailsSection>
 
         {/* X11 Forwarding */}
-        {(!form.protocol || form.protocol === "ssh") && !form.moshEnabled && !form.etEnabled && (
+        {showX11Forwarding && (
           <HostDetailsSection
             icon={<TerminalSquare size={14} className="text-muted-foreground" />}
             title={t("hostDetails.section.x11Forwarding")}
@@ -345,8 +355,8 @@ export const HostDetailsAdvancedSections: React.FC<HostDetailsAdvancedSectionsPr
             <ToggleRow
               label={t("hostDetails.x11Forwarding")}
               hint={t("hostDetails.x11Forwarding.desc")}
-              enabled={!!form.x11Forwarding}
-              onToggle={() => update("x11Forwarding", !form.x11Forwarding)}
+              enabled={effectiveX11Forwarding}
+              onToggle={() => update("x11Forwarding", !effectiveX11Forwarding)}
             />
           </HostDetailsSection>
         )}

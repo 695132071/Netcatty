@@ -102,7 +102,7 @@ export const hasGroupSshFields = (c: Partial<GroupConfig>): boolean =>
   c.protocol === 'ssh' ||
   c.port !== undefined || !!c.username || !!c.password || !!c.identityFileId ||
   c.deviceType !== undefined ||
-  c.agentForwarding !== undefined || c.authMethod !== undefined || c.identityId !== undefined ||
+  c.agentForwarding !== undefined || c.x11Forwarding !== undefined || c.authMethod !== undefined || c.identityId !== undefined ||
   !!c.proxyProfileId || !!c.proxyConfig || !!c.hostChain || !!c.startupCommand || c.startupCommandRunMode !== undefined || c.legacyAlgorithms !== undefined || c.skipEcdsaHostKey !== undefined || c.algorithms !== undefined || c.backspaceBehavior !== undefined ||
   Boolean(c.environmentVariables && c.environmentVariables.length > 0) ||
   c.moshEnabled !== undefined || !!c.moshServerPath ||
@@ -262,6 +262,7 @@ const GroupDetailsPanel: React.FC<GroupDetailsPanelPropsWithResize> = ({
       delete next.identityFilePaths;
       delete next.deviceType;
       delete next.agentForwarding;
+      delete next.x11Forwarding;
       delete next.startupCommand;
       delete next.startupCommandRunMode;
       delete next.legacyAlgorithms;
@@ -499,6 +500,10 @@ const GroupDetailsPanel: React.FC<GroupDetailsPanelPropsWithResize> = ({
     if (!parentGroup || groupConfigs.length === 0) return false;
     return !!resolveGroupDefaults(parentGroup, groupConfigs).skipEcdsaHostKey;
   }, [groupConfigs, parentGroup]);
+  const inheritedX11Forwarding = useMemo(() => {
+    if (!parentGroup || groupConfigs.length === 0) return false;
+    return !!resolveGroupDefaults(parentGroup, groupConfigs).x11Forwarding;
+  }, [groupConfigs, parentGroup]);
   const inheritedStartupCommandRunMode = useMemo(() => {
     if (!parentGroup || groupConfigs.length === 0) return "paste";
     return resolveGroupDefaults(parentGroup, groupConfigs).startupCommandRunMode ?? "paste";
@@ -568,6 +573,7 @@ const GroupDetailsPanel: React.FC<GroupDetailsPanelPropsWithResize> = ({
         ...(form.identityFilePaths !== undefined && { identityFilePaths: form.identityFilePaths }),
         ...(form.deviceType !== undefined && { deviceType: form.deviceType }),
         ...(form.agentForwarding !== undefined && { agentForwarding: form.agentForwarding }),
+        ...(form.x11Forwarding !== undefined && { x11Forwarding: form.x11Forwarding }),
         ...(form.startupCommand !== undefined && { startupCommand: form.startupCommand }),
         ...(form.startupCommandRunMode !== undefined && { startupCommandRunMode: form.startupCommandRunMode }),
         ...(form.legacyAlgorithms !== undefined && { legacyAlgorithms: form.legacyAlgorithms }),
@@ -778,6 +784,7 @@ const GroupDetailsPanel: React.FC<GroupDetailsPanelPropsWithResize> = ({
           setNewKeyFilePath={setNewKeyFilePath}
           inheritedLegacyAlgorithms={inheritedLegacyAlgorithms}
           inheritedSkipEcdsaHostKey={inheritedSkipEcdsaHostKey}
+          inheritedX11Forwarding={inheritedX11Forwarding}
           inheritedStartupCommandRunMode={inheritedStartupCommandRunMode}
           showAlgorithmOverrides={showAlgorithmOverrides}
           setShowAlgorithmOverrides={setShowAlgorithmOverrides}

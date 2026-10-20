@@ -3,6 +3,7 @@ import test from "node:test";
 
 import type { GroupConfig, Host, ProxyProfile, TerminalSession } from "./models";
 import {
+  resolveEffectiveTerminalHost,
   resolveTerminalChainHosts,
   resolveTerminalSessionHost,
 } from "./terminalHostResolution";
@@ -82,6 +83,45 @@ test("resolveTerminalSessionHost applies group default proxy profiles before ope
 
   assert.equal(resolved.proxyProfileId, "proxy-1");
   assert.deepEqual(resolved.proxyConfig, proxyProfiles[0].config);
+});
+
+test("resolveEffectiveTerminalHost applies the nearest group X11 default on the connect path", () => {
+  const host: Host = {
+    id: "target",
+    label: "Target",
+    hostname: "target.example.test",
+    username: "alice",
+    port: 22,
+    protocol: "ssh",
+    tags: [],
+    os: "linux",
+    group: "prod/web",
+  };
+  const groupConfigs: GroupConfig[] = [
+    { path: "prod", x11Forwarding: true },
+    { path: "prod/edge", x11Forwarding: false },
+  ];
+
+  assert.equal(
+    resolveEffectiveTerminalHost({ host, groupConfigs, proxyProfiles: [] }).x11Forwarding,
+    true,
+  );
+  assert.equal(
+    resolveEffectiveTerminalHost({
+      host: { ...host, x11Forwarding: false },
+      groupConfigs,
+      proxyProfiles: [],
+    }).x11Forwarding,
+    false,
+  );
+  assert.equal(
+    resolveEffectiveTerminalHost({
+      host: { ...host, group: "prod/edge/api" },
+      groupConfigs,
+      proxyProfiles: [],
+    }).x11Forwarding,
+    false,
+  );
 });
 
 test("resolveTerminalSessionHost defaults missing saved remote sessions to SSH", () => {

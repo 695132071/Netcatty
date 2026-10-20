@@ -15,6 +15,11 @@ test("GroupDetailsPanel treats an empty SSH identity as an explicit setting", ()
   assert.equal(hasGroupSshFields({}), false);
 });
 
+test("GroupDetailsPanel keeps the SSH section when X11 forwarding is set", () => {
+  assert.equal(hasGroupSshFields({ x11Forwarding: true }), true);
+  assert.equal(hasGroupSshFields({ x11Forwarding: false }), true);
+});
+
 test("GroupDetailsPanel treats cleared telnet credentials as explicit settings", () => {
   assert.equal(hasGroupTelnetFields({ telnetUsername: "" }), true);
   assert.equal(hasGroupTelnetFields({ telnetPassword: "" }), true);

@@ -47,6 +47,7 @@ export const GroupSshSettingsSection: React.FC<GroupSshSettingsSectionProps> = (
   setNewKeyFilePath,
   inheritedLegacyAlgorithms,
   inheritedSkipEcdsaHostKey,
+  inheritedX11Forwarding,
   inheritedStartupCommandRunMode,
   showAlgorithmOverrides,
   setShowAlgorithmOverrides,
@@ -393,6 +394,16 @@ export const GroupSshSettingsSection: React.FC<GroupSshSettingsSectionProps> = (
               hint={t("hostDetails.agentForwarding.desc")}
               enabled={!!form.agentForwarding}
               onToggle={() => update("agentForwarding", !form.agentForwarding)}
+            />
+
+            <ToggleRow
+              label={t("hostDetails.x11Forwarding")}
+              hint={t("hostDetails.x11Forwarding.desc")}
+              enabled={!!(form.x11Forwarding ?? inheritedX11Forwarding)}
+              onToggle={() => update(
+                "x11Forwarding",
+                !(form.x11Forwarding ?? inheritedX11Forwarding),
+              )}
             />
 
             {/* Startup Command — Textarea so multi-line sequences are typeable
