@@ -32,6 +32,8 @@ type PasteDisplayState = {
   clearPending: number;
   pasteEchoFragments: string[];
   inPasteEchoActiveRegion: boolean;
+  // Buffer type observed while preparing this chunk, before xterm applies it.
+  preparedOnAlternateScreen: boolean;
 };
 
 type PasteInputScrollState = {
@@ -328,6 +330,7 @@ export function pasteTextIntoTerminal(
       clearPending: 0,
       pasteEchoFragments: getPasteEchoFragments(text),
       inPasteEchoActiveRegion: false,
+      preparedOnAlternateScreen: false,
     });
   }
 
@@ -521,9 +524,16 @@ function consumePasteInputState(
   return true;
 }
 
+const isAlternateScreenBuffer = (term: object): boolean =>
+  (term as { buffer?: { active?: { type?: string } } }).buffer?.active?.type === "alternate";
+
 export function prepareTerminalDataForUserPasteDisplay(term: object, data: string): string {
   const state = pasteDisplayStates.get(term);
   if (!isStateActive(state)) return data;
+
+  // Captured before term.write. The residual check runs in the write callback,
+  // after a same-batch ESC[?1049l has already restored the normal buffer.
+  state.preparedOnAlternateScreen = isAlternateScreenBuffer(term);
 
   const strippedActiveRegion = stripMatchedReadlineActiveRegion(data, state);
   if (strippedActiveRegion.matched) {
@@ -541,6 +551,16 @@ export function prepareTerminalDataForUserPasteDisplay(term: object, data: strin
 export function clearPasteResidualAfterTerminalWrite(term: object): string | null {
   const state = pasteDisplayStates.get(term);
   if (!isStateActive(state)) return null;
+  // Vim and other alternate-screen apps often end a paste chunk with the cursor
+  // mid-line. EL would erase the rest of that row, and the app may not redraw it (#3166).
+  // Drop the pending clear so it cannot fire after returning to the normal screen.
+  // preparedOnAlternateScreen covers a same-batch exit: buffer.active is already
+  // normal when this write callback runs.
+  if (state.preparedOnAlternateScreen || isAlternateScreenBuffer(term)) {
+    state.preparedOnAlternateScreen = false;
+    state.clearPending = 0;
+    return null;
+  }
   if (state.clearPending <= 0) return null;
   if (typeof (term as Partial<Pick<XTerm, "write">>).write !== "function") return null;
 

@@ -448,6 +448,68 @@ test("long multi-line paste clears cursor-right residue after terminal echo", ()
   assert.deepEqual(writes, ["\x1b[K"]);
 });
 
+test("long multi-line paste does not erase to end of line on the alternate screen", () => {
+  const writes: string[] = [];
+  let bufferType: "alternate" | "normal" = "alternate";
+  const term = {
+    cols: 20,
+    rows: 4,
+    buffer: {
+      active: {
+        get type() {
+          return bufferType;
+        },
+      },
+    },
+    paste: () => {},
+    scrollToBottom: () => {},
+    write: (data: string) => writes.push(data),
+  };
+
+  const longPaste = Array.from({ length: 20 }, (_, index) => `line ${index} with enough content`).join("\n");
+  pasteTextIntoTerminal(term, longPaste, {
+    scrollOnPaste: false,
+  });
+  prepareTerminalDataForUserPasteDisplay(term, "\x1b[7mline 3 with enough content\x1b[27m");
+
+  assert.equal(clearPasteResidualAfterTerminalWrite(term), null);
+  assert.deepEqual(writes, []);
+
+  bufferType = "normal";
+  assert.equal(clearPasteResidualAfterTerminalWrite(term), null);
+  assert.deepEqual(writes, []);
+});
+
+test("long multi-line paste does not erase the restored normal buffer when the same batch leaves the alternate screen", () => {
+  const writes: string[] = [];
+  let bufferType: "alternate" | "normal" = "alternate";
+  const term = {
+    cols: 20,
+    rows: 4,
+    buffer: {
+      active: {
+        get type() {
+          return bufferType;
+        },
+      },
+    },
+    paste: () => {},
+    scrollToBottom: () => {},
+    write: (data: string) => writes.push(data),
+  };
+
+  const longPaste = Array.from({ length: 20 }, (_, index) => `line ${index} with enough content`).join("\n");
+  pasteTextIntoTerminal(term, longPaste, {
+    scrollOnPaste: false,
+  });
+  prepareTerminalDataForUserPasteDisplay(term, "\x1b[7mline 3 with enough content\x1b[27m\x1b[?1049l");
+  // xterm applies ESC[?1049l before the write callback observes buffer.active.
+  bufferType = "normal";
+
+  assert.equal(clearPasteResidualAfterTerminalWrite(term), null);
+  assert.deepEqual(writes, []);
+});
+
 test("sensitive paste override matches sanitized data containing zero-width characters", () => {
   const term = {
     paste: () => {},
