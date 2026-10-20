@@ -7,6 +7,7 @@ import {
   type AutocompleteSettings,
 } from "./autocomplete";
 import type { Snippet } from "../../domain/models";
+import { useI18n } from "../../application/i18n/I18nProvider";
 import { usePaneVisible } from "./paneVisibilityStore";
 import { getWindowPluginTerminalProviderRegistry } from "../../application/state/pluginTerminalProviderRegistry";
 import { provideTerminalCompletions } from "./autocomplete/terminalCompletionProviders";
@@ -95,6 +96,7 @@ export function TerminalAutocomplete({
   // flow through (and re-render) the TerminalView ctx. Popup / standalone
   // Terminal mounts never publish the store — fall back to the isVisible prop
   // (same contract as hibernate).
+  const { resolvedLocale } = useI18n();
   const visible = usePaneVisible(sessionId, isVisible);
   const provideCompletions = useCallback(async (
     input: string,
@@ -131,8 +133,9 @@ export function TerminalAutocomplete({
       historyScope: options.historyScope ?? settings?.historyScope,
       signal: options.signal,
       onLatePathSuggestions: options.onLatePathSuggestions,
+      locale: resolvedLocale,
     });
-  }, [allowHostStyleGreaterThanPrompt, hostGroup, hostId, hostOs, isPluginCompletionProviderAvailable, protocol, sensitiveInputActiveRef, sessionId, settings?.historyScope, status, workspaceId]);
+  }, [allowHostStyleGreaterThanPrompt, hostGroup, hostId, hostOs, isPluginCompletionProviderAvailable, protocol, resolvedLocale, sensitiveInputActiveRef, sessionId, settings?.historyScope, status, workspaceId]);
   const autocomplete = useTerminalAutocomplete({
     termRef,
     containerRef,

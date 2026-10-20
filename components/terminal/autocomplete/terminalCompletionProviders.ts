@@ -29,6 +29,8 @@ export interface TerminalCompletionProviderRequest {
    * soft budget (cache-bypassed relative SSH cwd).
    */
   onLatePathSuggestions?: (suggestions: CompletionSuggestion[]) => void;
+  /** UI locale forwarded to built-in spec description overlay. */
+  locale?: string;
 }
 
 const DEFAULT_PLUGIN_COMPLETION_RESPONSE_TIMEOUT_MS = 800;
@@ -74,6 +76,7 @@ export async function provideTerminalCompletions(
     snippets: request.snippets,
     historyScope: request.historyScope,
     onLatePathSuggestions: request.onLatePathSuggestions,
+    locale: request.locale,
   });
   const pluginRequestController = new AbortController();
   const abortPluginRequest = () => pluginRequestController.abort();

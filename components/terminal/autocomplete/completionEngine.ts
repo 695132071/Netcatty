@@ -31,6 +31,7 @@ import {
   resolvePathComponents,
 } from "./remotePathCompleter";
 import { getSnippetSuggestions } from "./snippetCompleter";
+import { localizeSpecSuggestionDescriptions } from "./autocompleteDescriptionI18n";
 import type { AutocompleteHistoryScope, Snippet } from "../../../domain/models";
 import type { AutocompleteCwdSource } from "./terminalAutocompleteLayout";
 
@@ -272,6 +273,11 @@ export async function getCompletions(
      * the shared directory cache for a later keystroke.
      */
     onLatePathSuggestions?: (suggestions: CompletionSuggestion[]) => void;
+    /**
+     * UI locale. zh-CN overlays bundled spec descriptions; any other locale
+     * keeps the original English text. Cached specs are not rewritten.
+     */
+    locale?: string;
   } = {},
 ): Promise<CompletionSuggestion[]> {
   const { hostId, maxResults = 15, historyScope = "host" } = options;
@@ -368,7 +374,11 @@ export async function getCompletions(
     )
     : [];
 
-  for (const suggestion of specResult.suggestions) {
+  const specSuggestions = await localizeSpecSuggestionDescriptions(
+    specResult.suggestions,
+    options.locale,
+  );
+  for (const suggestion of specSuggestions) {
     suggestions.push(suggestion);
     seenSuggestionTexts.add(suggestion.text);
   }
