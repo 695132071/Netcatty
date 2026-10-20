@@ -8,6 +8,10 @@ import { SearchAddon } from "@xterm/addon-search";
 import { SerializeAddon } from "@xterm/addon-serialize";
 import { UnicodeGraphemesAddon } from "@xterm/addon-unicode-graphemes";
 import { WebLinksAddon } from "@xterm/addon-web-links";
+import { supportsTerminalArchiveCommands } from "../../../domain/terminalArchives";
+import { registerTerminalArchiveLinks } from "./terminalArchiveLinks";
+import { createTerminalCwdMarkers } from "./terminalCwdMarkers";
+import { isTerminalReadyForCommandInjection } from "./terminalCommandInjectionReadyRegistry";
 import { WebglAddon } from "@xterm/addon-webgl";
 import { Terminal as XTerm } from "@xterm/xterm";
 import type { RefObject } from "react";
@@ -321,6 +325,8 @@ export const resetKittyKeyboardModeStateForSession = (
 export type CreateXTermRuntimeContext = {
   container: HTMLDivElement;
   host: Host;
+  /** Host OS facts can arrive after the runtime is created. */
+  getHost?: () => Host;
   fontFamilyId: string;
   resolvedFontFamily: string;
   fontSize: number;
@@ -974,6 +980,16 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
     terminalLinkHandler.activate(event, uri);
   });
   term.loadAddon(webLinksAddon);
+  const cwdMarkers = createTerminalCwdMarkers(term);
+  const archiveLinks = registerTerminalArchiveLinks({
+    term,
+    cwdMarkers,
+    isConnected: () => ctx.statusRef.current === "connected",
+    isBroadcasting: () => ctx.isBroadcastEnabledRef.current === true,
+    isHostEligible: () => supportsTerminalArchiveCommands(ctx.getHost?.() ?? ctx.host, platform),
+    isInputReady: () => isTerminalReadyForCommandInjection(ctx.sessionId, { allowDraft: true }),
+    linkModifier: () => ctx.terminalSettingsRef.current?.linkModifier ?? "none",
+  });
   const pluginLinkProviderHost = ctx.requestPluginTerminalProviders
     ? registerPluginTerminalLinkProvider({
         term,
@@ -3250,12 +3266,14 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
         if (path && path.length > 0) {
           currentCwd = path;
           ctx.onCwdChange?.(path);
+          cwdMarkers.note({ cwd: path, host: url.hostname });
           logger.debug('[XTerm] OSC 7 CWD update:', path);
         }
       } else if (data.startsWith('/')) {
         // Some shells send just the path without file:// prefix
         currentCwd = data;
         ctx.onCwdChange?.(data);
+        cwdMarkers.note({ cwd: data, host: '' });
         logger.debug('[XTerm] OSC 7 CWD update (raw path):', data);
       }
     } catch (err) {
@@ -3504,6 +3522,8 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
       keywordHighlighter.dispose();
       cursorLineHighlighter.dispose();
       pluginLinkProviderHost?.dispose();
+      archiveLinks.dispose();
+      cwdMarkers.dispose();
       pluginProviderHost?.dispose();
       eraseScrollbackDisposable.dispose();
       for (const disposable of cursorPositionReportRequestDisposables) {

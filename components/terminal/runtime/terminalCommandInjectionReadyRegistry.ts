@@ -1,8 +1,16 @@
-const commandInjectionReadyReaders = new Map<string, () => boolean>();
+export interface TerminalCommandInjectionReadyOptions {
+  /** Keep a typed draft. Sensitive prompts, alt-screen, and non-prompts still block. */
+  allowDraft?: boolean;
+}
+
+const commandInjectionReadyReaders = new Map<
+  string,
+  (options?: TerminalCommandInjectionReadyOptions) => boolean
+>();
 
 export function registerTerminalCommandInjectionReadyReader(
   sessionId: string,
-  reader: () => boolean,
+  reader: (options?: TerminalCommandInjectionReadyOptions) => boolean,
 ): () => void {
   commandInjectionReadyReaders.set(sessionId, reader);
   return () => {
@@ -12,7 +20,10 @@ export function registerTerminalCommandInjectionReadyReader(
   };
 }
 
-/** True when the live terminal reports an idle shell prompt ready for injection. */
-export function isTerminalReadyForCommandInjection(sessionId: string): boolean {
-  return commandInjectionReadyReaders.get(sessionId)?.() === true;
+/** True when the live terminal reports a shell prompt ready for injection. */
+export function isTerminalReadyForCommandInjection(
+  sessionId: string,
+  options?: TerminalCommandInjectionReadyOptions,
+): boolean {
+  return commandInjectionReadyReaders.get(sessionId)?.(options) === true;
 }
