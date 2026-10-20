@@ -289,6 +289,14 @@ export const zhCNAiMessages: Messages = {
   'ai.opencode.customPathPlaceholder': '例如 /usr/local/bin/opencode',
   'ai.opencode.check': '检查',
   'ai.opencode.resetPath': '重置',
+  'ai.opencode.v2.startupTimeout': 'OpenCode 2 未能及时就绪。请先在终端确认 `opencode serve` 可以启动，然后重试。',
+  'ai.opencode.v2.exited': 'OpenCode 2 在对话开始前已退出。',
+  'ai.opencode.v2.unauthorized': 'OpenCode 2 拒绝了连接。请重试这次对话。',
+  'ai.opencode.v2.unavailable': '无法连接到 OpenCode 2。请确认已安装后再试。',
+  'ai.opencode.v2.sessionFailed': 'OpenCode 2 未能完成这一轮对话。',
+  'ai.opencode.v2.empty': 'OpenCode 2 没有返回内容。请在终端运行 `opencode` 完成登录和模型配置。',
+  'ai.opencode.v2.contextSkipped': 'OpenCode 2 无法应用 Netcatty 的对话上下文。',
+  'ai.opencode.v2.mcpSkipped': 'OpenCode 2 无法接入 MCP 工具，对话会继续，但没有该工具。',
 
   // AI MiMo Code（小米 MiMo Code CLI，OpenCode 分支）
   'ai.mimo.title': 'MiMo Code',

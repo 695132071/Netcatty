@@ -24,6 +24,10 @@ const fs = require('node:fs');
 const http = require('node:http');
 const path = require('node:path');
 const root = ${JSON.stringify(root)};
+if (process.argv.includes('--version')) {
+  console.log('1.19.3');
+  process.exit(0);
+}
 const profile = path.basename(process.env.HOME);
 fs.appendFileSync(path.join(root, 'started'), profile + '\\n');
 if (profile === 'profile-failed') process.exit(7);

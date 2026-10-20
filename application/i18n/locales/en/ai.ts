@@ -289,6 +289,14 @@ export const enAiMessages: Messages = {
   'ai.opencode.customPathPlaceholder': 'e.g. /usr/local/bin/opencode',
   'ai.opencode.check': 'Check',
   'ai.opencode.resetPath': 'Reset',
+  'ai.opencode.v2.startupTimeout': 'OpenCode 2 did not become ready in time. Confirm `opencode serve` works in a terminal, then retry.',
+  'ai.opencode.v2.exited': 'OpenCode 2 stopped before the chat could start.',
+  'ai.opencode.v2.unauthorized': 'OpenCode 2 refused the connection. Retry the chat.',
+  'ai.opencode.v2.unavailable': 'OpenCode 2 could not be reached. Check that it is installed and try again.',
+  'ai.opencode.v2.sessionFailed': 'OpenCode 2 could not finish this turn.',
+  'ai.opencode.v2.empty': 'OpenCode 2 returned an empty response. Run `opencode` in a terminal to configure authentication and models.',
+  'ai.opencode.v2.contextSkipped': 'OpenCode 2 could not apply the Netcatty conversation context.',
+  'ai.opencode.v2.mcpSkipped': 'OpenCode 2 could not attach an MCP tool. The chat will continue without it.',
 
   // AI MiMo Code (Xiaomi MiMo Code CLI — OpenCode fork)
   'ai.mimo.title': 'MiMo Code',

@@ -25,6 +25,17 @@ import {
   registerCodebuddyElicitation,
 } from '../../shared/codebuddyElicitations';
 
+const OPENCODE_V2_MESSAGE_KEY = /^ai\.opencode\.v2\.[A-Za-z0-9]+$/;
+
+export function localizeSdkAgentMessage(
+  message: string,
+  translate?: (key: string) => string,
+): string {
+  if (!translate || !OPENCODE_V2_MESSAGE_KEY.test(message)) return message;
+  const localized = translate(message);
+  return localized || message;
+}
+
 interface LiveExternalTurn {
   requestId: string;
   sessionId: string;
@@ -333,7 +344,8 @@ async function runExternalTurn(
     },
     onWarning: (activity) => {
       flushTextBeforeNonTextEvent();
-      runOrBufferUiOperation(() => updateActivity(activity));
+      const message = localizeSdkAgentMessage(activity.message, ui.translate);
+      runOrBufferUiOperation(() => updateActivity({ ...activity, message }));
     },
     onUsage: (usage: AgentUsage) => {
       flushTextBeforeNonTextEvent();
@@ -391,7 +403,7 @@ async function runExternalTurn(
     },
     onError: (error: string) => {
       flushTextBeforeNonTextEvent();
-      ui.reportStreamError(sessionId, signal, error);
+      ui.reportStreamError(sessionId, signal, localizeSdkAgentMessage(error, ui.translate));
       ui.setStreamingForScope(sessionId, false);
     },
     onDone: () => {
