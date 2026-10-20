@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   isQuickConnectInput,
+  isSwitcherQuickConnectInput,
   parseQuickConnectInput,
 } from "./quickConnect";
 
@@ -118,4 +119,27 @@ test("quick connect rejects malformed multi-@ inputs", () => {
   assert.equal(parseQuickConnectInput("bad user@10.2.0.8@jump"), null);
   assert.equal(parseQuickConnectInput("root@10.2.0.8@"), null);
   assert.equal(parseQuickConnectInput("root@bad host@jump"), null);
+});
+
+test("switcher quick connect accepts only address-like input", () => {
+  for (const label of ["lab", "web01", "prod", "lab-switch", "localhost"]) {
+    assert.equal(isQuickConnectInput(label), true);
+    assert.equal(isSwitcherQuickConnectInput(label), false);
+  }
+
+  for (const address of [
+    "10.1.1.1",
+    "root@10.2.0.8:2222",
+    "example.com",
+    "host:2222",
+    "user@lab",
+    "[::1]",
+    "fe80::1",
+    "[2001:db8::1]:2222",
+  ]) {
+    assert.equal(isSwitcherQuickConnectInput(address), true, address);
+  }
+
+  assert.equal(isSwitcherQuickConnectInput("core switch"), false);
+  assert.equal(isSwitcherQuickConnectInput("host:99999"), false);
 });

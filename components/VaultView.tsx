@@ -44,6 +44,7 @@ import React, {
   useState,
 } from "react";
 import { useI18n } from "../application/i18n/I18nProvider";
+import { registerQuickConnectOpener } from "../application/quickConnectBridge";
 import { useStoredViewMode } from "../application/state/useStoredViewMode";
 import { useStoredBoolean } from "../application/state/useStoredBoolean";
 import { useStoredNumber } from "../application/state/useStoredNumber";
@@ -560,6 +561,12 @@ const VaultViewInner: React.FC<VaultViewProps> = ({
   const [quickConnectWarnings, setQuickConnectWarnings] = useState<string[]>(
     [],
   );
+
+  useEffect(() => registerQuickConnectOpener(({ target, warnings }) => {
+    setQuickConnectTarget(target);
+    setQuickConnectWarnings(warnings);
+    setIsQuickConnectOpen(true);
+  }), []);
 
   // Protocol select state (for hosts with multiple protocols)
   const [protocolSelectHost, setProtocolSelectHost] = useState<Host | null>(
@@ -1792,7 +1799,8 @@ export const vaultViewAreEqual = (
     // Only these terminal connection settings are forwarded to
     // PortForwarding inside the vault, so compare them directly. Other
     // terminal settings (fonts, themes, etc.) don't affect this subtree
-    // and we don't want to re-render for them.
+    // and we don't want to re-render for them. onConnect is also omitted:
+    // temporary-connection toggles are read from a ref at connect time.
     prev.terminalSettings?.verifyHostKeys ===
       next.terminalSettings?.verifyHostKeys &&
     prev.terminalSettings?.keepaliveInterval ===

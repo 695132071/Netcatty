@@ -360,3 +360,30 @@ export function parseQuickConnectInput(
 export function isQuickConnectInput(input: string): boolean {
   return parseQuickConnectInput(input) !== null;
 }
+
+const SWITCHER_PORT_SUFFIX = /:(\d{1,5})$/;
+
+/**
+ * Tab-switcher quick connect is stricter than vault search. A single saved
+ * label such as "lab" or "lab-switch" must stay a host search, not an address.
+ * Address-like means `@`, a numeric :port, an IP, or a dot.
+ */
+export function isSwitcherQuickConnectInput(input: string): boolean {
+  if (!isQuickConnectInput(input)) return false;
+  const trimmed = input.trim();
+  if (trimmed.includes("@") || trimmed.includes(".")) return true;
+
+  const portMatch = trimmed.match(SWITCHER_PORT_SUFFIX);
+  if (portMatch) {
+    const port = Number(portMatch[1]);
+    if (port >= 1 && port <= 65535) return true;
+  }
+
+  const hostToken = trimmed.split(/\s+/).pop() ?? trimmed;
+  const withoutUser = hostToken.includes("@")
+    ? hostToken.slice(hostToken.lastIndexOf("@") + 1)
+    : hostToken;
+  const withoutPort = withoutUser.replace(SWITCHER_PORT_SUFFIX, "");
+  const unbracketed = withoutPort.replace(/^\[|\]$/g, "");
+  return isBareIPv6(unbracketed);
+}

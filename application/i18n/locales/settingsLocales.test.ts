@@ -63,6 +63,24 @@ test("localized settings include temporary-connection legacy algorithm labels", 
   assert.match(zhTW["settings.terminal.connection.temporaryLegacyAlgorithms"], /臨時連線允許舊版演算法/);
 });
 
+test("localized settings include temporary-connection network device mode labels", () => {
+  const keys = [
+    "settings.terminal.connection.temporaryNetworkDeviceMode",
+    "settings.terminal.connection.temporaryNetworkDeviceMode.desc",
+  ];
+  const locales = [{ name: "en", messages: en }, ...LOCALIZED_SETTINGS_LOCALES];
+
+  for (const locale of locales) {
+    const missing = keys.filter((key) => !locale.messages[key]);
+    assert.deepEqual(missing, [], `${locale.name} is missing temporary network device mode labels`);
+  }
+
+  assert.match(zhCN["settings.terminal.connection.temporaryNetworkDeviceMode"], /临时连接使用网络设备模式/);
+  assert.match(zhTW["settings.terminal.connection.temporaryNetworkDeviceMode"], /臨時連線使用網路裝置模式/);
+  assert.match(zhTW["settings.terminal.connection.temporaryNetworkDeviceMode.desc"], /連線/);
+  assert.match(zhTW["settings.terminal.connection.temporaryNetworkDeviceMode.desc"], /設定|群組|裝置/);
+});
+
 test("localized settings include the global default proxy labels", () => {
   const keys = [
     "settings.terminal.connection.defaultProxy",

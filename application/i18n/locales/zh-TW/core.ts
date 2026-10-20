@@ -1141,6 +1141,10 @@ Vaults 分頁維持扁平，不使用這塊背景。
 
   // Quick Switcher
   'qs.search.placeholder': '搜尋主機或分頁',
+  'qs.quickConnectTo': '快速連線到 {target}',
+  'qs.hosts': '主機',
+  'qs.tabs': '分頁',
+  'qs.newWorkspace': '新增工作區',
   'qs.jumpTo': '跳轉到',
   'qs.localTerminal': '本機終端',
   'qs.localShells': '本機 Shell',

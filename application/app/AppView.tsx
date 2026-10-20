@@ -22,6 +22,7 @@ import { Input } from '../../components/ui/input';
 import { Label } from '../../components/ui/label';
 import { LazyLoadBoundary } from '../../components/ui/lazy-load-boundary';
 import { toast } from '../../components/ui/toast';
+import { openQuickConnectFromInput } from '../quickConnectBridge';
 import { AppHostTreeLayer } from './AppHostTreeLayer';
 import { AppHostEditorLayer } from './AppHostEditorLayer';
 import { AppPluginKeybindingHost } from './AppPluginKeybindingHost';
@@ -930,6 +931,7 @@ function AppViewInner({ domains }: AppViewProps) {
               showSftpTab={showSftpTab}
               onQueryChange={setQuickSearch}
               onSelect={handleHostConnectWithProtocolCheck}
+              onQuickConnect={openQuickConnectFromInput}
               onEditHost={(host) => {
                 setIsQuickSwitcherOpen(false);
                 setQuickSearch('');

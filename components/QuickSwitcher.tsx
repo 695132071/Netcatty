@@ -14,6 +14,7 @@ import { useI18n } from "../application/i18n/I18nProvider";
 import { Host, TerminalSession, TerminalSettings, Workspace } from "../types";
 import { KeyBinding } from "../domain/models";
 import type { PaneMagnificationState } from "../domain/paneMagnification";
+import { isSwitcherQuickConnectInput } from "../domain/quickConnect";
 import { matchesSearchQuery } from "../lib/searchMatcher";
 import { buildQuickSwitcherShells, useDiscoveredShells, getShellIconPath, isMonochromeShellIcon } from "../lib/useDiscoveredShells";
 import { usePluginContributions } from "../application/state/usePluginContributions";
@@ -30,11 +31,12 @@ type QuickSwitcherItemBase = {
   shortcut?: string;
   pluginId?: string;
   icon?: NetcattyPluginIconReference;
+  quickConnectInput?: string;
 };
 
 type QuickSwitcherItem = QuickSwitcherItemBase & (
   | { type: "plugin-command"; commandId: string }
-  | { type: "host" | "tab" | "workspace" | "action" | "shell" | "plugin-view"; commandId?: never }
+  | { type: "host" | "tab" | "workspace" | "action" | "shell" | "plugin-view" | "quick-connect"; commandId?: never }
 );
 
 export function buildPaneMagnificationPaletteAction(
@@ -165,6 +167,7 @@ interface QuickSwitcherProps {
   paneMagnificationState?: PaneMagnificationState;
   onMagnifyCurrentPane?: () => void;
   onRestoreMagnifiedPane?: () => void;
+  onQuickConnect?: (input: string) => void;
 }
 
 const QuickSwitcherInner: React.FC<QuickSwitcherProps> = ({
@@ -186,6 +189,7 @@ const QuickSwitcherInner: React.FC<QuickSwitcherProps> = ({
   paneMagnificationState = 'unavailable',
   onMagnifyCurrentPane,
   onRestoreMagnifiedPane,
+  onQuickConnect,
 }) => {
   const { t } = useI18n();
   const discoveredShells = useDiscoveredShells();
@@ -335,19 +339,37 @@ const QuickSwitcherInner: React.FC<QuickSwitcherProps> = ({
       });
     };
 
-    if (results.length > 0) {
-      pushHeader("header:hosts", "Hosts");
-      results.forEach((host) =>
-        pushItem({ type: "host", id: host.id, data: host }),
-      );
-    }
+    const quickConnectItem: QuickSwitcherItem | null =
+      trimmedQuery && isSwitcherQuickConnectInput(trimmedQuery)
+        ? {
+            type: "quick-connect",
+            id: "quick-connect",
+            title: t("qs.quickConnectTo", { target: trimmedQuery }),
+            quickConnectInput: trimmedQuery,
+          }
+        : null;
 
     const hasTabsSection =
       builtInTabs.length > 0
       || filteredOrphanSessions.length > 0
       || filteredWorkspaces.length > 0;
+
+    // The address row is the default Enter target only when nothing else matches.
+    // Matching hosts and open tabs stay ahead of it.
+    if (quickConnectItem && results.length === 0 && !hasTabsSection) {
+      pushItem(quickConnectItem);
+    }
+
+    if (results.length > 0) {
+      pushHeader("header:hosts", t("qs.hosts"));
+      results.forEach((host) =>
+        pushItem({ type: "host", id: host.id, data: host }),
+      );
+      if (quickConnectItem) pushItem(quickConnectItem);
+    }
+
     if (hasTabsSection) {
-      pushHeader("header:tabs", "Tabs");
+      pushHeader("header:tabs", t("qs.tabs"));
       builtInTabs.forEach((tabId) => {
         pushItem({ type: "tab", id: tabId });
       });
@@ -357,6 +379,7 @@ const QuickSwitcherInner: React.FC<QuickSwitcherProps> = ({
       filteredOrphanSessions.forEach((s) =>
         pushItem({ type: "tab", id: s.id, data: s }),
       );
+      if (quickConnectItem && results.length === 0) pushItem(quickConnectItem);
     }
 
     if (filteredShells.length > 0) {
@@ -445,6 +468,10 @@ const QuickSwitcherInner: React.FC<QuickSwitcherProps> = ({
 
   const handleItemSelect = (item: QuickSwitcherItem, useAlternate = false) => {
     switch (item.type) {
+      case "quick-connect":
+        if (item.quickConnectInput) onQuickConnect?.(item.quickConnectInput);
+        onClose();
+        break;
       case "host":
         onSelect(item.data as Host);
         break;
@@ -542,7 +569,7 @@ const QuickSwitcherInner: React.FC<QuickSwitcherProps> = ({
               className="ml-auto inline-flex items-center gap-1 text-[11px] text-muted-foreground hover:text-foreground border border-border rounded px-1.5 py-0.5 transition-colors hover:bg-muted/50"
             >
               <Plus size={11} />
-              <span>New Workspace</span>
+              <span>{t("qs.newWorkspace")}</span>
             </button>
           )}
         </div>
@@ -575,6 +602,20 @@ const QuickSwitcherInner: React.FC<QuickSwitcherProps> = ({
               const isSelected = itemIndex === selectedIndex;
               // Fixed virtual slots: keep content single-line (or plugin two-line) and clip overflow.
               const rowClass = `flex h-full min-h-0 items-center gap-3 overflow-hidden px-4 py-2.5 cursor-pointer transition-colors ${getQuickSwitcherRowStateClass(isSelected, isKeyboardNavigating)}`;
+
+              if (item.type === "quick-connect") {
+                return (
+                  <div
+                    className={rowClass}
+                    onClick={() => handleItemSelect(item)}
+                  >
+                    <div className="flex h-6 w-6 shrink-0 items-center justify-center rounded text-muted-foreground">
+                      <Terminal size={16} />
+                    </div>
+                    <span className="min-w-0 truncate text-sm font-medium">{item.title}</span>
+                  </div>
+                );
+              }
 
               if (item.type === "host") {
                 const host = item.data as Host;

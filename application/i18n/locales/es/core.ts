@@ -753,6 +753,8 @@ Resalta el panel dividido enfocado:
   'settings.terminal.connection.verifyHostKeys.desc': 'Pregunta antes de conectarse a una clave de host SSH nueva o modificada. Desactívalo solo en redes privadas de confianza.',
   'settings.terminal.connection.temporaryLegacyAlgorithms': 'Permitir algoritmos heredados en conexiones temporales',
   'settings.terminal.connection.temporaryLegacyAlgorithms.desc': 'Las conexiones SSH sin un host guardado, incluidos los inicios al estilo PuTTY y la conexión rápida, ofrecen los mismos algoritmos obsoletos que la opción por host. Los hosts guardados conservan su propio ajuste. Desactivado de forma predeterminada; estos algoritmos tienen debilidades conocidas.',
+  'settings.terminal.connection.temporaryNetworkDeviceMode': 'Modo de dispositivo de red para conexiones temporales',
+  'settings.terminal.connection.temporaryNetworkDeviceMode.desc': 'Las conexiones SSH sin un host guardado, incluidos los inicios externos y la conexión rápida, se inician en modo de dispositivo de red. Los hosts y grupos guardados conservan su propio tipo de dispositivo. Desactivado de forma predeterminada.',
   'settings.terminal.connection.sshAutoReconnectEnabled': 'Reconectar sesiones SSH automáticamente',
   'settings.terminal.connection.sshAutoReconnectEnabled.desc': 'Cuando está activado, las sesiones SSH establecidas que se caen inesperadamente intentan reconectarse cada 5 segundos hasta que la pestaña se cierra o la conexión se establece.',
   'settings.terminal.connection.keepaliveInterval': 'Intervalo de keepalive',

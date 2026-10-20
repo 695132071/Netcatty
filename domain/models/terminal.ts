@@ -149,6 +149,12 @@ export interface TerminalSettings {
    * this and keep their own setting. Off by default.
    */
   temporaryConnectionsAllowLegacyAlgorithms: boolean;
+  /**
+   * Start SSH connections that have no saved host (external launches, deep
+   * links, and quick connect) in network device mode. Saved hosts and groups
+   * keep their own device type. Off by default.
+   */
+  temporaryConnectionsNetworkDeviceMode: boolean;
   keepaliveInterval: number; // Seconds between SSH-level keepalive packets (0 = disabled)
   keepaliveCountMax: number; // Unanswered keepalives before declaring the connection dead
   sshAutoReconnectEnabled: boolean; // Automatically reconnect SSH sessions after unexpected disconnects
@@ -476,6 +482,8 @@ export const normalizeTerminalSettings = (
     ...mergedSettings,
     temporaryConnectionsAllowLegacyAlgorithms:
       mergedSettings.temporaryConnectionsAllowLegacyAlgorithms === true,
+    temporaryConnectionsNetworkDeviceMode:
+      mergedSettings.temporaryConnectionsNetworkDeviceMode === true,
     rendererType,
     autocompleteMaxSuggestions,
     multilinePasteConfirmMinLines: normalizeMultilinePasteConfirmMinLines(
@@ -577,6 +585,7 @@ const DEFAULT_TERMINAL_SETTINGS: TerminalSettings = {
   // own per-host keepaliveOverride and dial these values down.
   verifyHostKeys: true,
   temporaryConnectionsAllowLegacyAlgorithms: false,
+  temporaryConnectionsNetworkDeviceMode: false,
   keepaliveInterval: 30,
   keepaliveCountMax: 10,
   // On by default: unexpected transport drops (VPN / Wi-Fi blips) schedule an

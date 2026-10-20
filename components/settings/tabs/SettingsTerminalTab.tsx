@@ -1009,6 +1009,16 @@ function SettingsTerminalTab(props: {
           />
         </SettingRow>
         <SettingRow
+          anchorId="terminal-temporary-network-device-mode"
+          label={t("settings.terminal.connection.temporaryNetworkDeviceMode")}
+          description={t("settings.terminal.connection.temporaryNetworkDeviceMode.desc")}
+        >
+          <Toggle
+            checked={terminalSettings.temporaryConnectionsNetworkDeviceMode}
+            onChange={(v) => updateTerminalSetting("temporaryConnectionsNetworkDeviceMode", v)}
+          />
+        </SettingRow>
+        <SettingRow
           anchorId="terminal-ssh-auto-reconnect"
           label={t("settings.terminal.connection.sshAutoReconnectEnabled")}
           description={t("settings.terminal.connection.sshAutoReconnectEnabled.desc")}

@@ -710,6 +710,10 @@ export const ruVaultMessages: Messages = {
 
   // Quick Switcher
   'qs.search.placeholder': 'Поиск хостов или вкладок',
+  'qs.quickConnectTo': 'Быстрое подключение к {target}',
+  'qs.hosts': 'Хосты',
+  'qs.tabs': 'Вкладки',
+  'qs.newWorkspace': 'Новая рабочая область',
   'qs.jumpTo': 'Перейти к',
   'qs.localTerminal': 'Локальный терминал',
   'qs.localShells': 'Локальные оболочки',

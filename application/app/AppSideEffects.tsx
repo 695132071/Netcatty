@@ -47,7 +47,7 @@ import { buildSshDeepLinkConnectionHost, buildSshDeepLinkEphemeralHost, buildSsh
 import { buildTelnetDeepLinkConnectionHost, buildTelnetDeepLinkEphemeralHostFromSaved, buildTelnetDeepLinkOpenHost, findTelnetDeepLinkHost, materializeTelnetDeepLinkMatchHost, parseTelnetDeepLink } from '../../domain/telnetDeepLink';
 import { buildJmsDeepLinkEphemeralHost, isSupportedJmsProtocol, parseJmsDeepLink } from '../../domain/jmsDeepLink';
 import { applyEphemeralHostDistroUpdate, applyEphemeralHostsUpdate, splitHostsUpdateByEphemeral } from '../../domain/ephemeralHosts';
-import { prepareConnectionHost } from '../../domain/legacyAlgorithms';
+import { prepareConnectionHost, temporaryConnectionPrepareOptions } from '../../domain/legacyAlgorithms';
 import { resolveHostAuth } from '../../domain/sshAuth';
 import { isEncryptedCredentialPlaceholder, stripSyncPayloadEncryptedCredentials } from '../../domain/credentials';
 import {
@@ -1449,11 +1449,18 @@ export function AppSideEffects() {
     name,
   ), [createWorkspaceFromTargets, resolveEffectiveHost]);
 
+  // VaultView memo ignores onConnect identity, so this callback can stay
+  // closed over an older render. Temporary-connection toggles are read here,
+  // at connect time, so turning them on or off applies without a reload.
+  const temporaryConnectionSettingsRef = useRef(terminalSettings);
+  temporaryConnectionSettingsRef.current = terminalSettings;
+
   // Wrapper to connect to host with logging
   const handleConnectToHost = useCallback((host: Host, alreadyEffective = false, hidden = false) => {
+    const liveTerminalSettings = temporaryConnectionSettingsRef.current;
     const connectionHost = prepareConnectionHost(
       host,
-      terminalSettings.temporaryConnectionsAllowLegacyAlgorithms,
+      temporaryConnectionPrepareOptions(liveTerminalSettings),
     );
     if (connectionHost.ephemeral) {
       setEphemeralHosts((previous) => {
@@ -1476,9 +1483,9 @@ export function AppSideEffects() {
       resolveHostAuth,
       resolveShellSetting,
       systemInfoRef,
-      terminalSettings,
+      terminalSettings: liveTerminalSettings,
     }), connectionHost, hidden);
-  }, [addConnectionLog, connectToHost, resolveEffectiveHost, identities, keys, discoveredShells, terminalSettings]);
+  }, [addConnectionLog, connectToHost, resolveEffectiveHost, identities, keys, discoveredShells]);
 
   const handleConnectToHostWithTabName = useCallback((host: Host, tabName?: string) => {
     const sessionId = handleConnectToHost(host);

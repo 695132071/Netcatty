@@ -793,6 +793,8 @@ export const ruCoreMessages: Messages = {
   'settings.terminal.section.connection': 'Подключение',
   'settings.terminal.connection.temporaryLegacyAlgorithms': 'Устаревшие алгоритмы для временных подключений',
   'settings.terminal.connection.temporaryLegacyAlgorithms.desc': 'SSH-подключения без сохранённого хоста, включая запуск в стиле PuTTY и быстрое подключение, предлагают те же устаревшие алгоритмы, что и настройка хоста. Сохранённые хосты используют свою настройку. По умолчанию выключено: у этих алгоритмов есть известные слабости.',
+  'settings.terminal.connection.temporaryNetworkDeviceMode': 'Режим сетевого устройства для временных подключений',
+  'settings.terminal.connection.temporaryNetworkDeviceMode.desc': 'SSH-подключения без сохранённого хоста, включая внешний запуск и быстрое подключение, открываются в режиме сетевого устройства. Сохранённые хосты и группы сохраняют свой тип устройства. По умолчанию выключено.',
   'settings.terminal.connection.keepaliveInterval': 'Интервал keepalive',
   'settings.terminal.connection.keepaliveInterval.desc': 'Как часто (в секундах) отправлять keepalive-пакеты на уровне SSH. Установите 0, чтобы отключить глобально. Учтите, что отдельные хосты могут переопределять это значение в своих настройках.',
   'settings.terminal.connection.keepaliveCountMax': 'Макс. число пропущенных keepalive',

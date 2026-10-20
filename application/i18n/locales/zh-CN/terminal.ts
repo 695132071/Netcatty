@@ -456,6 +456,8 @@ export const zhCNTerminalMessages: Messages = {
   'settings.terminal.section.connection': '连接',
   'settings.terminal.connection.temporaryLegacyAlgorithms': '临时连接允许旧版算法',
   'settings.terminal.connection.temporaryLegacyAlgorithms.desc': '没有对应已保存主机的 SSH 连接（包括外部程序以 PuTTY 参数启动，以及快速连接）会使用与主机「允许旧版算法」相同的已弃用算法。已保存主机仍使用自己的设置。默认关闭，这些算法有已知安全问题。',
+  'settings.terminal.connection.temporaryNetworkDeviceMode': '临时连接使用网络设备模式',
+  'settings.terminal.connection.temporaryNetworkDeviceMode.desc': '没有对应已保存主机的 SSH 连接（包括外部程序启动以及快速连接）会以网络设备模式连接。已保存主机和分组仍使用自己的设备类型。默认关闭。',
   'settings.terminal.connection.defaultProxy': '默认代理',
   'settings.terminal.connection.defaultProxy.desc': '主机没有单独设置、也没有从分组继承代理时使用的已保存代理。选择“无”则直接连接。',
   'settings.terminal.connection.defaultProxy.none': '无',

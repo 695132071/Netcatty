@@ -10,6 +10,7 @@ import {
   User,
 } from "lucide-react";
 import React, { useMemo, useState } from "react";
+import { createPortal } from "react-dom";
 import { useI18n } from "../application/i18n/I18nProvider";
 import type { QuickConnectTarget } from "../domain/quickConnect";
 import { formatHostPort } from "../domain/host";
@@ -671,7 +672,7 @@ const QuickConnectWizard: React.FC<QuickConnectWizardProps> = ({
         : `${protocolLabel} ${hostEndpoint}`
     );
 
-  return (
+  const wizard = (
     <div
       className="fixed inset-0 z-50 flex items-center justify-center"
       onClick={onClose}
@@ -798,6 +799,13 @@ const QuickConnectWizard: React.FC<QuickConnectWizardProps> = ({
       </div>
     </div>
   );
+
+  // The vault surface is visibility:hidden while a terminal tab is active.
+  // Portal so the same wizard opened from the tab-bar switcher stays visible.
+  if (typeof document !== "undefined" && document.body) {
+    return createPortal(wizard, document.body);
+  }
+  return wizard;
 };
 
 export default QuickConnectWizard;

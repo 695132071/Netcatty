@@ -1,7 +1,9 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
+import en from "../application/i18n/locales/en.ts";
 import zhCN from "../application/i18n/locales/zh-CN.ts";
+import zhTW from "../application/i18n/locales/zh-TW.ts";
 import { filterSettingsSearchCatalog } from "./settingsSearch.ts";
 import { SETTINGS_SEARCH_CATALOG } from "./settingsSearchCatalog.ts";
 
@@ -120,6 +122,16 @@ test("settings search finds App Lock from the zh-CN locale", () => {
   const t = (key: string) => zhCN[key] ?? key;
   const hits = filterSettingsSearchCatalog("应用锁", t);
   assert.ok(hits.some((hit) => hit.entry.id === "system-app-lock"));
+});
+
+test("settings search finds temporary network device mode", () => {
+  const tEnReal = (key: string) => en[key] ?? key;
+  const tZhTW = (key: string) => zhTW[key] ?? key;
+  const english = filterSettingsSearchCatalog("network device", tEnReal);
+  assert.ok(english.some((hit) => hit.entry.id === "terminal-temporary-network-device-mode"));
+
+  const traditional = filterSettingsSearchCatalog("網路裝置", tZhTW);
+  assert.ok(traditional.some((hit) => hit.entry.id === "terminal-temporary-network-device-mode"));
 });
 
 test("filterSettingsSearchCatalog can exclude plugins tab", () => {

@@ -12,6 +12,19 @@ export interface ConnectionLegacyAlgorithmInput {
   temporaryConnectionsAllowLegacyAlgorithms?: boolean;
 }
 
+export interface PrepareConnectionHostOptions {
+  /**
+   * Global opt-in for SSH connections with no saved host.
+   * Missing or any non-true value stays off.
+   */
+  temporaryConnectionsAllowLegacyAlgorithms?: boolean;
+  /**
+   * Global opt-in that starts SSH connections with no saved host in network
+   * device mode. Missing or any non-true value leaves deviceType alone.
+   */
+  temporaryConnectionsNetworkDeviceMode?: boolean;
+}
+
 /**
  * Saved hosts keep their own legacy-algorithm choice. Connections with no
  * saved host use the global temporary-connection opt-in, which defaults to
@@ -39,20 +52,61 @@ function isTemporarySshHost(
   return host.protocol === undefined || host.protocol === "ssh";
 }
 
+function readPrepareConnectionHostOptions(
+  options?: boolean | PrepareConnectionHostOptions,
+): PrepareConnectionHostOptions {
+  if (typeof options === "boolean") {
+    return { temporaryConnectionsAllowLegacyAlgorithms: options };
+  }
+  return options ?? {};
+}
+
+/** Read the two temporary-connection toggles from the settings object given now. */
+export function temporaryConnectionPrepareOptions(
+  settings: {
+    temporaryConnectionsAllowLegacyAlgorithms?: boolean;
+    temporaryConnectionsNetworkDeviceMode?: boolean;
+  } | null | undefined,
+): PrepareConnectionHostOptions {
+  return {
+    temporaryConnectionsAllowLegacyAlgorithms:
+      settings?.temporaryConnectionsAllowLegacyAlgorithms,
+    temporaryConnectionsNetworkDeviceMode:
+      settings?.temporaryConnectionsNetworkDeviceMode,
+  };
+}
+
 /**
- * Stamp the resolved legacy-algorithm flag onto unsaved temporary SSH hosts.
+ * Stamp temporary-connection defaults onto unsaved temporary SSH hosts.
  * Saved hosts, and ephemeral clones of saved hosts, are returned unchanged so
- * their own value (including a later group default) still applies.
+ * their own values (including a later group default) still apply.
+ *
+ * A boolean second argument is the legacy-algorithm opt-in, matching callers
+ * from before network device mode existed.
  */
 export function prepareConnectionHost<T extends Host>(
   host: T,
-  temporaryConnectionsAllowLegacyAlgorithms?: boolean,
+  options?: boolean | PrepareConnectionHostOptions,
 ): T {
   if (!isTemporarySshHost(host)) return host;
+  const resolved = readPrepareConnectionHostOptions(options);
   const legacyAlgorithms = resolveConnectionLegacyAlgorithms({
     hasSavedHost: false,
-    temporaryConnectionsAllowLegacyAlgorithms,
+    temporaryConnectionsAllowLegacyAlgorithms: resolved.temporaryConnectionsAllowLegacyAlgorithms,
   });
-  if ((host.legacyAlgorithms === true) === legacyAlgorithms) return host;
-  return { ...host, legacyAlgorithms };
+  const legacyUnchanged = (host.legacyAlgorithms === true) === legacyAlgorithms;
+  // Mosh and ET are stored as SSH plus a transport flag. Network device mode
+  // is a plain-SSH CLI behavior; stamping it onto those hosts makes later
+  // raw-host checks (such as the copy-session cwd probe) treat them as
+  // network gear.
+  const stampNetworkDevice = resolved.temporaryConnectionsNetworkDeviceMode === true
+    && host.moshEnabled !== true
+    && host.etEnabled !== true;
+  const deviceTypeUnchanged = !stampNetworkDevice || host.deviceType === "network";
+  if (legacyUnchanged && deviceTypeUnchanged) return host;
+  return {
+    ...host,
+    ...(legacyUnchanged ? {} : { legacyAlgorithms }),
+    ...(stampNetworkDevice ? { deviceType: "network" as const } : {}),
+  };
 }
