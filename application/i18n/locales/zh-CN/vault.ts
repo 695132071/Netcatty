@@ -363,6 +363,8 @@ export const zhCNVaultMessages: Messages = {
   'hostDetails.jumpHosts.configure': '配置代理主机',
   'hostDetails.proxy': '通过 HTTP/SOCKS5/命令代理',
   'hostDetails.proxy.none': '无',
+  'hostDetails.proxy.direct': '直连（不使用代理）',
+  'hostDetails.proxy.directHint': '不使用分组或全局默认代理',
   'hostDetails.proxy.edit': '编辑代理',
   'hostDetails.proxy.configure': '配置代理',
   'hostDetails.envVars': '环境变量',

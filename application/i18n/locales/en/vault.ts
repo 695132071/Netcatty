@@ -949,6 +949,8 @@ export const enVaultMessages: Messages = {
   'hostDetails.jumpHosts.configure': 'Configure Proxy Hosts',
   'hostDetails.proxy': 'Proxy via HTTP/SOCKS5/Command',
   'hostDetails.proxy.none': 'None',
+  'hostDetails.proxy.direct': 'Direct (no proxy)',
+  'hostDetails.proxy.directHint': 'Does not use a group or global default proxy',
   'hostDetails.proxy.edit': 'Edit Proxy',
   'hostDetails.proxy.configure': 'Configure Proxy',
   'hostDetails.proxyPanel.title': 'Proxy via HTTP/SOCKS5/Command',

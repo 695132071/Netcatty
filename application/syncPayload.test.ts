@@ -454,6 +454,30 @@ test("note appearance settings survive sync and trigger auto-sync", async () => 
   assert.equal(localStorage.getItem(storageKeys.STORAGE_KEY_VAULT_NOTES_CODE_FONT_SIZE), "14");
 });
 
+test("buildSyncPayload round-trips the global default proxy profile", async () => {
+  localStorage.clear();
+  const absent = buildSyncPayload(vault([]));
+  assert.equal(absent.settings?.defaultProxyProfileId, undefined);
+
+  localStorage.setItem(storageKeys.STORAGE_KEY_GLOBAL_DEFAULT_PROXY_PROFILE, "proxy-1");
+  const selected = buildSyncPayload(vault([]));
+  assert.equal(selected.settings?.defaultProxyProfileId, "proxy-1");
+
+  localStorage.setItem(storageKeys.STORAGE_KEY_GLOBAL_DEFAULT_PROXY_PROFILE, "");
+  const cleared = buildSyncPayload(vault([]));
+  assert.equal(cleared.settings?.defaultProxyProfileId, "");
+
+  localStorage.clear();
+  await applySyncPayload(selected, { importVaultData: () => {} });
+  assert.equal(localStorage.getItem(storageKeys.STORAGE_KEY_GLOBAL_DEFAULT_PROXY_PROFILE), "proxy-1");
+
+  await applySyncPayload(cleared, { importVaultData: () => {} });
+  assert.equal(localStorage.getItem(storageKeys.STORAGE_KEY_GLOBAL_DEFAULT_PROXY_PROFILE), "");
+  assert.ok((SYNCABLE_SETTING_STORAGE_KEYS as readonly string[]).includes(
+    storageKeys.STORAGE_KEY_GLOBAL_DEFAULT_PROXY_PROFILE,
+  ));
+});
+
 test("buildSyncPayload includes host tree sidebar visibility setting", () => {
   localStorage.setItem(storageKeys.STORAGE_KEY_SHOW_HOST_TREE_SIDEBAR, "false");
   localStorage.setItem(storageKeys.STORAGE_KEY_TERMINAL_SIDE_PANEL_AUTO_OPEN, "true");

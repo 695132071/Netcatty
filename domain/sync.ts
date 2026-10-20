@@ -368,6 +368,11 @@ export interface SyncPayload {
     showHostTreeSidebar?: boolean;
     // Workspace focus indicator style
     workspaceFocusStyle?: 'dim' | 'border';
+    /**
+     * Saved proxy profile for hosts that do not set a proxy and do not inherit
+     * one from a group. An empty string is an explicit direct default.
+     */
+    defaultProxyProfileId?: string;
     // AI configuration
     ai?: {
       providers?: Array<Record<string, unknown>>;

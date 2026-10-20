@@ -939,6 +939,8 @@ export const esVaultMessages: Messages = {
   'hostDetails.jumpHosts.configure': 'Configurar hosts proxy',
   'hostDetails.proxy': 'Proxy mediante HTTP/SOCKS5/Comando',
   'hostDetails.proxy.none': 'Ninguno',
+  'hostDetails.proxy.direct': 'Directo (sin proxy)',
+  'hostDetails.proxy.directHint': 'No usa el proxy del grupo ni el predeterminado global',
   'hostDetails.proxy.edit': 'Editar proxy',
   'hostDetails.proxy.configure': 'Configurar proxy',
   'hostDetails.proxyPanel.title': 'Proxy mediante HTTP/SOCKS5/Comando',

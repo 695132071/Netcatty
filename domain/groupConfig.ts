@@ -1,5 +1,9 @@
 import type { GroupConfig, Host } from './models';
 import { migrateDeprecatedFontOverride } from '../infrastructure/config/fonts';
+import {
+  getActiveGlobalDefaultProxyProfileId,
+  normalizeGlobalDefaultProxyProfileId,
+} from './globalDefaultProxy';
 
 /**
  * Migrate deprecated primary-font ids out of a GroupConfig's
@@ -26,6 +30,12 @@ export function sanitizeGroupConfig(config: GroupConfig): GroupConfig {
 
 export interface ApplyGroupDefaultsOptions {
   validProxyProfileIds?: ReadonlySet<string>;
+  /**
+   * Saved proxy used when the host and its groups do not set one.
+   * An empty string forces no global default. When the property is omitted,
+   * the active app setting is used.
+   */
+  globalProxyProfileId?: string;
 }
 
 export const hasManualGroupSshCredentials = (config: Partial<GroupConfig>): boolean => [
@@ -48,6 +58,28 @@ const hasUsableProxyProfileId = (
 ): boolean => {
   if (!proxyProfileId) return false;
   return !options?.validProxyProfileIds || options.validProxyProfileIds.has(proxyProfileId);
+};
+
+const resolveGlobalProxyProfileId = (
+  options?: ApplyGroupDefaultsOptions,
+): string | undefined => {
+  const hasExplicit = Boolean(options)
+    && Object.prototype.hasOwnProperty.call(options, 'globalProxyProfileId');
+  const raw = hasExplicit
+    ? options?.globalProxyProfileId
+    : getActiveGlobalDefaultProxyProfileId();
+  const id = normalizeGlobalDefaultProxyProfileId(raw);
+  if (!id) return undefined;
+  if (options?.validProxyProfileIds && !options.validProxyProfileIds.has(id)) return undefined;
+  return id;
+};
+
+const withoutInheritedProxy = (host: Host): Host => {
+  if (host.proxyProfileId === undefined && host.proxyConfig === undefined) return host;
+  const next = { ...host };
+  delete next.proxyProfileId;
+  delete next.proxyConfig;
+  return next;
 };
 
 /**
@@ -276,6 +308,14 @@ export function applyGroupDefaults(
     if (shouldInherit && groupValue !== undefined) {
       (effective as unknown as Record<string, unknown>)[key] = groupValue;
     }
+  }
+  // Explicit direct beats a host proxy, the nearest group proxy, and the
+  // global default. Clearing the host setting leaves directProxy unset and
+  // still inherits.
+  if (host.directProxy === true) return withoutInheritedProxy(effective);
+  if (!effective.proxyConfig && !effective.proxyProfileId) {
+    const globalProxyProfileId = resolveGlobalProxyProfileId(options);
+    if (globalProxyProfileId) effective.proxyProfileId = globalProxyProfileId;
   }
   return effective;
 }

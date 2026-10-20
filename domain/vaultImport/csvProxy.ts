@@ -2,9 +2,16 @@ import type { ProxyConfig } from "../models";
 import { decodeCsvProxy } from "./csvCredentialFields";
 
 // CSV representation of a per-host proxy configuration:
+//   direct
 //   http://[user[:pass]@]host:port
 //   socks5://[user[:pass]@]host:port
 //   command://<command text, verbatim after the scheme>
+// `direct` is an explicit per-host direct connection. An empty cell still means inherit.
+export const CSV_DIRECT_PROXY_VALUE = "direct";
+
+export const isCsvDirectProxyValue = (raw: string): boolean =>
+  decodeCsvProxy(raw.trim()) === CSV_DIRECT_PROXY_VALUE;
+
 const PROXY_SCHEME_PATTERN = /^(http|socks5|command):\/\/(.*)$/is;
 const PROXY_AUTHORITY_PATTERN = /^(?:([^@:/?#\s]+)(?::([^@/?#]*))?@)?(\[[^\[\]@/?#\s]+\]|[^\[\]@:/?#\s]+):(\d+)$/u;
 

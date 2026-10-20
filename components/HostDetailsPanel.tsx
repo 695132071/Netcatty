@@ -453,7 +453,7 @@ const HostDetailsPanel: React.FC<HostDetailsPanelPropsWithResize> = ({
   const updateProxyConfig = useCallback(
     (field: keyof ProxyConfig, value: ProxyConfig[keyof ProxyConfig]) => {
       setForm((prev) => {
-        const { proxyProfileId: _proxyProfileId, ...rest } = prev;
+        const { proxyProfileId: _proxyProfileId, directProxy: _directProxy, ...rest } = prev;
         return {
           ...rest,
           proxyConfig: updateProxyConfigField(prev.proxyConfig, field, value),
@@ -465,16 +465,23 @@ const HostDetailsPanel: React.FC<HostDetailsPanelPropsWithResize> = ({
 
   const clearProxyConfig = useCallback(() => {
     setForm((prev) => {
-      const { proxyConfig: _proxyConfig, proxyProfileId: _proxyProfileId, ...rest } = prev;
+      const { proxyConfig: _proxyConfig, proxyProfileId: _proxyProfileId, directProxy: _directProxy, ...rest } = prev;
       return rest as Host;
     });
   }, []);
 
   const selectProxyProfile = useCallback((profileId: string | undefined) => {
     setForm((prev) => {
-      const { proxyConfig: _proxyConfig, proxyProfileId: _proxyProfileId, ...rest } = prev;
+      const { proxyConfig: _proxyConfig, proxyProfileId: _proxyProfileId, directProxy: _directProxy, ...rest } = prev;
       if (!profileId) return rest as Host;
       return { ...rest, proxyProfileId: profileId } as Host;
+    });
+  }, []);
+
+  const selectDirectProxy = useCallback(() => {
+    setForm((prev) => {
+      const { proxyConfig: _proxyConfig, proxyProfileId: _proxyProfileId, ...rest } = prev;
+      return { ...rest, directProxy: true } as Host;
     });
   }, []);
 
@@ -886,8 +893,10 @@ const HostDetailsPanel: React.FC<HostDetailsPanelPropsWithResize> = ({
         proxyProfiles={proxyProfiles}
         identities={identities}
         selectedProxyProfileId={form.proxyProfileId}
+        directProxy={form.directProxy}
         onUpdateProxy={updateProxyConfig}
         onSelectProxyProfile={selectProxyProfile}
+        onSelectDirectProxy={selectDirectProxy}
         onClearProxy={clearProxyConfig}
         onBack={() => setActiveSubPanel("none")}
         onCancel={onCancel}

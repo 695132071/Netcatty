@@ -3,7 +3,7 @@ import { applyGroupDefaults, resolveGroupDefaults } from '../groupConfig';
 import { isPluginHostProtocol } from '../pluginConnection';
 import { hasUnreadableProxyCredential, materializeHostProxyProfile, resolveProxyConfigAuth } from '../proxyProfiles';
 import { CsvLocalShellSpec, encodeCsvKeyPath, encodeCsvLocalShell, encodeCsvPassphrase, encodeCsvProxy } from './csvCredentialFields';
-import { formatCsvProxy } from './csvProxy';
+import { CSV_DIRECT_PROXY_VALUE, formatCsvProxy } from './csvProxy';
 
 const UTF8_BOM = "\uFEFF";
 
@@ -112,7 +112,14 @@ const exportHostsToCsv = (hosts: Host[], options: VaultCsvExportOptions) => {
   };
 
   const proxyProfiles = options.proxyProfiles ?? [];
-  const inheritanceOptions = { validProxyProfileIds: new Set(proxyProfiles.map((profile) => profile.id)) };
+  // Materialize group proxies so the file stays self-contained, but never the
+  // ambient global default. An empty Proxy cell means inherit for grouped and
+  // ungrouped hosts alike; injecting the global profile would embed its
+  // credentials and change routing based only on whether `group` is set.
+  const inheritanceOptions = {
+    validProxyProfileIds: new Set(proxyProfiles.map((profile) => profile.id)),
+    globalProxyProfileId: "",
+  };
   for (const host of exportableHosts) {
     // For telnet hosts, use telnet-specific port and username
     const isTelnet = host.protocol === "telnet";
@@ -132,16 +139,27 @@ const exportHostsToCsv = (hosts: Host[], options: VaultCsvExportOptions) => {
       : "";
     // Proxy profiles are materialized inline so the CSV stays self-contained;
     // encrypted credential placeholders are never written to the file.
-    const effectiveHost = host.group
-      ? applyGroupDefaults(host, resolveGroupDefaults(host.group, options.groupConfigs ?? [], inheritanceOptions), inheritanceOptions)
-      : host;
-    const proxyConfig = materializeHostProxyProfile(effectiveHost, proxyProfiles).proxyConfig;
-    if (hasUnreadableProxyCredential(proxyConfig, options.identities)) {
-      unreadableProxyCredentialCount += 1;
+    const effectiveHost = applyGroupDefaults(
+      host,
+      host.group
+        ? resolveGroupDefaults(host.group, options.groupConfigs ?? [], inheritanceOptions)
+        : {},
+      inheritanceOptions,
+    );
+    // `direct` is the reversible CSV form of directProxy. An empty Proxy cell
+    // still means inherit, including a configured global default.
+    let proxyValue = "";
+    if (effectiveHost.directProxy === true) {
+      proxyValue = CSV_DIRECT_PROXY_VALUE;
+    } else {
+      const proxyConfig = materializeHostProxyProfile(effectiveHost, proxyProfiles).proxyConfig;
+      if (hasUnreadableProxyCredential(proxyConfig, options.identities)) {
+        unreadableProxyCredentialCount += 1;
+      }
+      if (proxyConfig) {
+        proxyValue = formatCsvProxy(resolveProxyConfigAuth(proxyConfig, options.identities));
+      }
     }
-    const proxyValue = proxyConfig
-      ? formatCsvProxy(resolveProxyConfigAuth(proxyConfig, options.identities))
-      : "";
     const localShellSpec = getLocalShellSpec(host);
 
     rows.push([

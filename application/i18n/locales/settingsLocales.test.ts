@@ -47,6 +47,22 @@ test("localized settings include workspace focus indicator labels", () => {
   }
 });
 
+test("localized settings include the global default proxy labels", () => {
+  const keys = [
+    "settings.terminal.connection.defaultProxy",
+    "settings.terminal.connection.defaultProxy.desc",
+    "settings.terminal.connection.defaultProxy.none",
+    "hostDetails.proxy.direct",
+    "hostDetails.proxy.directHint",
+  ];
+  const locales = [{ name: "en", messages: en }, ...LOCALIZED_SETTINGS_LOCALES];
+
+  for (const locale of locales) {
+    const missing = keys.filter((key) => !locale.messages[key]);
+    assert.deepEqual(missing, [], `${locale.name} is missing global default proxy labels`);
+  }
+});
+
 test("localized settings include network proxy labels", () => {
   const keys = [
     "settings.system.networkProxy.title",

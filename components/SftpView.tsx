@@ -38,6 +38,7 @@ import { useRenderTracker } from "../lib/useRenderTracker";
 import { cn } from "../lib/utils";
 import { Host, Identity, KnownHost, ProxyProfile, SSHKey, TransferTask } from "../types";
 import { resolveGroupDefaults, applyGroupDefaults } from "../domain/groupConfig";
+import { useActiveGlobalDefaultProxyProfileId } from "../application/state/useGlobalDefaultProxyProfileId";
 import { materializeHostProxyProfile } from "../domain/proxyProfiles";
 import { useSftpFileAssociations } from "../application/state/useSftpFileAssociations";
 import { registerEditorSftpWriterScoped } from "../application/state/editorSftpBridge";
@@ -161,16 +162,19 @@ const SftpViewInner: React.FC<SftpViewProps> = ({
     resolveTransferSourceSessionId,
   ]);
 
-  // Pre-resolve group defaults so SFTP connections inherit group config
+  // Memoized on vault props, so this subscription is what refreshes the list
+  // after the global default changes.
+  const globalDefaultProxyProfileId = useActiveGlobalDefaultProxyProfileId();
   const effectiveHosts = useMemo(() => {
     const validProxyProfileIds = new Set(proxyProfiles.map((profile) => profile.id));
+    const inheritanceOptions = { validProxyProfileIds, globalProxyProfileId: globalDefaultProxyProfileId };
     return hosts.map(h => {
       const withGroupDefaults = h.group
-        ? applyGroupDefaults(h, resolveGroupDefaults(h.group, groupConfigs, { validProxyProfileIds }), { validProxyProfileIds })
-        : applyGroupDefaults(h, {}, { validProxyProfileIds });
+        ? applyGroupDefaults(h, resolveGroupDefaults(h.group, groupConfigs, inheritanceOptions), inheritanceOptions)
+        : applyGroupDefaults(h, {}, inheritanceOptions);
       return materializeHostProxyProfile(withGroupDefaults, proxyProfiles);
     });
-  }, [hosts, groupConfigs, proxyProfiles]);
+  }, [hosts, groupConfigs, proxyProfiles, globalDefaultProxyProfileId]);
 
   const hostWriteSource = writableHosts ?? hosts;
 

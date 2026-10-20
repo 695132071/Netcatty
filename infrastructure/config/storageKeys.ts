@@ -183,6 +183,8 @@ export const STORAGE_KEY_SHOW_TRAY_ICON = 'netcatty_show_tray_icon_v1';
 export const STORAGE_KEY_AUTO_LAUNCH_ENABLED = 'netcatty_auto_launch_enabled_v1';
 /** App-level HTTP(S) proxy for cloud sync / AI (not SSH ProxyJump). */
 export const STORAGE_KEY_HTTP_NETWORK_PROXY = 'netcatty_http_network_proxy_v1';
+/** Saved proxy profile used when a host and its groups do not set one. Empty string means explicit none. */
+export const STORAGE_KEY_GLOBAL_DEFAULT_PROXY_PROFILE = 'netcatty_global_default_proxy_profile_v1';
 export const STORAGE_KEY_GLOBAL_HOTKEY_ENABLED = 'netcatty_global_hotkey_enabled_v1';
 export const STORAGE_KEY_WINDOW_OPACITY = 'netcatty_window_opacity_v1';
 export const STORAGE_KEY_APP_ICON_VARIANT = 'netcatty_app_icon_variant_v1';

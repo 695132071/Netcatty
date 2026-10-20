@@ -697,7 +697,32 @@ export const HostDetailsAdvancedSections: React.FC<HostDetailsAdvancedSectionsPr
           title={t("hostDetails.proxy")}
           className="overflow-hidden"
         >
-          {form.proxyConfig?.host || form.proxyConfig?.command || form.proxyProfileId ? (
+          {form.directProxy ? (
+            <div className="w-full min-w-0 grid grid-cols-[minmax(0,1fr)_auto] items-center gap-1">
+              <button
+                type="button"
+                className="min-w-0 grid grid-cols-[auto_minmax(0,1fr)] items-center gap-2 p-2 rounded-md bg-secondary/50 hover:bg-secondary transition-colors cursor-pointer overflow-hidden"
+                onClick={() => setActiveSubPanel("proxy")}
+              >
+                <Badge variant="secondary" className="text-xs shrink-0">
+                  {t("hostDetails.proxy.direct")}
+                </Badge>
+                <span className="block min-w-0 overflow-hidden text-ellipsis whitespace-nowrap text-sm">
+                  {t("hostDetails.proxy.directHint")}
+                </span>
+              </button>
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                className="h-9 w-9 text-muted-foreground hover:text-destructive shrink-0"
+                aria-label={t("hostDetails.proxyPanel.remove")}
+                onClick={clearProxyConfig}
+              >
+                <X size={14} />
+              </Button>
+            </div>
+          ) : form.proxyConfig?.host || form.proxyConfig?.command || form.proxyProfileId ? (
             <div className="w-full min-w-0 grid grid-cols-[minmax(0,1fr)_auto] items-center gap-1">
               <button
                 type="button"

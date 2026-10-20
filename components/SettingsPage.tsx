@@ -141,6 +141,8 @@ type TerminalTabSettingsProps = Pick<
     | 'setLocalShellSidePanelAutoOpenTab'
     | 'workspaceFocusStyle'
     | 'setWorkspaceFocusStyle'
+    | 'globalDefaultProxyProfileId'
+    | 'setGlobalDefaultProxyProfileId'
 >;
 
 const SettingsTerminalTabContainer = React.memo<TerminalTabSettingsProps>(function SettingsTerminalTabContainer({
@@ -171,6 +173,8 @@ const SettingsTerminalTabContainer = React.memo<TerminalTabSettingsProps>(functi
     setLocalShellSidePanelAutoOpenTab,
     workspaceFocusStyle,
     setWorkspaceFocusStyle,
+    globalDefaultProxyProfileId,
+    setGlobalDefaultProxyProfileId,
 }) {
     const availableFonts = useAvailableFonts();
 
@@ -204,6 +208,8 @@ const SettingsTerminalTabContainer = React.memo<TerminalTabSettingsProps>(functi
             availableFonts={availableFonts}
             workspaceFocusStyle={workspaceFocusStyle}
             setWorkspaceFocusStyle={setWorkspaceFocusStyle}
+            globalDefaultProxyProfileId={globalDefaultProxyProfileId}
+            setGlobalDefaultProxyProfileId={setGlobalDefaultProxyProfileId}
         />
     );
 });
@@ -599,6 +605,8 @@ const SettingsPageContent: React.FC<{ settings: SettingsState; appLock?: AppLock
                                 setLocalShellSidePanelAutoOpenTab={settings.setLocalShellSidePanelAutoOpenTab}
                                 workspaceFocusStyle={settings.workspaceFocusStyle}
                                 setWorkspaceFocusStyle={settings.setWorkspaceFocusStyle}
+                                globalDefaultProxyProfileId={settings.globalDefaultProxyProfileId}
+                                setGlobalDefaultProxyProfileId={settings.setGlobalDefaultProxyProfileId}
                             />
                         </SettingsLazyTab>
                     )}

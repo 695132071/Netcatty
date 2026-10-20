@@ -217,6 +217,12 @@ export interface Host {
   proxy?: string; // Deprecated: use proxyConfig instead
   proxyProfileId?: string; // Reference to reusable proxy profile
   proxyConfig?: ProxyConfig; // New structured proxy configuration
+  /**
+   * Explicit direct connection for this host. Overrides group and global
+   * proxy defaults. Absent means inherit. This is not the jump-host
+   * "Direct" choice (`hostChain`).
+   */
+  directProxy?: boolean;
   hostChain?: HostChainConfig; // New structured host chain configuration
   envVars?: string; // Deprecated: use environmentVariables instead
   environmentVariables?: EnvVar[]; // Structured environment variables

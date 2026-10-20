@@ -1,6 +1,10 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { applyGroupDefaults, resolveGroupDefaults, sanitizeGroupConfig } from "./groupConfig.ts";
+import {
+  getActiveGlobalDefaultProxyProfileId,
+  publishActiveGlobalDefaultProxyProfileId,
+} from "./globalDefaultProxy.ts";
 import { resolveTelnetPassword, resolveTelnetUsername } from "./host.ts";
 import type { GroupConfig, Host } from "./models.ts";
 
@@ -781,4 +785,115 @@ test("applyGroupDefaults does not inherit the group startup command into local s
 
   assert.equal(result.startupCommand, undefined);
   assert.equal(result.startupCommandRunMode, "paste");
+});
+
+const globalProxyOptions = {
+  globalProxyProfileId: "global-proxy",
+  validProxyProfileIds: new Set(["global-proxy", "group-proxy", "host-proxy"]),
+};
+
+test("applyGroupDefaults prefers the host proxy over the group and global defaults", () => {
+  const result = applyGroupDefaults(
+    host({ proxyProfileId: "host-proxy" }),
+    { proxyProfileId: "group-proxy" },
+    globalProxyOptions,
+  );
+
+  assert.equal(result.proxyProfileId, "host-proxy");
+});
+
+test("applyGroupDefaults prefers the nearest group proxy over the global default", () => {
+  const groupDefaults = resolveGroupDefaults("prod/api", [
+    { path: "prod", proxyProfileId: "group-proxy" },
+    { path: "prod/api", proxyProfileId: "child-proxy" },
+  ]);
+  const result = applyGroupDefaults(host({ group: "prod/api" }), groupDefaults, {
+    ...globalProxyOptions,
+    validProxyProfileIds: new Set(["global-proxy", "group-proxy", "child-proxy"]),
+  });
+
+  assert.equal(result.proxyProfileId, "child-proxy");
+});
+
+test("applyGroupDefaults uses the global default when the host and group have no proxy", () => {
+  const grouped = applyGroupDefaults(host({ group: "prod" }), {}, globalProxyOptions);
+  const ungrouped = applyGroupDefaults(host(), {}, globalProxyOptions);
+
+  assert.equal(grouped.proxyProfileId, "global-proxy");
+  assert.equal(ungrouped.proxyProfileId, "global-proxy");
+});
+
+test("applyGroupDefaults stays direct when the global default is off", () => {
+  const result = applyGroupDefaults(host(), {}, { globalProxyProfileId: "" });
+
+  assert.equal(result.proxyProfileId, undefined);
+  assert.equal(result.proxyConfig, undefined);
+});
+
+test("applyGroupDefaults lets an explicit host direct choice override group and global proxies", () => {
+  const result = applyGroupDefaults(
+    host({
+      directProxy: true,
+      proxyProfileId: "host-proxy",
+      proxyConfig: { type: "http", host: "leftover.example.com", port: 8080 },
+    }),
+    { proxyProfileId: "group-proxy" },
+    globalProxyOptions,
+  );
+
+  assert.equal(result.directProxy, true);
+  assert.equal(result.proxyProfileId, undefined);
+  assert.equal(result.proxyConfig, undefined);
+});
+
+test("applyGroupDefaults still inherits after the host proxy setting is cleared", () => {
+  const fromGroup = applyGroupDefaults(
+    host({ proxyProfileId: "" }),
+    { proxyProfileId: "group-proxy" },
+    globalProxyOptions,
+  );
+  const fromGlobal = applyGroupDefaults(
+    host({ proxyProfileId: "" }),
+    {},
+    globalProxyOptions,
+  );
+
+  assert.equal(fromGroup.proxyProfileId, "group-proxy");
+  assert.equal(fromGlobal.proxyProfileId, "global-proxy");
+});
+
+test("applyGroupDefaults ignores a deleted global proxy profile", () => {
+  const result = applyGroupDefaults(host(), {}, {
+    globalProxyProfileId: "deleted-proxy",
+    validProxyProfileIds: new Set(["group-proxy"]),
+  });
+
+  assert.equal(result.proxyProfileId, undefined);
+});
+
+test("applyGroupDefaults keeps a missing group proxy instead of using the global default", () => {
+  const result = applyGroupDefaults(
+    host(),
+    { proxyProfileId: "missing-proxy" },
+    {
+      globalProxyProfileId: "global-proxy",
+      validProxyProfileIds: new Set(["global-proxy"]),
+    },
+  );
+
+  assert.equal(result.proxyProfileId, "missing-proxy");
+});
+
+test("applyGroupDefaults reads the active global default when callers omit it", () => {
+  publishActiveGlobalDefaultProxyProfileId("global-proxy");
+  try {
+    const inherited = applyGroupDefaults(host(), {});
+    const forcedOff = applyGroupDefaults(host(), {}, { globalProxyProfileId: "" });
+    assert.equal(inherited.proxyProfileId, "global-proxy");
+    assert.equal(forcedOff.proxyProfileId, undefined);
+  } finally {
+    publishActiveGlobalDefaultProxyProfileId(undefined);
+  }
+
+  assert.equal(getActiveGlobalDefaultProxyProfileId(), undefined);
 });

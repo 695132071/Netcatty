@@ -70,6 +70,7 @@ import {
   STORAGE_KEY_SHOW_TRAY_ICON,
   STORAGE_KEY_AUTO_LAUNCH_ENABLED,
   STORAGE_KEY_HTTP_NETWORK_PROXY,
+  STORAGE_KEY_GLOBAL_DEFAULT_PROXY_PROFILE,
   STORAGE_KEY_GLOBAL_HOTKEY_ENABLED,
   STORAGE_KEY_WINDOW_OPACITY,
   STORAGE_KEY_APP_ICON_VARIANT,
@@ -104,6 +105,11 @@ import { getUiThemeById } from '../../infrastructure/config/uiThemes';
 import { DEFAULT_UI_FONT_ID, withWindowsEmojiFallback } from '../../infrastructure/config/uiFonts';
 import { uiFontStore, useUIFontsLoaded } from './uiFontStore';
 import { localStorageAdapter } from '../../infrastructure/persistence/localStorageAdapter';
+import {
+  normalizeGlobalDefaultProxyProfileId,
+  publishActiveGlobalDefaultProxyProfileId,
+  registerGlobalDefaultProxyProfileSetter,
+} from '../../domain/globalDefaultProxy';
 import { netcattyBridge } from '../../infrastructure/services/netcattyBridge';
 import {
   resolveSftpTransferConcurrency,
@@ -574,6 +580,13 @@ export const useSettingsState = (options: { enableSettingsSync?: boolean; enable
     const stored = localStorageAdapter.read<unknown>(STORAGE_KEY_HTTP_NETWORK_PROXY);
     return normalizeHttpNetworkProxySettings(stored ?? DEFAULT_HTTP_NETWORK_PROXY);
   });
+  const [globalDefaultProxyProfileId, setGlobalDefaultProxyProfileIdState] = useState<string | undefined>(() => {
+    const next = normalizeGlobalDefaultProxyProfileId(
+      localStorageAdapter.readString(STORAGE_KEY_GLOBAL_DEFAULT_PROXY_PROFILE),
+    );
+    publishActiveGlobalDefaultProxyProfileId(next);
+    return next;
+  });
   const setHttpNetworkProxy = useCallback((nextValue: SetStateAction<HttpNetworkProxySettings>) => {
     setHttpNetworkProxyState((prev) => {
       const candidate = typeof nextValue === 'function'
@@ -796,6 +809,37 @@ export const useSettingsState = (options: { enableSettingsSync?: boolean; enable
     }
   }, [enableSettingsSync]);
 
+  const setGlobalDefaultProxyProfileId = useCallback((value: string | undefined) => {
+    const next = normalizeGlobalDefaultProxyProfileId(value);
+    setGlobalDefaultProxyProfileIdState(next);
+    localStorageAdapter.writeString(STORAGE_KEY_GLOBAL_DEFAULT_PROXY_PROFILE, next ?? '');
+    publishActiveGlobalDefaultProxyProfileId(next);
+    if (!persistMountedRef.current) return;
+    notifySettingsChanged(STORAGE_KEY_GLOBAL_DEFAULT_PROXY_PROFILE, next ?? '');
+  }, [notifySettingsChanged]);
+
+  useLayoutEffect(() => {
+    publishActiveGlobalDefaultProxyProfileId(globalDefaultProxyProfileId);
+  }, [globalDefaultProxyProfileId]);
+
+  useEffect(
+    () => registerGlobalDefaultProxyProfileSetter(setGlobalDefaultProxyProfileId),
+    [setGlobalDefaultProxyProfileId],
+  );
+
+  // Peer session windows set enableSettingsSync false, which skips IPC sync.
+  // This setting still has to follow localStorage or an already-open session
+  // window keeps the proxy id it read at mount.
+  useEffect(() => {
+    const onStorage = (event: StorageEvent) => {
+      if (event.key !== STORAGE_KEY_GLOBAL_DEFAULT_PROXY_PROFILE) return;
+      const next = normalizeGlobalDefaultProxyProfileId(event.newValue);
+      publishActiveGlobalDefaultProxyProfileId(next);
+      setGlobalDefaultProxyProfileIdState((prev) => (prev === next ? prev : next));
+    };
+    window.addEventListener('storage', onStorage);
+    return () => window.removeEventListener('storage', onStorage);
+  }, []);
 
   const setSftpTransferConcurrency = useCallback((value: number) => {
     const clamped = Math.max(1, Math.min(16, Math.round(value)));
@@ -1079,6 +1123,11 @@ export const useSettingsState = (options: { enableSettingsSync?: boolean; enable
         localStorageAdapter.read(STORAGE_KEY_HTTP_NETWORK_PROXY) ?? DEFAULT_HTTP_NETWORK_PROXY,
       ),
     );
+    const nextGlobalDefaultProxyProfileId = normalizeGlobalDefaultProxyProfileId(
+      localStorageAdapter.readString(STORAGE_KEY_GLOBAL_DEFAULT_PROXY_PROFILE),
+    );
+    publishActiveGlobalDefaultProxyProfileId(nextGlobalDefaultProxyProfileId);
+    setGlobalDefaultProxyProfileIdState(nextGlobalDefaultProxyProfileId);
 
     // Custom terminal themes
     customThemeStore.loadFromStorage();
@@ -1227,6 +1276,7 @@ export const useSettingsState = (options: { enableSettingsSync?: boolean; enable
     setAutoUpdateEnabled,
     setAutoLaunchEnabled,
     setHttpNetworkProxy,
+    setGlobalDefaultProxyProfileIdState,
     setSftpAutoOpenSidebar,
     setSftpFollowTerminalCwd,
     setSftpDefaultViewMode,
@@ -2211,6 +2261,8 @@ export const useSettingsState = (options: { enableSettingsSync?: boolean; enable
     autoLaunchSupported,
     httpNetworkProxy,
     setHttpNetworkProxy,
+    globalDefaultProxyProfileId,
+    setGlobalDefaultProxyProfileId,
     autoUpdateEnabled,
     setAutoUpdateEnabled,
     hotkeyRegistrationError,
@@ -2233,7 +2285,7 @@ export const useSettingsState = (options: { enableSettingsSync?: boolean; enable
       terminalThemeId, terminalFontFamilyId, terminalFontSize, terminalSettings,
       customKeyBindings, editorWordWrap,
       sftpDoubleClickBehavior, sftpAutoSync, sftpShowHiddenFiles, sftpUseCompressedUpload, sftpSkipUnchanged, sftpAutoOpenSidebar, sftpFollowTerminalCwd, sftpDefaultViewMode,
-      showRecentHosts, hostClickBehavior, showOnlyUngroupedHostsInRoot, showSftpTab, showHostTreeSidebar, terminalSidePanelAutoOpen, terminalSidePanelAutoOpenTab, localShellSidePanelAutoOpen, localShellSidePanelAutoOpenTab, shellOnlyTabNumberShortcuts, showTabNumberBadges, disableTerminalFontZoom,
+      showRecentHosts, hostClickBehavior, showOnlyUngroupedHostsInRoot, showSftpTab, showHostTreeSidebar, terminalSidePanelAutoOpen, terminalSidePanelAutoOpenTab, localShellSidePanelAutoOpen, localShellSidePanelAutoOpenTab, shellOnlyTabNumberShortcuts, showTabNumberBadges, disableTerminalFontZoom, globalDefaultProxyProfileId,
       customThemes, workspaceFocusStyle, sessionLogsTimestampsEnabled, sshDebugLogsEnabled, sshDeepLinkEnabled, jmsDeepLinkEnabled, explorerContextMenuEnabled,
     ]),
   };

@@ -33,6 +33,7 @@ import {
   type SyncPayload,
 } from '../domain/sync';
 import { migrateLegacyCommandBlocklist } from '../domain/commandBlocklist';
+import { normalizeGlobalDefaultProxyProfileId } from '../domain/globalDefaultProxy';
 import { migrateHostsFromLegacyLineTimestamps } from '../domain/host';
 import { toPersistedPortForwardingRules } from '../domain/portForwardingPersistence';
 import {
@@ -112,6 +113,7 @@ import {
   STORAGE_KEY_SHOW_ONLY_UNGROUPED_HOSTS_IN_ROOT,
   STORAGE_KEY_SHOW_SFTP_TAB,
   STORAGE_KEY_SHOW_HOST_TREE_SIDEBAR,
+  STORAGE_KEY_GLOBAL_DEFAULT_PROXY_PROFILE,
   STORAGE_KEY_SHELL_ONLY_TAB_NUMBER_SHORTCUTS,
   STORAGE_KEY_SHOW_TAB_NUMBER_BADGES,
   STORAGE_KEY_DISABLE_TERMINAL_FONT_ZOOM,
@@ -345,6 +347,7 @@ export const SYNCABLE_SETTING_STORAGE_KEYS = [
   STORAGE_KEY_SHELL_ONLY_TAB_NUMBER_SHORTCUTS,
   STORAGE_KEY_SHOW_TAB_NUMBER_BADGES,
   STORAGE_KEY_WORKSPACE_FOCUS_STYLE,
+  STORAGE_KEY_GLOBAL_DEFAULT_PROXY_PROFILE,
   STORAGE_KEY_AI_PROVIDERS,
   STORAGE_KEY_AI_ACTIVE_PROVIDER,
   STORAGE_KEY_AI_ACTIVE_MODEL,
@@ -591,6 +594,10 @@ export function collectSyncableSettings(): SyncPayload['settings'] {
   const workspaceFocusStyle = localStorageAdapter.readString(STORAGE_KEY_WORKSPACE_FOCUS_STYLE);
   if (workspaceFocusStyle === 'dim' || workspaceFocusStyle === 'border') {
     settings.workspaceFocusStyle = workspaceFocusStyle;
+  }
+  const storedDefaultProxyProfileId = localStorageAdapter.readString(STORAGE_KEY_GLOBAL_DEFAULT_PROXY_PROFILE);
+  if (storedDefaultProxyProfileId !== null) {
+    settings.defaultProxyProfileId = normalizeGlobalDefaultProxyProfileId(storedDefaultProxyProfileId) ?? '';
   }
 
   const ai: NonNullable<SyncPayload['settings']>['ai'] = {};
@@ -905,6 +912,12 @@ async function applySyncableSettings(
   }
   if (settings.workspaceFocusStyle != null) {
     localStorageAdapter.writeString(STORAGE_KEY_WORKSPACE_FOCUS_STYLE, settings.workspaceFocusStyle);
+  }
+  if (typeof settings.defaultProxyProfileId === 'string') {
+    localStorageAdapter.writeString(
+      STORAGE_KEY_GLOBAL_DEFAULT_PROXY_PROFILE,
+      normalizeGlobalDefaultProxyProfileId(settings.defaultProxyProfileId) ?? '',
+    );
   }
 
   const ai = settings.ai;

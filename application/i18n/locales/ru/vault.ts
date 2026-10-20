@@ -987,6 +987,8 @@ export const ruVaultMessages: Messages = {
   'hostDetails.jumpHosts.configure': 'Настроить прокси-хосты',
   'hostDetails.proxy': 'Прокси через HTTP/SOCKS5/Command',
   'hostDetails.proxy.none': 'Нет',
+  'hostDetails.proxy.direct': 'Напрямую (без прокси)',
+  'hostDetails.proxy.directHint': 'Не использует прокси группы или глобальный прокси по умолчанию',
   'hostDetails.proxy.edit': 'Редактировать прокси',
   'hostDetails.proxy.configure': 'Настроить прокси',
   'hostDetails.proxyPanel.title': 'Прокси через HTTP/SOCKS5/Command',

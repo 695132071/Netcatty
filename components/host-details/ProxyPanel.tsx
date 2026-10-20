@@ -27,8 +27,10 @@ export interface ProxyPanelProps {
     proxyProfiles?: ProxyProfile[];
     identities?: Identity[];
     selectedProxyProfileId?: string;
+    directProxy?: boolean;
     onUpdateProxy: (field: keyof ProxyConfig, value: ProxyConfig[keyof ProxyConfig]) => void;
     onSelectProxyProfile?: (profileId: string | undefined) => void;
+    onSelectDirectProxy?: () => void;
     onClearProxy: () => void;
     onBack: () => void;
     onCancel: () => void;
@@ -42,8 +44,10 @@ export const ProxyPanel: React.FC<ProxyPanelPropsWithResize> = ({
     proxyProfiles = [],
     identities = [],
     selectedProxyProfileId,
+    directProxy = false,
     onUpdateProxy,
     onSelectProxyProfile,
+    onSelectDirectProxy,
     onClearProxy,
     onBack,
     onCancel,
@@ -54,13 +58,18 @@ export const ProxyPanel: React.FC<ProxyPanelPropsWithResize> = ({
 }) => {
     const { t } = useI18n();
     const customValue = '__custom__';
+    const directValue = '__direct__';
     const selectedProfile = useMemo(
         () => proxyProfiles.find((profile) => profile.id === selectedProxyProfileId),
         [proxyProfiles, selectedProxyProfileId],
     );
-    const hasMissingProfile = Boolean(selectedProxyProfileId && !selectedProfile);
-    const selectedValue = selectedProfile ? selectedProfile.id : customValue;
-    const isUsingProfile = Boolean(selectedProfile);
+    const hasMissingProfile = Boolean(selectedProxyProfileId && !selectedProfile && !directProxy);
+    const selectedValue = directProxy
+        ? directValue
+        : selectedProfile
+            ? selectedProfile.id
+            : customValue;
+    const isUsingProfile = Boolean(selectedProfile) && !directProxy;
     const isCommandProxy = isProxyCommandConfig(proxyConfig);
     const hasManualProxyHost = Boolean(proxyConfig?.host?.trim());
     const hasManualProxyCommand = Boolean(proxyConfig?.command?.trim());
@@ -71,8 +80,8 @@ export const ProxyPanel: React.FC<ProxyPanelPropsWithResize> = ({
     const hasIncompleteIdentity = hasIncompleteProxyIdentity(effectiveProxyConfig, identities);
     const hasUnreadableIdentity = hasUnreadableProxyCredential(effectiveProxyConfig, identities);
     const hasInvalidIdentity = hasMissingIdentity || hasIncompleteIdentity || hasUnreadableIdentity;
-    const canSave = (isUsingProfile && !hasInvalidIdentity) ||
-        (!isUsingProfile && hasManualProxyValue && !hasInvalidManualProxyPort && !hasInvalidIdentity);
+    const canSave = directProxy || (isUsingProfile && !hasInvalidIdentity) ||
+        (!isUsingProfile && !directProxy && hasManualProxyValue && !hasInvalidManualProxyPort && !hasInvalidIdentity);
     const manualCredentialsValue = '__manual_credentials__';
     const missingIdentityValue = '__missing_identity__';
     const selectedIdentity = useMemo(
@@ -103,7 +112,7 @@ export const ProxyPanel: React.FC<ProxyPanelPropsWithResize> = ({
             }
         >
             <AsidePanelContent>
-                {(proxyProfiles.length > 0 || hasMissingProfile) && onSelectProxyProfile && (
+                {(proxyProfiles.length > 0 || hasMissingProfile || onSelectDirectProxy) && onSelectProxyProfile && (
                     <Card className="p-3 space-y-3 bg-card border-border/80">
                         <div className="flex items-center gap-2">
                             <Globe size={14} className="text-muted-foreground" />
@@ -111,7 +120,13 @@ export const ProxyPanel: React.FC<ProxyPanelPropsWithResize> = ({
                         </div>
                         <Select
                             value={selectedValue}
-                            onValueChange={(value) => onSelectProxyProfile(value === customValue ? undefined : value)}
+                            onValueChange={(value) => {
+                                if (value === directValue) {
+                                    onSelectDirectProxy?.();
+                                    return;
+                                }
+                                onSelectProxyProfile(value === customValue ? undefined : value);
+                            }}
                         >
                             <SelectTrigger
                                 aria-label={t('hostDetails.proxyPanel.savedProxy')}
@@ -120,6 +135,9 @@ export const ProxyPanel: React.FC<ProxyPanelPropsWithResize> = ({
                                 <SelectValue placeholder={t('hostDetails.proxyPanel.selectSaved')} />
                             </SelectTrigger>
                             <SelectContent>
+                                {onSelectDirectProxy && (
+                                    <SelectItem value={directValue}>{t('hostDetails.proxy.direct')}</SelectItem>
+                                )}
                                 <SelectItem value={customValue}>{t('hostDetails.proxyPanel.customProxy')}</SelectItem>
                                 {proxyProfiles.map((profile) => (
                                     <SelectItem key={profile.id} value={profile.id}>
@@ -163,7 +181,7 @@ export const ProxyPanel: React.FC<ProxyPanelPropsWithResize> = ({
                     </Card>
                 )}
 
-                {!isUsingProfile && (
+                {!isUsingProfile && !directProxy && (
                     <>
                         <Card className="p-3 space-y-3 bg-card border-border/80">
                             <div className="space-y-2">
@@ -328,7 +346,7 @@ export const ProxyPanel: React.FC<ProxyPanelPropsWithResize> = ({
                     </>
                 )}
 
-                {(proxyConfig?.host || proxyConfig?.command || selectedProxyProfileId) && (
+                {(proxyConfig?.host || proxyConfig?.command || selectedProxyProfileId || directProxy) && (
                     <Button variant="ghost" className="w-full h-10 text-destructive" onClick={onClearProxy}>
                         <Trash2 size={14} className="mr-2" /> {t('hostDetails.proxyPanel.remove')}
                     </Button>

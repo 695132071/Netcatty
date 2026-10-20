@@ -16,7 +16,7 @@ export {
 import { parseQuickConnectInput } from "./quickConnect";
 import { findExactHeaderIndex, findHeaderIndex, parseCsv } from "./vaultImport/csvUtils";
 import { decodeCsvKeyPath, decodeCsvLocalShell, decodeCsvPassphrase } from "./vaultImport/csvCredentialFields";
-import { parseCsvProxy } from "./vaultImport/csvProxy";
+import { isCsvDirectProxyValue, parseCsvProxy } from "./vaultImport/csvProxy";
 import { attachMobaXtermPasswords } from "./vaultImport/mobaXtermPasswords";
 import { decodeFinalShellPassword } from "./finalShellPassword";
 export {
@@ -532,8 +532,9 @@ const importFromCsv = (text: string): VaultImportResult => {
       ? decodedPassphrase
       : undefined;
     const proxyRaw = (proxyIdx >= 0 ? row[proxyIdx] : undefined)?.trim();
-    const proxyConfig = proxyRaw ? parseCsvProxy(proxyRaw) : undefined;
-    if (proxyRaw && !proxyConfig) {
+    const directProxy = Boolean(proxyRaw && isCsvDirectProxyValue(proxyRaw));
+    const proxyConfig = proxyRaw && !directProxy ? parseCsvProxy(proxyRaw) : undefined;
+    if (proxyRaw && !directProxy && !proxyConfig) {
       issues.push({
         level: "warning",
         message: `CSV row ${i + 2}: Proxy was ignored because it is not a valid http://, socks5://, or command:// value.`,
@@ -576,6 +577,7 @@ const importFromCsv = (text: string): VaultImportResult => {
       notes,
     });
     if (proxyConfig) host.proxyConfig = proxyConfig;
+    if (directProxy) host.directProxy = true;
     if (localShellSpec && protocol === "local") {
       if (localShellSpec.shell) host.localShell = localShellSpec.shell;
       if (localShellSpec.shellArgs) host.localShellArgs = localShellSpec.shellArgs;

@@ -51,6 +51,7 @@ import {
   STORAGE_KEY_WINDOW_OPACITY,
   STORAGE_KEY_APP_ICON_VARIANT,
   STORAGE_KEY_HTTP_NETWORK_PROXY,
+  STORAGE_KEY_GLOBAL_DEFAULT_PROXY_PROFILE,
 } from '../../infrastructure/config/storageKeys';
 import { resolveAppIconVariant, type AppIconVariant } from '../../domain/appIconVariant';
 import {
@@ -58,6 +59,10 @@ import {
   normalizeHttpNetworkProxySettings,
   type HttpNetworkProxySettings,
 } from '../../domain/httpNetworkProxy';
+import {
+  normalizeGlobalDefaultProxyProfileId,
+  publishActiveGlobalDefaultProxyProfileId,
+} from '../../domain/globalDefaultProxy';
 import { netcattyBridge } from '../../infrastructure/services/netcattyBridge';
 import {
   isValidUiFontId,
@@ -98,6 +103,7 @@ interface UseSettingsIpcSyncParams {
   setAutoUpdateEnabled: Dispatch<SetStateAction<boolean>>;
   setAutoLaunchEnabled: Dispatch<SetStateAction<boolean>>;
   setHttpNetworkProxy: Dispatch<SetStateAction<HttpNetworkProxySettings>>;
+  setGlobalDefaultProxyProfileIdState: Dispatch<SetStateAction<string | undefined>>;
   setSftpAutoOpenSidebar: Dispatch<SetStateAction<boolean>>;
   setSftpFollowTerminalCwd: Dispatch<SetStateAction<boolean>>;
   setSftpDefaultViewMode: Dispatch<SetStateAction<'list' | 'tree'>>;
@@ -146,6 +152,7 @@ export function useSettingsIpcSync({
   setAutoUpdateEnabled,
   setAutoLaunchEnabled,
   setHttpNetworkProxy,
+  setGlobalDefaultProxyProfileIdState,
   setSftpAutoOpenSidebar,
   setSftpFollowTerminalCwd,
   setSftpDefaultViewMode,
@@ -292,6 +299,11 @@ export function useSettingsIpcSync({
           areHttpNetworkProxySettingsEqual(prev, next) ? prev : next
         ));
       }
+      if (key === STORAGE_KEY_GLOBAL_DEFAULT_PROXY_PROFILE) {
+        const next = normalizeGlobalDefaultProxyProfileId(value);
+        publishActiveGlobalDefaultProxyProfileId(next);
+        setGlobalDefaultProxyProfileIdState((prev) => (prev === next ? prev : next));
+      }
       if (key === STORAGE_KEY_SFTP_AUTO_OPEN_SIDEBAR && typeof value === 'boolean') {
         setSftpAutoOpenSidebar((prev) => (prev === value ? prev : value));
       }
@@ -354,6 +366,7 @@ export function useSettingsIpcSync({
     setAutoUpdateEnabled,
     setAutoLaunchEnabled,
     setHttpNetworkProxy,
+    setGlobalDefaultProxyProfileIdState,
     setEditorWordWrapState,
     setFollowAppTerminalThemeState,
     setGlobalHotkeyEnabled,

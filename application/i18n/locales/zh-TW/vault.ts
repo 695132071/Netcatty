@@ -363,6 +363,8 @@ export const zhTWVaultMessages: Messages = {
   'hostDetails.jumpHosts.configure': '設定代理主機',
   'hostDetails.proxy': '透過 HTTP/SOCKS5/指令代理',
   'hostDetails.proxy.none': '無',
+  'hostDetails.proxy.direct': '直連（不使用代理）',
+  'hostDetails.proxy.directHint': '不使用群組或全域預設代理',
   'hostDetails.proxy.edit': '編輯代理',
   'hostDetails.proxy.configure': '設定代理',
   'hostDetails.envVars': '環境變數',

@@ -5,10 +5,13 @@ import type {
   CursorShape,
   HostInfoBarTitleMode,
   PasswordPromptAssistMode,
+  ProxyProfile,
   TerminalEmulationType,
   TerminalSettings,
 } from "../../../domain/models";
 import { useI18n } from "../../../application/i18n/I18nProvider";
+import { localStorageAdapter, LOCAL_STORAGE_ADAPTER_CHANGED_EVENT } from "../../../infrastructure/persistence/localStorageAdapter";
+import { STORAGE_KEY_PROXY_PROFILES } from "../../../infrastructure/config/storageKeys";
 import { MAX_FONT_SIZE, MIN_FONT_SIZE, resolveTerminalFontFamilyId, type TerminalFont } from "../../../infrastructure/config/fonts";
 import { TERMINAL_THEMES } from "../../../infrastructure/config/terminalThemes";
 import { customThemeStore, useCustomThemes } from "../../../application/state/customThemeStore";
@@ -42,6 +45,34 @@ import {
   TERMINAL_INLINE_IMAGE_STORAGE_LIMIT_MB_MAX,
   TERMINAL_INLINE_IMAGE_STORAGE_LIMIT_MB_MIN,
 } from "../../../domain/terminalInlineImages";
+
+const GLOBAL_DEFAULT_PROXY_NONE = "__none__";
+
+const readSavedProxyProfiles = (): ProxyProfile[] => {
+  const stored = localStorageAdapter.read<ProxyProfile[]>(STORAGE_KEY_PROXY_PROFILES);
+  return Array.isArray(stored) ? stored : [];
+};
+
+const useSavedProxyProfiles = (): ProxyProfile[] => {
+  const [profiles, setProfiles] = useState<ProxyProfile[]>(readSavedProxyProfiles);
+  useEffect(() => {
+    const refresh = (key?: string | null) => {
+      if (key && key !== STORAGE_KEY_PROXY_PROFILES) return;
+      setProfiles(readSavedProxyProfiles());
+    };
+    const onAdapterChange = (event: Event) => {
+      refresh((event as CustomEvent<{ key?: string }>).detail?.key);
+    };
+    const onStorage = (event: StorageEvent) => refresh(event.key);
+    window.addEventListener(LOCAL_STORAGE_ADAPTER_CHANGED_EVENT, onAdapterChange);
+    window.addEventListener("storage", onStorage);
+    return () => {
+      window.removeEventListener(LOCAL_STORAGE_ADAPTER_CHANGED_EVENT, onAdapterChange);
+      window.removeEventListener("storage", onStorage);
+    };
+  }, []);
+  return profiles;
+};
 
 const FONT_WEIGHT_OPTIONS = [
   { value: "100", labelKey: "settings.terminal.font.weight.thin" },
@@ -87,6 +118,8 @@ function SettingsTerminalTab(props: {
   availableFonts: TerminalFont[];
   workspaceFocusStyle: 'dim' | 'border';
   setWorkspaceFocusStyle: (style: 'dim' | 'border') => void;
+  globalDefaultProxyProfileId?: string;
+  setGlobalDefaultProxyProfileId: (id: string | undefined) => void;
 }) {
   const {
     terminalThemeId,
@@ -117,8 +150,14 @@ function SettingsTerminalTab(props: {
     availableFonts,
     workspaceFocusStyle,
     setWorkspaceFocusStyle,
+    globalDefaultProxyProfileId,
+    setGlobalDefaultProxyProfileId,
   } = props;
   const { t } = useI18n();
+  const proxyProfiles = useSavedProxyProfiles();
+  const defaultProxyValue = proxyProfiles.some((profile) => profile.id === globalDefaultProxyProfileId)
+    ? globalDefaultProxyProfileId ?? GLOBAL_DEFAULT_PROXY_NONE
+    : GLOBAL_DEFAULT_PROXY_NONE;
 
   // Local shell settings state
   const [defaultShell, setDefaultShell] = useState<string>("");
@@ -932,6 +971,23 @@ function SettingsTerminalTab(props: {
 
       <SectionHeader title={t("settings.terminal.section.connection")} />
       <div className="space-y-0 divide-y divide-border rounded-lg border bg-card px-4">
+        <SettingRow
+          anchorId="terminal-default-proxy"
+          label={t("settings.terminal.connection.defaultProxy")}
+          description={t("settings.terminal.connection.defaultProxy.desc")}
+        >
+          <Select
+            value={defaultProxyValue}
+            onChange={(value) => {
+              setGlobalDefaultProxyProfileId(value === GLOBAL_DEFAULT_PROXY_NONE ? undefined : value);
+            }}
+            options={[
+              { value: GLOBAL_DEFAULT_PROXY_NONE, label: t("settings.terminal.connection.defaultProxy.none") },
+              ...proxyProfiles.map((profile) => ({ value: profile.id, label: profile.label })),
+            ]}
+            className="w-56"
+          />
+        </SettingRow>
         <SettingRow
           anchorId="terminal-verify-host-keys"
           label={t("settings.terminal.connection.verifyHostKeys")}
