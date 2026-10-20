@@ -49,6 +49,60 @@ test("self-heals a deleted discovery file while the TCP host stays alive", async
   assert.equal(fixed.token, original.token);
 });
 
+test("self-heal rewrites files whose pid drifted and files that are invalid JSON", async (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "netcatty-discovery-test-"));
+  const discoveryPath = path.join(dir, "discovery.json");
+  t.after(() => {
+    bridge.cleanup();
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+
+  bridge.init({ cliDiscoveryFilePath: discoveryPath });
+  const port = await bridge.getOrCreateHost();
+  const current = readDiscovery(discoveryPath);
+
+  // Correct port/token but a pid from a previous app instance: the file is
+  // stale from the CLI's perspective and must be rewritten.
+  fs.writeFileSync(discoveryPath, JSON.stringify({
+    port,
+    token: current.token,
+    pid: process.pid + 1,
+    permissionMode: current.permissionMode,
+    updatedAt: "stale",
+  }));
+  bridge.ensureCliDiscoveryFile();
+  const repid = readDiscovery(discoveryPath);
+  assert.equal(repid.pid, process.pid);
+  assert.equal(repid.port, port);
+
+  // A file that cannot be parsed is treated as missing and rewritten.
+  fs.writeFileSync(discoveryPath, "{not json");
+  bridge.ensureCliDiscoveryFile();
+  const reparsed = readDiscovery(discoveryPath);
+  assert.equal(reparsed.port, port);
+  assert.equal(reparsed.token, current.token);
+  assert.equal(reparsed.pid, process.pid);
+});
+
+test("self-heal leaves a current discovery file untouched", async (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "netcatty-discovery-test-"));
+  const discoveryPath = path.join(dir, "discovery.json");
+  t.after(() => {
+    bridge.cleanup();
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+
+  bridge.init({ cliDiscoveryFilePath: discoveryPath });
+  const port = await bridge.getOrCreateHost();
+  const before = fs.readFileSync(discoveryPath, "utf8");
+
+  bridge.ensureCliDiscoveryFile();
+
+  const after = fs.readFileSync(discoveryPath, "utf8");
+  assert.equal(after, before);
+  assert.equal(JSON.parse(after).port, port);
+});
+
 test("ensureCliDiscoveryFile does nothing while the host is down", async (t) => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "netcatty-discovery-test-"));
   const discoveryPath = path.join(dir, "discovery.json");
