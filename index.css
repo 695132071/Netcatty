@@ -819,6 +819,15 @@ html[data-theme-transition] *::after {
   -webkit-user-select: auto;
 }
 
+/* Selected top-tab hooks. Fill and text stay on the tab's inline style so the
+   unset custom properties fall through to the existing chrome colors. The
+   border is a 1px inset outline and stays invisible until
+   --top-tab-active-border is set (Settings → Appearance → Custom CSS). */
+[data-section="top-tabs"] .top-tab[data-active="true"] {
+  outline: 1px solid var(--top-tab-active-border, transparent);
+  outline-offset: -1px;
+}
+
 /* Window controls: icons sit in the h-7 tab row; hover fills the full h-9 title bar */
 [data-section="top-tabs"] .window-control-btn {
   position: relative;

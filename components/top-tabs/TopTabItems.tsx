@@ -30,6 +30,13 @@ import { handleTabMiddleClickClose, handleTabMiddleMouseDown } from '../../lib/t
 import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuSeparator, ContextMenuTrigger } from '../ui/context-menu';
 import { Tooltip, TooltipContent, TooltipTrigger } from '../ui/tooltip';
 import { SessionTabContextMenuContent } from './SessionTabContextMenuContent';
+import {
+  TOP_TAB_ITEM_CLASS,
+  clearInactiveTopTabHover,
+  paintInactiveTopTabHover,
+  resolveTopTabChromeStyle,
+  topTabActiveValue,
+} from './topTabActiveStyle';
 import { renderHostIconGlyph } from '../hostIconRenderer';
 import type { PluginViewTab } from '../../application/state/pluginViewTabStore';
 import { PluginContributionIcon } from '../plugins/PluginContributionIcon';
@@ -446,31 +453,20 @@ export const RootTopTab: React.FC<RootTopTabProps> = memo(({ tabId, label, icon,
       data-tab-id={tabId}
       data-tab-type="root"
       data-state={isActive ? 'active' : 'inactive'}
+      data-active={topTabActiveValue(isActive)}
       onClick={handleClick}
       className={cn(
+        TOP_TAB_ITEM_CLASS,
         "netcatty-tab relative h-7 overflow-hidden text-xs font-semibold cursor-pointer flex items-center app-no-drag transition-[padding,gap] duration-300 ease-out",
         compact ? "px-2 gap-0" : "px-3 gap-2",
         className,
       )}
-      style={{
-        backgroundColor: isActive && !suppressActiveBg
-          ? 'var(--top-tabs-active-bg, hsl(var(--background)))'
-          : 'transparent',
-        color: isActive
-          ? 'var(--top-tabs-fg, hsl(var(--foreground)))'
-          : 'var(--top-tabs-muted, hsl(var(--muted-foreground)))',
-      }}
+      style={resolveTopTabChromeStyle(isActive, { suppressActiveBg })}
       onMouseEnter={(e) => {
-        if (!isActive) {
-          e.currentTarget.style.backgroundColor = 'color-mix(in srgb, var(--top-tabs-active-bg, hsl(var(--background))) 40%, transparent)';
-          e.currentTarget.style.color = 'var(--top-tabs-fg, hsl(var(--foreground)))';
-        }
+        if (!isActive) paintInactiveTopTabHover(e.currentTarget);
       }}
       onMouseLeave={(e) => {
-        if (!isActive) {
-          e.currentTarget.style.backgroundColor = 'transparent';
-          e.currentTarget.style.color = 'var(--top-tabs-muted, hsl(var(--muted-foreground)))';
-        }
+        if (!isActive) clearInactiveTopTabHover(e.currentTarget);
       }}
     >
       {shortcutNumber != null ? <TabShortcutNumberBadge number={shortcutNumber} /> : icon}
@@ -529,6 +525,7 @@ export const PluginViewTopTab: React.FC<PluginViewTopTabProps> = memo(({
           data-tab-id={tab.id}
           data-tab-type="plugin-view"
           data-state={isActive ? 'active' : 'inactive'}
+          data-active={topTabActiveValue(isActive)}
           onClick={() => activeTabStore.setActiveTabId(tab.id)}
           onMouseDown={handleTabMiddleMouseDown}
           onAuxClick={(event) => handleTabMiddleClickClose(event, close)}
@@ -539,6 +536,7 @@ export const PluginViewTopTab: React.FC<PluginViewTopTabProps> = memo(({
           onDragLeave={onTabDragLeave}
           onDrop={(event) => onTabDrop(event, tab.id)}
           className={cn(
+            TOP_TAB_ITEM_CLASS,
             'netcatty-tab relative h-7 min-w-[140px] max-w-[240px] flex-shrink-0 cursor-pointer items-center justify-between gap-2 overflow-hidden rounded-t-md pl-3 pr-2 text-xs font-semibold app-no-drag',
             'flex transition-transform duration-150',
             isBeingDragged && isDraggingForReorder && 'scale-95 opacity-40',
@@ -546,8 +544,7 @@ export const PluginViewTopTab: React.FC<PluginViewTopTabProps> = memo(({
           )}
           style={{
             ...shiftStyle,
-            backgroundColor: isActive ? 'var(--top-tabs-active-bg, hsl(var(--background)))' : 'transparent',
-            color: isActive ? 'var(--top-tabs-fg, hsl(var(--foreground)))' : 'var(--top-tabs-muted, hsl(var(--muted-foreground)))',
+            ...resolveTopTabChromeStyle(isActive),
           }}
         >
           {showDropIndicatorBefore && isDraggingForReorder && <div className="absolute -left-0.5 bottom-1 top-1 w-0.5 rounded-full bg-primary" />}
@@ -649,6 +646,7 @@ export const EditorTopTab: React.FC<EditorTopTabProps> = memo(({
           data-tab-id={tabId}
           data-tab-type="editor"
           data-state={isActive ? 'active' : 'inactive'}
+          data-active={topTabActiveValue(isActive)}
           onClick={handleClick}
           onMouseDown={handleTabMiddleMouseDown}
           onAuxClick={(e) => handleTabMiddleClickClose(e, () => onRequestCloseEditorTab(editorTab.id))}
@@ -659,6 +657,7 @@ export const EditorTopTab: React.FC<EditorTopTabProps> = memo(({
           onDragLeave={onTabDragLeave}
           onDrop={(e) => onTabDrop(e, tabId)}
           className={cn(
+            TOP_TAB_ITEM_CLASS,
             "netcatty-tab relative h-7 pl-3 pr-2 min-w-[140px] max-w-[240px] rounded-t-md overflow-hidden text-xs font-semibold cursor-pointer flex items-center justify-between gap-2 app-no-drag flex-shrink-0",
             "transition-transform duration-150",
             isBeingDragged && isDraggingForReorder ? "opacity-40 scale-95" : "",
@@ -666,24 +665,13 @@ export const EditorTopTab: React.FC<EditorTopTabProps> = memo(({
           )}
           style={{
             ...shiftStyle,
-            backgroundColor: isActive
-              ? 'var(--top-tabs-active-bg, hsl(var(--background)))'
-              : 'transparent',
-            color: isActive
-              ? 'var(--top-tabs-fg, hsl(var(--foreground)))'
-              : 'var(--top-tabs-muted, hsl(var(--muted-foreground)))',
+            ...resolveTopTabChromeStyle(isActive),
           }}
           onMouseEnter={(e) => {
-            if (!isActive) {
-              e.currentTarget.style.backgroundColor = 'color-mix(in srgb, var(--top-tabs-active-bg, hsl(var(--background))) 40%, transparent)';
-              e.currentTarget.style.color = 'var(--top-tabs-fg, hsl(var(--foreground)))';
-            }
+            if (!isActive) paintInactiveTopTabHover(e.currentTarget);
           }}
           onMouseLeave={(e) => {
-            if (!isActive) {
-              e.currentTarget.style.backgroundColor = 'transparent';
-              e.currentTarget.style.color = 'var(--top-tabs-muted, hsl(var(--muted-foreground)))';
-            }
+            if (!isActive) clearInactiveTopTabHover(e.currentTarget);
           }}
         >
           {showDropIndicatorBefore && isDraggingForReorder && (
@@ -833,6 +821,7 @@ export const SessionTopTab: React.FC<SessionTopTabProps> = memo(({
       data-tab-id={session.id}
       data-tab-type="session"
       data-state={isActive ? 'active' : 'inactive'}
+      data-active={topTabActiveValue(isActive)}
       onClick={handleClick}
       onDoubleClick={handleDoubleClick}
       onMouseDown={handleTabMiddleMouseDown}
@@ -844,6 +833,7 @@ export const SessionTopTab: React.FC<SessionTopTabProps> = memo(({
       onDragLeave={onTabDragLeave}
       onDrop={(e) => onTabDrop(e, session.id)}
       className={cn(
+        TOP_TAB_ITEM_CLASS,
         "netcatty-tab relative h-7 pl-3 pr-2 min-w-[140px] max-w-[240px] rounded-t-md overflow-hidden text-xs font-semibold cursor-pointer flex items-center justify-between gap-2 app-no-drag flex-shrink-0",
         "transition-transform duration-150",
         isBeingDragged && isDraggingForReorder ? "opacity-40 scale-95" : "",
@@ -851,24 +841,13 @@ export const SessionTopTab: React.FC<SessionTopTabProps> = memo(({
       )}
       style={{
         ...shiftStyle,
-        backgroundColor: isActive
-          ? 'var(--top-tabs-active-bg, hsl(var(--background)))'
-          : 'transparent',
-        color: isActive
-          ? 'var(--top-tabs-fg, hsl(var(--foreground)))'
-          : 'var(--top-tabs-muted, hsl(var(--muted-foreground)))',
+        ...resolveTopTabChromeStyle(isActive),
       }}
       onMouseEnter={(e) => {
-        if (!isActive) {
-          e.currentTarget.style.backgroundColor = 'color-mix(in srgb, var(--top-tabs-active-bg, hsl(var(--background))) 40%, transparent)';
-          e.currentTarget.style.color = 'var(--top-tabs-fg, hsl(var(--foreground)))';
-        }
+        if (!isActive) paintInactiveTopTabHover(e.currentTarget);
       }}
       onMouseLeave={(e) => {
-        if (!isActive) {
-          e.currentTarget.style.backgroundColor = 'transparent';
-          e.currentTarget.style.color = 'var(--top-tabs-muted, hsl(var(--muted-foreground)))';
-        }
+        if (!isActive) clearInactiveTopTabHover(e.currentTarget);
       }}
     >
       {showDropIndicatorBefore && isDraggingForReorder && (
@@ -1045,6 +1024,7 @@ export const WorkspaceTopTab: React.FC<WorkspaceTopTabProps> = memo(({
           data-tab-id={workspace.id}
           data-tab-type="workspace"
           data-state={isActive ? 'active' : 'inactive'}
+          data-active={topTabActiveValue(isActive)}
           data-host-drop-active={isHostDropTarget ? 'true' : 'false'}
           onClick={handleClick}
           onDoubleClick={handleDoubleClick}
@@ -1057,6 +1037,7 @@ export const WorkspaceTopTab: React.FC<WorkspaceTopTabProps> = memo(({
           onDragLeave={onTabDragLeave}
           onDrop={(e) => onTabDrop(e, workspace.id)}
           className={cn(
+            TOP_TAB_ITEM_CLASS,
             "netcatty-tab relative h-7 pl-3 pr-2 min-w-[150px] max-w-[260px] rounded-t-md overflow-hidden text-xs font-semibold cursor-pointer flex items-center justify-between gap-2 app-no-drag flex-shrink-0",
             "transition-transform duration-150",
             isBeingDragged && isDraggingForReorder ? "opacity-40 scale-95" : "",
@@ -1065,24 +1046,13 @@ export const WorkspaceTopTab: React.FC<WorkspaceTopTabProps> = memo(({
           )}
           style={{
             ...shiftStyle,
-            backgroundColor: isActive
-              ? 'var(--top-tabs-active-bg, hsl(var(--background)))'
-              : 'transparent',
-            color: isActive
-              ? 'var(--top-tabs-fg, hsl(var(--foreground)))'
-              : 'var(--top-tabs-muted, hsl(var(--muted-foreground)))',
+            ...resolveTopTabChromeStyle(isActive),
           }}
           onMouseEnter={(e) => {
-            if (!isActive) {
-              e.currentTarget.style.backgroundColor = 'color-mix(in srgb, var(--top-tabs-active-bg, hsl(var(--background))) 40%, transparent)';
-              e.currentTarget.style.color = 'var(--top-tabs-fg, hsl(var(--foreground)))';
-            }
+            if (!isActive) paintInactiveTopTabHover(e.currentTarget);
           }}
           onMouseLeave={(e) => {
-            if (!isActive) {
-              e.currentTarget.style.backgroundColor = 'transparent';
-              e.currentTarget.style.color = 'var(--top-tabs-muted, hsl(var(--muted-foreground)))';
-            }
+            if (!isActive) clearInactiveTopTabHover(e.currentTarget);
           }}
         >
           {showDropIndicatorBefore && isDraggingForReorder && (
@@ -1203,6 +1173,7 @@ export const LogViewTopTab: React.FC<LogViewTopTabProps> = memo(({
       data-tab-id={logView.id}
       data-tab-type="logView"
       data-state={isActive ? 'active' : 'inactive'}
+      data-active={topTabActiveValue(isActive)}
       onClick={handleClick}
       onMouseDown={handleTabMiddleMouseDown}
       onAuxClick={(e) => handleTabMiddleClickClose(e, () => onCloseLogView(logView.id))}
@@ -1213,6 +1184,7 @@ export const LogViewTopTab: React.FC<LogViewTopTabProps> = memo(({
       onDragLeave={onTabDragLeave}
       onDrop={(e) => onTabDrop(e, logView.id)}
       className={cn(
+        TOP_TAB_ITEM_CLASS,
         "netcatty-tab relative h-7 pl-3 pr-2 min-w-[140px] max-w-[240px] rounded-t-md overflow-hidden text-xs font-semibold cursor-pointer flex items-center justify-between gap-2 app-no-drag flex-shrink-0",
         "transition-transform duration-150",
         isBeingDragged && isDraggingForReorder ? "opacity-40 scale-95" : "",
@@ -1220,24 +1192,13 @@ export const LogViewTopTab: React.FC<LogViewTopTabProps> = memo(({
       )}
       style={{
         ...shiftStyle,
-        backgroundColor: isActive
-          ? 'var(--top-tabs-active-bg, hsl(var(--background)))'
-          : 'transparent',
-        color: isActive
-          ? 'var(--top-tabs-fg, hsl(var(--foreground)))'
-          : 'var(--top-tabs-muted, hsl(var(--muted-foreground)))',
+        ...resolveTopTabChromeStyle(isActive),
       }}
       onMouseEnter={(e) => {
-        if (!isActive) {
-          e.currentTarget.style.backgroundColor = 'color-mix(in srgb, var(--top-tabs-active-bg, hsl(var(--background))) 40%, transparent)';
-          e.currentTarget.style.color = 'var(--top-tabs-fg, hsl(var(--foreground)))';
-        }
+        if (!isActive) paintInactiveTopTabHover(e.currentTarget);
       }}
       onMouseLeave={(e) => {
-        if (!isActive) {
-          e.currentTarget.style.backgroundColor = 'transparent';
-          e.currentTarget.style.color = 'var(--top-tabs-muted, hsl(var(--muted-foreground)))';
-        }
+        if (!isActive) clearInactiveTopTabHover(e.currentTarget);
       }}
     >
       {showDropIndicatorBefore && isDraggingForReorder && (

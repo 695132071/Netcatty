@@ -419,7 +419,7 @@ export const zhTWCoreMessages: Messages = {
   'settings.appearance.themeColor.dark': '深色主題',
   'settings.appearance.customCss': '自訂 CSS',
   'settings.appearance.customCss.desc':
-    '使用自訂 CSS 個人化介面，修改會立即生效。',
+    '使用自訂 CSS 個人化介面，修改會立即生效。選取的頂部分頁（`.top-tab[data-active="true"]`）會讀取 `--top-tab-active-bg`、`--top-tab-active-fg` 和 `--top-tab-active-border`。不設定則維持目前外觀。',
   'settings.appearance.customCss.help.ariaLabel': '自訂 CSS 說明',
   'settings.appearance.customCss.help.title': '自訂 CSS 說明',
   'settings.appearance.customCss.help.body': `主要 UI 區塊都公開了 \`data-section\` 屬性，供你用 CSS 定位。編輯後會立即生效。
@@ -445,6 +445,22 @@ export const zhTWCoreMessages: Messages = {
 - \`top-tabs-toolbar-actions\` — 右側選單和工具列
 - \`top-tabs-host-tree-toggle\`
 - \`top-tabs-quick-switcher-toggle\`
+
+選取的頂部分頁帶有 \`top-tab\` 類別和 \`data-active="true"\`。設定下列變數即可改變選取分頁的顏色；不設定則維持目前外觀。這些變數不需要 \`!important\`。
+
+- \`--top-tab-active-bg\` — 選取分頁的背景（預設為目前的分頁背景）
+- \`--top-tab-active-fg\` — 選取分頁的文字顏色（預設為目前的文字顏色）
+- \`--top-tab-active-border\` — 1px 內描邊（預設透明，也就是沒有邊框）
+
+Vaults 分頁維持扁平，不使用這塊背景。
+
+\`\`\`css
+.top-tab[data-active="true"] {
+  --top-tab-active-bg: #2563eb;
+  --top-tab-active-fg: #ffffff;
+  --top-tab-active-border: #1d4ed8;
+}
+\`\`\`
 
 ### 保險庫
 
@@ -539,7 +555,7 @@ export const zhTWCoreMessages: Messages = {
 \`\`\`
 `,
   'settings.appearance.customCss.placeholder':
-    '/* 範例 — 由於 Tailwind 優先順序較高，需要使用 !important */\n\n/* 隱藏頂部分頁列裡的主機列表開關 */\n[data-section="top-tabs-host-tree-toggle"] {\n  width: 0 !important;\n  opacity: 0 !important;\n  pointer-events: none !important;\n}\n\n/* 隱藏開啟快速切換器的加號按鈕 */\n[data-section="top-tabs-quick-switcher-toggle"] {\n  display: none !important;\n}\n\n/* SFTP / 操作側欄邊框（關閉側欄後不會殘留） */\n[data-section="terminal-side-panel"] {\n  border: 2px solid #00c851 !important;\n  border-radius: 6px !important;\n}\n\n/* 修改整個操作側欄背景，而不只是頂部分頁 */\n[data-section="terminal-side-panel"],\n[data-section="terminal-side-panel-tabs"],\n[data-section="terminal-side-panel-content"],\n[data-section="terminal-sftp-panel"],\n[data-section="terminal-sftp-pane"],\n[data-section="terminal-sftp-list"],\n[data-section="terminal-sftp-tree"],\n[data-section="terminal-sftp-transfer-queue"] {\n  background-color: #1c384a !important;\n}\n\n/* 修改選取的 SFTP 檔案行 */\n[data-section="terminal-sftp-list-row"][data-selected="true"] {\n  background-color: #00c851 !important;\n  color: #001b10 !important;\n}\n\n/* 加粗分割分割線 */\n[data-section="terminal-split-resizer-bar"] {\n  background-color: hsl(var(--primary)) !important;\n  transform: scale(2) !important;\n}\n\n/* 標示目前聚焦的分割 */\n[data-section="terminal-split-pane"][data-focused="true"] {\n  outline: 2px solid hsl(var(--primary)) !important;\n  outline-offset: -2px;\n}\n\n/* 也可在 設定 → 終端 → 工作區聚焦指示 → 聚焦窗格顯示邊框 */',
+    '/* 範例 — 由於 Tailwind 優先順序較高，需要使用 !important */\n\n/* 選取的頂部分頁。不設定這些變數則維持目前外觀。 */\n.top-tab[data-active="true"] {\n  --top-tab-active-bg: #2563eb;\n  --top-tab-active-fg: #ffffff;\n  --top-tab-active-border: #1d4ed8;\n}\n\n/* 隱藏頂部分頁列裡的主機列表開關 */\n[data-section="top-tabs-host-tree-toggle"] {\n  width: 0 !important;\n  opacity: 0 !important;\n  pointer-events: none !important;\n}\n\n/* 隱藏開啟快速切換器的加號按鈕 */\n[data-section="top-tabs-quick-switcher-toggle"] {\n  display: none !important;\n}\n\n/* SFTP / 操作側欄邊框（關閉側欄後不會殘留） */\n[data-section="terminal-side-panel"] {\n  border: 2px solid #00c851 !important;\n  border-radius: 6px !important;\n}\n\n/* 修改整個操作側欄背景，而不只是頂部分頁 */\n[data-section="terminal-side-panel"],\n[data-section="terminal-side-panel-tabs"],\n[data-section="terminal-side-panel-content"],\n[data-section="terminal-sftp-panel"],\n[data-section="terminal-sftp-pane"],\n[data-section="terminal-sftp-list"],\n[data-section="terminal-sftp-tree"],\n[data-section="terminal-sftp-transfer-queue"] {\n  background-color: #1c384a !important;\n}\n\n/* 修改選取的 SFTP 檔案行 */\n[data-section="terminal-sftp-list-row"][data-selected="true"] {\n  background-color: #00c851 !important;\n  color: #001b10 !important;\n}\n\n/* 加粗分割分割線 */\n[data-section="terminal-split-resizer-bar"] {\n  background-color: hsl(var(--primary)) !important;\n  transform: scale(2) !important;\n}\n\n/* 標示目前聚焦的分割 */\n[data-section="terminal-split-pane"][data-focused="true"] {\n  outline: 2px solid hsl(var(--primary)) !important;\n  outline-offset: -2px;\n}\n\n/* 也可在 設定 → 終端 → 工作區聚焦指示 → 聚焦窗格顯示邊框 */',
   'settings.appearance.language': '語言',
   'settings.appearance.language.desc': '選擇介面語言',
   'settings.appearance.uiFont': '介面字型',

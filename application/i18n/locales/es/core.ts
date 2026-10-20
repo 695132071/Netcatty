@@ -328,7 +328,7 @@ export const esCoreMessages: Messages = {
   'settings.appearance.themeColor.dark': 'Paleta oscura',
   'settings.appearance.customCss': 'CSS personalizado',
   'settings.appearance.customCss.desc':
-    'Agrega CSS personalizado para personalizar la apariencia de la aplicación. Los cambios se aplican de inmediato.',
+    'Agrega CSS personalizado para personalizar la apariencia de la aplicación. Los cambios se aplican de inmediato. Las pestañas superiores seleccionadas (`.top-tab[data-active="true"]`) leen `--top-tab-active-bg`, `--top-tab-active-fg` y `--top-tab-active-border`. Si no las defines, se conserva el aspecto actual.',
   'settings.appearance.customCss.help.ariaLabel': 'Ayuda de CSS personalizado',
   'settings.appearance.customCss.help.title': 'Guía de CSS personalizado',
   'settings.appearance.customCss.help.body': `Las principales regiones de la interfaz exponen un atributo \`data-section\` que puedes usar como destino. Los cambios se aplican en cuanto editas el CSS.
@@ -354,6 +354,22 @@ Como muchos estilos provienen de utilidades de Tailwind, a menudo necesitas \`!i
 - \`top-tabs-toolbar-actions\` — Menú lateral derecho y barra de herramientas de utilidades
 - \`top-tabs-host-tree-toggle\`
 - \`top-tabs-quick-switcher-toggle\`
+
+Las pestañas superiores seleccionadas usan la clase \`top-tab\` y \`data-active="true"\`. Define estas variables para cambiar el color de la pestaña seleccionada. Si no las defines, se conserva el aspecto actual. Se aplican sin \`!important\`.
+
+- \`--top-tab-active-bg\` — relleno seleccionado (por defecto, el fondo actual de la pestaña)
+- \`--top-tab-active-fg\` — color del texto seleccionado (por defecto, el texto actual)
+- \`--top-tab-active-border\` — contorno interior de 1px (transparente por defecto, así que no hay borde)
+
+La pestaña Vaults permanece plana y no usa el relleno.
+
+\`\`\`css
+.top-tab[data-active="true"] {
+  --top-tab-active-bg: #2563eb;
+  --top-tab-active-fg: #ffffff;
+  --top-tab-active-border: #1d4ed8;
+}
+\`\`\`
 
 ### Vault
 
@@ -448,7 +464,7 @@ Resalta el panel dividido enfocado:
 \`\`\`
 `,
   'settings.appearance.customCss.placeholder':
-    '/* Ejemplos: usa !important para superar la especificidad de las utilidades de Tailwind */\n\n/* Oculta el botón de lista de hosts en la barra de pestañas superior */\n[data-section="top-tabs-host-tree-toggle"] {\n  width: 0 !important;\n  opacity: 0 !important;\n  pointer-events: none !important;\n}\n\n/* Oculta el botón + que abre el selector rápido */\n[data-section="top-tabs-quick-switcher-toggle"] {\n  display: none !important;\n}\n\n/* Borde alrededor del panel SFTP / lateral (no persiste tras cerrarlo) */\n[data-section="terminal-side-panel"] {\n  border: 2px solid #00c851 !important;\n  border-radius: 6px !important;\n}\n\n/* Cambia el fondo de todo el panel lateral, no solo las pestañas superiores */\n[data-section="terminal-side-panel"],\n[data-section="terminal-side-panel-tabs"],\n[data-section="terminal-side-panel-content"],\n[data-section="terminal-sftp-panel"],\n[data-section="terminal-sftp-pane"],\n[data-section="terminal-sftp-list"],\n[data-section="terminal-sftp-tree"],\n[data-section="terminal-sftp-transfer-queue"] {\n  background-color: #1c384a !important;\n}\n\n/* Estiliza las filas de archivos SFTP seleccionadas */\n[data-section="terminal-sftp-list-row"][data-selected="true"] {\n  background-color: #00c851 !important;\n  color: #001b10 !important;\n}\n\n/* Divisores de división más gruesos */\n[data-section="terminal-split-resizer-bar"] {\n  background-color: hsl(var(--primary)) !important;\n  transform: scale(2) !important;\n}\n\n/* Resalta el panel dividido enfocado */\n[data-section="terminal-split-pane"][data-focused="true"] {\n  outline: 2px solid hsl(var(--primary)) !important;\n  outline-offset: -2px;\n}\n\n/* O usa Configuración → Terminal → Indicador de foco del espacio de trabajo → Borde en el panel enfocado */',
+    '/* Ejemplos: usa !important para superar la especificidad de las utilidades de Tailwind */\n\n/* Pestaña superior seleccionada. Si no defines estas variables, se conserva el aspecto actual. */\n.top-tab[data-active="true"] {\n  --top-tab-active-bg: #2563eb;\n  --top-tab-active-fg: #ffffff;\n  --top-tab-active-border: #1d4ed8;\n}\n\n/* Oculta el botón de lista de hosts en la barra de pestañas superior */\n[data-section="top-tabs-host-tree-toggle"] {\n  width: 0 !important;\n  opacity: 0 !important;\n  pointer-events: none !important;\n}\n\n/* Oculta el botón + que abre el selector rápido */\n[data-section="top-tabs-quick-switcher-toggle"] {\n  display: none !important;\n}\n\n/* Borde alrededor del panel SFTP / lateral (no persiste tras cerrarlo) */\n[data-section="terminal-side-panel"] {\n  border: 2px solid #00c851 !important;\n  border-radius: 6px !important;\n}\n\n/* Cambia el fondo de todo el panel lateral, no solo las pestañas superiores */\n[data-section="terminal-side-panel"],\n[data-section="terminal-side-panel-tabs"],\n[data-section="terminal-side-panel-content"],\n[data-section="terminal-sftp-panel"],\n[data-section="terminal-sftp-pane"],\n[data-section="terminal-sftp-list"],\n[data-section="terminal-sftp-tree"],\n[data-section="terminal-sftp-transfer-queue"] {\n  background-color: #1c384a !important;\n}\n\n/* Estiliza las filas de archivos SFTP seleccionadas */\n[data-section="terminal-sftp-list-row"][data-selected="true"] {\n  background-color: #00c851 !important;\n  color: #001b10 !important;\n}\n\n/* Divisores de división más gruesos */\n[data-section="terminal-split-resizer-bar"] {\n  background-color: hsl(var(--primary)) !important;\n  transform: scale(2) !important;\n}\n\n/* Resalta el panel dividido enfocado */\n[data-section="terminal-split-pane"][data-focused="true"] {\n  outline: 2px solid hsl(var(--primary)) !important;\n  outline-offset: -2px;\n}\n\n/* O usa Configuración → Terminal → Indicador de foco del espacio de trabajo → Borde en el panel enfocado */',
   'settings.appearance.language': 'Idioma',
   'settings.appearance.language.desc': 'Elige el idioma de la interfaz',
   'settings.appearance.uiFont': 'Fuente de la interfaz',
