@@ -335,10 +335,46 @@ test("probeCapabilities reports Docker when docker is installed even if plain do
 
   assert.equal(result.success, true);
   assert.equal(result.capabilities.hasDocker, true);
+  assert.equal(result.capabilities.hasPodman, false);
+  assert.equal(result.capabilities.hasNerdctl, false);
+  assert.equal(result.capabilities.hasKubectl, false);
   assert.equal(result.capabilities.hasNvidiaSmi, true);
   assert.equal(result.capabilities.hasNpuSmi, false);
   assert.equal(result.capabilities.hasSs, true);
   assert.equal(result.capabilities.hasSystemctl, true);
+});
+
+test("probeCapabilities reports podman, nerdctl, and kubectl from command -v markers", async () => {
+  const conn = {
+    exec(command, callback) {
+      assert.match(command, /command -v podman/);
+      assert.match(command, /command -v nerdctl/);
+      assert.match(command, /nerdctl info/);
+      assert.match(command, /permission denied/);
+      assert.doesNotMatch(command, /command -v nerdctl >\/dev\/null 2>&1 && printf/);
+      assert.match(command, /command -v kubectl/);
+      callback(null, createFakeExecStream(
+        "__NC_OS__=Linux\n__NC_PODMAN__=1\n__NC_NERDCTL__=1\n__NC_KUBECTL__=1\n",
+      ));
+    },
+  };
+  const sessions = new Map([["s1", { conn, type: "ssh" }]]);
+  const bridge = createSystemManagerBridge({
+    getSessions: () => sessions,
+    process,
+  });
+
+  const result = await bridge.probeCapabilities(null, { sessionId: "s1" });
+
+  assert.equal(result.success, true);
+  assert.equal(result.capabilities.hasDocker, false);
+  assert.equal(result.capabilities.hasPodman, true);
+  assert.equal(result.capabilities.hasNerdctl, true);
+  assert.equal(result.capabilities.hasKubectl, true);
+
+  const source = fs.readFileSync(path.join(__dirname, "systemManagerBridge.cjs"), "utf8");
+  assert.match(source, /nerdctl info 2>\$null; if \(\$LASTEXITCODE -eq 0\)/);
+  assert.match(source, /echo nerdctl_ok/);
 });
 
 test("setupOsc7Tracking runs the setup command through the active session executor", async () => {

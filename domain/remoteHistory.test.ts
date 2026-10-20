@@ -11,6 +11,13 @@ import {
   isNetcattyManagedStartupHistoryCommand,
 } from './remoteHistory.ts';
 import { buildDockerExecShellCommand, buildDockerLogsCommand } from './systemManager/dockerShell.ts';
+import {
+  buildContainerExecShellCommand,
+  buildContainerLogsCommand,
+  buildKubectlDescribeCommand,
+  buildKubectlExecShellCommand,
+  buildKubectlLogsCommand,
+} from './systemManager/containerRuntime.ts';
 import { buildTmuxAttachCommand } from './systemManager/tmuxShell.ts';
 
 test('parseBashHistory: plain lines', () => {
@@ -199,8 +206,44 @@ test('isNetcattyAiHistoryCommand: detects AI PTY marker lines', () => {
 test('isNetcattyManagedStartupHistoryCommand: detects Docker and tmux terminal launch commands', () => {
   assert.equal(isNetcattyManagedStartupHistoryCommand(buildDockerExecShellCommand('587abcdef123')), true);
   assert.equal(isNetcattyManagedStartupHistoryCommand(buildDockerLogsCommand('587abcdef123')), true);
+  assert.equal(isNetcattyManagedStartupHistoryCommand(buildContainerLogsCommand('podman', '587abcdef123')), true);
+  assert.equal(
+    isNetcattyManagedStartupHistoryCommand(buildKubectlLogsCommand('kind-dev', 'default', 'api-0')),
+    true,
+  );
+  assert.equal(
+    isNetcattyManagedStartupHistoryCommand(
+      "printf '\\033[H\\033[2J\\033[3J'; _nc_docker_err=$(docker inspect 587abcdef123 2>&1 >/dev/null);",
+    ),
+    true,
+  );
   assert.equal(isNetcattyManagedStartupHistoryCommand(buildTmuxAttachCommand('my-session')), true);
   assert.equal(isNetcattyManagedStartupHistoryCommand(buildTmuxAttachCommand('my-session', 2)), true);
+  assert.equal(isNetcattyManagedStartupHistoryCommand(buildContainerLogsCommand('podman', 'abc123', 'powershell')), true);
+  assert.equal(isNetcattyManagedStartupHistoryCommand(buildContainerExecShellCommand('nerdctl', 'abc123', 'cmd')), true);
+  assert.equal(
+    isNetcattyManagedStartupHistoryCommand(buildKubectlLogsCommand('kind-kind', 'default', 'api', undefined, 'powershell')),
+    true,
+  );
+  assert.equal(
+    isNetcattyManagedStartupHistoryCommand(buildKubectlDescribeCommand('kind-kind', 'default', 'api', 'cmd')),
+    true,
+  );
+  assert.equal(
+    isNetcattyManagedStartupHistoryCommand(buildKubectlExecShellCommand('kind-kind', 'default', 'api', 'app', 'powershell')),
+    true,
+  );
+  assert.equal(isNetcattyManagedStartupHistoryCommand('podman logs -f abc123'), false);
+  assert.equal(isNetcattyManagedStartupHistoryCommand('kubectl logs api'), false);
+  assert.equal(isNetcattyManagedStartupHistoryCommand('kubectl describe pod api'), false);
+  assert.equal(
+    isNetcattyManagedStartupHistoryCommand('kubectl --context prod -n default logs -f --tail 200 api'),
+    false,
+  );
+  assert.equal(
+    isNetcattyManagedStartupHistoryCommand('kubectl --context prod describe pod api'),
+    false,
+  );
   assert.equal(isNetcattyManagedStartupHistoryCommand('docker ps -a'), false);
   assert.equal(isNetcattyManagedStartupHistoryCommand('docker logs -f 587abcdef123'), false);
   assert.equal(isNetcattyManagedStartupHistoryCommand('docker exec -it 587abcdef123 bash'), false);

@@ -487,8 +487,8 @@ export const zhCNTerminalMessages: Messages = {
   'settings.terminal.systemManager.processRefreshInterval.desc': '系统管理侧栏中进程列表的刷新频率。',
   'settings.terminal.systemManager.tmuxRefreshInterval': 'tmux 会话刷新间隔',
   'settings.terminal.systemManager.tmuxRefreshInterval.desc': 'tmux 会话列表的刷新频率。',
-  'settings.terminal.systemManager.dockerListRefreshInterval': 'Docker 容器列表刷新间隔',
-  'settings.terminal.systemManager.dockerListRefreshInterval.desc': 'Docker 容器列表的刷新频率。',
+  'settings.terminal.systemManager.dockerListRefreshInterval': '容器列表刷新间隔',
+  'settings.terminal.systemManager.dockerListRefreshInterval.desc': '容器与 Pod 列表的刷新频率。',
   'settings.terminal.systemManager.dockerStatsRefreshInterval': 'Docker 性能数据刷新间隔',
   'settings.terminal.systemManager.dockerStatsRefreshInterval.desc': 'Docker 容器 CPU/内存/网络指标的刷新频率。',
 

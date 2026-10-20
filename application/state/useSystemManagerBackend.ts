@@ -1,4 +1,5 @@
 import { useCallback, useMemo } from 'react';
+import type { ContainerRuntimeId } from '../../domain/systemManager/containerRuntime';
 import type {
   DockerContainerAction,
   DockerImageManageAction,
@@ -94,23 +95,27 @@ export function useSystemManagerBackend() {
     return bridge.tmuxAction(options);
   }, []);
 
-  const listDockerContainers = useCallback(async (sessionId: string) => {
+  const listDockerContainers = useCallback(async (sessionId: string, runtime?: ContainerRuntimeId) => {
     const bridge = netcattyBridge.get();
     if (!bridge?.listDockerContainers) {
       return { success: false as const, error: 'listDockerContainers unavailable' };
     }
-    return bridge.listDockerContainers(sessionId);
+    return bridge.listDockerContainers(sessionId, runtime);
   }, []);
 
-  const listDockerImages = useCallback(async (sessionId: string) => {
+  const listDockerImages = useCallback(async (sessionId: string, runtime?: ContainerRuntimeId) => {
     const bridge = netcattyBridge.get();
     if (!bridge?.listDockerImages) {
       return { success: false as const, error: 'listDockerImages unavailable' };
     }
-    return bridge.listDockerImages(sessionId);
+    return bridge.listDockerImages(sessionId, runtime);
   }, []);
 
-  const getDockerStats = useCallback(async (options: { sessionId: string; ids?: string[] }) => {
+  const getDockerStats = useCallback(async (options: {
+    sessionId: string;
+    ids?: string[];
+    runtime?: ContainerRuntimeId;
+  }) => {
     const bridge = netcattyBridge.get();
     if (!bridge?.getDockerStats) {
       return { success: false as const, error: 'getDockerStats unavailable' };
@@ -155,7 +160,11 @@ export function useSystemManagerBackend() {
     return bridge.systemServiceAction(options);
   }, []);
 
-  const dockerInspect = useCallback(async (options: { sessionId: string; containerId: string }) => {
+  const dockerInspect = useCallback(async (options: {
+    sessionId: string;
+    containerId: string;
+    runtime?: ContainerRuntimeId;
+  }) => {
     const bridge = netcattyBridge.get();
     if (!bridge?.dockerInspect) {
       return { success: false as const, error: 'dockerInspect unavailable' };
@@ -163,7 +172,11 @@ export function useSystemManagerBackend() {
     return bridge.dockerInspect(options);
   }, []);
 
-  const dockerImageInspect = useCallback(async (options: { sessionId: string; imageId: string }) => {
+  const dockerImageInspect = useCallback(async (options: {
+    sessionId: string;
+    imageId: string;
+    runtime?: ContainerRuntimeId;
+  }) => {
     const bridge = netcattyBridge.get();
     if (!bridge?.dockerImageInspect) {
       return { success: false as const, error: 'dockerImageInspect unavailable' };
@@ -176,6 +189,7 @@ export function useSystemManagerBackend() {
     containerId: string;
     action: DockerContainerAction;
     newName?: string;
+    runtime?: ContainerRuntimeId;
   }) => {
     const bridge = netcattyBridge.get();
     if (!bridge?.dockerAction) {
@@ -184,12 +198,30 @@ export function useSystemManagerBackend() {
     return bridge.dockerAction(options);
   }, []);
 
-  const dockerImageAction = useCallback(async (options: { sessionId: string } & DockerImageManageAction) => {
+  const dockerImageAction = useCallback(async (options: {
+    sessionId: string;
+    runtime?: ContainerRuntimeId;
+  } & DockerImageManageAction) => {
     const bridge = netcattyBridge.get();
     if (!bridge?.dockerImageAction) {
       return { success: false as const, error: 'dockerImageAction unavailable' };
     }
     return bridge.dockerImageAction(options);
+  }, []);
+
+  const kubectl = useCallback(async (options: {
+    sessionId: string;
+    op: 'contexts' | 'namespaces' | 'pods' | 'delete';
+    context?: string;
+    namespace?: string;
+    pod?: string;
+    shell?: string;
+  }) => {
+    const bridge = netcattyBridge.get();
+    if (!bridge?.kubectl) {
+      return { success: false as const, error: 'kubectl unavailable' };
+    }
+    return bridge.kubectl(options);
   }, []);
 
   const openTerminalPopup = useCallback(async (
@@ -223,6 +255,7 @@ export function useSystemManagerBackend() {
     dockerImageInspect,
     dockerAction,
     dockerImageAction,
+    kubectl,
     openTerminalPopup,
   }), [
     probeSystemCapabilities,
@@ -245,6 +278,7 @@ export function useSystemManagerBackend() {
     dockerImageInspect,
     dockerAction,
     dockerImageAction,
+    kubectl,
     openTerminalPopup,
   ]);
 }

@@ -93,3 +93,71 @@ test('openInteractiveTerminal keeps SSH connection reuse for ordinary connected 
   assert.equal(payload.sourceSession.protocol, 'ssh');
   assert.equal(payload.sourceSession.reuseConnectionFromSessionId, 'session-1');
 });
+
+async function withSystemPanels(
+  panels: Array<{ getBoundingClientRect: () => { x: number; y: number; width: number; height: number } }>,
+  run: () => Promise<void>,
+): Promise<void> {
+  const previous = globalThis.document;
+  globalThis.document = {
+    querySelectorAll(selector: string) {
+      return selector === '[data-section="system-manager-panel"]' ? panels : [];
+    },
+  } as unknown as Document;
+  try {
+    await run();
+  } finally {
+    if (previous === undefined) {
+      delete (globalThis as { document?: Document }).document;
+    } else {
+      globalThis.document = previous;
+    }
+  }
+}
+
+test('openInteractiveTerminal passes the system panel rectangle so the shell can avoid it', async () => {
+  const panel = {
+    getBoundingClientRect: () => ({ x: 1000, y: 40, width: 440, height: 860 }),
+  };
+  const payloads: Array<{ avoidClientRect?: { x: number; width: number } }> = [];
+  await withSystemPanels([panel], async () => {
+    await openInteractiveTerminal(
+      {
+        openTerminalPopup: async (payload: { avoidClientRect?: { x: number; width: number } }) => {
+          payloads.push(payload);
+          return { success: true };
+        },
+      } as never,
+      parentSession(),
+      'pod: multi-box',
+      'kubectl exec -it multi-box -- sh',
+    );
+  });
+
+  assert.deepEqual(payloads[0]?.avoidClientRect, { x: 1000, y: 40, width: 440, height: 860 });
+});
+
+test('openInteractiveTerminal skips a parked zero-size system panel and avoids the visible one', async () => {
+  const parked = {
+    getBoundingClientRect: () => ({ x: 0, y: 0, width: 0, height: 0 }),
+  };
+  const visible = {
+    getBoundingClientRect: () => ({ x: 1000, y: 40, width: 440, height: 860 }),
+  };
+  const payloads: Array<{ avoidClientRect?: { x: number; y: number; width: number; height: number } }> = [];
+  await withSystemPanels([parked, visible], async () => {
+    await openInteractiveTerminal(
+      {
+        openTerminalPopup: async (payload: { avoidClientRect?: { x: number; y: number; width: number; height: number } }) => {
+          payloads.push(payload);
+          return { success: true };
+        },
+      } as never,
+      parentSession(),
+      'pod: multi-box',
+      'kubectl exec -it multi-box -- sh',
+    );
+  });
+
+  assert.deepEqual(payloads[0]?.avoidClientRect, { x: 1000, y: 40, width: 440, height: 860 });
+});

@@ -7,7 +7,8 @@ import type { TerminalSession } from '../../types';
 import type { DockerContainerAction, DockerContainerInfo, DockerStatInfo, TerminalPopupIcon } from '../../domain/systemManager/types';
 import { dockerContainerInfoEqual } from '../../domain/systemManager/pollEquals';
 import { getContainerFlags, getContainerTone } from '../../domain/systemManager/containerState';
-import { buildDockerExecShellCommand, buildDockerLogsCommand } from '../../domain/systemManager/dockerShell';
+import type { ContainerRuntimeId } from '../../domain/systemManager/containerRuntime';
+import { buildContainerExecShellCommand, buildContainerLogsCommand, describeRuntimeFailure } from '../../domain/systemManager/containerRuntime';
 import { DockerContainerDetail } from './DockerContainerDetail';
 import { DockerImageIcon } from './DockerImageIcon';
 import { useStableListOrder, mergePollListByKey } from './listStable';
@@ -59,6 +60,7 @@ async function buildContainerPopupIcon(image: string): Promise<TerminalPopupIcon
 interface DockerContainersPanelProps {
   sessionId: string;
   parentSession: TerminalSession;
+  runtime?: ContainerRuntimeId;
   isVisible: boolean;
   warmupEnabled?: boolean;
   backend: Backend;
@@ -157,6 +159,7 @@ const DockerContainerRow = memo(function DockerContainerRow({
 export const DockerContainersPanel = memo(function DockerContainersPanel({
   sessionId,
   parentSession,
+  runtime = 'docker',
   isVisible,
   warmupEnabled = false,
   backend,
@@ -179,15 +182,15 @@ export const DockerContainersPanel = memo(function DockerContainersPanel({
     setConfirmAction(null);
     setPendingAction(null);
     setSelectedId(null);
-  }, [sessionId]);
+  }, [runtime, sessionId]);
 
   const containersFetcher = useCallback(async () => {
-    const result = await backend.listDockerContainers(sessionId);
+    const result = await backend.listDockerContainers(sessionId, runtime);
     if (!result.success || !result.containers) {
-      throw new Error(result.error || stableT('systemManager.errors.loadDocker'));
+      throw new Error(describeRuntimeFailure(result, stableT, stableT('systemManager.errors.loadDocker')));
     }
     return result.containers;
-  }, [backend, sessionId, stableT]);
+  }, [backend, runtime, sessionId, stableT]);
 
   const listIntervalMs = Math.max(3, listRefreshIntervalSec) * 1000;
   const { data: containers, error, loading, refresh } = usePolling<DockerContainerInfo[]>(
@@ -195,7 +198,7 @@ export const DockerContainersPanel = memo(function DockerContainersPanel({
     listIntervalMs,
     isVisible || warmupEnabled,
     (prev, next) => mergePollListByKey(prev, next, (c) => c.id, dockerContainerInfoEqual),
-    { poll: isVisible, resetKey: sessionId },
+    { poll: isVisible, resetKey: `${sessionId}:${runtime}` },
   );
 
   const matched = useMemo<DockerContainerInfo[]>(() => {
@@ -240,12 +243,12 @@ export const DockerContainersPanel = memo(function DockerContainersPanel({
   );
   const statsFetcher = useCallback(async () => {
     if (statContainerIds.length === 0) return [];
-    const result = await backend.getDockerStats({ sessionId, ids: statContainerIds });
+    const result = await backend.getDockerStats({ sessionId, ids: statContainerIds, runtime });
     if (!result.success || !result.stats) {
-      throw new Error(result.error || stableT('systemManager.errors.loadDockerStats'));
+      throw new Error(describeRuntimeFailure(result, stableT, stableT('systemManager.errors.loadDockerStats')));
     }
     return result.stats;
-  }, [backend, sessionId, stableT, statContainerIds]);
+  }, [backend, runtime, sessionId, stableT, statContainerIds]);
 
   const statsIntervalMs = Math.max(2, statsRefreshIntervalSec) * 1000;
   const { data: stats, loading: statsLoading } = usePolling<DockerStatInfo[]>(
@@ -266,18 +269,19 @@ export const DockerContainersPanel = memo(function DockerContainersPanel({
   }, [stats]);
 
   const getContainerInspectKey = useCallback((container: DockerContainerInfo) => (
-    `${sessionId}:${container.id}`
-  ), [sessionId]);
+    `${sessionId}:${runtime}:${container.id}`
+  ), [runtime, sessionId]);
   const fetchContainerInspect = useCallback(async (container: DockerContainerInfo) => {
     const result = await backend.dockerInspect({
       sessionId,
       containerId: container.id.slice(0, 12),
+      runtime,
     });
     if (!result.success) {
-      throw new Error(result.error || stableT('systemManager.errors.actionFailed'));
+      throw new Error(describeRuntimeFailure(result, stableT, stableT('systemManager.errors.actionFailed')));
     }
     return result.inspect ?? null;
-  }, [backend, sessionId, stableT]);
+  }, [backend, runtime, sessionId, stableT]);
   const {
     records: inspectByContainerId,
     loadRecord: loadContainerInspect,
@@ -305,9 +309,12 @@ export const DockerContainersPanel = memo(function DockerContainersPanel({
     }
     setPendingAction({ id: containerId, action });
     try {
-      const result = await backend.dockerAction({ sessionId, containerId, action, newName });
+      const result = await backend.dockerAction({ sessionId, containerId, action, newName, runtime });
       if (!result.success) {
-        showSystemManagerError(result.error || t('systemManager.errors.actionFailed'), t('common.error'));
+        showSystemManagerError(
+          describeRuntimeFailure(result, t, t('systemManager.errors.actionFailed')),
+          t('common.error'),
+        );
         return;
       }
       const affectedContainer = (containers ?? []).find((container) => (
@@ -332,6 +339,7 @@ export const DockerContainersPanel = memo(function DockerContainersPanel({
     invalidateContainerInspectMatching,
     refresh,
     refreshContainerInspect,
+    runtime,
     sessionId,
     t,
   ]);
@@ -360,7 +368,7 @@ export const DockerContainersPanel = memo(function DockerContainersPanel({
       backend,
       parentSession,
       `docker: ${container.name || id}`,
-      buildDockerExecShellCommand(id),
+      buildContainerExecShellCommand(runtime, id, parentSession.shellType),
       { icon: await buildContainerPopupIcon(container.image) },
     );
     if (!result.success) {
@@ -372,7 +380,7 @@ export const DockerContainersPanel = memo(function DockerContainersPanel({
       });
       showSystemManagerError(result.error || t('systemManager.errors.actionFailed'), t('common.error'));
     }
-  }, [backend, parentSession, sessionId, t]);
+  }, [backend, parentSession, runtime, sessionId, t]);
 
   const openLogs = useCallback(async (container: DockerContainerInfo) => {
     const id = container.id.slice(0, 12);
@@ -387,7 +395,7 @@ export const DockerContainersPanel = memo(function DockerContainersPanel({
       backend,
       parentSession,
       `logs: ${container.name || id}`,
-      buildDockerLogsCommand(id),
+      buildContainerLogsCommand(runtime, id, parentSession.shellType),
       { icon: await buildContainerPopupIcon(container.image) },
     );
     if (!result.success) {
@@ -399,7 +407,7 @@ export const DockerContainersPanel = memo(function DockerContainersPanel({
       });
       showSystemManagerError(result.error || t('systemManager.errors.actionFailed'), t('common.error'));
     }
-  }, [backend, parentSession, sessionId, t]);
+  }, [backend, parentSession, runtime, sessionId, t]);
 
   return (
     <div className="flex flex-col flex-1 min-h-0 overflow-hidden" data-section="docker-containers">

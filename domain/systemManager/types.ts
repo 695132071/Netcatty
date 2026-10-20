@@ -4,6 +4,12 @@ export interface SessionCapabilities {
   targetOs: TargetOs;
   hasTmux: boolean;
   hasDocker: boolean;
+  /** `podman` binary present. A podman-docker shim may also set hasDocker. */
+  hasPodman?: boolean;
+  /** `nerdctl` binary present. */
+  hasNerdctl?: boolean;
+  /** `kubectl` binary present on the remote host. */
+  hasKubectl?: boolean;
   hasNvidiaSmi: boolean;
   hasNpuSmi: boolean;
   /** `ss` binary present (preferred listening-port collector). */
@@ -194,7 +200,7 @@ export type DockerContainerAction =
 
 export type DockerImageManageAction =
   | { action: 'pull'; imageRef: string }
-  | { action: 'rm'; imageId: string; force?: boolean }
+  | { action: 'rm'; imageId: string; force?: boolean; repository?: string; tag?: string }
   | { action: 'prune'; all?: boolean }
   | { action: 'tag'; imageId: string; repository: string; tag?: string };
 
@@ -221,6 +227,11 @@ export interface TerminalPopupPayload {
   parentSessionId: string;
   sourceSession: import('../../types').TerminalSession;
   startupCommand: string;
+  /**
+   * System-manager panel rectangle in renderer viewport pixels. The popup is
+   * placed in the remaining source-window area so it does not cover this panel.
+   */
+  avoidClientRect?: { x: number; y: number; width: number; height: number };
   localShellType?: import('../../types').TerminalSession['shellType'];
   /**
    * When set, the popup attaches to this already-running backend session

@@ -282,3 +282,70 @@ test("attach popup waits for renderer handoff before closing", async () => {
   api.closeTerminalPopupWindow("attach-popup");
   assert.equal(popupWindow.destroyed, true);
 });
+
+test("a system-manager shell popup is placed beside the panel instead of over it", async () => {
+  let created = null;
+  class PlacedBrowserWindowStub {
+    constructor(options) {
+      created = options;
+      this.handlers = new Map();
+      this.webContents = { id: 77, on() {}, send() {}, setWindowOpenHandler() {} };
+    }
+
+    on(channel, handler) { this.handlers.set(channel, handler); }
+    isDestroyed() { return false; }
+    isVisible() { return true; }
+    loadURL() { return Promise.resolve(); }
+    setBackgroundColor() {}
+  }
+
+  const api = createTerminalPopupWindowApi({
+    mainWindow: null,
+    currentTheme: "light",
+    V8_CACHE_OPTIONS: "bypassHeatCheck",
+    resolveFrontendBackgroundColor() { return "#fff"; },
+    resolveSettingsWindowBounds() { return { x: 260, y: 160 }; },
+    createExternalOnlyWindowOpenHandler() { return {}; },
+    applyWindowOpacityToWindow() {},
+    getDevRendererBaseUrl(url) { return url; },
+    showAndFocusWindow() {},
+    registerAppContentWindow() {},
+    unregisterAppContentWindow() {},
+    notifyAppContentWindowClosed() {},
+  });
+
+  await api.openTerminalPopupWindow(
+    {
+      BrowserWindow: PlacedBrowserWindowStub,
+      nativeTheme: {},
+      shell: {},
+      screen: {
+        getDisplayMatching() {
+          return { workArea: { x: 0, y: 0, width: 1440, height: 900 } };
+        },
+      },
+    },
+    {
+      preload: "/tmp/preload.cjs",
+      isDev: false,
+      appIcon: null,
+      isMac: false,
+      electronDir: __dirname,
+      sourceWindow: {
+        isDestroyed() { return false; },
+        getContentBounds() { return { x: 0, y: 0, width: 1440, height: 900 }; },
+        webContents: { getZoomFactor() { return 1; } },
+      },
+    },
+    {
+      popupId: "shell-popup",
+      title: "pod: multi-box",
+      avoidClientRect: { x: 1000, y: 40, width: 440, height: 860 },
+    },
+  );
+
+  assert.ok(created);
+  assert.ok(created.x + created.width <= 1000);
+  assert.equal(created.width, 920);
+  assert.notEqual(created.x, 260);
+});

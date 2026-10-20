@@ -40,6 +40,13 @@ test("build.files includes the prompt classifier required by Mosh", () => {
   assert.equal(promptSecurity.isUntrustedTerminalInputPrompt("验证码："), true);
 });
 
+test("build.files includes the container runtime adapter", () => {
+  assert.ok(
+    config.files.includes("domain/systemManager/containerRuntime.shared.cjs"),
+    "packaged system manager requires the shared container runtime adapter",
+  );
+});
+
 test("build.files includes the single-channel SSH banner matcher", () => {
   assert.ok(
     config.files.includes("domain/singleChannelSshBanner.shared.cjs"),

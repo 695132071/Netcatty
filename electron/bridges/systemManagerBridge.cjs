@@ -3,9 +3,25 @@
 const { createExecOnSessionApi } = require("./systemManager/execOnSession.cjs");
 const { createTmuxOpsApi } = require("./systemManager/tmuxOps.cjs");
 const { createDockerOpsApi } = require("./systemManager/dockerOps.cjs");
+const { createKubectlOpsApi } = require("./systemManager/kubectlOps.cjs");
+const { parseRuntimeProbe } = require("../../domain/systemManager/containerRuntime.shared.cjs");
 const { createGpuOpsApi } = require("./systemManager/gpuOps.cjs");
 const { createPortOpsApi } = require("./systemManager/portOps.cjs");
 const { createServiceOpsApi } = require("./systemManager/serviceOps.cjs");
+
+function nerdctlUsableClause(markCommand) {
+  // Offer nerdctl only when `nerdctl info` works. A socket permission error
+  // still counts: later commands can fall back to sudo. A dead containerd
+  // (rootless not running, connection refused) does not.
+  return [
+    "if command -v nerdctl >/dev/null 2>&1; then ",
+    "_nc_nerdctl_err=$( { if command -v timeout >/dev/null 2>&1; then timeout 3 nerdctl info; else nerdctl info; fi; } 2>&1 >/dev/null ); ",
+    "_nc_nerdctl_code=$?; ",
+    'if [ "$_nc_nerdctl_code" -eq 0 ] || printf "%s\\n" "$_nc_nerdctl_err" | grep -i "permission denied" >/dev/null 2>&1; then ',
+    markCommand,
+    "; fi; fi; ",
+  ].join("");
+}
 
 const CAPABILITY_SCRIPT_POSIX = [
   "exec sh -c ",
@@ -13,6 +29,9 @@ const CAPABILITY_SCRIPT_POSIX = [
   'printf "%s\\n" "__NC_OS__=$(uname -s)"; ',
   'command -v tmux >/dev/null 2>&1 && printf "%s\\n" __NC_TMUX__=1; ',
   'command -v docker >/dev/null 2>&1 && printf "%s\\n" __NC_DOCKER__=1; ',
+  'command -v podman >/dev/null 2>&1 && printf "%s\\n" __NC_PODMAN__=1; ',
+  nerdctlUsableClause('printf "%s\\n" __NC_NERDCTL__=1'),
+  'command -v kubectl >/dev/null 2>&1 && printf "%s\\n" __NC_KUBECTL__=1; ',
   'command -v nvidia-smi >/dev/null 2>&1 && printf "%s\\n" __NC_NVIDIA_SMI__=1; ',
   'command -v npu-smi >/dev/null 2>&1 && printf "%s\\n" __NC_NPU_SMI__=1; ',
   'command -v ss >/dev/null 2>&1 && printf "%s\\n" __NC_SS__=1; ',
@@ -48,7 +67,11 @@ function parseCapabilities(stdout, isLocal, localPlatform) {
   // noisy shells / vendor CLIs that reprint the command text.
   const hasFlag = (name) => new RegExp(`(?:^|\\r?\\n)${name}=1(?:\\r?\\n|$)`).test(text);
   const hasTmux = hasFlag("__NC_TMUX__");
-  const hasDocker = hasFlag("__NC_DOCKER__");
+  const runtimeProbe = parseRuntimeProbe(text);
+  const hasDocker = runtimeProbe.docker;
+  const hasPodman = runtimeProbe.podman;
+  const hasNerdctl = runtimeProbe.nerdctl;
+  const hasKubectl = runtimeProbe.kubernetes;
   const hasNvidiaSmi = hasFlag("__NC_NVIDIA_SMI__");
   const hasNpuSmi = hasFlag("__NC_NPU_SMI__");
   const hasSs = hasFlag("__NC_SS__");
@@ -59,6 +82,9 @@ function parseCapabilities(stdout, isLocal, localPlatform) {
     targetOs,
     hasTmux,
     hasDocker,
+    hasPodman,
+    hasNerdctl,
+    hasKubectl,
     hasNvidiaSmi,
     hasNpuSmi,
     hasSs,
@@ -185,6 +211,7 @@ function createSystemManagerBridge(deps) {
 
   const tmuxOps = createTmuxOpsApi({ execOnSession });
   const dockerOps = createDockerOpsApi({ execOnSession, getSession });
+  const kubectlOps = createKubectlOpsApi({ execOnSession, isLocalSession, process });
   const gpuOps = createGpuOpsApi({
     execOnSession,
     execOnLocalMachine,
@@ -212,6 +239,9 @@ function createSystemManagerBridge(deps) {
             'Write-Output "__NC_OS__=Windows"; ',
             "if (Get-Command tmux -ErrorAction SilentlyContinue) { Write-Output '__NC_TMUX__=1' }; ",
             "docker info 2>$null; if ($LASTEXITCODE -eq 0) { Write-Output '__NC_DOCKER__=1' }; ",
+            "if (Get-Command podman -ErrorAction SilentlyContinue) { Write-Output '__NC_PODMAN__=1' }; ",
+            "if (Get-Command nerdctl -ErrorAction SilentlyContinue) { nerdctl info 2>$null; if ($LASTEXITCODE -eq 0) { Write-Output '__NC_NERDCTL__=1' } }; ",
+            "if (Get-Command kubectl -ErrorAction SilentlyContinue) { Write-Output '__NC_KUBECTL__=1' }; ",
             "if (Get-Command nvidia-smi -ErrorAction SilentlyContinue) { Write-Output '__NC_NVIDIA_SMI__=1' }; ",
             "if (Get-Command npu-smi -ErrorAction SilentlyContinue) { Write-Output '__NC_NPU_SMI__=1' }; ",
             // Local Windows uses Get-NetTCPConnection; treat as netstat-capable for tab visibility.
@@ -235,6 +265,9 @@ function createSystemManagerBridge(deps) {
             "uname -s; ",
             "command -v tmux; ",
             "command -v docker >/dev/null 2>&1 && echo docker_ok; ",
+            "command -v podman >/dev/null 2>&1 && echo podman_ok; ",
+            nerdctlUsableClause("echo nerdctl_ok"),
+            "command -v kubectl >/dev/null 2>&1 && echo kubectl_ok; ",
             "command -v nvidia-smi >/dev/null 2>&1 && echo nvidia_ok; ",
             "command -v npu-smi >/dev/null 2>&1 && echo npu_ok; ",
             "command -v ss >/dev/null 2>&1 && echo ss_ok; ",
@@ -252,6 +285,9 @@ function createSystemManagerBridge(deps) {
             targetOs: platform === "linux" ? "linux" : platform === "darwin" ? "darwin" : "unknown",
             hasTmux: text.includes("tmux") && !text.includes("not found"),
             hasDocker: text.includes("docker_ok"),
+            hasPodman: text.includes("podman_ok"),
+            hasNerdctl: text.includes("nerdctl_ok"),
+            hasKubectl: text.includes("kubectl_ok"),
             hasNvidiaSmi: text.includes("nvidia_ok"),
             hasNpuSmi: text.includes("npu_ok"),
             hasSs: text.includes("ss_ok"),
@@ -426,13 +462,13 @@ function createSystemManagerBridge(deps) {
   async function listDockerContainers(event, payload) {
     const sessionId = payload?.sessionId;
     if (!sessionId) return { success: false, error: "Missing sessionId" };
-    return dockerOps.listContainers(event, sessionId);
+    return dockerOps.listContainers(event, sessionId, payload?.runtime);
   }
 
   async function listDockerImages(event, payload) {
     const sessionId = payload?.sessionId;
     if (!sessionId) return { success: false, error: "Missing sessionId" };
-    return dockerOps.listImages(event, sessionId);
+    return dockerOps.listImages(event, sessionId, payload?.runtime);
   }
 
   async function dockerStats(event, payload) {
@@ -450,14 +486,24 @@ function createSystemManagerBridge(deps) {
   async function dockerAction(event, payload) {
     const result = await dockerOps.containerAction(event, payload);
     if (result.success === false) {
+      if (result.errorCode === "nerdctlUnreachable") {
+        return { success: false, errorCode: result.errorCode };
+      }
       return { success: false, error: result.error || result.stderr || "docker command failed" };
     }
     return { success: true };
   }
 
+  async function kubectl(event, payload) {
+    return kubectlOps.run(event, payload);
+  }
+
   async function dockerImageAction(event, payload) {
     const result = await dockerOps.imageAction(event, payload);
     if (result.success === false) {
+      if (result.errorCode === "nerdctlUnreachable") {
+        return { success: false, errorCode: result.errorCode };
+      }
       return { success: false, error: result.error || result.stderr || "docker command failed" };
     }
     return { success: true, output: result.stdout };
@@ -512,6 +558,7 @@ function createSystemManagerBridge(deps) {
         "netcatty:system:dockerImageInspect",
         "netcatty:system:dockerAction",
         "netcatty:system:dockerImageAction",
+        "netcatty:system:kubectl",
         "netcatty:system:listAccelerators",
         "netcatty:system:listListeningPorts",
         "netcatty:system:listSystemServices",
@@ -536,6 +583,7 @@ function createSystemManagerBridge(deps) {
     ipcMain.handle("netcatty:system:dockerImageInspect", dockerImageInspect);
     ipcMain.handle("netcatty:system:dockerAction", dockerAction);
     ipcMain.handle("netcatty:system:dockerImageAction", dockerImageAction);
+    ipcMain.handle("netcatty:system:kubectl", kubectl);
     ipcMain.handle("netcatty:system:listAccelerators", listAccelerators);
     ipcMain.handle("netcatty:system:listListeningPorts", listListeningPorts);
     ipcMain.handle("netcatty:system:listSystemServices", listSystemServices);

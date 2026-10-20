@@ -14,6 +14,7 @@ import { resolveCapabilityPanelState } from '../../domain/systemManagerPanelStat
 import {
   allowSystemManagerMutations,
   buildSystemManagerTabs,
+  hasContainerSource,
   shouldCollectServerStats,
 } from '../../domain/systemManager/systemTarget';
 
@@ -284,13 +285,14 @@ export const SystemManagerSidePanel = memo(function SystemManagerSidePanel({
   }, [isConnectedSession, isVisible, availableTabsKey, tabBarEl]);
 
   // Must be defined before early returns to comply with React rules of hooks.
+  const containerSourceReady = hasContainerSource(capabilities);
   const prevTabRef = React.useRef(resolvedTab);
   const probingRef = React.useRef(false);
   React.useEffect(() => {
     const prev = prevTabRef.current;
     prevTabRef.current = resolvedTab;
     if (prev === resolvedTab) return;
-    if (resolvedTab === 'docker' && capabilities?.hasDocker !== true) {
+    if (resolvedTab === 'docker' && !containerSourceReady) {
       if (!probingRef.current) {
         probingRef.current = true;
         refreshCapabilities().finally(() => { probingRef.current = false; });
@@ -298,7 +300,7 @@ export const SystemManagerSidePanel = memo(function SystemManagerSidePanel({
     } else if (resolvedTab === 'tmux' && capabilities?.hasTmux !== true) {
       void refreshCapabilities();
     }
-  }, [resolvedTab, capabilities, refreshCapabilities]);
+  }, [resolvedTab, capabilities, containerSourceReady, refreshCapabilities]);
 
   // Auto-poll for Docker capabilities while Docker tab is active and Docker not yet detected.
   // Use setTimeout recursion so the next probe only starts after the previous one finishes,
@@ -315,7 +317,7 @@ export const SystemManagerSidePanel = memo(function SystemManagerSidePanel({
   // preventing stale probes from surviving cleanup (unlike cancelledRef which is shared).
   // First poll is delayed by one interval to avoid overlapping with the tab-switch probe.
   React.useEffect(() => {
-    if (!isVisible || resolvedTab !== 'docker' || capabilities?.hasDocker === true) return;
+    if (!isVisible || resolvedTab !== 'docker' || containerSourceReady) return;
 
     let cancelled = false;
     let timerId: ReturnType<typeof setTimeout>;
@@ -344,7 +346,7 @@ export const SystemManagerSidePanel = memo(function SystemManagerSidePanel({
       cancelled = true;
       if (timerId) clearTimeout(timerId);
     };
-  }, [isVisible, resolvedTab, capabilities?.hasDocker, capabilitiesTtlMs]);
+  }, [isVisible, resolvedTab, containerSourceReady, capabilitiesTtlMs]);
 
   const selectTab = useCallback((id: SystemManagerSubTab) => {
     setActiveTab(id);
@@ -398,7 +400,7 @@ export const SystemManagerSidePanel = memo(function SystemManagerSidePanel({
   }
 
   const tmuxReady = capabilities?.hasTmux === true;
-  const dockerReady = capabilities?.hasDocker === true;
+  const dockerReady = containerSourceReady;
   const gpuReady = capabilities?.hasNvidiaSmi === true || capabilities?.hasNpuSmi === true;
   const portsReady = (
     capabilities?.hasSs === true
@@ -621,8 +623,10 @@ export const SystemManagerSidePanel = memo(function SystemManagerSidePanel({
         ) : dockerPanelState === 'ready' ? (
           <div className={cn('flex-1 min-h-0 flex flex-col', resolvedTab !== 'docker' && 'hidden')}>
             <DockerManagerTab
+              key={session.hostId || sessionId}
               sessionId={sessionId}
               parentSession={session}
+              capabilities={capabilities}
               isVisible={isVisible && resolvedTab === 'docker'}
               warmupEnabled={isVisible && resolvedTab !== 'docker'}
               backend={backend}

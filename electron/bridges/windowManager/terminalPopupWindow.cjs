@@ -12,6 +12,7 @@ const {
 const {
   windowsFramelessContentChromeOptions,
 } = require("./windowsWindowChrome.cjs");
+const { placeTerminalPopup } = require("./terminalPopupPlacement.cjs");
 
 const ATTACH_CLOSE_PREPARE_TIMEOUT_MS = 2000;
 
@@ -23,6 +24,62 @@ function createTerminalPopupWindowApi(ctx) {
 
     function isLiveWindow(win) {
       return Boolean(win && typeof win.isDestroyed === "function" && !win.isDestroyed());
+    }
+
+    function isClientRect(value) {
+      if (!value || typeof value !== "object") return false;
+      const { x, y, width, height } = value;
+      return [x, y, width, height].every((entry) => typeof entry === "number" && Number.isFinite(entry))
+        && width > 0
+        && height > 0
+        && width < 10000
+        && height < 10000;
+    }
+
+    function resolveTerminalPopupFrame(electronModule, sourceWindow, avoidClientRect, preferred) {
+      const centered = resolveSettingsWindowBounds(electronModule, {
+        sourceWindow,
+        settingsWidth: preferred.width,
+        settingsHeight: preferred.height,
+      });
+      const fallback = {
+        x: centered.x,
+        y: centered.y,
+        width: preferred.width,
+        height: preferred.height,
+      };
+      if (!isClientRect(avoidClientRect) || !isLiveWindow(sourceWindow)) return fallback;
+      let content;
+      let zoom = 1;
+      try {
+        content = sourceWindow.getContentBounds();
+        const factor = sourceWindow.webContents?.getZoomFactor?.();
+        if (typeof factor === "number" && Number.isFinite(factor) && factor > 0) zoom = factor;
+      } catch {
+        return fallback;
+      }
+      if (!content || ![content.x, content.y, content.width, content.height].every((entry) => Number.isFinite(entry))) {
+        return fallback;
+      }
+      let workArea;
+      try {
+        workArea = electronModule?.screen?.getDisplayMatching?.(content)?.workArea;
+      } catch {
+        workArea = null;
+      }
+      if (!workArea || !Number.isFinite(workArea.width) || workArea.width <= 0) return fallback;
+      return placeTerminalPopup({
+        workArea,
+        sourceBounds: content,
+        avoid: {
+          x: content.x + avoidClientRect.x * zoom,
+          y: content.y + avoidClientRect.y * zoom,
+          width: avoidClientRect.width * zoom,
+          height: avoidClientRect.height * zoom,
+        },
+        width: preferred.width,
+        height: preferred.height,
+      });
     }
 
     async function openTerminalPopupWindow(electronModule, options, payload) {
@@ -52,13 +109,16 @@ function createTerminalPopupWindowApi(ctx) {
       const frontendBackground = resolveFrontendBackgroundColor(electronDir || __dirname, effectiveTheme);
       const backgroundColor = frontendBackground || "#1a1a1a";
 
-      const popupWidth = 920;
-      const popupHeight = 580;
-      const { x: popupX, y: popupY } = resolveSettingsWindowBounds(electronModule, {
-        sourceWindow: sourceWindow || mainWindow,
-        settingsWidth: popupWidth,
-        settingsHeight: popupHeight,
+      const preferredWidth = 920;
+      const preferredHeight = 580;
+      const placed = resolveTerminalPopupFrame(electronModule, sourceWindow || mainWindow, payload?.avoidClientRect, {
+        width: preferredWidth,
+        height: preferredHeight,
       });
+      const popupWidth = placed.width;
+      const popupHeight = placed.height;
+      const popupX = placed.x;
+      const popupY = placed.y;
 
       const title = typeof payload?.title === "string" && payload.title.trim()
         ? payload.title.trim()

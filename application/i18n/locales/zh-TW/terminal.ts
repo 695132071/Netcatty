@@ -487,8 +487,8 @@ export const zhTWTerminalMessages: Messages = {
   'settings.terminal.systemManager.processRefreshInterval.desc': '系統管理側欄中程序列表的重新整理頻率。',
   'settings.terminal.systemManager.tmuxRefreshInterval': 'tmux 工作階段重新整理間隔',
   'settings.terminal.systemManager.tmuxRefreshInterval.desc': 'tmux 工作階段列表的重新整理頻率。',
-  'settings.terminal.systemManager.dockerListRefreshInterval': 'Docker 容器列表重新整理間隔',
-  'settings.terminal.systemManager.dockerListRefreshInterval.desc': 'Docker 容器列表的重新整理頻率。',
+  'settings.terminal.systemManager.dockerListRefreshInterval': '容器列表重新整理間隔',
+  'settings.terminal.systemManager.dockerListRefreshInterval.desc': '容器與 Pod 列表的重新整理頻率。',
   'settings.terminal.systemManager.dockerStatsRefreshInterval': 'Docker 效能資料重新整理間隔',
   'settings.terminal.systemManager.dockerStatsRefreshInterval.desc': 'Docker 容器 CPU/記憶體/網路指標的重新整理頻率。',
 

@@ -6,6 +6,18 @@ import type { useSystemManagerBackend } from '../../application/state/useSystemM
 
 type Backend = ReturnType<typeof useSystemManagerBackend>;
 
+function readSystemPanelClientRect(): { x: number; y: number; width: number; height: number } | undefined {
+  if (typeof document === "undefined" || typeof document.querySelectorAll !== "function") return undefined;
+  const panels = document.querySelectorAll('[data-section="system-manager-panel"]');
+  for (const panel of panels) {
+    if (typeof panel.getBoundingClientRect !== "function") continue;
+    const rect = panel.getBoundingClientRect();
+    if (rect.width < 1 || rect.height < 1) continue;
+    return { x: rect.x, y: rect.y, width: rect.width, height: rect.height };
+  }
+  return undefined;
+}
+
 function buildPopupTitle(parentSession: TerminalSession, title: string): string {
   const hostLabel = parentSession.hostLabel.trim();
   const cleanTitle = title.trim();
@@ -62,11 +74,13 @@ export async function openInteractiveTerminal(
     canReuseConnection,
     hasIcon: !!options?.icon,
   });
+  const avoidClientRect = readSystemPanelClientRect();
   const result = await backend.openTerminalPopup({
     title: popupTitle,
     icon: options?.icon,
     parentSessionId: parentSession.id,
     startupCommand,
+    ...(avoidClientRect ? { avoidClientRect } : {}),
     sourceSession: buildCommandPopupSourceSession(parentSession, startupCommand, canReuseConnection),
   });
   await writeSystemManagerDiagnostic('openInteractiveTerminal result', {

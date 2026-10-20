@@ -447,11 +447,11 @@ function createPreloadApi(ctx) {
   tmuxAction: async (options) => {
     return ipcRenderer.invoke("netcatty:system:tmuxAction", options);
   },
-  listDockerContainers: async (sessionId) => {
-    return ipcRenderer.invoke("netcatty:system:listDockerContainers", { sessionId });
+  listDockerContainers: async (sessionId, runtime) => {
+    return ipcRenderer.invoke("netcatty:system:listDockerContainers", { sessionId, runtime });
   },
-  listDockerImages: async (sessionId) => {
-    return ipcRenderer.invoke("netcatty:system:listDockerImages", { sessionId });
+  listDockerImages: async (sessionId, runtime) => {
+    return ipcRenderer.invoke("netcatty:system:listDockerImages", { sessionId, runtime });
   },
   getDockerStats: async (options) => {
     return ipcRenderer.invoke("netcatty:system:dockerStats", options);
@@ -479,6 +479,9 @@ function createPreloadApi(ctx) {
   },
   dockerImageAction: async (options) => {
     return ipcRenderer.invoke("netcatty:system:dockerImageAction", options);
+  },
+  kubectl: async (options) => {
+    return ipcRenderer.invoke("netcatty:system:kubectl", options);
   },
   openTerminalPopup: async (payload) => {
     return ipcRenderer.invoke("netcatty:window:openTerminalPopup", payload);

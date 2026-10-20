@@ -4,6 +4,7 @@ import test from "node:test";
 import {
   allowSystemManagerMutations,
   buildSystemManagerTabs,
+  hasContainerSource,
   shouldCollectServerStats,
   shouldShowGpuTab,
   shouldShowPortsTab,
@@ -55,6 +56,23 @@ test("gpu tab appears only after nvidia-smi or npu-smi is detected", () => {
     }), null),
     ["overview", "processes", "ports", "services", "tmux", "docker", "gpu"],
   );
+});
+
+test("the single container tab appears for podman, nerdctl, or kubectl without a docker binary", () => {
+  const networkHost = {
+    id: "host-podman",
+    label: "Podman",
+    hostname: "podman.local",
+    username: "root",
+    tags: [],
+    os: "linux" as const,
+    deviceType: "network" as const,
+  };
+  assert.equal(hasContainerSource(caps()), false);
+  assert.equal(hasContainerSource(caps({ hasPodman: true })), true);
+  assert.equal(buildSystemManagerTabs(networkHost, caps({ hasPodman: true }), null).includes("docker"), true);
+  assert.equal(buildSystemManagerTabs(networkHost, caps({ hasKubectl: true }), null).includes("docker"), true);
+  assert.equal(buildSystemManagerTabs(networkHost, caps(), null).includes("docker"), false);
 });
 
 test("ports and services tabs are detect-first like GPU", () => {

@@ -49,11 +49,11 @@ test("process and docker confirm dialogs reset when sessionId changes", () => {
   assert.match(processSource, /}, \[sessionId\]\);/);
 
   assert.match(containersSource, /setConfirmAction\(null\)/);
-  assert.match(containersSource, /}, \[sessionId\]\);/);
+  assert.match(containersSource, /}, \[runtime, sessionId\]\);/);
 
   assert.match(imagesSource, /setConfirmTarget\(null\)/);
   assert.match(imagesSource, /setActionBusy\(false\)/);
-  assert.match(imagesSource, /}, \[sessionId\]\);/);
+  assert.match(imagesSource, /}, \[runtime, sessionId\]\);/);
 });
 
 test("ports and services confirm dialogs reset when sessionId changes", () => {

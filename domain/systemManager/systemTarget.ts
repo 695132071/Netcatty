@@ -44,12 +44,19 @@ export function shouldShowTmuxTab(
   return false;
 }
 
+export function hasContainerSource(capabilities: SessionCapabilities | undefined): boolean {
+  return capabilities?.hasDocker === true
+    || capabilities?.hasPodman === true
+    || capabilities?.hasNerdctl === true
+    || capabilities?.hasKubectl === true;
+}
+
 export function shouldShowDockerTab(
   host: Host | null | undefined,
   capabilities: SessionCapabilities | undefined,
   session: TerminalSession | null | undefined,
 ): boolean {
-  if (capabilities?.hasDocker === true) return true;
+  if (hasContainerSource(capabilities)) return true;
   // Network appliances: never show Docker from an OS guess alone.
   if (isNetworkDeviceTarget(host)) return false;
   return isDefiniteLinuxTarget(host, capabilities, session);
