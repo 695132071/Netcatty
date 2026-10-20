@@ -459,7 +459,7 @@ async function* iterateSse(response, signal) {
   if (!reader) throw openCodeV2UserError("ai.opencode.v2.unavailable");
   const decoder = new TextDecoder();
   const parser = createSseJsonDecoder();
-  const cancelReader = () => { try { void reader.cancel(); } catch {} };
+  const cancelReader = () => { try { void reader.cancel().catch(() => {}); } catch {} };
   if (signal?.aborted) cancelReader();
   else signal?.addEventListener("abort", cancelReader, { once: true });
   try {
@@ -991,7 +991,7 @@ async function listOpenCodeV2Models(args = {}) {
 
 async function runOpenCodeV2Turn({
   prompt, systemPrompt, attachments, cwd, model, injectedMcpServers, toolIntegrationMode,
-  skillsPathAllowlist, resumeSessionId, env, binPath, emitter, abortController, openCodeV2Factory,
+  skillsPathAllowlist, resumeSessionId, env, binPath, emitter, abortController, openCodeV2Factory, assertSessionValid,
 } = {}) {
   const signal = abortController?.signal;
   const config = buildOpenCodeConfig({ model, injectedMcpServers, toolIntegrationMode, skillsPathAllowlist });
@@ -1033,6 +1033,7 @@ async function runOpenCodeV2Turn({
     emitter.sessionId(sessionId);
 
     if (systemPrompt) {
+      assertSessionValid?.();
       const wrote = await client.putInstruction(sessionId, "netcatty", String(systemPrompt), signal);
       if (!wrote.ok && emitter.warning) emitter.warning("opencode-v2-context", "ai.opencode.v2.contextSkipped");
     }
@@ -1112,6 +1113,7 @@ async function runOpenCodeV2Turn({
     })();
 
     try {
+      assertSessionValid?.();
       await client.prompt(sessionId, promptBody, signal);
     } catch (error) {
       failed = true;

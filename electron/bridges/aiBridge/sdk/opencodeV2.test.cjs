@@ -3,7 +3,8 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
-const { EventEmitter } = require("node:events");
+const { EventEmitter, getEventListeners } = require("node:events");
+const { createAiPrivacyService } = require("../../../shared/aiPrivacyService.cjs");
 const {
   buildOpenCodeBasicAuthorization,
   buildOpenCodeV2ConfigContent,
@@ -348,6 +349,30 @@ test("OpenCode 2 client hides undici transport failures", async () => {
   });
 });
 
+test("OpenCode 2 event stream handles rejected reader cancellation on abort", async () => {
+  const abortController = new AbortController();
+  let cancelled = false;
+  const client = createOpenCodeV2Client({
+    baseUrl: "http://127.0.0.1:4096",
+    password: "synthetic-test-password",
+    fetchImpl: async () => new Response(new ReadableStream({
+      start() {},
+      cancel() {
+        cancelled = true;
+        return Promise.reject(new Error("synthetic reader cancellation failure"));
+      },
+    }), { status: 200, headers: { "content-type": "text/event-stream" } }),
+  });
+  const stream = await client.openEventStream(abortController.signal);
+  const next = stream.next();
+  abortController.abort();
+  assert.deepEqual(await next, { value: undefined, done: true });
+  assert.equal(cancelled, true);
+  assert.equal(getEventListeners(abortController.signal, "abort").length, 0);
+  // Let node:test observe any unhandled cancellation rejection.
+  await new Promise((resolve) => setImmediate(resolve));
+});
+
 test("listCatalog omits the location query when no directory is set", async () => {
   const urls = [];
   const client = createOpenCodeV2Client({
@@ -608,6 +633,88 @@ test("runOpenCodeV2Turn posts the prompt only after the event stream is open", a
   assert.deepEqual(order, ["event-start", "event-open", "prompt"]);
   assert.deepEqual(events, ["Hi", "done"]);
 });
+
+for (const pausedAt of ["server startup", "session creation", "event stream opening"]) {
+  test(`runOpenCodeTurn v2 rechecks privacy after paused ${pausedAt}`, { timeout: 2000 }, async () => {
+    const privacy = createAiPrivacyService();
+    privacy.checkSession("chat");
+    const abortController = new AbortController();
+    const sends = [];
+    const errors = [];
+    let closed = false;
+    let streamCancelled = false;
+    let entered;
+    let release;
+    const ready = new Promise((resolve) => { entered = resolve; });
+    const waiting = new Promise((resolve) => { release = resolve; });
+    async function pause(stage) {
+      if (stage !== pausedAt) return;
+      entered();
+      await waiting;
+    }
+    const fetchImpl = async (url, init) => {
+      const pathname = new URL(url).pathname;
+      if (pathname === "/api/session") {
+        await pause("session creation");
+        return jsonResponse({ data: { id: "ses_1" } });
+      }
+      if (pathname.includes("/instructions/")) {
+        sends.push(["instruction", JSON.parse(init.body).value]);
+        return new Response(null, { status: 204 });
+      }
+      if (pathname === "/api/event") {
+        await pause("event stream opening");
+        return new Response(new ReadableStream({
+          start() {},
+          cancel() { streamCancelled = true; },
+        }), { status: 200, headers: { "content-type": "text/event-stream" } });
+      }
+      if (pathname.endsWith("/prompt")) {
+        sends.push(["prompt", JSON.parse(init.body).text]);
+        // Keep the unguarded regression finite without an execution event.
+        return jsonResponse({ message: "unexpected prompt" }, 400);
+      }
+      throw new Error(`Unexpected request: ${pathname}`);
+    };
+    const running = runOpenCodeTurn({
+      prompt: "synthetic raw prompt",
+      systemPrompt: "synthetic raw context",
+      abortController,
+      assertSessionValid: () => privacy.checkSession("chat"),
+      versionProbe: async () => ({ major: 2, minor: 1, patch: 0 }),
+      emitter: {
+        sessionId() {},
+        emitDone() { assert.fail("a retired chat must not complete"); },
+        emitError: (message) => errors.push(message),
+      },
+      openCodeV2Factory: async () => {
+        await pause("server startup");
+        return {
+          client: createOpenCodeV2Client({
+            baseUrl: "http://127.0.0.1:4096",
+            password: "synthetic-test-password",
+            fetchImpl,
+          }),
+          server: { close() { closed = true; } },
+        };
+      },
+    });
+    await ready;
+    privacy.configure({ enabled: true });
+    release();
+    await running;
+
+    assert.deepEqual(sends, pausedAt === "event stream opening"
+      ? [["instruction", "synthetic raw context"]]
+      : []);
+    assert.equal(errors.length, 1);
+    assert.match(errors[0], /start a new chat/);
+    assert.equal(closed, true);
+    assert.equal(streamCancelled, pausedAt === "event stream opening");
+    assert.equal(abortController.signal.aborted, false);
+    assert.equal(getEventListeners(abortController.signal, "abort").length, 0);
+  });
+}
 
 test("runOpenCodeV2Turn reports a rejected prompt without waiting on the event stream", { timeout: 2000 }, async () => {
   let releaseEvent;
