@@ -24,6 +24,14 @@ export interface ProcessInfo {
   command: string;
 }
 
+export interface GpuDeviceStats {
+  index: number;
+  name: string;
+  utilization: number | null; // percent, null when nvidia-smi reports N/A
+  memoryUsed: number | null;  // MiB
+  memoryTotal: number | null; // MiB
+}
+
 export interface ServerStats {
   hostname?: string;            // Remote hostname
   osName?: string;              // Remote operating system name
@@ -37,6 +45,7 @@ export interface ServerStats {
   gpuName: string | null;       // First GPU name (tooltip)
   gpuMemUsed: number | null;    // Summed VRAM used in MB
   gpuMemTotal: number | null;   // Summed VRAM total in MB
+  gpus: GpuDeviceStats[];       // Per-GPU utilization and VRAM
   memTotal: number | null;      // Total memory in MB
   memUsed: number | null;       // Used memory in MB (excluding buffers/cache)
   memFree: number | null;       // Free memory in MB
@@ -116,6 +125,7 @@ function createEmptyServerStats(): ServerStats {
     gpuName: null,
     gpuMemUsed: null,
     gpuMemTotal: null,
+    gpus: [],
     memTotal: null,
     memUsed: null,
     memFree: null,
@@ -218,6 +228,7 @@ function normalizeServerStats(stats: Partial<ServerStats>): ServerStats {
     gpuName: stats.gpuName ?? null,
     gpuMemUsed: stats.gpuMemUsed ?? null,
     gpuMemTotal: stats.gpuMemTotal ?? null,
+    gpus: Array.isArray(stats.gpus) ? stats.gpus : [],
     memTotal: stats.memTotal ?? null,
     memUsed: stats.memUsed ?? null,
     memFree: stats.memFree ?? null,

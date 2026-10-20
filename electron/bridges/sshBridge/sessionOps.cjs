@@ -1312,11 +1312,10 @@ function createSessionOpsApi(ctx) {
         `kernel=$(uname -r 2>/dev/null || echo "")`,
         `uptime=$(awk '{printf "%.0f",$1}' /proc/uptime 2>/dev/null || echo "")`,
         `loadavg=$(awk '{print $1" "$2" "$3}' /proc/loadavg 2>/dev/null || echo "")`,
-        // GPU: NVIDIA GPUs expose utilization + VRAM through the driver-bundled
-        // nvidia-smi. Best-effort — empty on hosts without the tool, so the UI
-        // simply hides the GPU chip. Utilization is averaged across GPUs and
-        // VRAM is summed independently; incomplete memory totals remain unknown.
-        // The first GPU's name is kept for the tooltip.
+        // GPU: NVIDIA GPUs expose utilization + VRAM through one bounded
+        // nvidia-smi query. Best-effort — empty on hosts without the tool, so
+        // the UI hides the GPU chip. Utilization is averaged across GPUs and
+        // VRAM is summed independently; the same reply also lists each card.
         // Bound GPU queries independently so a stuck driver cannot stop CPU/memory
         // polling. Hosts without timeout also omit this optional metric.
         // macOS is skipped: powermetrics needs root, which stats must not.
@@ -1461,6 +1460,7 @@ function createSessionOpsApi(ctx) {
             let gpuName = null;
             let gpuMemUsed = null;
             let gpuMemTotal = null;
+            let gpus = [];
             for (const part of parts) {
               if (part.startsWith('CPU:')) {
                 // macOS: command reports normalized CPU% directly (no delta needed)
@@ -1588,7 +1588,7 @@ function createSessionOpsApi(ctx) {
                   }
                 }
               } else if (part.startsWith('GPU:')) {
-                ({gpu,gpuName,gpuMemUsed,gpuMemTotal}=parseGpuStats(part));
+                ({gpu,gpuName,gpuMemUsed,gpuMemTotal,gpus}=parseGpuStats(part));
               } else if (part.startsWith('HOST:')) {
                 hostname = part.substring(5).trim();
               } else if (part.startsWith('OS:')) {
@@ -1741,6 +1741,7 @@ function createSessionOpsApi(ctx) {
                 gpuName,       // First GPU name (tooltip), null when unavailable
                 gpuMemUsed,    // Summed VRAM used in MB, null when unavailable
                 gpuMemTotal,   // Summed VRAM total in MB, null when unavailable
+                gpus,          // Per-GPU index, name, utilization, and VRAM in MB
                 memTotal,      // Total memory in MB
                 memUsed,       // Used memory in MB (excluding buffers/cache)
                 memFree,       // Free memory in MB

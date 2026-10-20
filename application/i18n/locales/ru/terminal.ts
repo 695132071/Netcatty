@@ -130,6 +130,8 @@ export const ruTerminalMessages: Messages = {
   'terminal.serverStats.cpu': 'Использование CPU',
   'terminal.serverStats.cpuCores': 'Использование ядер CPU',
   'terminal.serverStats.gpu': 'Использование GPU',
+  'terminal.serverStats.gpuDevices': 'Использование видеокарт',
+  'terminal.serverStats.gpuIndex': 'GPU {{index}}',
   'terminal.serverStats.memory': 'Использование памяти',
   'terminal.serverStats.memoryDetails': 'Сведения о памяти',
   'terminal.serverStats.memUsed': 'Использовано',

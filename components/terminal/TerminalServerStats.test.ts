@@ -28,4 +28,7 @@ test("GPU chip only renders when the remote reports GPU utilization", () => {
     source,
     /terminal\.serverStats\.gpu[\s\S]{0,2000}terminal\.serverStats\.memory/,
   );
+  // Same hover card as CPU: compact aggregate trigger, per-device body.
+  assert.match(source, /HoverCardTrigger asChild[\s\S]*terminal\.serverStats\.gpu[\s\S]*<TerminalGpuCards/);
+  assert.match(source, /className="w-auto p-3"[\s\S]*side="bottom"[\s\S]*align="start"[\s\S]*sideOffset=\{8\}[\s\S]*<TerminalGpuCards/);
 });

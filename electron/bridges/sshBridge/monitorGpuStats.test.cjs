@@ -3,6 +3,8 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 const { EventEmitter } = require("node:events");
 const {
+  GPU_ASSIGNMENT,
+  parseGpuStats,
   startMonitorGpuProbe,
   withCachedMonitorGpu,
   cacheFullGpuStats,
@@ -17,6 +19,75 @@ function stream() {
   return s;
 }
 const sample = { success: true, stats: { cpu: 12, memTotal: 4096, gpu: null } };
+
+test("GPU collection stays one nvidia-smi query and keeps per-GPU fields", () => {
+  assert.equal(
+    GPU_ASSIGNMENT.match(/nvidia-smi/g).length,
+    1,
+    "each poll must run a single nvidia-smi command",
+  );
+  assert.match(
+    GPU_ASSIGNMENT,
+    /nvidia-smi --query-gpu=index,name,utilization\.gpu,memory\.used,memory\.total --format=csv,noheader,nounits/,
+  );
+});
+
+test("parseGpuStats keeps a single aggregate GPU and an empty device list", () => {
+  assert.deepEqual(parseGpuStats("GPU:73 2048 24576 NVIDIA GeForce RTX 4090"), {
+    gpu: 73,
+    gpuName: "NVIDIA GeForce RTX 4090",
+    gpuMemUsed: 2048,
+    gpuMemTotal: 24576,
+    gpus: [],
+  });
+});
+
+test("parseGpuStats reads each GPU index, name, utilization, and memory", () => {
+  const parsed = parseGpuStats(
+    "GPU:72 3072 49152 NVIDIA RTX 4090 ;; 0\tNVIDIA RTX 4090\t73\t2048\t24576 ;; 1\tNVIDIA A100 80GB\t71\t1024\t24576",
+  );
+  assert.equal(parsed.gpu, 72);
+  assert.equal(parsed.gpuMemUsed, 3072);
+  assert.equal(parsed.gpuMemTotal, 49152);
+  assert.deepEqual(parsed.gpus, [
+    { index: 0, name: "NVIDIA RTX 4090", utilization: 73, memoryUsed: 2048, memoryTotal: 24576 },
+    { index: 1, name: "NVIDIA A100 80GB", utilization: 71, memoryUsed: 1024, memoryTotal: 24576 },
+  ]);
+});
+
+test("parseGpuStats keeps eight GPUs and clamps utilization", () => {
+  const cards = Array.from({ length: 8 }, (_, index) =>
+    `${index}\tNVIDIA A100 ${index}\t${index === 3 ? 140 : 10 + index}\t${1024 * (index + 1)}\t81920`,
+  ).join(" ;; ");
+  const parsed = parseGpuStats(`GPU:40 36864 655360 NVIDIA A100 0 ;; ${cards}`);
+  assert.equal(parsed.gpus.length, 8);
+  assert.equal(parsed.gpus[3].utilization, 100);
+  assert.equal(parsed.gpus[7].index, 7);
+  assert.equal(parsed.gpus[7].memoryTotal, 81920);
+});
+
+test("parseGpuStats skips a broken card and unknown memory without hiding the rest", () => {
+  const parsed = parseGpuStats(
+    "GPU:73 2048 24576 NVIDIA RTX 4090 ;; not-a-card ;; 0\tNVIDIA RTX 4090\t73\tN/A\t24576 ;; 2\tNVIDIA A100\tN/A\t1024\t8192",
+  );
+  assert.equal(parsed.gpu, 73);
+  assert.deepEqual(parsed.gpus, [
+    { index: 0, name: "NVIDIA RTX 4090", utilization: 73, memoryUsed: null, memoryTotal: 24576 },
+    { index: 2, name: "NVIDIA A100", utilization: null, memoryUsed: 1024, memoryTotal: 8192 },
+  ]);
+});
+
+test("parseGpuStats hides GPU data when nvidia-smi output cannot be parsed", () => {
+  for (const output of ["", "GPU:", "GPU:[Not Supported]", "GPU:N/A N/A N/A", "CPURAW:1 1|MEMINFO:1"]) {
+    assert.deepEqual(parseGpuStats(output), {
+      gpu: null,
+      gpuName: null,
+      gpuMemUsed: null,
+      gpuMemTotal: null,
+      gpus: [],
+    });
+  }
+});
 test("GPU work is coalesced, cached independently, and never changes CPU readings", async (t) => {
   let now = 100000,
     calls = 0,

@@ -301,6 +301,13 @@ declare global {
         gpuName?: string | null;      // First GPU name
         gpuMemUsed?: number | null;   // Summed VRAM used in MB
         gpuMemTotal?: number | null;  // Summed VRAM total in MB
+        gpus?: Array<{                // Per-GPU utilization and VRAM (MiB)
+          index: number;
+          name: string;
+          utilization: number | null;
+          memoryUsed: number | null;
+          memoryTotal: number | null;
+        }>;
         memTotal: number | null;      // Total memory in MB
         memUsed: number | null;       // Used memory in MB (excluding buffers/cache)
         memFree: number | null;       // Free memory in MB

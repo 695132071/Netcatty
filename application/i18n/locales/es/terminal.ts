@@ -109,6 +109,8 @@ export const esTerminalMessages: Messages = {
   'terminal.serverStats.cpu': 'Uso de CPU',
   'terminal.serverStats.cpuCores': 'Uso de núcleos de CPU',
   'terminal.serverStats.gpu': 'Uso de GPU',
+  'terminal.serverStats.gpuDevices': 'Uso de cada GPU',
+  'terminal.serverStats.gpuIndex': 'GPU {{index}}',
   'terminal.serverStats.memory': 'Uso de memoria',
   'terminal.serverStats.memoryDetails': 'Detalles de memoria',
   'terminal.serverStats.memUsed': 'Usada',
