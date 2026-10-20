@@ -118,6 +118,7 @@ test("buildSshDeepLinkEphemeralHostFromSaved keeps saved settings but overrides 
     proxyProfileId: "proxy-1",
     hostChain: { hostIds: ["jump-1"] },
     charset: "utf8",
+    legacyAlgorithms: true,
     moshEnabled: true,
     createdAt: 1,
   };
@@ -141,6 +142,8 @@ test("buildSshDeepLinkEphemeralHostFromSaved keeps saved settings but overrides 
   // Group is cleared so effective-host resolution cannot re-inherit
   // group credentials over the one-time password.
   assert.equal(ephemeral.group, "");
+  assert.equal(ephemeral.backedBySavedHost, true);
+  assert.equal(ephemeral.legacyAlgorithms, true);
   assert.equal(ephemeral.proxyProfileId, "proxy-1");
   assert.deepEqual(ephemeral.hostChain, { hostIds: ["jump-1"] });
   assert.equal(ephemeral.charset, "utf8");

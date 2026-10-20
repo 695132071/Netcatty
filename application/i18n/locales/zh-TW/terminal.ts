@@ -454,6 +454,8 @@ export const zhTWTerminalMessages: Messages = {
   'settings.terminal.localShell.startDir.notFound': '目錄不存在',
   'settings.terminal.localShell.startDir.isFile': '路徑是檔案，不是目錄',
   'settings.terminal.section.connection': '連線',
+  'settings.terminal.connection.temporaryLegacyAlgorithms': '臨時連線允許舊版演算法',
+  'settings.terminal.connection.temporaryLegacyAlgorithms.desc': '沒有對應已儲存主機的 SSH 連線（包括外部程式以 PuTTY 參數啟動，以及快速連線）會使用與主機「允許舊版演算法」相同的已棄用演算法。已儲存主機仍使用自己的設定。預設關閉，這些演算法有已知安全問題。',
   'settings.terminal.connection.defaultProxy': '預設代理',
   'settings.terminal.connection.defaultProxy.desc': '主機沒有單獨設定、也沒有從群組繼承代理時使用的已儲存代理。選擇「無」則直接連線。',
   'settings.terminal.connection.defaultProxy.none': '無',

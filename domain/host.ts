@@ -486,5 +486,6 @@ export const sanitizeHost = (host: Host, snippets: Snippet[] = []): Host => {
     pluginConnection,
   };
   delete (sanitized as { singleChannelSsh?: unknown }).singleChannelSsh;
+  delete (sanitized as { backedBySavedHost?: boolean }).backedBySavedHost;
   return stripBuiltInConnectionFieldsForPluginHost(sanitized);
 };

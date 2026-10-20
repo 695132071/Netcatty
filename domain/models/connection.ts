@@ -183,6 +183,10 @@ export interface Host {
   // Runtime marker for in-memory-only hosts (e.g. password deep links).
   // Ephemeral hosts are never persisted to the vault or session restore.
   ephemeral?: boolean;
+  // Runtime marker for an ephemeral host cloned from a saved vault host.
+  // Those connections keep the saved host's own SSH settings. Pure temporary
+  // launches (external command lines, quick connect) leave this unset.
+  backedBySavedHost?: boolean;
   // Runtime hint for deep-link launches that target file transfer (e.g.
   // JumpServer sftp payloads): auto-open the SFTP side panel on connect.
   autoOpenSftpPanel?: boolean;

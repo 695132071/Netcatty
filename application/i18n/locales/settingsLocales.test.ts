@@ -47,6 +47,22 @@ test("localized settings include workspace focus indicator labels", () => {
   }
 });
 
+test("localized settings include temporary-connection legacy algorithm labels", () => {
+  const keys = [
+    "settings.terminal.connection.temporaryLegacyAlgorithms",
+    "settings.terminal.connection.temporaryLegacyAlgorithms.desc",
+  ];
+  const locales = [{ name: "en", messages: en }, ...LOCALIZED_SETTINGS_LOCALES];
+
+  for (const locale of locales) {
+    const missing = keys.filter((key) => !locale.messages[key]);
+    assert.deepEqual(missing, [], `${locale.name} is missing temporary legacy algorithm labels`);
+  }
+
+  assert.match(zhCN["settings.terminal.connection.temporaryLegacyAlgorithms"], /临时连接允许旧版算法/);
+  assert.match(zhTW["settings.terminal.connection.temporaryLegacyAlgorithms"], /臨時連線允許舊版演算法/);
+});
+
 test("localized settings include the global default proxy labels", () => {
   const keys = [
     "settings.terminal.connection.defaultProxy",

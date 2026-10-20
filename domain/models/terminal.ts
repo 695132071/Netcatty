@@ -143,6 +143,12 @@ export interface TerminalSettings {
 
   // SSH Connection
   verifyHostKeys: boolean; // Verify SSH host keys before authenticating
+  /**
+   * Offer the per-host legacy SSH algorithm list for connections that have
+   * no saved host (external launches and quick connect). Saved hosts ignore
+   * this and keep their own setting. Off by default.
+   */
+  temporaryConnectionsAllowLegacyAlgorithms: boolean;
   keepaliveInterval: number; // Seconds between SSH-level keepalive packets (0 = disabled)
   keepaliveCountMax: number; // Unanswered keepalives before declaring the connection dead
   sshAutoReconnectEnabled: boolean; // Automatically reconnect SSH sessions after unexpected disconnects
@@ -468,6 +474,8 @@ export const normalizeTerminalSettings = (
 
   return {
     ...mergedSettings,
+    temporaryConnectionsAllowLegacyAlgorithms:
+      mergedSettings.temporaryConnectionsAllowLegacyAlgorithms === true,
     rendererType,
     autocompleteMaxSuggestions,
     multilinePasteConfirmMinLines: normalizeMultilinePasteConfirmMinLines(
@@ -568,6 +576,7 @@ const DEFAULT_TERMINAL_SETTINGS: TerminalSettings = {
   // reply to keepalive@openssh.com (older routers/switches) should set their
   // own per-host keepaliveOverride and dial these values down.
   verifyHostKeys: true,
+  temporaryConnectionsAllowLegacyAlgorithms: false,
   keepaliveInterval: 30,
   keepaliveCountMax: 10,
   // On by default: unexpected transport drops (VPN / Wi-Fi blips) schedule an

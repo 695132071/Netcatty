@@ -481,6 +481,14 @@ export const SETTINGS_SEARCH_CATALOG: readonly SettingsSearchEntry[] = [
     sectionKey: "settings.terminal.section.connection",
   },
   {
+    id: "terminal-temporary-legacy-algorithms",
+    tab: "terminal",
+    labelKey: "settings.terminal.connection.temporaryLegacyAlgorithms",
+    descriptionKey: "settings.terminal.connection.temporaryLegacyAlgorithms.desc",
+    sectionKey: "settings.terminal.section.connection",
+    keywords: ["legacy", "kex", "putty", "旧版算法", "演算法", "堡垒机"],
+  },
+  {
     id: "terminal-ssh-auto-reconnect",
     tab: "terminal",
     labelKey: "settings.terminal.connection.sshAutoReconnectEnabled",

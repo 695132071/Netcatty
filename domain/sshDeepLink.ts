@@ -146,6 +146,7 @@ export const buildSshDeepLinkEphemeralHostFromSaved = (
   savePassword: false,
   group: "",
   ephemeral: true,
+  backedBySavedHost: true,
   protocol: "ssh",
   moshEnabled: false,
   etEnabled: false,

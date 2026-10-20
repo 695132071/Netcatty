@@ -47,6 +47,7 @@ import { buildSshDeepLinkConnectionHost, buildSshDeepLinkEphemeralHost, buildSsh
 import { buildTelnetDeepLinkConnectionHost, buildTelnetDeepLinkEphemeralHostFromSaved, buildTelnetDeepLinkOpenHost, findTelnetDeepLinkHost, materializeTelnetDeepLinkMatchHost, parseTelnetDeepLink } from '../../domain/telnetDeepLink';
 import { buildJmsDeepLinkEphemeralHost, isSupportedJmsProtocol, parseJmsDeepLink } from '../../domain/jmsDeepLink';
 import { applyEphemeralHostDistroUpdate, applyEphemeralHostsUpdate, splitHostsUpdateByEphemeral } from '../../domain/ephemeralHosts';
+import { prepareConnectionHost } from '../../domain/legacyAlgorithms';
 import { resolveHostAuth } from '../../domain/sshAuth';
 import { isEncryptedCredentialPlaceholder, stripSyncPayloadEncryptedCredentials } from '../../domain/credentials';
 import {
@@ -1450,11 +1451,15 @@ export function AppSideEffects() {
 
   // Wrapper to connect to host with logging
   const handleConnectToHost = useCallback((host: Host, alreadyEffective = false, hidden = false) => {
-    if (host.ephemeral) {
+    const connectionHost = prepareConnectionHost(
+      host,
+      terminalSettings.temporaryConnectionsAllowLegacyAlgorithms,
+    );
+    if (connectionHost.ephemeral) {
       setEphemeralHosts((previous) => {
-        const existingIndex = previous.findIndex((candidate) => candidate.id === host.id);
-        if (existingIndex < 0) return [...previous, host];
-        return previous.map((candidate, index) => index === existingIndex ? host : candidate);
+        const existingIndex = previous.findIndex((candidate) => candidate.id === connectionHost.id);
+        if (existingIndex < 0) return [...previous, connectionHost];
+        return previous.map((candidate, index) => index === existingIndex ? connectionHost : candidate);
       });
     }
     const effectiveHostResolver = alreadyEffective
@@ -1464,7 +1469,7 @@ export function AppSideEffects() {
       addConnectionLog,
       connectToHost,
       discoveredShells,
-      host,
+      host: connectionHost,
       identities,
       keys,
       resolveEffectiveHost: effectiveHostResolver,
@@ -1472,7 +1477,7 @@ export function AppSideEffects() {
       resolveShellSetting,
       systemInfoRef,
       terminalSettings,
-    }), host, hidden);
+    }), connectionHost, hidden);
   }, [addConnectionLog, connectToHost, resolveEffectiveHost, identities, keys, discoveredShells, terminalSettings]);
 
   const handleConnectToHostWithTabName = useCallback((host: Host, tabName?: string) => {

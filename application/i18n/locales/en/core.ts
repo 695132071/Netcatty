@@ -836,6 +836,8 @@ Highlight the focused split pane:
   'settings.terminal.section.connection': 'Connection',
   'settings.terminal.connection.verifyHostKeys': 'Verify SSH host keys',
   'settings.terminal.connection.verifyHostKeys.desc': 'Ask before connecting to a new or changed SSH host key. Turn this off only for trusted private networks.',
+  'settings.terminal.connection.temporaryLegacyAlgorithms': 'Allow legacy algorithms for temporary connections',
+  'settings.terminal.connection.temporaryLegacyAlgorithms.desc': 'SSH connections with no saved host, including PuTTY-style launches and quick connect, offer the same deprecated algorithms as the per-host option. Saved hosts keep their own setting. Off by default; these algorithms have known weaknesses.',
   'settings.terminal.connection.sshAutoReconnectEnabled': 'Automatically reconnect SSH sessions',
   'settings.terminal.connection.sshAutoReconnectEnabled.desc': 'When turned on, established SSH sessions that drop unexpectedly try to reconnect every 5 seconds until the tab is closed or the connection succeeds.',
   'settings.terminal.connection.keepaliveInterval': 'Keepalive Interval',
