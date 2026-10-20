@@ -8,8 +8,11 @@ const net = require("node:net");
 const { createNdjsonRpcClient } = require("../capabilities/rpcTransport.cjs");
 const tempDirBridge = require("./tempDirBridge.cjs");
 const bridge = require("./mcpServerBridge.cjs");
+const privacy = require("../shared/aiPrivacyService.cjs");
 
 test("external MCP approval names the host and isolates connection and host grants", async (t) => {
+  privacy.configure({ enabled: false });
+  let executions = 0;
   const dir = fs.mkdtempSync(`${tempDirBridge.getTempFilePath("host-approval")}-`);
   const clients = [];
   t.after(() => {
@@ -30,7 +33,7 @@ test("external MCP approval names the host and isolates connection and host gran
     sessions: new Map(),
     cliDiscoveryFilePath: path.join(dir, "discovery.json"),
     terminalWorkerManager: {
-      request: async () => ({ ok: true, stdout: "done", stderr: "", exitCode: 0 }),
+      request: async () => { executions += 1; return { ok: true, stdout: "done", stderr: "", exitCode: 0 }; },
     },
   });
   bridge.setMainWindowGetter(() => ({
@@ -140,6 +143,16 @@ test("external MCP approval names the host and isolates connection and host gran
   assert.equal(localRequest.target.hostId, "", "local sessions cannot get a persistent host grant");
   bridge.resolveApprovalFromRenderer(localRequest.approvalId, false);
   assert.equal((await localCall).ok, false);
+
+  const policyApproval = nextApproval();
+  const policyCall = exec(clientC, "local-test");
+  const rejectedPolicyCall = assert.rejects(policyCall, /settings changed/);
+  const policyRequest = await policyApproval;
+  const executedBeforeChange = executions;
+  privacy.configure({ enabled: true });
+  bridge.resolveApprovalFromRenderer(policyRequest.approvalId, true, "once");
+  await rejectedPolicyCall;
+  assert.equal(executions, executedBeforeChange, "external approvals must not execute across policy changes");
 
   const staleApproval = nextApproval();
   const staleCall = exec(clientC, "local-test");

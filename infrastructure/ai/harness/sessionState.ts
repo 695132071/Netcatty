@@ -262,14 +262,14 @@ export class SessionStateStore {
     if (hosts.length) {
       const hostSummary = hosts
         .slice(-5)
-        .map(([id, host]) => `${id}${host.lastCommand ? ` (last: ${redactSecretsForModel(host.lastCommand)})` : ''}`)
+        .map(([id, host]) => `${id}${host.lastCommand ? ` (last: ${redactSecretsForModel(host.lastCommand, chatSessionId)})` : ''}`)
         .join(', ');
       lines.push(`Active hosts: ${hostSummary}`);
     }
     const jobs = Object.entries(state.activeJobs);
     if (jobs.length) {
       const jobSummary = jobs.slice(-5).map(([jobId, job]) => (
-        `${jobId} (status=${job.status}, offset=${job.nextOffset}${job.sessionId ? `, session=${job.sessionId}` : ''}${job.command ? `, command=${redactSecretsForModel(job.command)}` : ''})`
+        `${jobId} (status=${job.status}, offset=${job.nextOffset}${job.sessionId ? `, session=${job.sessionId}` : ''}${job.command ? `, command=${redactSecretsForModel(job.command, chatSessionId)}` : ''})`
       )).join('; ');
       lines.push(`Remembered terminal jobs (status is unverified after compaction): ${jobSummary}. Poll the existing job from its saved offset to verify current status; do not restart its command.`);
     }

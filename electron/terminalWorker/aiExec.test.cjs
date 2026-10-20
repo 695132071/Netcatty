@@ -78,6 +78,37 @@ function nextTick() {
   return new Promise((resolve) => setImmediate(resolve));
 }
 
+for (const channel of ["netcatty:ai:exec", "netcatty:ai:jobStart"]) {
+  test(`${channel} stays cancellable while main validates execution`, async () => {
+    const pty = new FakePty();
+    const ipcMain = createFakeIpcMain();
+    registerWorkerAiExecHandlers(ipcMain, {
+      sessions: new Map([["session", { protocol: "ssh", stream: pty, shellKind: "posix" }]]),
+    });
+    let validationEntered;
+    let allowExecution;
+    const entered = new Promise(resolve => { validationEntered = resolve; });
+    const validation = new Promise(resolve => { allowExecution = resolve; });
+    const event = {
+      ...createFakeEvent(),
+      beforeExecute: async () => {
+        validationEntered();
+        await validation;
+      },
+    };
+    const pending = ipcMain.handlers.get(channel)(event, {
+      sessionId: "session", command: "echo synthetic", chatSessionId: "chat-validation",
+    });
+    await entered;
+    ipcMain.listeners.get("netcatty:ai:catty:cancel")(event, { chatSessionId: "chat-validation" });
+    allowExecution();
+    const result = await pending;
+    assert.equal(result.ok, false);
+    assert.equal(result.error, "Cancelled");
+    assert.deepEqual(pty.writes, []);
+  });
+}
+
 test("worker job stop receives cancellation output while renderer flow is paused", async () => {
   class PausablePty extends Duplex {
     constructor() { super(); this.writes = []; }

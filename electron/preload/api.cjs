@@ -1997,6 +1997,9 @@ function createPreloadApi(ctx) {
     return ipcRenderer.invoke("netcatty:external-mcp:grok:add");
   },
   // MCP Server session metadata
+  aiPrivacyStatus: async () => ipcRenderer.invoke("netcatty:ai:privacy:status"),
+  aiPrivacyTransform: async (request) => ipcRenderer.invoke("netcatty:ai:privacy:transform", request),
+  aiPrivacyClearSession: async (chatSessionId) => ipcRenderer.invoke("netcatty:ai:privacy:clear", chatSessionId),
   aiMcpUpdateSessions: async (sessions, chatSessionId) => {
     return ipcRenderer.invoke("netcatty:ai:mcp:update-sessions", { sessions, chatSessionId });
   },

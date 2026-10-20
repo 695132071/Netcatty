@@ -20,6 +20,9 @@ import {
 
 export interface ProviderRequestContext {
   getOpenAIChatAssistantFields?: () => Array<OpenAIChatAssistantFields | undefined>;
+  transformOpenAIChatAssistantFields?: (
+    fields: Array<OpenAIChatAssistantFields | undefined>,
+  ) => Promise<Array<OpenAIChatAssistantFields | undefined>>;
   streamIdleTimeoutMs?: number;
   /** Stable per-conversation id; used e.g. for OpenCode's x-opencode-session header. */
   chatSessionId?: string;
@@ -473,10 +476,14 @@ export function createBridgeFetchForSDK(
     const headers = extractHeaders(resolvedInit?.headers);
     const body =
       resolvedInit?.body != null ? String(resolvedInit.body) : undefined;
+    const assistantFields = requestContext?.getOpenAIChatAssistantFields?.() ?? [];
+    const safeAssistantFields = requestContext?.transformOpenAIChatAssistantFields
+      ? await requestContext.transformOpenAIChatAssistantFields(assistantFields)
+      : assistantFields;
     const requestBody = body != null
       ? repairOpenAIChatToolResultPairsInBody(applyOpenAIChatContinuationToBody(
           body,
-          requestContext?.getOpenAIChatAssistantFields?.() ?? [],
+          safeAssistantFields,
         ))
       : undefined;
 

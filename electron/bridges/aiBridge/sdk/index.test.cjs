@@ -113,3 +113,32 @@ test("Copilot registry catalog uses the configured profile environment", async (
   assert.deepEqual(models, [{ id: "profile-model", name: "profile-model" }]);
   assert.deepEqual(receivedEnv, env);
 });
+
+test("registry forwards the same live session guard to every prompt driver", async (t) => {
+  const assertSessionValid = () => {};
+  const cases = [
+    ["claude", "./claudeDriver.cjs", "runClaudeTurn", {}],
+    ["codex", "./codexDriver.cjs", "runCodexTurn", {}],
+    ["copilot", "./copilotDriver.cjs", "runCopilotTurn", {}],
+    ["cursor", "./cursorDriver.cjs", "runCursorTurn", {}],
+    ["cursor", "./cursorCliDriver.cjs", "runCursorCliTurn", { cursorAuthMode: "cli-login" }],
+    ["codebuddy", "./codebuddyDriver.cjs", "runCodebuddyTurn", { maxBudgetUsd: 1 }],
+    ["opencode", "./opencodeDriver.cjs", "runOpenCodeTurn", {}],
+    ["grok", "./grokAcpDriver.cjs", "runGrokAcpTurn", {}],
+    ["grok", "./grokDriver.cjs", "runGrokTurn", { grokRuntime: "streaming-json" }],
+    ["mimo", "./mimoDriver.cjs", "runMimoTurn", {}],
+  ];
+  for (const [backend, modulePath, method, extra] of cases) {
+    const driver = require(modulePath);
+    let received;
+    t.mock.method(driver, method, async (context) => { received = context; return {}; });
+    await getDriver(backend).runTurn({
+      prompt: "hello", emitter: {}, env: {}, assertSessionValid, ...extra,
+    });
+    assert.equal(received.assertSessionValid, assertSessionValid, method);
+  }
+  let received;
+  t.mock.method(codebuddySessionManager, "runTurn", async (context) => { received = context; return {}; });
+  await getDriver("codebuddy").runTurn({ prompt: "hello", emitter: {}, env: {}, assertSessionValid });
+  assert.equal(received.assertSessionValid, assertSessionValid, "CodeBuddy V2");
+});

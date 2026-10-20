@@ -51,6 +51,7 @@ import { CopilotCliCard } from "./ai/CopilotCliCard";
 import { CodebuddyCard } from "./ai/CodebuddyCard";
 import { SafetySettings } from "./ai/SafetySettings";
 import { ExternalMcpCard } from "./ai/ExternalMcpCard";
+import { AIPrivacySection } from "./ai/AIPrivacySection";
 import { ToolAccessGuidance } from "./ai/ToolAccessGuidance";
 import { PermissionGrantsSettings } from "./ai/PermissionGrantsSettings";
 import { useAIPermissionGrantsState } from "../../../application/state/useAIPermissionGrantsState";
@@ -1296,6 +1297,8 @@ const SettingsAITab: React.FC<SettingsAITabProps> = ({
               </div>
             </SettingCard>
           </SettingsSection>
+
+          <AIPrivacySection />
 
           <SettingsSection anchorId="ai-external-mcp" title={t('ai.externalMcp.title')}>
             <ExternalMcpCard />

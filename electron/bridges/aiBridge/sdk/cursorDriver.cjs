@@ -320,7 +320,7 @@ function runCursorTurn(options) {
 }
 
 async function runCursorTurnInProcess({
-  prompt, attachments, agentOptions, runtimeEnv, resumeSessionId, emitter, signal, sdkModule,
+  prompt, attachments, agentOptions, runtimeEnv, resumeSessionId, emitter, signal, sdkModule, assertSessionValid, getPrompt,
 }) {
   let resolvedModule = sdkModule;
   if (!resolvedModule) {
@@ -370,10 +370,13 @@ async function runCursorTurnInProcess({
     if (sessionId) emitter.sessionId(sessionId);
     if (signal?.aborted) return { sessionId };
 
-    const sendMessage = buildCursorSendMessage(prompt, attachments);
-    run = await abortable(withExclusiveProcessEnv(runtimeEnv, () => {
+    run = await abortable(withExclusiveProcessEnv(runtimeEnv, async () => {
+      // The utility worker receives prompt content only after startup and the
+      // main process has revalidated this chat at the handoff boundary.
+      const input = getPrompt ? await getPrompt() : { prompt, attachments };
       if (signal?.aborted) throw new CursorTurnAbortError();
-      return agent.send(sendMessage);
+      assertSessionValid?.();
+      return agent.send(buildCursorSendMessage(input.prompt, input.attachments));
     }), signal, (lateRun) => {
       if (lateRun && typeof lateRun.cancel === "function") {
         void lateRun.cancel().catch(() => {});

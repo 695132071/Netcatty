@@ -110,7 +110,7 @@ export async function compactCattyMessages(
           instructions: CONTEXT_COMPACTION_SYSTEM_PROMPT,
           messages: [{
             role: 'user',
-            content: `Create the first-pass note for this stable earlier prefix. Preserve exact decisions, paths, commands, errors, and unfinished work:\n\n${formatMessagesForCompaction(prefix)}`,
+            content: `Create the first-pass note for this stable earlier prefix. Preserve exact decisions, paths, commands, errors, and unfinished work:\n\n${formatMessagesForCompaction(prefix, input.chatSessionId)}`,
           }],
           abortSignal: input.abortSignal,
           maxOutputTokens: COMPACTION_SUMMARY_MAX_OUTPUT_TOKENS,
@@ -151,13 +151,13 @@ export async function compactCattyMessages(
     const formattedHistory = cached
       ? [
           `[FIRST-PASS NOTE FOR ${cached.prefixLength} EARLIER MESSAGES]\n${cached.note}`,
-          `[REMAINING EXACT MESSAGES]\n${formatMessagesForCompaction(pruned.slice(cached.prefixLength))}`,
+          `[REMAINING EXACT MESSAGES]\n${formatMessagesForCompaction(pruned.slice(cached.prefixLength), input.chatSessionId)}`,
         ].join('\n\n')
-      : formatMessagesForCompaction(pruned);
+      : formatMessagesForCompaction(pruned, input.chatSessionId);
     // Archive the untouched turn input. messagesToSummarize has already passed
     // through integrity repair and stale-result pruning, so it is not an exact
     // recovery source even though it is the right input for the summary model.
-    const exactFormattedHistory = formatMessagesForCompaction(input.messages);
+    const exactFormattedHistory = formatMessagesForCompaction(input.messages, input.chatSessionId);
     archiveChars = exactFormattedHistory.length;
     if (input.toolOutputStore && input.chatSessionId) {
       const archive = storeCompactionArchive(

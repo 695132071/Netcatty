@@ -82,6 +82,66 @@ test("runtime invokes registered request handlers and posts responses", async ()
   ]);
 });
 
+test("execution validation is request scoped and denial prevents worker effects", async () => {
+  const parentPort = createParentPort();
+  let effects = 0;
+  const runtime = createTerminalWorkerRuntime({
+    parentPort,
+    registerBridges(ipcMain) {
+      ipcMain.handle("netcatty:ai:exec", async event => {
+        await event.beforeExecute();
+        effects++;
+        return { ok: true };
+      });
+    },
+  });
+  runtime.start();
+  parentPort.emitMessage({
+    kind: "request", requestId: "guarded", channel: "netcatty:ai:exec",
+    requiresExecutionValidation: true,
+  });
+  await new Promise(resolve => setImmediate(resolve));
+  const validation = parentPort.messages.find(message => message.kind === "validate-execution");
+  assert.ok(validation);
+  parentPort.emitMessage({
+    kind: "execution-validation", requestId: "another-request",
+    validationId: validation.validationId, ok: true,
+  });
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(effects, 0);
+  assert.equal(parentPort.messages.some(message => message.kind === "response"), false);
+  parentPort.emitMessage({
+    kind: "execution-validation", requestId: "guarded",
+    validationId: validation.validationId, ok: false,
+  });
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(effects, 0);
+  assert.match(parentPort.messages.at(-1).error, /privacy session is unavailable/);
+});
+
+test("execution validation times out closed without a main response", async () => {
+  const parentPort = createParentPort();
+  let effects = 0;
+  const runtime = createTerminalWorkerRuntime({
+    parentPort,
+    executionValidationTimeoutMs: 10,
+    registerBridges(ipcMain) {
+      ipcMain.handle("netcatty:ai:exec", async event => {
+        await event.beforeExecute();
+        effects++;
+      });
+    },
+  });
+  runtime.start();
+  parentPort.emitMessage({
+    kind: "request", requestId: "timeout", channel: "netcatty:ai:exec",
+    requiresExecutionValidation: true,
+  });
+  await new Promise(resolve => setTimeout(resolve, 30));
+  assert.equal(effects, 0);
+  assert.match(parentPort.messages.at(-1).error, /privacy session is unavailable/);
+});
+
 test("runtime serializes overlapping same-id starts and closes the superseded session first", async () => {
   const parentPort = createParentPort();
   const order = [];

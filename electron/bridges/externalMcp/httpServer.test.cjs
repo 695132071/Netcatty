@@ -251,6 +251,40 @@ describe("external MCP streamable HTTP server", () => {
     }
   });
 
+  it("isolates reversible masking per HTTP session and covers the environment resource", async () => {
+    const writes = [];
+    active = await startServer({
+      getRedactionConfig: () => ({ enabled: true }),
+      dispatchRpc: async (method, params) => {
+        if (method === "netcatty/exec") {
+          writes.push(params.command);
+          return { ok: true, stdout: params.command, exitCode: 0 };
+        }
+        return { ok: true, text: "192.0.2.10", password: "synthetic-password" };
+      },
+    });
+    const clients = [1, 2].map(() => new Client({ name: "privacy-test", version: "1" }));
+    try {
+      for (const client of clients) {
+        await client.connect(new StreamableHTTPClientTransport(new URL(active.url), {
+          requestInit: { headers: { Authorization: `Bearer ${TOKEN}` } },
+        }));
+      }
+      const result = await clients[0].callTool({ name: "get_environment", arguments: {} });
+      const data = JSON.parse(result.content[0].text);
+      assert.doesNotMatch(JSON.stringify(result), /192\.0\.2\.10|synthetic-password/);
+      const resource = await clients[0].readResource({ uri: "netcatty://context" });
+      assert.equal(JSON.parse(resource.contents[0].text).text, data.text);
+      await clients[0].callTool({ name: "terminal_execute", arguments: { sessionId: "s", command: `echo ${data.text}` } });
+      assert.deepEqual(writes, ["echo 192.0.2.10"]);
+      const rejected = await clients[1].callTool({ name: "terminal_execute", arguments: { sessionId: "s", command: `echo ${data.text}` } });
+      assert.equal(rejected.isError, true);
+      assert.equal(writes.length, 1);
+    } finally {
+      for (const client of clients) await client.close();
+    }
+  });
+
   it("expires an HTTP session that never sends DELETE", async () => {
     active = await startServer({ sessionIdleMs: 40, sessionSweepMs: 15 });
     const initialized = await postJson(active.url, {

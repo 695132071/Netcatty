@@ -235,6 +235,10 @@ export const STORAGE_KEY_AI_SESSION_IDLE_TIMEOUT_MINUTES = 'netcatty_ai_session_
 export const STORAGE_KEY_AI_EXTERNAL_MCP_SILENT_SESSIONS = 'netcatty_ai_external_mcp_silent_sessions_v1';
 /** External MCP confirm-mode approval alert: off, unfocused, or always. Default unfocused. */
 export const STORAGE_KEY_AI_EXTERNAL_MCP_APPROVAL_ALERT = 'netcatty_ai_external_mcp_approval_alert_v1';
+/** Shared AI privacy settings for Netcatty-managed context and tools. Device-local and off by default. */
+export const STORAGE_KEY_AI_PRIVACY = 'netcatty_ai_privacy_v1';
+/** Legacy External MCP privacy key, read only when no shared AI privacy preference exists. */
+export const STORAGE_KEY_AI_EXTERNAL_MCP_REDACTION = 'netcatty_ai_external_mcp_redaction_v1';
 /** External MCP Streamable HTTP listener. Off unless the user enables it. */
 export const STORAGE_KEY_AI_EXTERNAL_MCP_HTTP_ENABLED = 'netcatty_ai_external_mcp_http_enabled_v1';
 /** Fixed Streamable HTTP port so client configs stay stable across restarts. */

@@ -477,6 +477,7 @@ async function runCursorCliTurn({
   workspaceCwd,
   abortGraceMs = CURSOR_CLI_ABORT_GRACE_MS,
   forceKillImpl,
+  assertSessionValid,
 }) {
   const cliPath = String(binPath || "").trim();
   if (!cliPath) {
@@ -539,6 +540,7 @@ async function runCursorCliTurn({
   };
 
   try {
+    assertSessionValid?.();
     child = spawnCursorCliProcess(spawnImpl, cliPath, args, {
       cwd: effectiveCwd,
       env: childEnv,

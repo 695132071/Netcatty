@@ -1,4 +1,5 @@
 import { streamText, isStepCount, type ModelMessage } from 'ai';
+import type { LanguageModelV4 } from '@ai-sdk/provider';
 import { classifyError } from '../../errorClassifier';
 import { isRequestTooLargeError } from '../../errorClassifier';
 import { isSdkStreamStateError } from '../../shared/streamStateErrors';
@@ -10,7 +11,7 @@ import { mapCattyStreamChunkToAgentEvents } from '../agentEventAdapter';
 import type { AgentEvent } from '../types';
 import { resolveProviderStyle, type ProviderAdvancedParams } from '../../types';
 import type { CattyReasoningProviderOptions } from '../../cattyReasoning';
-import { createModelFromConfig, resolveProviderEndpoint } from '../../sdk/providers';
+import { resolveProviderEndpoint } from '../../sdk/providers';
 import type { CattyToolsBundle } from '../capabilityTools';
 import { buildCattyToolApproval } from '../cattyToolApproval';
 import type { CattyRuntimeContext } from '../cattyRuntimeContext';
@@ -42,7 +43,7 @@ import {
 } from '../../aiChatStreamingSupport';
 import type { ChatMessage, ProviderConfig } from '../../types';
 
-export type CattyModel = ReturnType<typeof createModelFromConfig>;
+export type CattyModel = LanguageModelV4;
 
 export interface CattyStreamUiSink {
   addMessageToSession: (sessionId: string, message: ChatMessage) => void;

@@ -206,6 +206,9 @@ class CodexAppServerConnection {
 
   async request(method, params = {}, timeoutMs = DEFAULT_REQUEST_TIMEOUT_MS, options = {}) {
     if (!options.skipStart) await this.start();
+    // Even an initialized connection yields in start(). Revalidate prompt
+    // handoffs after that await, before any JSONL payload reaches the process.
+    options.beforeSend?.();
     const id = this.nextRequestId++;
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => {

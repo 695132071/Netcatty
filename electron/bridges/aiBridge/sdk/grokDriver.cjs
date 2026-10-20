@@ -736,6 +736,7 @@ async function runGrokTurn({
   mergeMcp,
   abortGraceMs = GROK_ABORT_GRACE_MS,
   forceKillImpl,
+  assertSessionValid,
 }) {
   const cliPath = String(binPath || "").trim();
   if (!cliPath) {
@@ -789,6 +790,7 @@ async function runGrokTurn({
   };
 
   try {
+    assertSessionValid?.();
     child = spawnGrokProcess(spawnImpl, cliPath, args, {
       cwd: effectiveCwd,
       env: childEnv,

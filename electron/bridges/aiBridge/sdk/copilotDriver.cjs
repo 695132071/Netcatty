@@ -477,6 +477,7 @@ async function runCopilotTurn({
   emitter,
   signal,
   sdkModule,
+  assertSessionValid,
 }) {
   let resolvedModule = sdkModule;
   if (!resolvedModule) {
@@ -564,6 +565,7 @@ async function runCopilotTurn({
     }
     let final;
     try {
+      assertSessionValid?.();
       final = await session.sendAndWait(buildCopilotMessageOptions({ prompt, attachments }));
     } finally {
       try { unsubscribe(); } catch { /* best effort */ }

@@ -488,7 +488,7 @@ function createMiMoEmitter(emitter) {
 async function runMimoTurn({
   prompt, systemPrompt, attachments, cwd, model, injectedMcpServers, toolIntegrationMode,
   skillsPathAllowlist, permissionMode = "confirm", chatSessionId, requestApprovalFromRenderer, clearPendingApprovals,
-  resumeSessionId, env, binPath, emitter, abortController, mimoFactory, mimoConfigReader,
+  resumeSessionId, env, binPath, emitter, abortController, mimoFactory, mimoConfigReader, assertSessionValid,
 }) {
   const emit = createMiMoEmitter(emitter);
   const nativeSkillOptions = { mimo: true, env: { ...process.env, ...env }, cwd };
@@ -578,6 +578,8 @@ async function runMimoTurn({
     if (!sessionId) throw new Error("MiMo Code did not create a session");
     emit.sessionId(sessionId);
 
+    // Keep the guard before the event loop and prompt send (no awaits between).
+    assertSessionValid?.();
     const stopEventLoopWait = createStopWait();
     const serverExitWait = createMimoExitWait(instance.server);
     const answeredPermissions = new Set();

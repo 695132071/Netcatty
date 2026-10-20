@@ -4,6 +4,7 @@ const test = require('node:test');
 const { configureTerminalSessionDataEmitter, emitTerminalSessionData } = require('./emitTerminalSessionData.cjs');
 const { registerCattyExecHandlers } = require('./aiBridge/cattyExecHandlers.cjs');
 const { execViaPty } = require('./ai/ptyExec.cjs');
+const { createAiPrivacyService } = require('../shared/aiPrivacyService.cjs');
 // Keep bridge discovery writes/deletes off the installed app's live file.
 const { isolateCliDiscoveryFile } = require('./cliDiscoveryTestIsolation.cjs');
 isolateCliDiscoveryFile();
@@ -46,7 +47,10 @@ for (const surface of ['catty', 'mcp-exec', 'mcp-job']) {
       let pending;
       if (surface === 'catty') {
         const handlers = new Map();
+        const aiPrivacyService = createAiPrivacyService();
+        aiPrivacyService.checkSession('chat');
         registerCattyExecHandlers({ ipcMain: { handle: (key, fn) => handlers.set(key, fn) },
+          aiPrivacyService,
           validateSender: () => true, sessions, mcpServerBridge: bridge, electronModule,
           safeSend: (target, ...args) => target.send(...args), execViaPty, getFreshIdlePrompt: () => '' });
         pending = handlers.get('netcatty:ai:exec')({ sender: contents }, { sessionId: 'session', command: 'echo test', chatSessionId: 'chat' });

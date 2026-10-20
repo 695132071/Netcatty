@@ -445,3 +445,44 @@ test("implemented vault capabilities do not return CAPABILITY_NOT_IMPLEMENTED", 
   const result = await dispatch("vault/host/get", { hostId: "host-1" });
   assert.notEqual(result.code, "CAPABILITY_NOT_IMPLEMENTED");
 });
+
+test("managed privacy is revalidated after capability approval and before writes", async () => {
+  const { createAiPrivacyService } = require("../../shared/aiPrivacyService.cjs");
+  const { createManagedPrivacyBoundary } = require("../../shared/managedPrivacyBoundary.cjs");
+  const privacy = createAiPrivacyService();
+  privacy.configure({ enabled: true });
+  const token = privacy.redact("approval-chat", "192.0.2.14");
+  let invoked = false;
+  const dispatch = createManagedPrivacyBoundary(createTestDispatcher({
+    evaluatePermissionWithGrants: () => ({ allowed: true, requiresApproval: true }),
+    requestApprovalFromRenderer: async (_tool, args) => {
+      assert.equal(args.notes, "192.0.2.14");
+      privacy.configure({ enabled: false });
+      return true;
+    },
+    invokeVaultAgent: async () => { invoked = true; return { ok: true }; },
+  }), privacy);
+  await assert.rejects(dispatch("public/vault/hostNotes/set", {
+    chatSessionId: "approval-chat", hostId: "host-1", notes: token,
+  }), /settings changed|unavailable/);
+  assert.equal(invoked, false);
+});
+
+test("managed session close revalidates privacy after asynchronous close preparation", async () => {
+  const { createAiPrivacyService } = require("../../shared/aiPrivacyService.cjs");
+  const { createManagedPrivacyBoundary } = require("../../shared/managedPrivacyBoundary.cjs");
+  const privacy = createAiPrivacyService();
+  privacy.configure({ enabled: true });
+  let invoked = false;
+  let outcome;
+  const dispatch = createManagedPrivacyBoundary(createTestDispatcher({
+    beforeSessionClose: async () => { privacy.configure({ enabled: false }); },
+    afterSessionClose: async (_params, result) => { outcome = result; },
+    invokeVaultAgent: async () => { invoked = true; return { ok: true }; },
+  }), privacy);
+  await assert.rejects(dispatch("public/session/close", {
+    chatSessionId: "closing-chat", sessionId: "session-1",
+  }), /settings changed|unavailable/);
+  assert.equal(invoked, false);
+  assert.equal(outcome.closed, false);
+});

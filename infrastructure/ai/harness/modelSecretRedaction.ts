@@ -1,4 +1,15 @@
 const REDACTED = '[REDACTED]';
+const reversibleSessions = new Set<string>();
+
+/** Only bypass legacy masking when a fail-closed model boundary owns this chat. */
+export function setReversibleModelPrivacy(chatSessionId: string, enabled: boolean): void {
+  if (enabled) reversibleSessions.add(chatSessionId);
+  else reversibleSessions.delete(chatSessionId);
+}
+
+export function hasReversibleModelPrivacy(chatSessionId?: string): boolean {
+  return !!chatSessionId && reversibleSessions.has(chatSessionId);
+}
 
 const PRIVATE_KEY_PATTERN = /-----BEGIN ([A-Z0-9 ]*PRIVATE KEY)-----[\s\S]*?-----END \1-----/g;
 const BEARER_PATTERN = /\b(Bearer)\s+[A-Za-z0-9._~+/=-]{8,}/gi;
@@ -15,7 +26,8 @@ function isSecretKey(key: string): boolean {
 }
 
 /** Redacts likely credentials only on data that is about to become model-visible. */
-export function redactSecretsForModel(value: string): string {
+export function redactSecretsForModel(value: string, chatSessionId?: string): string {
+  if (hasReversibleModelPrivacy(chatSessionId)) return value;
   if (!value) return value;
   return value
     .replace(PRIVATE_KEY_PATTERN, REDACTED)
@@ -29,15 +41,16 @@ export function redactSecretsForModel(value: string): string {
 }
 
 /** Recursively redacts model-visible event arguments without mutating the source value. */
-export function redactSecretsInValueForModel<T>(value: T): T {
-  if (typeof value === 'string') return redactSecretsForModel(value) as T;
-  if (Array.isArray(value)) return value.map(redactSecretsInValueForModel) as T;
+export function redactSecretsInValueForModel<T>(value: T, chatSessionId?: string): T {
+  if (hasReversibleModelPrivacy(chatSessionId)) return value;
+  if (typeof value === 'string') return redactSecretsForModel(value, chatSessionId) as T;
+  if (Array.isArray(value)) return value.map(entry => redactSecretsInValueForModel(entry, chatSessionId)) as T;
   if (!value || typeof value !== 'object') return value;
   return Object.fromEntries(
     Object.entries(value as Record<string, unknown>)
       .map(([key, entry]) => [
         key,
-        isSecretKey(key) ? REDACTED : redactSecretsInValueForModel(entry),
+        isSecretKey(key) ? REDACTED : redactSecretsInValueForModel(entry, chatSessionId),
       ]),
   ) as T;
 }

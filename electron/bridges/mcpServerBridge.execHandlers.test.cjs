@@ -8,6 +8,7 @@ const test = require("node:test");
 const { createBackgroundJobApi } = require("./mcpServerBridge/backgroundJobs.cjs");
 const { createExecHandlerApi } = require("./mcpServerBridge/execHandlers.cjs");
 const { PROBE_OUTPUT_MARKER } = require("./ai/sessionShellKind.cjs");
+const { createAiPrivacyService } = require("../shared/aiPrivacyService.cjs");
 const {
   checkBlocklistForShell,
   resolveSessionBlocklistShellKind,
@@ -265,6 +266,37 @@ test("MCP exec probes an unclassified PowerShell session before the authoritativ
   assert.equal(result.ok, true);
   assert.equal(session._loginShellKind, "powershell");
 });
+
+for (const route of ["pty", "channel", "job"]) {
+  test(`MCP ${route} rechecks privacy after shell probing before command handoff`, async () => {
+    const privacy = createAiPrivacyService();
+    privacy.checkSession("chat");
+    const deferred = createDeferredShellProbeConn();
+    const session = { protocol: "ssh", conn: deferred.conn };
+    if (route !== "channel") session.stream = new FakePty();
+    const ctx = createExecHandlerTestContext({
+      sessions: new Map([["ssh", session]]),
+      backgroundJobs: new Map(),
+    });
+    const effects = [];
+    ctx.execViaPty = (...args) => { effects.push(args); return { ok: true }; };
+    ctx.execViaChannel = (...args) => { effects.push(args); return { ok: true }; };
+    ctx.startPtyJob = (...args) => { effects.push(args); return { resultPromise: Promise.resolve({}) }; };
+    const api = createExecHandlerApi(ctx);
+    const handler = route === "job" ? api.handleJobStart : api.handleExec;
+    const pending = handler({
+      sessionId: "ssh", command: "echo synthetic", chatSessionId: "chat",
+    }, { beforeExecute: () => privacy.restore("chat", []) });
+    await nextTick();
+    privacy.configure({ enabled: true });
+    deferred.release();
+    const result = await Promise.resolve(pending).catch((error) => ({ ok: false, error: error.message }));
+    assert.equal(result.ok, false);
+    assert.match(result.error, /start a new chat/);
+    assert.deepEqual(effects, []);
+    assert.equal(ctx.activeSessionExecutions.size, 0);
+  });
+}
 
 
 test("expired local and unknown jobs do not claim a lost worker route", (t) => {

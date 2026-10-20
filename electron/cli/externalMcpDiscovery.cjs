@@ -10,6 +10,7 @@ function buildExternalDiscoveryPayload({
   pid,
   permissionMode,
   chatSessionId,
+  redaction,
 }) {
   return {
     version: 1,
@@ -19,6 +20,7 @@ function buildExternalDiscoveryPayload({
     pid,
     permissionMode: permissionMode || "confirm",
     chatSessionId: chatSessionId || "__external_mcp__",
+    ...(redaction ? { redaction } : {}),
     updatedAt: new Date().toISOString(),
   };
 }
@@ -55,6 +57,7 @@ function readExternalDiscovery(filePath) {
       ? parsed.chatSessionId
       : "__external_mcp__",
     pid: parsed.pid ?? null,
+    redaction: parsed.redaction,
   };
 }
 

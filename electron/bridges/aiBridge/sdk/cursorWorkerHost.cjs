@@ -12,7 +12,11 @@ function createCursorWorker(options) {
 
 // Each turn gets its own environment and SDK instance. A stalled SDK network
 // request cannot retain a main-process environment lock or block another chat.
-function runCursorWorkerTurn({ emitter, signal, ...params }, createWorker = createCursorWorker) {
+function runCursorWorkerTurn({ emitter, signal, assertSessionValid, ...params }, createWorker = createCursorWorker) {
+  // Functions cannot cross the utility-process boundary. Keep semantic content
+  // in main until the worker is ready to send, then validate before releasing it.
+  const { prompt, attachments, ...startupParams } = params;
+  const deferPrompt = typeof assertSessionValid === "function";
   let sessionId = params.resumeSessionId || null;
   if (signal?.aborted) return Promise.resolve({ sessionId });
   return new Promise((resolve) => {
@@ -29,6 +33,11 @@ function runCursorWorkerTurn({ emitter, signal, ...params }, createWorker = crea
     const terminate = () => {
       clearTimeout(stopTimer);
       worker.kill();
+    };
+    const privacyFailure = (error) => {
+      emitter.emitError(error?.message || String(error));
+      finish({ sessionId });
+      terminate();
     };
     const onAbort = () => {
       if (spawned) worker.postMessage({ type: "abort" });
@@ -50,10 +59,25 @@ function runCursorWorkerTurn({ emitter, signal, ...params }, createWorker = crea
     worker.once("spawn", () => {
       spawned = true;
       if (settled) terminate();
-      else worker.postMessage({ type: "start", params });
+      else {
+        try {
+          assertSessionValid?.();
+          worker.postMessage({ type: "start", params: deferPrompt ? { ...startupParams, deferPrompt } : params });
+        } catch (error) {
+          privacyFailure(error);
+        }
+      }
     });
     worker.on("message", (message) => {
-      if (message?.type === "event") {
+      if (message?.type === "prompt-request") {
+        if (settled || !deferPrompt) return;
+        try {
+          assertSessionValid();
+          worker.postMessage({ type: "prompt", prompt, attachments });
+        } catch (error) {
+          privacyFailure(error);
+        }
+      } else if (message?.type === "event") {
         if (settled) return;
         if (message.method === "sessionId") sessionId = message.args[0];
         const handler = emitter[message.method];

@@ -10,8 +10,10 @@ import {
   STORAGE_KEY_AI_EXTERNAL_MCP_HTTP_PORT,
   STORAGE_KEY_AI_EXTERNAL_MCP_IDLE_TIMEOUT_MINUTES,
   STORAGE_KEY_AI_EXTERNAL_MCP_MODE,
+  STORAGE_KEY_AI_EXTERNAL_MCP_REDACTION,
   STORAGE_KEY_AI_EXTERNAL_MCP_SILENT_SESSIONS,
   STORAGE_KEY_AI_PERMISSION_MODE,
+  STORAGE_KEY_AI_PRIVACY,
   STORAGE_KEY_AI_SESSION_IDLE_TIMEOUT_MINUTES,
 } from '../../infrastructure/config/storageKeys';
 import type { AIPermissionMode } from '../../infrastructure/ai/types';
@@ -39,6 +41,7 @@ let externalMcpStartupReadyWaitPromise: Promise<void> | null = null;
 let externalMcpStartupReadyWaitResolve: (() => void) | null = null;
 /** Bumps on every intentional enable/disable so stale startup applies lose. */
 let externalMcpEnableGeneration = 0;
+let externalMcpConfigError: string | null = null;
 
 function getWindowHash(hash?: string): string {
   if (typeof hash === 'string') return hash;
@@ -76,6 +79,7 @@ export function resetExternalMcpStartupReadyForTests(): void {
   externalMcpStartupReadyWaitPromise = null;
   externalMcpStartupReadyWaitResolve = null;
   externalMcpEnableGeneration = 0;
+  externalMcpConfigError = null;
   externalMcpStartupSyncPromise = null;
 }
 
@@ -110,6 +114,138 @@ export function waitForExternalMcpStartupReady(hash?: string): Promise<void> {
   return externalMcpStartupReadyWaitPromise;
 }
 
+export type AIPrivacySettings = {
+  enabled: boolean;
+  redactPrivateIps: boolean;
+  cidrs: string[];
+  patterns: string[];
+};
+
+export function defaultAIPrivacySettings(): AIPrivacySettings {
+  return { enabled: false, redactPrivateIps: false, cidrs: [], patterns: [] };
+}
+
+/** Missing settings are opt-out; corrupt settings must never silently opt out. */
+export function readAIPrivacySettings(): AIPrivacySettings {
+  // The shared key wins, including invalid data: never fall back to a weaker legacy policy.
+  // Leave the legacy value intact for older installs; Apply writes only the validated shared key.
+  const stored = localStorageAdapter.readString(STORAGE_KEY_AI_PRIVACY)
+    ?? localStorageAdapter.readString(STORAGE_KEY_AI_EXTERNAL_MCP_REDACTION);
+  if (stored === null) return defaultAIPrivacySettings();
+  let value: unknown;
+  try {
+    value = JSON.parse(stored);
+  } catch {
+    throw new Error('Invalid saved AI privacy settings. Review and apply the settings again.');
+  }
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw new Error('Invalid saved AI privacy settings. Review and apply the settings again.');
+  }
+  const settings = value as Record<string, unknown>;
+  if (
+    Object.keys(settings).some((key) => !['enabled', 'redactPrivateIps', 'cidrs', 'patterns'].includes(key))
+    || typeof settings.enabled !== 'boolean'
+    || typeof settings.redactPrivateIps !== 'boolean'
+    || !Array.isArray(settings.cidrs) || !settings.cidrs.every((item) => typeof item === 'string')
+    || !Array.isArray(settings.patterns) || !settings.patterns.every((item) => typeof item === 'string')
+  ) {
+    throw new Error('Invalid saved AI privacy settings. Review and apply the settings again.');
+  }
+  return {
+    enabled: settings.enabled,
+    redactPrivateIps: settings.redactPrivateIps,
+    cidrs: [...settings.cidrs],
+    patterns: [...settings.patterns],
+  };
+}
+
+function configResponseError(
+  result: unknown,
+  unverifiedMessage = 'External MCP settings could not be verified. The bridge has not been enabled.',
+): string | null {
+  if (result && typeof result === 'object' && 'ok' in result && result.ok === true) return null;
+  if (result && typeof result === 'object' && 'error' in result && typeof result.error === 'string' && result.error) {
+    return result.error;
+  }
+  return unverifiedMessage;
+}
+
+/** Validate in the main process before committing any privacy preference. */
+export async function applyAIPrivacySettings(
+  settings: AIPrivacySettings,
+  bridge: ExternalMcpBridge | undefined = netcattyBridge.get(),
+): Promise<void> {
+  const result = await bridge?.externalMcpSetConfig?.({ redaction: settings });
+  const error = configResponseError(result, 'AI privacy settings could not be verified. Try applying them again.');
+  if (error) throw new Error(error);
+  if (!localStorageAdapter.write(STORAGE_KEY_AI_PRIVACY, settings)) {
+    throw new Error('AI privacy settings could not be saved. Apply them again before restarting.');
+  }
+  externalMcpConfigError = null;
+  emitAIStateChanged(STORAGE_KEY_AI_PRIVACY);
+}
+
+function readAIPrivacyState() {
+  try {
+    return { settings: readAIPrivacySettings(), error: null as string | null };
+  } catch (error) {
+    return {
+      settings: defaultAIPrivacySettings(),
+      error: error instanceof Error ? error.message : String(error),
+    };
+  }
+}
+
+export function useAIPrivacyState() {
+  const [state, setState] = useState(readAIPrivacyState);
+  const [applying, setApplying] = useState(false);
+  const apply = useCallback(async (settings: AIPrivacySettings): Promise<boolean> => {
+    setApplying(true);
+    try {
+      await applyAIPrivacySettings(settings);
+      setState({ settings, error: null });
+      return true;
+    } catch (error) {
+      setState((current) => ({
+        ...current,
+        error: error instanceof Error ? error.message : String(error),
+      }));
+      return false;
+    } finally {
+      setApplying(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    const onStorage = (event: StorageEvent) => {
+      if (event.key === STORAGE_KEY_AI_PRIVACY || event.key === STORAGE_KEY_AI_EXTERNAL_MCP_REDACTION) {
+        setState(readAIPrivacyState());
+      }
+    };
+    const onLocalChange = (event: Event) => {
+      const key = (event as CustomEvent<{ key?: string }>).detail?.key;
+      if (key === STORAGE_KEY_AI_PRIVACY || key === STORAGE_KEY_AI_EXTERNAL_MCP_REDACTION) {
+        setState(readAIPrivacyState());
+      }
+    };
+    window.addEventListener('storage', onStorage);
+    window.addEventListener(AI_STATE_CHANGED_EVENT, onLocalChange);
+    return () => {
+      window.removeEventListener('storage', onStorage);
+      window.removeEventListener(AI_STATE_CHANGED_EVENT, onLocalChange);
+    };
+  }, []);
+
+  return { ...state, applying, apply };
+}
+
+/** Compatibility exports for existing External MCP configuration callers. One shared policy only. */
+export type ExternalMcpRedactionSettings = AIPrivacySettings;
+export const defaultExternalMcpRedactionSettings = defaultAIPrivacySettings;
+export const readExternalMcpRedactionSettings = readAIPrivacySettings;
+export const applyExternalMcpRedactionSettings = applyAIPrivacySettings;
+export const useExternalMcpRedactionState = useAIPrivacyState;
+
 export type ExternalMcpHttpSettings = {
   enabled: boolean;
   port: number;
@@ -119,9 +255,11 @@ export type ExternalMcpHttpSettings = {
 };
 
 type ExternalMcpConfig = {
-  mode: ExternalMcpMode;
-  idleTimeoutMinutes: number;
-  sessionIdleTimeoutMinutes: number;
+  mode?: ExternalMcpMode;
+  idleTimeoutMinutes?: number;
+  sessionIdleTimeoutMinutes?: number;
+  /** null invalidates shared privacy when persisted settings cannot be read safely. */
+  redaction?: AIPrivacySettings | null;
   httpEnabled?: boolean;
   httpPort?: number;
   httpAllowCustomBind?: boolean;
@@ -146,6 +284,7 @@ export type ExternalMcpStartupSyncPlan = {
   runtimeEnabled: boolean;
   storedEnabled: boolean;
   shouldPersistStoredEnabled: boolean;
+  configError?: string;
 };
 
 export function normalizeExternalMcpMode(value: string | null): ExternalMcpMode {
@@ -385,6 +524,7 @@ export function createExternalMcpStartupSyncPlan({
   mode,
   idleTimeoutMinutes,
   sessionIdleTimeoutMinutes,
+  redaction = defaultAIPrivacySettings(),
   http = {
     enabled: false,
     port: DEFAULT_EXTERNAL_MCP_HTTP_PORT,
@@ -398,6 +538,7 @@ export function createExternalMcpStartupSyncPlan({
   idleTimeoutMinutes: number;
   sessionIdleTimeoutMinutes: number;
   http?: ExternalMcpHttpSettings;
+  redaction?: AIPrivacySettings;
 }): ExternalMcpStartupSyncPlan {
   const runtimeEnabled = shouldStartExternalMcpOnStartup({ enabled, mode });
   const storedEnabled = runtimeEnabled;
@@ -406,6 +547,7 @@ export function createExternalMcpStartupSyncPlan({
       mode,
       idleTimeoutMinutes,
       sessionIdleTimeoutMinutes,
+      redaction,
       ...httpConfigFromSettings(http),
     },
     runtimeEnabled,
@@ -415,23 +557,44 @@ export function createExternalMcpStartupSyncPlan({
 }
 
 export function readExternalMcpStartupSyncPlan(): ExternalMcpStartupSyncPlan {
-  return createExternalMcpStartupSyncPlan({
+  let redaction = defaultAIPrivacySettings();
+  let configError: string | undefined;
+  try {
+    redaction = readAIPrivacySettings();
+  } catch (error) {
+    configError = error instanceof Error ? error.message : String(error);
+  }
+  const plan = createExternalMcpStartupSyncPlan({
     enabled: readExternalMcpStoredEnabled(),
     mode: readExternalMcpMode(),
     idleTimeoutMinutes: readExternalMcpIdleTimeoutMinutes(),
     sessionIdleTimeoutMinutes: readSessionIdleTimeoutMinutes(),
     http: readExternalMcpHttpSettings(),
+    redaction,
   });
+  return configError ? { ...plan, runtimeEnabled: false, configError } : plan;
 }
 
-export function syncExternalMcpConfig(bridge: ExternalMcpBridge | undefined = netcattyBridge.get()): void {
-  const http = readExternalMcpHttpSettings();
-  void bridge?.externalMcpSetConfig?.({
-    mode: readExternalMcpMode(),
-    idleTimeoutMinutes: readExternalMcpIdleTimeoutMinutes(),
-    sessionIdleTimeoutMinutes: readSessionIdleTimeoutMinutes(),
-    ...httpConfigFromSettings(http),
-  });
+export async function syncExternalMcpConfig(
+  bridge: ExternalMcpBridge | undefined = netcattyBridge.get(),
+): Promise<void> {
+  const plan = readExternalMcpStartupSyncPlan();
+  if (plan.configError) {
+    // A corrupt saved policy must block all managed agents, not only External MCP.
+    // Keep the original recovery error even if notifying the main process fails.
+    try {
+      await bridge?.externalMcpSetConfig?.({ redaction: null });
+    } catch {
+      // The saved policy still needs user repair regardless of bridge availability.
+    }
+    throw new Error(plan.configError);
+  }
+  const result = await bridge?.externalMcpSetConfig?.(plan.config);
+  const error = configResponseError(result);
+  if (error) throw new Error(error);
+  if (JSON.stringify(readAIPrivacySettings()) !== JSON.stringify(plan.config.redaction)) {
+    throw new Error('AI privacy settings changed. Try enabling the bridge again.');
+  }
 }
 
 /**
@@ -453,10 +616,18 @@ export async function syncExternalMcpStartupState(
   } catch {
     // Permission sync is best-effort; the main process keeps its safe default.
   }
+  let configError = initialPlan.configError;
   try {
-    await Promise.resolve(bridge?.externalMcpSetConfig?.(initialPlan.config));
-  } catch {
-    // Config sync is best-effort; continue with enable/disable reconcile.
+    if (configError) {
+      // Explicit invalidation is distinct from a rejected draft Apply, which keeps
+      // the previous working policy. Never replace corrupt saved data with defaults.
+      await Promise.resolve(bridge?.externalMcpSetConfig?.({ redaction: null }));
+    } else {
+      const result = await Promise.resolve(bridge?.externalMcpSetConfig?.(initialPlan.config));
+      configError = configResponseError(result) ?? undefined;
+    }
+  } catch (error) {
+    configError ??= error instanceof Error ? error.message : String(error);
   }
 
   // A user toggle during config await invalidates this startup apply.
@@ -465,6 +636,18 @@ export async function syncExternalMcpStartupState(
   }
 
   const plan = readExternalMcpStartupSyncPlan();
+  if (JSON.stringify(plan.config.redaction) !== JSON.stringify(initialPlan.config.redaction)) {
+    configError = 'AI privacy settings changed during startup. Enable the bridge again.';
+  }
+  if (configError || plan.configError) {
+    // A rejected or unverified config must never expose an unprotected runtime.
+    plan.configError = configError || plan.configError;
+    plan.runtimeEnabled = false;
+    plan.storedEnabled = false;
+    plan.shouldPersistStoredEnabled = readExternalMcpStoredEnabled();
+  }
+  externalMcpConfigError = plan.configError ?? null;
+  emitAIStateChanged(STORAGE_KEY_AI_PRIVACY);
   if (plan.shouldPersistStoredEnabled) {
     localStorageAdapter.writeBoolean(STORAGE_KEY_AI_EXTERNAL_MCP_ENABLED, plan.storedEnabled);
     emitAIStateChanged(STORAGE_KEY_AI_EXTERNAL_MCP_ENABLED);
@@ -516,24 +699,47 @@ export function useExternalMcpToggleState() {
     emitAIStateChanged(STORAGE_KEY_AI_EXTERNAL_MCP_ENABLED);
   }, []);
 
-  const setEnabled = useCallback((nextEnabled: boolean) => {
-    persistEnabled(nextEnabled);
-    // Peer session windows can mirror the stored switch, but they must not own
-    // the main-process External MCP lifecycle.
-    if (isPeerSessionWindow) return;
-    externalMcpEnableGeneration += 1;
-    // Re-emit after the lifecycle IPC settles so consumers that refetch runtime
-    // status (e.g. Tool Access guidance) do not act on the pre-IPC storage
-    // event, which can still observe the previous enabled state.
-    void Promise.resolve(netcattyBridge.get()?.externalMcpSetEnabled?.(nextEnabled)).finally(() => {
+  const [error, setError] = useState<string | null>(() => externalMcpConfigError);
+
+  const setEnabled = useCallback(async (nextEnabled: boolean) => {
+    // Peer session windows mirror storage, but never own the main lifecycle.
+    if (isPeerSessionWindow) {
+      persistEnabled(nextEnabled);
+      return;
+    }
+    if (!nextEnabled) persistEnabled(false);
+    const generation = ++externalMcpEnableGeneration;
+    setError(null);
+    externalMcpConfigError = null;
+    const bridge = netcattyBridge.get();
+    try {
+      // Even a manual enable must apply and verify saved privacy settings first.
+      if (nextEnabled) await syncExternalMcpConfig(bridge);
+      if (generation !== externalMcpEnableGeneration) return;
+      const result = await bridge?.externalMcpSetEnabled?.(nextEnabled);
+      if (nextEnabled && result && typeof result === 'object' && 'ok' in result && result.ok === false) {
+        throw new Error('error' in result && typeof result.error === 'string' && result.error
+          ? result.error : 'External MCP could not be enabled.');
+      }
+      if (generation === externalMcpEnableGeneration) persistEnabled(nextEnabled);
+    } catch (cause) {
+      if (generation !== externalMcpEnableGeneration) return;
+      externalMcpConfigError = cause instanceof Error ? cause.message : String(cause);
+      setError(externalMcpConfigError);
+      if (nextEnabled) {
+        persistEnabled(false);
+        await Promise.resolve(bridge?.externalMcpSetEnabled?.(false)).catch(() => undefined);
+      }
+    } finally {
       emitAIStateChanged(STORAGE_KEY_AI_EXTERNAL_MCP_ENABLED);
-    });
+    }
   }, [isPeerSessionWindow, persistEnabled]);
 
   useEffect(() => {
     const syncFromStorage = () => {
       const nextEnabled = readExternalMcpStoredEnabled();
       setEnabledRaw(nextEnabled);
+      setError(externalMcpConfigError);
     };
 
     const handleStorage = (event: StorageEvent) => {
@@ -542,7 +748,7 @@ export function useExternalMcpToggleState() {
     };
     const handleLocalStateChanged = (event: Event) => {
       const key = (event as CustomEvent<{ key?: string }>).detail?.key;
-      if (key !== STORAGE_KEY_AI_EXTERNAL_MCP_ENABLED) return;
+      if (key !== STORAGE_KEY_AI_EXTERNAL_MCP_ENABLED && key !== STORAGE_KEY_AI_EXTERNAL_MCP_REDACTION) return;
       syncFromStorage();
     };
 
@@ -587,5 +793,5 @@ export function useExternalMcpToggleState() {
     };
   }, [enabled, isPeerSessionWindow, persistEnabled]);
 
-  return { enabled, setEnabled };
+  return { enabled, setEnabled, error };
 }

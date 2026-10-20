@@ -62,6 +62,35 @@ class LinkedRuntimeChild extends FakeChild {
   }
 }
 
+test("worker execution validation uses the pending main guard without serializing it", async (t) => {
+  const child = new LinkedRuntimeChild();
+  let effects = 0;
+  let checks = 0;
+  child.connectRuntime(ipcMain => {
+    ipcMain.handle("netcatty:ai:exec", async event => {
+      await event.beforeExecute();
+      effects++;
+      return { ok: true };
+    });
+  });
+  const manager = createTerminalWorkerManager({ utilityProcess: { fork: () => child } });
+  t.after(() => manager.stop());
+  assert.deepEqual(await manager.request("netcatty:ai:exec", {}, {
+    beforeExecute: () => { checks++; },
+  }), { ok: true });
+  assert.equal(effects, 1);
+  assert.equal(checks, 1);
+  const request = child.messages.find(message => message.kind === "request");
+  assert.equal(request.requiresExecutionValidation, true);
+  assert.equal(Object.hasOwn(request, "beforeExecute"), false);
+  await assert.rejects(manager.request("netcatty:ai:exec", {}, {
+    beforeExecute: () => { throw new Error("synthetic-private-policy-detail"); },
+  }), /privacy session is unavailable/);
+  assert.equal(effects, 1);
+  child.emit("message", { kind: "validate-execution", requestId: "expired", validationId: "late" });
+  assert.equal(child.messages.at(-1).ok, false);
+});
+
 function emitOutputPortReady(child, sessionId) {
   const openMessage = [...child.messages].reverse().find((message) => (
     message.kind === "output-port" && message.sessionId === sessionId

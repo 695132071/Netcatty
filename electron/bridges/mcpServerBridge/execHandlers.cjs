@@ -73,7 +73,7 @@ function createExecHandlerApi(ctx) {
       };
     }
     
-    function handleExec(params) {
+    function handleExec(params, executionContext = {}) {
       const resolved = resolveExecContext(params);
       if (!resolved.ok) return resolved;
       const {
@@ -103,6 +103,7 @@ function createExecHandlerApi(ctx) {
     
       const runExecution = (factory) => {
         try {
+          executionContext.beforeExecute?.();
           return Promise.resolve(factory()).finally(() => {
             releaseSessionExecution(sessionId, sessionToken);
             executionLock.release();
@@ -138,6 +139,7 @@ function createExecHandlerApi(ctx) {
             chatSessionId,
           });
           if (!probed.ok) return probed;
+          executionContext.beforeExecute?.();
           const safety = checkCommandSafetyForShell(command, resolveSessionBlocklistShellKind(session));
           if (safety.blocked) {
             debugLog("handleExec:blocklisted", { sessionId, matchedPattern: safety.matchedPattern });
@@ -182,6 +184,7 @@ function createExecHandlerApi(ctx) {
             chatSessionId,
           });
           if (!probed.ok) return probed;
+          executionContext.beforeExecute?.();
           const safety = checkCommandSafetyForShell(command, resolveSessionBlocklistShellKind(session));
           if (safety.blocked) {
             debugLog("handleExec:blocklisted", { sessionId, matchedPattern: safety.matchedPattern });
@@ -217,7 +220,7 @@ function createExecHandlerApi(ctx) {
       return { ok: false, error: "Session does not support command execution" };
     }
     
-    function handleJobStart(params) {
+    function handleJobStart(params, executionContext = {}) {
       const resolved = resolveExecContext(params);
       if (!resolved.ok) return resolved;
       const {
@@ -313,6 +316,7 @@ function createExecHandlerApi(ctx) {
 
         let handle;
         try {
+          executionContext.beforeExecute?.();
           handle = startPtyJob(ptyStream, command, {
             onInterrupt: () => clearSessionFlowState(session),
             // Intentionally do NOT register in activePtyExecs: terminal_start jobs

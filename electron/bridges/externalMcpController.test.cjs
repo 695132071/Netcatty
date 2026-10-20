@@ -101,6 +101,38 @@ describe("externalMcpController", () => {
     return { controller, bridge };
   }
 
+  it("validates privacy config before updating discovery and propagates IPC failures", async () => {
+    const { controller } = createController();
+    await controller.setEnabled(true);
+    const valid = { enabled: true, redactPrivateIps: true, cidrs: ["10.0.0.0/8"], patterns: ["internal-[a-z]+"] };
+    assert.equal(controller.setConfig({ redaction: valid }).ok, true);
+    assert.deepEqual(written.at(-1).options.redaction, valid);
+    const handlers = new Map();
+    controller.registerHandlers({ handle: (name, handler) => handlers.set(name, handler) });
+    const result = await handlers.get("netcatty:external-mcp:set-config")({}, { redaction: { enabled: true, cidrs: ["bad-value"] } });
+    assert.equal(result.ok, false);
+    assert.deepEqual(controller.getStatus().redaction, valid);
+    assert.deepEqual(written.at(-1).options.redaction, valid);
+    assert.ok(!result.error.includes("bad-value"));
+  });
+
+  it("retries discovery persistence after a failed privacy change", async () => {
+    let fail = false;
+    let saved;
+    const { controller } = createController({ writeDiscovery: (_path, options) => {
+      if (fail) throw new Error("disk full");
+      saved = options;
+    } });
+    await controller.setEnabled(true);
+    fail = true;
+    assert.equal(controller.setConfig({ redaction: { enabled: true } }).ok, false);
+    assert.equal(controller.getStatus().redaction.enabled, false);
+    assert.equal(saved.redaction.enabled, false);
+    fail = false;
+    assert.equal(controller.setConfig({ redaction: { enabled: true } }).ok, true);
+    assert.equal(saved.redaction.enabled, true);
+  });
+
   it("enables external mode, writes discovery, and syncs sessions", async () => {
     const { controller, bridge } = createController();
     const status = await controller.setEnabled(true);

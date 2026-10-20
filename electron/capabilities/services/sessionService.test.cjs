@@ -53,3 +53,22 @@ test("already-missing sessions are distinguished from retryable close failures",
   assert.equal(outcome.closed, false);
   assert.equal(outcome.notFound, true);
 });
+
+test("close rechecks its execution guard after cleanup and preserves failed-close lifecycle", async () => {
+  const { createAiPrivacyService } = require("../../shared/aiPrivacyService.cjs");
+  const privacy = createAiPrivacyService();
+  privacy.checkSession("chat");
+  let invokeCount = 0;
+  let outcome;
+  const service = createSessionService({
+    beforeClose: async () => { privacy.configure({ enabled: true }); },
+    invokeSessionAgent: async () => { invokeCount++; return { ok: true }; },
+    afterClose: async (_params, value) => { outcome = value; },
+  });
+  await assert.rejects(service.close({ sessionId: "session-1" }, {
+    beforeExecute: () => privacy.restore("chat", []),
+  }), /start a new chat/);
+  assert.equal(invokeCount, 0);
+  assert.equal(outcome.closed, false);
+  assert.equal(outcome.notFound, false);
+});

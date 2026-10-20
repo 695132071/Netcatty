@@ -19,6 +19,7 @@ function createSessionService(ctx = {}) {
     let closed = false;
     try {
       await beforeClose?.(params);
+      options.beforeExecute?.();
       result = await invokeSessionAgent("session.close", { sessionId: params.sessionId });
       if (result?.ok !== false) {
         await onClosed?.(params.sessionId);
@@ -35,7 +36,9 @@ function createSessionService(ctx = {}) {
   }
 
   return {
-    close: (params = {}) => close(params),
+    close: (params = {}, executionContext = {}) => close(params, {
+      beforeExecute: executionContext.beforeExecute,
+    }),
     closeTracked: (params = {}) => close(params, { skipValidation: true }),
   };
 }

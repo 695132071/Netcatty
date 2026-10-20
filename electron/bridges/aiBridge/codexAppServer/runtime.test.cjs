@@ -311,6 +311,56 @@ test("runtime routes native approvals and request_user_input responses", async (
   await run;
 });
 
+test("runtime transforms user answers with authoritative pending chat context after sender validation", () => {
+  const responses = [];
+  const sender = {};
+  const transformedContexts = [];
+  const runtime = new CodexAppServerRuntime({
+    transformUserInputAnswers(answers, context) {
+      transformedContexts.push(context.chatSessionId);
+      return { ...answers, question: { answers: ["protected-answer"] } };
+    },
+  });
+  runtime.pendingInteractions.set("private-answer", {
+    interactionId: "private-answer",
+    kind: "user-input",
+    context: { chatSessionId: "chat-private", sender },
+    connection: { respond: (id, result) => responses.push({ id, result }) },
+    rpcId: 90,
+    params: {},
+  });
+  assert.equal(runtime.respondInteraction("private-answer", {
+    answers: { question: { answers: ["private-input"] } },
+  }, {}), false);
+  assert.equal(transformedContexts.length, 0);
+  assert.equal(runtime.respondInteraction("private-answer", {
+    answers: { question: { answers: ["private-input"] } },
+  }, sender), true);
+  assert.deepEqual(transformedContexts, ["chat-private"]);
+  assert.deepEqual(responses, [{ id: 90, result: { answers: { question: { answers: ["protected-answer"] } } } }]);
+});
+
+test("failed user answer transformation sends no raw reply and leaves interaction pending", () => {
+  const responses = [];
+  const runtime = new CodexAppServerRuntime({
+    transformUserInputAnswers() { throw new Error("Privacy settings changed"); },
+  });
+  runtime.pendingInteractions.set("private-answer", {
+    interactionId: "private-answer",
+    kind: "user-input",
+    context: { chatSessionId: "chat-private" },
+    connection: { respond: (id, result) => responses.push({ id, result }) },
+    rpcId: 91,
+    params: {},
+  });
+  assert.throws(() => runtime.respondInteraction("private-answer", {
+    answers: { question: { answers: ["private-input"] } },
+  }), /Privacy settings changed/);
+  assert.deepEqual(responses, []);
+  assert.equal(runtime.pendingInteractions.has("private-answer"), true);
+  runtime.close();
+});
+
 test("cancelInteractionTimeout re-arms the absolute approval deadline (Catty/MCP style)", async () => {
   let connection;
   let interaction;
@@ -848,3 +898,45 @@ test("model and file-change normalization preserve UI contract", async () => {
   assert.deepEqual(catalog.models[1].thinkingLevels, ["low", "high"]);
   assert.equal(catalog.models[1].defaultThinkingLevel, "high");
 });
+
+for (const startupStage of ["connection", "thread"]) {
+  test(`privacy off-to-on while Codex ${startupStage} startup is paused prevents turn/start`, async () => {
+    const { createAiPrivacyService } = require("../../../shared/aiPrivacyService.cjs");
+    const privacy = createAiPrivacyService();
+    privacy.checkSession("chat-privacy-race");
+    let notifyReady;
+    let release;
+    const ready = new Promise((resolve) => { notifyReady = resolve; });
+    const gate = new Promise((resolve) => { release = resolve; });
+    let connection;
+    const runtime = new CodexAppServerRuntime({
+      connectionFactory: (options) => {
+        connection = new FakeConnection(options);
+        if (startupStage === "connection") {
+          connection.start = async () => { notifyReady(); await gate; };
+        } else {
+          const request = connection.request.bind(connection);
+          connection.request = async (method, params) => {
+            if (method === "thread/start") { notifyReady(); await gate; }
+            return request(method, params);
+          };
+        }
+        return connection;
+      },
+    });
+    const run = runtime.runTurn({
+      requestId: "privacy-race", chatSessionId: "chat-privacy-race",
+      prompt: "raw-secret", binPath: "/bin/codex", emitter: createEmitter(),
+      assertSessionValid: () => privacy.checkSession("chat-privacy-race"),
+    });
+    const rejected = assert.rejects(run, /start a new chat/);
+    await ready;
+    privacy.configure({ enabled: true });
+    release();
+    await rejected;
+    assert.equal(connection.requests.some(({ method }) => method === "turn/start"), false);
+    assert.equal(runtime.activeByRequest.size, 0);
+    assert.equal(runtime.activeByThread.size, 0);
+    await runtime.cleanupChatSession("chat-privacy-race");
+  });
+}

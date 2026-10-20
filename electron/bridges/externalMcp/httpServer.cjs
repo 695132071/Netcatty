@@ -1,5 +1,7 @@
 "use strict";
 
+const { createPrivacyBoundary } = require("../../mcp/externalMcpPrivacyBoundary.cjs");
+
 /**
  * Optional Streamable HTTP endpoint for External MCP.
  * Tool calls go through the same progressive MCP registry and
@@ -188,6 +190,7 @@ function createExternalMcpHttpServer(deps = {}) {
   }
 
   function createSessionServer() {
+    const protectedRpcCall = createPrivacyBoundary(rpcCall, deps.getRedactionConfig || (() => undefined));
     const {
       McpServer,
       getCatalogToolDescription,
@@ -205,7 +208,7 @@ function createExternalMcpHttpServer(deps = {}) {
       "netcatty://context",
       { description: "Current Netcatty workspace context: connected hosts, session IDs, and environment description." },
       async () => {
-        const ctx = await rpcCall("netcatty/getContext", { chatSessionId });
+        const ctx = await protectedRpcCall("netcatty/getContext", { chatSessionId });
         return {
           contents: [{
             uri: "netcatty://context",
@@ -216,7 +219,7 @@ function createExternalMcpHttpServer(deps = {}) {
       },
     );
     registerProgressiveMcpTools(server, {
-      rpcCall,
+      rpcCall: protectedRpcCall,
       scopeParams: { chatSessionId },
       guardWriteOperation,
       catalogDescription(toolName, fallback) {

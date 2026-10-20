@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { createSessionIdleManager } from '../../electron/bridges/mcpServerBridge/sessionIdleManager.cjs';
-import { STORAGE_KEY_AI_SESSION_IDLE_TIMEOUT_MINUTES } from '../../infrastructure/config/storageKeys';
+import { STORAGE_KEY_AI_SESSION_IDLE_TIMEOUT_MINUTES, STORAGE_KEY_AI_PRIVACY, STORAGE_KEY_AI_EXTERNAL_MCP_REDACTION, STORAGE_KEY_AI_EXTERNAL_MCP_ENABLED, STORAGE_KEY_AI_EXTERNAL_MCP_MODE } from '../../infrastructure/config/storageKeys';
 import { localStorageAdapter } from '../../infrastructure/persistence/localStorageAdapter';
 import {
   readExternalMcpHttpAllowCustomBind,
@@ -16,6 +16,10 @@ import {
 } from "./useExternalMcpToggleState.ts";
 import {
   EXTERNAL_MCP_RUNTIME_STATUS_POLL_MS,
+  applyAIPrivacySettings,
+  readAIPrivacySettings,
+  applyExternalMcpRedactionSettings,
+  readExternalMcpRedactionSettings,
   bumpExternalMcpEnableGenerationForTests,
   createExternalMcpStartupSyncPlan,
   getExternalMcpEnableGenerationForTests,
@@ -116,11 +120,12 @@ describe('useExternalMcpToggleState helpers', () => {
           externalMcpSetConfig: (config: { sessionIdleTimeoutMinutes: number }) => {
             received.push(config.sessionIdleTimeoutMinutes);
             manager.setTimeoutMinutes(config.sessionIdleTimeoutMinutes);
+            return { ok: true };
           },
         };
         await syncExternalMcpStartupState(bridge);
         assert.equal(manager.getTimeoutMinutes(), expected, 'startup keeps the intended timeout');
-        syncExternalMcpConfig(bridge);
+        await syncExternalMcpConfig(bridge);
         assert.deepEqual(received, [expected, expected]);
         assert.equal(manager.getTimeoutMinutes(), expected, 'config sync keeps the intended timeout');
         assert.equal(
@@ -449,6 +454,337 @@ describe("external MCP HTTP settings", () => {
       assert.equal(readExternalMcpHttpListenAddress(), "172.22.0.1");
     } finally {
       restore();
+    }
+  });
+});
+
+
+describe('Shared AI privacy settings', () => {
+  const settings = {
+    enabled: true,
+    redactPrivateIps: true,
+    cidrs: ['192.0.2.0/24'],
+    patterns: ['INTERNAL_[A-Z0-9]+'],
+  };
+
+  it('defaults off and persists only after successful bridge validation', async () => {
+    const restore = installMemoryLocalStorage();
+    try {
+      assert.deepEqual(readExternalMcpRedactionSettings(), {
+        enabled: false, redactPrivateIps: false, cidrs: [], patterns: [],
+      });
+      let resolveConfig: (value: unknown) => void;
+      const apply = applyExternalMcpRedactionSettings(settings, {
+        externalMcpSetConfig: async (config) => {
+          assert.deepEqual(config, { redaction: settings });
+          return new Promise((resolve) => { resolveConfig = resolve; });
+        },
+      });
+      assert.equal(localStorageAdapter.readString(STORAGE_KEY_AI_PRIVACY), null);
+      resolveConfig!({ ok: true });
+      await apply;
+      assert.deepEqual(readExternalMcpRedactionSettings(), settings);
+      assert.deepEqual(localStorageAdapter.read(STORAGE_KEY_AI_PRIVACY), settings);
+      assert.equal(localStorageAdapter.readString(STORAGE_KEY_AI_EXTERNAL_MCP_REDACTION), null);
+    } finally {
+      restore();
+    }
+  });
+
+  it('reads legacy privacy preferences until a validated shared preference is applied', async () => {
+    const restore = installMemoryLocalStorage();
+    try {
+      localStorageAdapter.write(STORAGE_KEY_AI_EXTERNAL_MCP_REDACTION, settings);
+      assert.deepEqual(readAIPrivacySettings(), settings);
+      assert.equal(localStorageAdapter.readString(STORAGE_KEY_AI_PRIVACY), null, 'reads must not migrate or discard data');
+      const changed = { ...settings, redactPrivateIps: false };
+      await applyAIPrivacySettings(changed, { externalMcpSetConfig: async () => ({ ok: true }) });
+      assert.deepEqual(readAIPrivacySettings(), changed);
+      assert.deepEqual(readExternalMcpRedactionSettings(), changed, 'legacy API must read the same shared policy');
+      assert.deepEqual(localStorageAdapter.read(STORAGE_KEY_AI_PRIVACY), changed);
+      assert.deepEqual(localStorageAdapter.read(STORAGE_KEY_AI_EXTERNAL_MCP_REDACTION), settings, 'keep legacy storage intact');
+    } finally {
+      restore();
+    }
+  });
+
+  it('never falls back to legacy settings when a shared preference exists, even if corrupt', () => {
+    const restore = installMemoryLocalStorage();
+    try {
+      localStorageAdapter.write(STORAGE_KEY_AI_EXTERNAL_MCP_REDACTION, settings);
+      const disabled = { enabled: false, redactPrivateIps: false, cidrs: [], patterns: [] };
+      localStorageAdapter.write(STORAGE_KEY_AI_PRIVACY, disabled);
+      assert.deepEqual(readAIPrivacySettings(), disabled);
+      localStorageAdapter.writeString(STORAGE_KEY_AI_PRIVACY, '{');
+      assert.throws(readAIPrivacySettings, /Invalid saved AI privacy settings/);
+      localStorageAdapter.remove(STORAGE_KEY_AI_PRIVACY);
+      localStorageAdapter.writeString(STORAGE_KEY_AI_EXTERNAL_MCP_REDACTION, '{');
+      assert.throws(readAIPrivacySettings, /Invalid saved AI privacy settings/);
+    } finally {
+      restore();
+    }
+  });
+
+  it('restores the shared policy even when External MCP is disabled', async () => {
+    const restore = installMemoryLocalStorage();
+    try {
+      resetExternalMcpStartupReadyForTests();
+      localStorageAdapter.writeBoolean(STORAGE_KEY_AI_EXTERNAL_MCP_ENABLED, false);
+      localStorageAdapter.write(STORAGE_KEY_AI_PRIVACY, settings);
+      const calls: string[] = [];
+      const plan = await syncExternalMcpStartupState({
+        externalMcpSetConfig: async (config) => {
+          assert.deepEqual(config.redaction, settings);
+          calls.push('shared-policy');
+          return { ok: true };
+        },
+        externalMcpSetEnabled: async (enabled) => { calls.push(`external:${enabled}`); },
+      });
+      assert.deepEqual(calls, ['shared-policy', 'external:false']);
+      assert.equal(plan.runtimeEnabled, false);
+      assert.deepEqual(readAIPrivacySettings(), settings);
+    } finally {
+      restore();
+    }
+  });
+
+  it('does not persist rejected, unverified or failed privacy changes', async () => {
+    const restore = installMemoryLocalStorage();
+    try {
+      localStorageAdapter.write(STORAGE_KEY_AI_PRIVACY, settings);
+      const changed = { ...settings, patterns: ['['] };
+      for (const result of [{ ok: false, error: 'Invalid regular expression' }, { ok: false, error: '' }, undefined, {}]) {
+        await assert.rejects(applyExternalMcpRedactionSettings(changed, {
+          externalMcpSetConfig: async () => result,
+        }));
+        assert.deepEqual(readExternalMcpRedactionSettings(), settings);
+      }
+      await assert.rejects(applyExternalMcpRedactionSettings(changed, {
+        externalMcpSetConfig: async () => { throw new Error('Disconnected'); },
+      }), /Disconnected/);
+      assert.deepEqual(readExternalMcpRedactionSettings(), settings);
+    } finally {
+      restore();
+    }
+  });
+
+  it('syncs saved privacy settings before persistent startup enable', async () => {
+    const restore = installMemoryLocalStorage();
+    try {
+      resetExternalMcpStartupReadyForTests();
+      localStorageAdapter.writeBoolean(STORAGE_KEY_AI_EXTERNAL_MCP_ENABLED, true);
+      localStorageAdapter.writeString(STORAGE_KEY_AI_EXTERNAL_MCP_MODE, 'persistent');
+      localStorageAdapter.write(STORAGE_KEY_AI_PRIVACY, settings);
+      const calls: string[] = [];
+      await syncExternalMcpStartupState({
+        externalMcpSetConfig: async (config) => {
+          assert.deepEqual(config.redaction, settings);
+          calls.push('config');
+          return { ok: true };
+        },
+        externalMcpSetEnabled: async (enabled) => { calls.push(`enabled:${enabled}`); },
+      });
+      assert.deepEqual(calls, ['config', 'enabled:true']);
+    } finally {
+      restore();
+    }
+  });
+
+  it('fails closed at startup when saved privacy settings are malformed', async () => {
+    const restore = installMemoryLocalStorage();
+    try {
+      for (const saved of ['{', 'null', '{}', '{"enabled":"true"}', '{"enabled":false,"redactPrivateIps":false,"cidrs":[],"patterns":[2]}', '{"enabled":false,"redactPrivateIps":false,"cidrs":[],"patterns":[],"unexpected":true}']) {
+        resetExternalMcpStartupReadyForTests();
+        localStorageAdapter.writeBoolean(STORAGE_KEY_AI_EXTERNAL_MCP_ENABLED, true);
+        localStorageAdapter.writeString(STORAGE_KEY_AI_EXTERNAL_MCP_MODE, 'persistent');
+        localStorageAdapter.writeString(STORAGE_KEY_AI_PRIVACY, saved);
+        const enabledCalls: boolean[] = [];
+        let configCalls = 0;
+        const bridge = {
+          externalMcpSetConfig: async (config: unknown) => {
+            assert.deepEqual(config, { redaction: null });
+            configCalls += 1;
+            return { ok: false, error: 'Shared AI privacy configuration is unavailable.' };
+          },
+          externalMcpSetEnabled: async (enabled: boolean) => { enabledCalls.push(enabled); },
+        };
+        const plan = await syncExternalMcpStartupState(bridge);
+        assert.equal(plan.runtimeEnabled, false);
+        assert.match(plan.configError!, /Invalid saved/);
+        assert.equal(configCalls, 1, 'invalidate shared privacy instead of applying unprotected defaults');
+        assert.deepEqual(enabledCalls, [false]);
+        assert.equal(readExternalMcpStoredEnabled(), false);
+        await assert.rejects(syncExternalMcpConfig(bridge), /Invalid saved/);
+        assert.equal(configCalls, 2);
+      }
+    } finally {
+      restore();
+    }
+  });
+
+  it('fails closed when the backend rejects or cannot verify startup config', async () => {
+    const restore = installMemoryLocalStorage();
+    try {
+      for (const result of [{ ok: false, error: 'Invalid CIDR' }, { ok: false, error: '' }, undefined, {}]) {
+        resetExternalMcpStartupReadyForTests();
+        localStorageAdapter.writeBoolean(STORAGE_KEY_AI_EXTERNAL_MCP_ENABLED, true);
+        localStorageAdapter.writeString(STORAGE_KEY_AI_EXTERNAL_MCP_MODE, 'persistent');
+        localStorageAdapter.write(STORAGE_KEY_AI_PRIVACY, settings);
+        const enabledCalls: boolean[] = [];
+        const plan = await syncExternalMcpStartupState({
+          externalMcpSetConfig: async () => result,
+          externalMcpSetEnabled: async (enabled) => { enabledCalls.push(enabled); },
+        });
+        assert.equal(plan.runtimeEnabled, false);
+        assert.ok(plan.configError);
+        assert.deepEqual(enabledCalls, [false]);
+        assert.deepEqual(readExternalMcpRedactionSettings(), settings);
+      }
+    } finally {
+      restore();
+    }
+  });
+
+  it('preserves the corrupt-settings error if shared policy invalidation cannot reach the bridge', async () => {
+    const restore = installMemoryLocalStorage();
+    try {
+      resetExternalMcpStartupReadyForTests();
+      localStorageAdapter.writeString(STORAGE_KEY_AI_PRIVACY, '{');
+      const calls: boolean[] = [];
+      const bridge = {
+        externalMcpSetConfig: async (config: unknown) => {
+          assert.deepEqual(config, { redaction: null });
+          throw new Error('Disconnected');
+        },
+        externalMcpSetEnabled: async (enabled: boolean) => { calls.push(enabled); },
+      };
+      const plan = await syncExternalMcpStartupState(bridge);
+      assert.match(plan.configError!, /Invalid saved AI privacy settings/);
+      assert.deepEqual(calls, [false]);
+      await assert.rejects(syncExternalMcpConfig(bridge), /Invalid saved AI privacy settings/);
+      assert.equal(localStorageAdapter.readString(STORAGE_KEY_AI_PRIVACY), '{');
+    } finally {
+      restore();
+    }
+  });
+
+  it('does not enable from a stale privacy snapshot changed during config sync', async () => {
+    const restore = installMemoryLocalStorage();
+    try {
+      resetExternalMcpStartupReadyForTests();
+      localStorageAdapter.writeBoolean(STORAGE_KEY_AI_EXTERNAL_MCP_ENABLED, true);
+      localStorageAdapter.writeString(STORAGE_KEY_AI_EXTERNAL_MCP_MODE, 'persistent');
+      const calls: boolean[] = [];
+      const plan = await syncExternalMcpStartupState({
+        externalMcpSetConfig: async () => {
+          localStorageAdapter.write(STORAGE_KEY_AI_PRIVACY, settings);
+          return { ok: true };
+        },
+        externalMcpSetEnabled: async (enabled) => { calls.push(enabled); },
+      });
+      assert.deepEqual(calls, [false]);
+      assert.match(plan.configError!, /changed during startup/);
+      await assert.rejects(syncExternalMcpConfig({
+        externalMcpSetConfig: async () => {
+          localStorageAdapter.write(STORAGE_KEY_AI_PRIVACY, { ...settings, cidrs: [] });
+          return { ok: true };
+        },
+      }), /settings changed/);
+    } finally {
+      restore();
+    }
+  });
+
+  it('fails closed on a startup config transport failure', async () => {
+    const restore = installMemoryLocalStorage();
+    try {
+      resetExternalMcpStartupReadyForTests();
+      localStorageAdapter.writeBoolean(STORAGE_KEY_AI_EXTERNAL_MCP_ENABLED, true);
+      localStorageAdapter.writeString(STORAGE_KEY_AI_EXTERNAL_MCP_MODE, 'persistent');
+      const calls: boolean[] = [];
+      const plan = await syncExternalMcpStartupState({
+        externalMcpSetConfig: async () => { throw new Error('Disconnected'); },
+        externalMcpSetEnabled: async (enabled) => { calls.push(enabled); },
+      });
+      assert.deepEqual(calls, [false]);
+      assert.equal(plan.configError, 'Disconnected');
+    } finally {
+      restore();
+    }
+  });
+});
+
+describe('External MCP manual enable privacy gate', () => {
+  it('waits for validated config and keeps rejected or superseded enables off', async () => {
+    const React = await import('react');
+    const { act, create } = await import('react-test-renderer');
+    const { useExternalMcpToggleState } = await import('./useExternalMcpToggleState.ts');
+    const restoreStorage = installMemoryLocalStorage();
+    const previousWindow = Object.getOwnPropertyDescriptor(globalThis, 'window');
+    const previousAct = Object.getOwnPropertyDescriptor(globalThis, 'IS_REACT_ACT_ENVIRONMENT');
+    const events = new EventTarget();
+    let resolveConfig!: (value: unknown) => void;
+    const calls: string[] = [];
+    const bridge = {
+      externalMcpSetConfig: async () => {
+        calls.push('config');
+        return new Promise((resolve) => { resolveConfig = resolve; });
+      },
+      externalMcpSetEnabled: async (enabled: boolean) => {
+        calls.push(`enabled:${enabled}`);
+        return { ok: true, enabled };
+      },
+    };
+    Object.defineProperty(globalThis, 'IS_REACT_ACT_ENVIRONMENT', { value: true, configurable: true });
+    Object.defineProperty(globalThis, 'window', {
+      value: {
+        netcatty: bridge,
+        location: { hash: '#/settings' },
+        addEventListener: events.addEventListener.bind(events),
+        removeEventListener: events.removeEventListener.bind(events),
+        dispatchEvent: events.dispatchEvent.bind(events),
+        setInterval,
+        clearInterval,
+      },
+      configurable: true,
+    });
+    let hook!: ReturnType<typeof useExternalMcpToggleState>;
+    const Capture = () => { hook = useExternalMcpToggleState(); return null; };
+    let renderer: ReturnType<typeof create> | undefined;
+    try {
+      resetExternalMcpStartupReadyForTests();
+      await act(async () => { renderer = create(React.createElement(Capture)); });
+      let pending!: Promise<void>;
+      await act(async () => { pending = hook.setEnabled(true); });
+      assert.deepEqual(calls, ['config']);
+      assert.equal(hook.enabled, false);
+      assert.equal(readExternalMcpStoredEnabled(), false);
+      await act(async () => { resolveConfig({ ok: false, error: 'Invalid privacy rules' }); await pending; });
+      assert.deepEqual(calls, ['config', 'enabled:false']);
+      assert.equal(hook.enabled, false);
+      assert.match(hook.error!, /Invalid privacy rules/);
+
+      calls.length = 0;
+      await act(async () => { pending = hook.setEnabled(true); });
+      await act(async () => { await hook.setEnabled(false); });
+      await act(async () => { resolveConfig({ ok: true }); await pending; });
+      assert.deepEqual(calls, ['config', 'enabled:false']);
+      assert.equal(hook.enabled, false, 'a newer disable wins over a pending enable');
+
+      calls.length = 0;
+      await act(async () => { pending = hook.setEnabled(true); });
+      await act(async () => { resolveConfig({ ok: true }); await pending; });
+      assert.deepEqual(calls, ['config', 'enabled:true']);
+      assert.equal(hook.enabled, true);
+      assert.equal(readExternalMcpStoredEnabled(), true);
+      assert.equal(hook.error, null);
+    } finally {
+      if (renderer) await act(async () => renderer!.unmount());
+      if (previousWindow) Object.defineProperty(globalThis, 'window', previousWindow);
+      else Reflect.deleteProperty(globalThis, 'window');
+      if (previousAct) Object.defineProperty(globalThis, 'IS_REACT_ACT_ENVIRONMENT', previousAct);
+      else Reflect.deleteProperty(globalThis, 'IS_REACT_ACT_ENVIRONMENT');
+      restoreStorage();
     }
   });
 });

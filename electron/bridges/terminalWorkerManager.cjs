@@ -1234,6 +1234,32 @@ function createTerminalWorkerManager(options = {}) {
   function handleMessage(eventOrMessage) {
     const message = unwrapMessageEvent(eventOrMessage);
     if (!message || typeof message !== "object") return;
+    if (message.kind === "validate-execution") {
+      const entry = pending.get(message.requestId);
+      let ok = false;
+      try {
+        if (typeof entry?.beforeExecute !== "function") throw new Error("Missing execution guard");
+        // These guards are synchronous main-owned policy snapshots. No
+        // renderer callback or function is serialized to the worker.
+        const result = entry.beforeExecute();
+        if (result && typeof result.then === "function") throw new Error("Invalid execution guard");
+        ok = true;
+      } catch {
+        // Return no command content or policy internals to a stale worker call.
+      }
+      const worker = child;
+      try {
+        worker?.postMessage({
+          kind: "execution-validation",
+          requestId: message.requestId,
+          validationId: message.validationId,
+          ok,
+        });
+      } catch (error) {
+        retireWorkerAfterIpcFailure(worker, error);
+      }
+      return;
+    }
     if (message.kind === "job-diagnostic") {
       if (isJobDiagEnabled() && typeof message.line === "string"
         && message.line.startsWith("[Netcatty JobDiag] ")) {
@@ -1824,6 +1850,7 @@ function createTerminalWorkerManager(options = {}) {
         requestedSessionId,
         bootEpoch: normalizeBootEpoch(payload?.bootEpoch),
         webContentsId: optionsForRequest.webContentsId,
+        beforeExecute: optionsForRequest.beforeExecute,
         opensOutputSession: channel === "netcatty:start"
           || channel === "netcatty:local:reconnect"
           || channel === "netcatty:external:start"
@@ -1861,6 +1888,8 @@ function createTerminalWorkerManager(options = {}) {
         channel,
         payload,
         webContentsId: optionsForRequest.webContentsId,
+        ...(typeof optionsForRequest.beforeExecute === "function"
+          ? { requiresExecutionValidation: true } : {}),
       });
     } catch (error) {
       retireWorkerAfterIpcFailure(worker, error);

@@ -6,6 +6,16 @@ const { emitTerminalSessionData } = require("../emitTerminalSessionData.cjs");
 const { formatSyntheticEcho } = require("../ai/shellUtils.cjs");
 const { clearSessionFlowState } = require("../terminalFlowAck.cjs");
 const { remoteDisallowsExecChannelProbe, sessionDisallowsExtraSshChannel, ensureSessionShellKindForExec } = require("../ai/sessionShellKind.cjs");
+const defaultAiPrivacyService = require("../../shared/aiPrivacyService.cjs");
+
+function assertCattyPrivacySession(privacyService, chatSessionId) {
+  if (chatSessionId) {
+    // Unlike checkSession/redact, restore cannot create an unpinned session.
+    privacyService.restore(chatSessionId, []);
+  } else if (privacyService.isEnabled()) {
+    throw new Error("AI privacy requires a managed chat session.");
+  }
+}
 
 function getWorkerExecutionMeta(mcpServerBridge, sessionId, chatSessionId) {
   return mcpServerBridge.getSessionMeta?.(sessionId, chatSessionId) || {};
@@ -24,6 +34,7 @@ async function proxyCattyExecToWorker({
   sessionId,
   command,
   chatSessionId,
+  beforeExecute,
 }) {
   if (!terminalWorkerManager?.request) {
     return { ok: false, error: "Session not found" };
@@ -54,6 +65,7 @@ async function proxyCattyExecToWorker({
   };
 
   try {
+    beforeExecute();
     return await terminalWorkerManager.request("netcatty:ai:exec", {
       sessionId,
       command,
@@ -63,6 +75,7 @@ async function proxyCattyExecToWorker({
       commandBlocklist: mcpServerBridge.getCommandBlocklist?.(),
     }, {
       webContentsId: event?.sender?.id,
+      beforeExecute,
     });
   } catch (err) {
     return { ok: false, error: err?.message || String(err) };
@@ -72,6 +85,7 @@ async function proxyCattyExecToWorker({
 }
 
 function registerCattyExecHandlers(ctx) {
+  const privacyService = ctx.aiPrivacyService || defaultAiPrivacyService;
   with (ctx) {
   ipcMain.handle("netcatty:ai:exec", async (event, { sessionId, command, chatSessionId }) => {
     // Validate IPC sender (Issue #17)
@@ -82,6 +96,12 @@ function registerCattyExecHandlers(ctx) {
     if (mcpServerBridge.getPermissionMode() === "observer") {
       return { ok: false, error: "Execution blocked: permission mode is 'observer'" };
     }
+    const beforeExecute = () => assertCattyPrivacySession(privacyService, chatSessionId);
+    try {
+      beforeExecute();
+    } catch (err) {
+      return { ok: false, error: err?.message || "AI privacy protection is unavailable." };
+    }
     const session = sessions?.get(sessionId);
     if (!session) {
       return proxyCattyExecToWorker({
@@ -91,6 +111,7 @@ function registerCattyExecHandlers(ctx) {
         sessionId,
         command,
         chatSessionId,
+        beforeExecute,
       });
     }
 
@@ -120,6 +141,7 @@ function registerCattyExecHandlers(ctx) {
     // (or immediately on a synchronous error/early return).
     const withLockRelease = (factory) => {
       try {
+        beforeExecute();
         const result = factory();
         return Promise.resolve(result).finally(releaseLock);
       } catch (err) {
@@ -165,6 +187,7 @@ function registerCattyExecHandlers(ctx) {
             chatSessionId,
           });
           if (!probed.ok) return probed;
+          beforeExecute();
           const safety = mcpServerBridge.checkCommandSafetyForShell(
             command,
             mcpServerBridge.resolveSessionBlocklistShellKind(session),
@@ -226,6 +249,7 @@ function registerCattyExecHandlers(ctx) {
             chatSessionId,
           });
           if (!probed.ok) return probed;
+          beforeExecute();
           const safety = mcpServerBridge.checkCommandSafetyForShell(
             command,
             mcpServerBridge.resolveSessionBlocklistShellKind(session),
@@ -307,10 +331,16 @@ function registerCattyExecHandlers(ctx) {
     if (!rpcMethod || typeof rpcMethod !== "string") {
       return { ok: false, error: "rpcMethod is required" };
     }
-    return mcpServerBridge.dispatchBuiltinRpc(rpcMethod, {
-      ...(params || {}),
-      chatSessionId,
-    });
+    const beforeExecute = () => assertCattyPrivacySession(privacyService, chatSessionId);
+    try {
+      beforeExecute();
+      return await mcpServerBridge.dispatchBuiltinRpc(rpcMethod, {
+        ...(params || {}),
+        chatSessionId,
+      }, { beforeExecute });
+    } catch (err) {
+      return { ok: false, error: err?.message || "AI privacy protection is unavailable." };
+    }
   });
   }
 }

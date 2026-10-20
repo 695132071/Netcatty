@@ -345,7 +345,7 @@ function translateCodexEvent(event, emitter, state) {
  * @param {Function} [args.CodexCtor]       inject Codex class (for tests)
  */
 async function runCodexTurn({
-  prompt, attachments, constructorOptions, threadOptions, resumeThreadId, emitter, signal, CodexCtor,
+  prompt, attachments, constructorOptions, threadOptions, resumeThreadId, emitter, signal, CodexCtor, assertSessionValid,
 }) {
   const Codex = CodexCtor || (await import("@openai/codex-sdk")).Codex;
   const promptInput = buildCodexPromptInput(prompt, attachments);
@@ -357,9 +357,12 @@ async function runCodexTurn({
       ? codex.resumeThread(resumeThreadId, threadOptions)
       : codex.startThread(threadOptions);
 
+    assertSessionValid?.();
     const { events } = await thread.runStreamed(promptInput, signal ? { signal } : undefined);
     let hasContent = false;
     const state = { reasoningOpen: false };
+    // runStreamed returns a lazy iterator; its first read starts execution.
+    assertSessionValid?.();
     for await (const event of events) {
       // Capture + emit the resumable thread id as EARLY as possible — it exists
       // the moment `thread.started` arrives (the first event). Emitting it only at

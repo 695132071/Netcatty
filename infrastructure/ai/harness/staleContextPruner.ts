@@ -138,12 +138,12 @@ function replaceToolResultText(part: Record<string, unknown>, text: string): Rec
   return { ...part, output: { type: 'text', value: text } };
 }
 
-function redactToolCallInputs(message: ModelMessage): ModelMessage {
+function redactToolCallInputs(message: ModelMessage, chatSessionId?: string): ModelMessage {
   if (message.role !== 'assistant' || !Array.isArray(message.content)) return message;
   let changed = false;
   const content = (message.content as unknown[]).map(part => {
     if (!isRecord(part) || part.type !== 'tool-call' || !('input' in part)) return part;
-    const redacted = redactSecretsInValueForModel(part.input);
+    const redacted = redactSecretsInValueForModel(part.input, chatSessionId);
     if (JSON.stringify(redacted) === JSON.stringify(part.input)) return part;
     changed = true;
     return { ...part, input: redacted };
@@ -179,6 +179,7 @@ function compressMessageToolResults(
 }
 
 export interface PruneStaleToolContextOptions {
+  chatSessionId?: string;
   /** Supersede stale reads and omit older terminal output only under context budget pressure. */
   underBudgetPressure?: boolean;
 }
@@ -243,7 +244,7 @@ export function pruneStaleToolContext(
         if (keepTerminalIndices.has(entry.index)) continue;
         terminalOmitByIndex.set(
           entry.index,
-          `${EARLIER_TERMINAL_PREFIX} command=${redactSecretsForModel(entry.command ?? 'unknown')}]`,
+          `${EARLIER_TERMINAL_PREFIX} command=${redactSecretsForModel(entry.command ?? 'unknown', options.chatSessionId)}]`,
         );
       }
     }
@@ -251,7 +252,7 @@ export function pruneStaleToolContext(
 
   let didAdjust = false;
   const next = messages.map((message, index) => {
-    const redactedMessage = redactToolCallInputs(message);
+    const redactedMessage = redactToolCallInputs(message, options.chatSessionId);
     const updated = compressMessageToolResults(redactedMessage, (toolName, args, text, isError) => {
       if (isError) return null;
       const readKey = readFingerprint(toolName, args);

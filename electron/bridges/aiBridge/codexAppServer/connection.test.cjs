@@ -198,3 +198,26 @@ test("App Server process keys include executable and environment identity", () =
     buildCodexAppServerKey("/a/codex", { HOME: "/b" }),
   );
 });
+
+test("prompt guard runs after the connection's own startup await and prevents the JSONL write", async () => {
+  const { createAiPrivacyService } = require("../../../shared/aiPrivacyService.cjs");
+  const privacy = createAiPrivacyService();
+  privacy.checkSession("chat");
+  const child = createFakeChild();
+  const writes = [];
+  child.stdin.on("data", (chunk) => writes.push(String(chunk)));
+  const connection = new CodexAppServerConnection({ binPath: "/bin/codex", spawnImpl: () => child });
+  let release;
+  connection.process = child;
+  connection.start = () => new Promise((resolve) => { release = resolve; });
+  const run = connection.request("turn/start", { input: [{ type: "text", text: "raw-secret" }] }, undefined, {
+    beforeSend: () => privacy.checkSession("chat"),
+  });
+  const rejected = assert.rejects(run, /start a new chat/);
+  privacy.configure({ enabled: true });
+  release();
+  await rejected;
+  assert.deepEqual(writes, []);
+  assert.equal(connection.pending.size, 0);
+  connection.close();
+});

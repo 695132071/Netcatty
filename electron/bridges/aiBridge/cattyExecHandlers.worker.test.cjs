@@ -2,6 +2,7 @@ const assert = require("node:assert/strict");
 const test = require("node:test");
 
 const { registerCattyExecHandlers } = require("./cattyExecHandlers.cjs");
+const { createAiPrivacyService } = require("../../shared/aiPrivacyService.cjs");
 
 function createFakeIpcMain() {
   return {
@@ -14,6 +15,8 @@ function createFakeIpcMain() {
 
 test("catty AI exec proxies to the terminal worker when the real session lives in the worker", async () => {
   const ipcMain = createFakeIpcMain();
+  const aiPrivacyService = createAiPrivacyService();
+  aiPrivacyService.checkSession("chat-1");
   const requests = [];
   const terminalWorkerManager = {
     request(channel, payload, options) {
@@ -55,6 +58,7 @@ test("catty AI exec proxies to the terminal worker when the real session lives i
 
   registerCattyExecHandlers({
     ipcMain,
+    aiPrivacyService,
     validateSender: () => true,
     sessions: new Map(),
     terminalWorkerManager,
@@ -86,9 +90,10 @@ test("catty AI exec proxies to the terminal worker when the real session lives i
         sessionMeta: { protocol: "ssh", deviceType: "", hostname: "host.example" },
         commandBlocklist: [],
       },
-      options: { webContentsId: 7 },
+      options: { webContentsId: 7, beforeExecute: requests[0].options.beforeExecute },
     },
   ]);
+  assert.equal(typeof requests[0].options.beforeExecute, "function");
   assert.deepEqual(locks, [
     ["reserve", "ssh-1", "exec"],
     ["release", "ssh-1", "token-1"],

@@ -43,6 +43,7 @@ import { hadToolProgressBeforeRequestTooLarge, processCattyStream } from './catt
 import type { CattyTurnInput, TurnDriver, TurnDriverContext } from './types';
 import { fitLargeUserInputForModel } from '../largeUserInput';
 import { buildPromptContextSnapshot } from '../promptContextSnapshot';
+import { initializeModelPrivacy, protectModel, redactOpenAIChatAssistantFields, type ModelPrivacyBridge } from '../modelPrivacy';
 
 export class CattyTurnDriver implements TurnDriver {
   readonly backend = 'catty' as const;
@@ -74,6 +75,7 @@ async function runCattyTurn(input: CattyTurnInput, ctx: TurnDriverContext): Prom
   } = input;
 
   const netcattyBridge = (bridge ?? getNetcattyBridge()) as NonNullable<ReturnType<typeof getNetcattyBridge>>;
+  const privacy = await initializeModelPrivacy(netcattyBridge as ModelPrivacyBridge, sessionId);
   const toolOutputTempBridge = netcattyBridge as typeof netcattyBridge & {
     getToolOutputPersistenceStatus?: () => Promise<{ durable: boolean; reason?: string }>;
     writeToolOutputTemp?: (
@@ -237,17 +239,27 @@ async function runCattyTurn(input: CattyTurnInput, ctx: TurnDriverContext): Prom
 
     let model;
     try {
-      model = createModelFromConfig(
+      model = protectModel(createModelFromConfig(
         {
           ...context.activeProvider,
           defaultModel: activeModelId,
         },
         {
           getOpenAIChatAssistantFields: () => continuationContext.openAIChatAssistantFields,
+          transformOpenAIChatAssistantFields: privacy
+            ? fields => redactOpenAIChatAssistantFields(fields, privacy)
+            : undefined,
           streamIdleTimeoutMs: responseIdleTimeoutMs,
           chatSessionId: sessionId,
         },
-      );
+      ), privacy, {
+        // Compaction can run before prepareMessagesForStream selects replay
+        // fields. Include built history plus freshly captured live fields.
+        getOpenAIChatAssistantFields: () => [
+          ...openAIChatAssistantFieldsByMessage.values(),
+          ...continuationContext.openAIChatAssistantFields,
+        ],
+      });
     } catch (e) {
       console.error('[Catty] Model creation failed:', e);
       ui.reportStreamError(sessionId, signal, `Model creation failed: ${e instanceof Error ? e.message : String(e)}`);

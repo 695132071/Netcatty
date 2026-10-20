@@ -1,6 +1,8 @@
 "use strict";
 
 const crypto = require("node:crypto");
+const { normalizeRedactionConfig } = require("../mcp/externalMcpRedaction.cjs");
+const aiPrivacyService = require("../shared/aiPrivacyService.cjs");
 
 const {
   getExternalMcpDiscoveryFilePath,
@@ -81,6 +83,7 @@ function createExternalMcpController(options = {}) {
 
   let discoveryFilePath = null;
   let enabled = false;
+  let redaction = normalizeRedactionConfig();
   let state = "disabled";
   let error = null;
   let mode = EXTERNAL_MCP_MODE_TEMPORARY;
@@ -175,6 +178,7 @@ function createExternalMcpController(options = {}) {
         isEnabled: () => isEnabled(),
         recordActivity,
         getPermissionMode: () => getBridge()?.getPermissionMode?.() || "confirm",
+        getRedactionConfig: () => redaction,
         attachExternalClient: (client) => {
           const bridge = getBridge();
           if (typeof bridge?.attachExternalMcpClient === "function") {
@@ -192,6 +196,7 @@ function createExternalMcpController(options = {}) {
             chatSessionId: deps.chatSessionId,
           }, {
             externalSocket: context?.externalClient || null,
+            beforeExecute: aiPrivacyService.createPolicyGuard(),
           });
         },
       });
@@ -316,6 +321,7 @@ function createExternalMcpController(options = {}) {
       hostRunning,
       error,
       http: buildHttpStatus(),
+      redaction,
     };
   }
 
@@ -332,6 +338,7 @@ function createExternalMcpController(options = {}) {
       pid: process.pid,
       permissionMode: bridge.getPermissionMode?.() || "confirm",
       chatSessionId: deps.chatSessionId,
+      redaction,
     });
   }
 
@@ -542,6 +549,26 @@ function createExternalMcpController(options = {}) {
   }
 
   function setConfig(config = {}) {
+    if (config.redaction !== undefined) {
+      let nextRedaction;
+      try {
+        nextRedaction = normalizeRedactionConfig(config.redaction);
+      } catch {
+        if (config.redaction === null) aiPrivacyService.invalidateConfiguration();
+        return { ...buildStatus(), ok: false, error: "Invalid privacy rules. Check CIDRs and regular expressions." };
+      }
+      if (JSON.stringify(nextRedaction) !== JSON.stringify(redaction)) {
+        const previousRedaction = redaction;
+        redaction = nextRedaction;
+        try {
+          writeDiscoveryFromBridge();
+        } catch {
+          redaction = previousRedaction;
+          return { ...buildStatus(), ok: false, error: "Privacy settings could not be saved. Retry before reconnecting clients." };
+        }
+      }
+      aiPrivacyService.configure(nextRedaction);
+    }
     const nextMode = config.mode == null ? mode : normalizeMode(config.mode);
     const nextIdleTimeoutMinutes = config.idleTimeoutMinutes == null
       ? idleTimeoutMinutes
@@ -750,7 +777,8 @@ function createExternalMcpController(options = {}) {
     });
     ipcMain.handle("netcatty:external-mcp:set-config", async (event, payload) => {
       if (!guard(event)) return { ok: false, error: "Unauthorized IPC sender" };
-      setConfig(payload || {});
+      const status = setConfig(payload || {});
+      if (!status.ok) return status;
       await whenHttpSettled();
       return getStatus();
     });

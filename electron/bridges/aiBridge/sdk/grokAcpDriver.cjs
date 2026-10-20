@@ -548,10 +548,13 @@ async function establishGrokAcpSession(rpc, {
   toolIntegrationMode,
   systemContext,
   agentCapabilities,
+  assertSessionValid,
 } = {}) {
   const methods = planGrokAcpSessionEstablish({ resumeSessionId, agentCapabilities });
   let lastError = null;
   for (const method of methods) {
+    // session/new carries system context; retries must recheck as well.
+    assertSessionValid?.();
     try {
       if (method === "new") {
         const created = await rpc.request(
@@ -929,6 +932,7 @@ async function runGrokAcpTurn({
   forceKillImpl,
   // inject for tests: skip real spawn
   rpcClientFactory,
+  assertSessionValid,
 }) {
   const cliPath = String(binPath || "").trim();
   if (!cliPath) {
@@ -975,6 +979,7 @@ async function runGrokAcpTurn({
         permissionMode,
         toolIntegrationMode,
         systemContext: systemPrompt,
+        assertSessionValid,
         agentCapabilities: parseGrokAcpAgentCapabilities(initResult),
       });
       state.sessionId = established.sessionId;
@@ -987,6 +992,7 @@ async function runGrokAcpTurn({
       });
       // Only accept updates for this turn's prompt (not session/load replay).
       state.acceptUpdates = true;
+      assertSessionValid?.();
       const promptResult = await client.request(
         "session/prompt",
         buildGrokAcpPromptParams(state.sessionId, effectivePrompt),
@@ -1207,6 +1213,7 @@ async function runGrokAcpTurn({
       permissionMode,
       toolIntegrationMode,
       systemContext: systemPrompt,
+      assertSessionValid,
       agentCapabilities: parseGrokAcpAgentCapabilities(initResult),
     });
     state.sessionId = established.sessionId;
@@ -1224,6 +1231,7 @@ async function runGrokAcpTurn({
     // Await the prompt RPC only (no race with promptDone). Process death
     // rejects via rejectAll on close; success sets turnCompleted + usage in
     // handleGrokAcpMessage before resolve.
+    assertSessionValid?.();
     await rpc.request(
       "session/prompt",
       buildGrokAcpPromptParams(state.sessionId, effectivePrompt),

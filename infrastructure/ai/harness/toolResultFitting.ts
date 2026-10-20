@@ -81,7 +81,7 @@ function fitValue(value: unknown, ctx: FitValueContext): unknown {
 }
 
 function fitString(value: string, ctx: FitValueContext): string {
-  const safeValue = redactSecretsForModel(value);
+  const safeValue = redactSecretsForModel(value, ctx.chatSessionId);
   const normalizedValue = ctx.normalizeStrings ? compressVerboseText(safeValue) : safeValue;
   if (safeValue.length <= ctx.maxStringChars && normalizedValue.length <= ctx.maxStringChars) {
     return normalizedValue;

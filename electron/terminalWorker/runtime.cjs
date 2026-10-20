@@ -355,6 +355,32 @@ function createTerminalWorkerRuntime(options = {}) {
     ? options.reportSuppressedError
     : null;
   const ipcMain = createIpcMainHarness();
+  const executionValidations = new Map();
+  let executionValidationCounter = 0;
+  const executionValidationTimeoutMs = options.executionValidationTimeoutMs ?? 10_000;
+  const executionValidationError = "AI privacy session is unavailable or its settings changed; start a new chat";
+
+  function validateExecution(message) {
+    return new Promise((resolve, reject) => {
+      const validationId = `${message.requestId}:${++executionValidationCounter}`;
+      const finish = (ok) => {
+        const entry = executionValidations.get(validationId);
+        if (!entry) return;
+        executionValidations.delete(validationId);
+        clearTimeout(entry.timer);
+        if (ok) resolve();
+        else reject(new Error(executionValidationError));
+      };
+      const timer = setTimeout(() => finish(false), executionValidationTimeoutMs);
+      timer.unref?.();
+      executionValidations.set(validationId, { requestId: message.requestId, timer, finish });
+      try {
+        parentPort.postMessage({ kind: "validate-execution", requestId: message.requestId, validationId });
+      } catch {
+        finish(false);
+      }
+    });
+  }
   let started = false;
   const outputPorts = createOutputPortRegistry();
   const pendingOutputBySession = new Map();
@@ -504,6 +530,8 @@ function createTerminalWorkerRuntime(options = {}) {
         sessionLifecycleTombstoneTimes.delete(requestedSessionId);
       }
       const result = await handler({
+        ...(message.requiresExecutionValidation === true
+          ? { beforeExecute: () => validateExecution(message) } : {}),
         sender: createSender(
           parentPort,
           message.webContentsId,
@@ -751,6 +779,11 @@ function createTerminalWorkerRuntime(options = {}) {
 
   function handleMessage(eventOrMessage) {
     const { message, ports } = normalizeMessageEvent(eventOrMessage);
+    if (message?.kind === "execution-validation") {
+      const entry = executionValidations.get(message.validationId);
+      if (entry?.requestId === message.requestId) entry.finish(message.ok === true);
+      return;
+    }
     if (message?.kind === "set-ssh-transport-idle-ttl") {
       setDefaultTransportIdleTtlMs(message.value);
       return;

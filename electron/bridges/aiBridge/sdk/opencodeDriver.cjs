@@ -554,7 +554,7 @@ function createStopWait() {
 
 async function runOpenCodeV1Turn({
   prompt, systemPrompt, attachments, cwd, model, injectedMcpServers, toolIntegrationMode,
-  skillsPathAllowlist, resumeSessionId, env, binPath, emitter, abortController, openCodeFactory,
+  skillsPathAllowlist, resumeSessionId, env, binPath, emitter, abortController, openCodeFactory, assertSessionValid,
 }) {
   const config = buildOpenCodeConfig({ model, injectedMcpServers, toolIntegrationMode, skillsPathAllowlist });
   let opencode = null;
@@ -596,6 +596,9 @@ async function runOpenCodeV1Turn({
     if (!sessionId) throw new Error("OpenCode did not create a session");
     emitter.sessionId(sessionId);
 
+    // No awaits between this guard and promptAsync below. Validate before
+    // starting the background event loop so failure cannot leave it pending.
+    assertSessionValid?.();
     const stopEventLoopWait = createStopWait();
     const eventLoop = (async () => {
       const iterator = events.stream?.[Symbol.asyncIterator]?.();

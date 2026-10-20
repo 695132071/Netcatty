@@ -233,7 +233,7 @@ function buildClaudePromptInput(prompt, attachments) {
  * @param {object} args.emitter  createStreamEmitter(...)
  * @param {Function} [args.queryFn] inject @anthropic-ai/claude-agent-sdk query (for tests)
  */
-async function runClaudeTurn({ prompt, attachments, options, emitter, queryFn }) {
+async function runClaudeTurn({ prompt, attachments, options, emitter, queryFn, assertSessionValid }) {
   ensureClaudeConfig();
   let query = queryFn;
   if (!query) {
@@ -246,6 +246,7 @@ async function runClaudeTurn({ prompt, attachments, options, emitter, queryFn })
   let sessionId = null;
   let hasContent = false;
   try {
+    assertSessionValid?.();
     const stream = query({ prompt: promptInput, options });
     for await (const message of stream) {
       if (options.abortController?.signal?.aborted) break;

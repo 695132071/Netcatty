@@ -20,6 +20,8 @@ function catalogDescription(toolName, fallback) {
   return getCatalogToolDescription(toolName) || fallback;
 }
 
+const { createPrivacyBoundary } = require("./externalMcpPrivacyBoundary.cjs");
+
 const DEBUG_MCP = process.env.NETCATTY_MCP_DEBUG === "1";
 
 function debugLog(...args) {
@@ -191,10 +193,19 @@ function rpcCall(method, params) {
     const id = nextRpcId++;
     pendingRequests.set(id, { resolve, reject });
     const msg = JSON.stringify({ jsonrpc: "2.0", id, method, params }) + "\n";
-    debugLog("rpcCall", { id, method, params });
+    debugLog("rpcCall", { id, method });
     tcpSocket.write(msg);
   });
 }
+
+// External clients own connection maps here; managed agents use the main-process chat boundary.
+const externalDiscoveryPath = process.env.NETCATTY_EXTERNAL_MCP_DISCOVERY_FILE;
+const exposedRpcCall = externalDiscoveryPath
+  ? createPrivacyBoundary(rpcCall, () => {
+    const discovery = JSON.parse(fs.readFileSync(externalDiscoveryPath, "utf8"));
+    return discovery.redaction;
+  })
+  : rpcCall;
 
 // ── MCP Server ──
 
@@ -219,7 +230,7 @@ server.resource(
   "netcatty://context",
   { description: "Current Netcatty workspace context: connected hosts, session IDs, and environment description." },
   async () => {
-    const ctx = await rpcCall("netcatty/getContext", scopeParams);
+    const ctx = await exposedRpcCall("netcatty/getContext", scopeParams);
     return {
       contents: [{
         uri: "netcatty://context",
@@ -232,7 +243,7 @@ server.resource(
 
 // Start with core tools; load specialized catalog groups through load_netcatty_tools.
 registerProgressiveMcpTools(server, {
-  rpcCall,
+  rpcCall: exposedRpcCall,
   scopeParams,
   guardWriteOperation,
   catalogDescription,

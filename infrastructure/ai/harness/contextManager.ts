@@ -206,6 +206,7 @@ export async function prepareTurnContext(
   });
   const stale = pruneStaleToolContext(integrity.messages, {
     underBudgetPressure,
+    chatSessionId: input.chatSessionId,
   });
   let working = stale.messages;
   let didAdjust = integrity.didAdjust || stale.didAdjust;
@@ -417,6 +418,7 @@ export async function prepareStepContext(
   });
   const stale = pruneStaleToolContext(integrity.messages, {
     underBudgetPressure,
+    chatSessionId: input.chatSessionId,
   });
   let working = stale.messages;
 

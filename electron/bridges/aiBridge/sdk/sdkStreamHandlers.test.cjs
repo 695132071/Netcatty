@@ -32,6 +32,13 @@ function registerWithStubbedCtx(overrides = {}) {
     ipcMain: { handle: (channel, fn) => handlers.set(channel, fn) },
     electronModule: undefined,
     validateSender: () => true,
+    aiPrivacyService: {
+      isEnabled: () => false,
+      checkSession: () => false,
+      redact: (_chatId, value) => value,
+      restore: (_chatId, value) => value,
+      clearSession: () => {},
+    },
     mcpServerBridge: {
       setChatSessionCancelled: () => {},
       cancelPtyExecsForSession: () => {},
@@ -43,6 +50,442 @@ function registerWithStubbedCtx(overrides = {}) {
   registerSdkStreamHandlers(ctx);
   return { handlers, ctx };
 }
+
+function createTestPrivacy(enabled = true) {
+  const sessions = new Map();
+  const cleared = new Set();
+  const checkSession = (chatId) => {
+    if (cleared.has(chatId)) throw new Error("AI privacy session was cleared. Start a new conversation.");
+    const prior = sessions.get(chatId);
+    if (prior && prior.enabled !== enabled) throw new Error("AI privacy settings changed. Start a new conversation.");
+    if (!prior) sessions.set(chatId, { enabled, values: new Map(), tokens: new Map() });
+    return enabled;
+  };
+  const mapValues = (value, fn) => {
+    if (typeof value === "string") return fn(value);
+    if (Array.isArray(value)) return value.map((entry) => mapValues(entry, fn));
+    if (value && typeof value === "object") {
+      return Object.fromEntries(Object.entries(value).map(([key, entry]) => [key, mapValues(entry, fn)]));
+    }
+    return value;
+  };
+  return {
+    isEnabled: () => enabled,
+    hasSession: (chatId) => sessions.has(chatId),
+    setEnabled: (value) => { enabled = value; },
+    checkSession,
+    clearSession(chatId) { sessions.delete(chatId); cleared.add(chatId); },
+    redact(chatId, value) {
+      if (!checkSession(chatId)) return value;
+      const state = sessions.get(chatId);
+      return mapValues(value, (text) => text.replace(/secret-[a-z]+/g, (original) => {
+        if (!state.values.has(original)) {
+          const token = `[NC_${chatId}_SECRET_${state.values.size + 1}]`;
+          state.values.set(original, token);
+          state.tokens.set(token, original);
+        }
+        return state.values.get(original);
+      }));
+    },
+    restore(chatId, value) {
+      if (!checkSession(chatId)) return value;
+      const state = sessions.get(chatId);
+      return mapValues(value, (text) => text.replace(/\[NC_[^\]]*(?:\]|$)/g, (token) => {
+        if (!state.tokens.has(token)) throw new Error("Unknown AI privacy token.");
+        return state.tokens.get(token);
+      }));
+    },
+  };
+}
+
+function createPrivacyStreamHarness(privacy = createTestPrivacy(), runTurn) {
+  const turns = [];
+  const messages = [];
+  const driver = {
+    async runTurn(context) {
+      turns.push(context);
+      if (runTurn) return runTurn(context);
+      context.emitter.sessionId("native-1");
+      context.emitter.text(context.prompt);
+      context.emitter.emitDone();
+      return { sessionId: "native-1" };
+    },
+  };
+  const registered = registerWithStubbedCtx({
+    aiPrivacyService: privacy,
+    safeSend: (_sender, channel, payload) => messages.push({ channel, payload }),
+    getShellEnv: async () => ({}),
+    normalizeToolIntegrationMode: (mode) => mode || "mcp",
+    setToolIntegrationMode: () => {},
+    normalizeAgentEnv: (env) => ({ ...env }),
+    normalizeClaudeCodeExecutableEnvForSdk: (env) => env,
+    resolveCliFromPath: (backend) => `/bin/${backend}`,
+    normalizeCliPathForPlatform: (value) => value,
+    resolveSdkBinPath: (backend) => `/bin/${backend}`,
+    resolveClaudeCodeExecutableForSdk: (value) => value,
+    resolveCodexExecutableForSdk: (value) => value,
+    resolveCodebuddyExecutableForSdk: (value) => value,
+    addCodexExecutableEnvForSdk: (env) => env,
+    buildExternalAgentSystemContext: ({ userSkillsContext, defaultTargetSession }) => (
+      `System ${userSkillsContext || ""} ${defaultTargetSession?.hostname || ""}`
+    ),
+    buildExternalAgentContextualPrompt: ({ prompt, userSkillsContext, defaultTargetSession }) => (
+      `System ${userSkillsContext || ""} ${defaultTargetSession?.hostname || ""}\n\n${prompt}`
+    ),
+    getDriver: () => driver,
+    mcpServerBridge: {
+      setChatSessionCancelled: () => {},
+      cancelPtyExecsForSession: () => {},
+      cancelWorkerBackgroundJobsForSession: () => {},
+      clearPendingApprovals: () => {},
+      cleanupScopedMetadata: async () => {},
+      getOrCreateHost: async () => 1234,
+      getScopedSessionIds: () => ["terminal-1"],
+      buildMcpServerConfig: (_port, _ids, chatId) => ({
+        name: "netcatty", command: "/bin/node", env: [{ name: "CHAT_ID", value: chatId }],
+      }),
+      updateAttachmentMetadata: () => {},
+    },
+  });
+  const stream = (overrides = {}) => registered.handlers.get("netcatty:ai:sdk-agent:stream")(
+    { sender: {} },
+    {
+      requestId: `request-${turns.length + 1}`,
+      chatSessionId: "chat-1",
+      sdkBackend: "claude",
+      prompt: "Use secret-user",
+      cwd: "/secret-runtime",
+      agentEnv: { RUNTIME_AUTH: "secret-auth" },
+      userSkillsContext: "secret-skill",
+      defaultTargetSession: { hostname: "secret-host" },
+      historyMessages: [{ role: "user", content: "Previous secret-history" }],
+      ...overrides,
+    },
+  );
+  return { ...registered, stream, turns, messages, privacy };
+}
+
+test("SDK privacy protects assembled prompt/history/system content across drivers without touching runtime routing", async () => {
+  for (const backend of ["claude", "codex", "copilot", "cursor", "codebuddy", "opencode", "grok", "mimo"]) {
+    const h = createPrivacyStreamHarness();
+    const result = await h.stream({ sdkBackend: backend });
+    assert.equal(result.ok, true, `${backend}: ${result.error}`);
+    assert.equal(h.turns.length, 1);
+    const turn = h.turns[0];
+    assert.doesNotMatch(turn.prompt, /secret-/);
+    assert.doesNotMatch(turn.systemPrompt || "", /secret-/);
+    assert.equal(turn.cwd, "/secret-runtime");
+    assert.equal(turn.env.RUNTIME_AUTH, "secret-auth");
+    assert.equal(turn.chatSessionId, "chat-1");
+    assert.match(JSON.stringify(h.messages), /secret-user/, "local human output is restored");
+    assert.doesNotMatch(JSON.stringify(h.messages), /\[NC_/, "aliases do not escape into local display");
+  }
+});
+
+test("SDK privacy preserves aliases and safe native resume across turns, including Grok history fallback", async () => {
+  const h = createPrivacyStreamHarness();
+  assert.equal((await h.stream({ sdkBackend: "grok" })).ok, true);
+  assert.equal((await h.stream({ sdkBackend: "grok" })).ok, true);
+  assert.equal(h.turns[1].resumeSessionId, "native-1");
+  const token = h.privacy.redact("chat-1", "secret-user");
+  assert.ok(h.turns[0].prompt.includes(token));
+  assert.ok(h.turns[1].prompt.includes(token));
+  assert.doesNotMatch(h.turns[1].historySeed, /secret-history/);
+  assert.match(h.turns[1].historySeed, /\[NC_/);
+});
+
+test("SDK adapters round trip through the real shared privacy service", async () => {
+  const { createAiPrivacyService } = require("../../../shared/aiPrivacyService.cjs");
+  const privacy = createAiPrivacyService();
+  privacy.configure({ enabled: true, patterns: ["secret-[a-z]+"] });
+  const h = createPrivacyStreamHarness(privacy);
+  assert.equal((await h.stream()).ok, true);
+  assert.equal((await h.stream()).ok, true);
+  assert.equal(h.turns[1].resumeSessionId, "native-1");
+  assert.doesNotMatch(h.turns[0].prompt, /secret-/);
+  assert.match(JSON.stringify(h.messages), /secret-user/);
+  assert.doesNotMatch(JSON.stringify(h.messages), /\[NC_/);
+});
+
+test("CodeBuddy nested agent prompts are protected without changing agent names, tools or model IDs", async () => {
+  const h = createPrivacyStreamHarness();
+  const agents = {
+    "secret-agent": {
+      prompt: "Use secret-user",
+      description: "Access secret-host",
+      tools: ["secret-tool"],
+      model: "secret-model",
+    },
+  };
+  assert.equal((await h.stream({ sdkBackend: "codebuddy", agents })).ok, true);
+  const definition = h.turns[0].agents["secret-agent"];
+  assert.doesNotMatch(definition.prompt, /secret-user/);
+  assert.doesNotMatch(definition.description, /secret-host/);
+  assert.deepEqual(definition.tools, ["secret-tool"]);
+  assert.equal(definition.model, "secret-model");
+});
+
+test("real privacy discovers system and custom-agent secrets before masking any prompt surface", async () => {
+  const { createAiPrivacyService } = require("../../../shared/aiPrivacyService.cjs");
+  for (const source of ["system", "custom-agent"]) {
+    const service = createAiPrivacyService();
+    service.configure({ enabled: true });
+    const batches = [];
+    const privacy = {
+      ...service,
+      redact(chatId, value) { batches.push(value); return service.redact(chatId, value); },
+    };
+    const h = createPrivacyStreamHarness(privacy);
+    const result = await h.stream({
+      sdkBackend: source === "system" ? "opencode" : "codebuddy",
+      prompt: "Use synthetic-secret",
+      historyMessages: [{ role: "user", content: "Earlier synthetic-secret" }],
+      userSkillsContext: source === "system" ? "password=synthetic-secret" : "",
+      agents: {
+        helper: {
+          prompt: "Check synthetic-secret",
+          description: source === "custom-agent" ? "password=synthetic-secret" : "Helper",
+        },
+      },
+    });
+    assert.equal(result.ok, true, result.error);
+    const turn = h.turns[0];
+    assert.doesNotMatch(turn.prompt, /synthetic-secret/);
+    assert.doesNotMatch(turn.systemPrompt, /synthetic-secret/);
+    assert.doesNotMatch(turn.agents.helper.prompt, /synthetic-secret/);
+    assert.doesNotMatch(turn.agents.helper.description, /synthetic-secret/);
+    assert.equal(batches.length, 1, "all semantic prompt surfaces share one discovery pass");
+    assert.ok(Array.isArray(batches[0]));
+  }
+});
+
+test("real privacy retains mapping and native resume provenance through runtime-only cleanup", async () => {
+  const { createAiPrivacyService } = require("../../../shared/aiPrivacyService.cjs");
+  const privacy = createAiPrivacyService();
+  privacy.configure({ enabled: true, patterns: ["secret-[a-z]+"] });
+  const h = createPrivacyStreamHarness(privacy);
+  assert.equal((await h.stream()).ok, true);
+  const token = privacy.redact("chat-1", "secret-user");
+  await h.handlers.get("netcatty:ai:sdk-agent:cleanup")({}, { chatSessionId: "chat-1" });
+  assert.equal(privacy.hasSession("chat-1"), true);
+  assert.equal(privacy.restore("chat-1", token), "secret-user");
+  const resumed = await h.stream({ existingSessionId: "native-1" });
+  assert.equal(resumed.ok, true, resumed.error);
+  assert.equal(h.turns[1].resumeSessionId, "native-1");
+  assert.ok(h.turns[1].prompt.includes(token));
+  privacy.clearSession("chat-1");
+  const deleted = await h.stream({ existingSessionId: "native-1" });
+  assert.equal(deleted.ok, false);
+  assert.match(deleted.error, /new chat|new conversation/i);
+  assert.equal(h.turns.length, 2);
+});
+
+test("privacy policy change while environment initialization awaits blocks the provider call", async () => {
+  const h = createPrivacyStreamHarness(createTestPrivacy(false));
+  let release;
+  let notifyStarted;
+  const started = new Promise((resolve) => { notifyStarted = resolve; });
+  const gate = new Promise((resolve) => { release = resolve; });
+  h.ctx.getShellEnv = async () => { notifyStarted(); await gate; return {}; };
+  const run = h.stream();
+  await started;
+  h.privacy.setEnabled(true);
+  release();
+  const result = await run;
+  assert.equal(result.ok, false);
+  assert.match(result.error, /settings changed/);
+  assert.equal(h.turns.length, 0);
+  assert.equal(h.ctx.sdkActiveStreams.size, 0);
+});
+
+test("native session emitted before a stopped turn remains eligible for private resume", async () => {
+  let count = 0;
+  const h = createPrivacyStreamHarness(createTestPrivacy(), async (context) => {
+    context.emitter.sessionId("native-stopped");
+    if (++count === 1) throw new Error("Stopped");
+    context.emitter.emitDone();
+    return { sessionId: "native-stopped" };
+  });
+  assert.equal((await h.stream()).ok, false);
+  assert.equal((await h.stream()).ok, true);
+  assert.equal(h.turns[1].resumeSessionId, "native-stopped");
+});
+
+test("SDK privacy refuses cold native resumes even if Catty already established a chat mapping", async () => {
+  const privacy = createTestPrivacy();
+  privacy.redact("chat-1", "secret-user");
+  const h = createPrivacyStreamHarness(privacy);
+  const result = await h.stream({ existingSessionId: "persisted-native-thread" });
+  assert.equal(result.ok, false);
+  assert.match(result.error, /Start a new conversation/);
+  assert.equal(h.turns.length, 0);
+});
+
+test("SDK privacy blocks direct image and file attachments before driver or staging", async () => {
+  for (const image of [
+    { mediaType: "image/png", base64Data: "c2VjcmV0", filename: "image.png" },
+    { mediaType: "text/plain", base64Data: "c2VjcmV0", filename: "notes.txt" },
+    { filePath: "/private/image.png", mediaType: "image/png" },
+  ]) {
+    const h = createPrivacyStreamHarness();
+    const result = await h.stream({ images: [image] });
+    assert.equal(result.ok, false);
+    assert.match(result.error, /does not support direct agent attachments/);
+    assert.equal(h.turns.length, 0);
+  }
+});
+
+test("SDK privacy changes require a new chat and cancellation preserves the existing map", async () => {
+  const h = createPrivacyStreamHarness();
+  assert.equal((await h.stream()).ok, true);
+  await h.handlers.get("netcatty:ai:sdk-agent:cancel")({}, { requestId: "missing", chatSessionId: "chat-1" });
+  assert.equal(h.privacy.hasSession("chat-1"), true);
+  h.privacy.setEnabled(false);
+  const result = await h.stream();
+  assert.equal(result.ok, false);
+  assert.match(result.error, /settings changed/);
+  assert.equal(h.turns.length, 1);
+  await h.handlers.get("netcatty:ai:sdk-agent:cleanup")({}, { chatSessionId: "chat-1" });
+  assert.equal(h.privacy.hasSession("chat-1"), true, "runtime cleanup is not chat deletion");
+});
+
+test("disabled SDK privacy leaves prompts, native resumes, and output untouched", async () => {
+  const h = createPrivacyStreamHarness(createTestPrivacy(false));
+  const result = await h.stream({ existingSessionId: "existing-native-thread", prompt: "literal [NC_" });
+  assert.equal(result.ok, true);
+  assert.equal(h.turns[0].resumeSessionId, "existing-native-thread");
+  assert.match(h.turns[0].prompt, /secret-skill/);
+  assert.match(JSON.stringify(h.messages), /literal \[NC_/);
+});
+
+test("Codex app-server start and steering use the same privacy scope", async () => {
+  const h = createPrivacyStreamHarness();
+  h.ctx.codexAppServerRuntime.runTurn = async (context) => {
+    h.turns.push(context);
+    context.emitter.sessionId("app-native-1");
+    return { threadId: "app-native-1" };
+  };
+  assert.equal((await h.stream({ sdkBackend: "codex", codexRuntime: "app-server" })).ok, true);
+  const token = h.privacy.redact("chat-1", "secret-user");
+  assert.ok(h.turns[0].prompt.includes(token));
+  h.ctx.sdkRequestSessions.set("active-request", "chat-1");
+  h.ctx.sdkRequestRuntimes.set("active-request", {
+    backendKey: "codex", codexRuntime: "app-server", toolIntegrationMode: "mcp",
+  });
+  let steered;
+  h.ctx.codexAppServerRuntime.steerTurn = async (_requestId, input) => {
+    steered = input;
+    return { status: "accepted" };
+  };
+  const steer = h.handlers.get("netcatty:ai:sdk-agent:steer");
+  const result = await steer({}, {
+    requestId: "active-request", chatSessionId: "chat-1",
+    clientUserMessageId: "user-1", prompt: "Also secret-user",
+  });
+  assert.equal(result.status, "accepted");
+  assert.equal(steered.prompt, `Also ${token}`);
+  assert.equal(steered.clientUserMessageId, "user-1");
+  const blocked = await steer({}, {
+    requestId: "active-request", chatSessionId: "chat-1", clientUserMessageId: "user-2",
+    prompt: "image", images: [{ mediaType: "image/png", base64Data: "aA==" }],
+  });
+  assert.equal(blocked.status, "failed");
+});
+
+test("Codex and CodeBuddy user answers are masked using the pending chat without rewriting field IDs", async () => {
+  const h = createPrivacyStreamHarness();
+  h.privacy.checkSession("chat-1");
+  const content = { "secret-question": { answers: ["secret-user"] } };
+  const answers = h.ctx.codexAppServerRuntime.transformUserInputAnswers(content, { chatSessionId: "chat-1" });
+  assert.deepEqual(Object.keys(answers), ["secret-question"]);
+  assert.equal(answers["secret-question"].answers[0], h.privacy.redact("chat-1", "secret-user"));
+  let response;
+  h.ctx.codebuddySessionManager.elicitationPending.set("elicit-private", {
+    chatSessionId: "chat-1",
+    resolve: (value) => { response = value; },
+  });
+  const result = await h.handlers.get("netcatty:ai:sdk-agent:elicitation-response")({}, {
+    elicitationId: "elicit-private", action: "accept", content,
+  });
+  assert.equal(result.ok, true);
+  assert.deepEqual(response.content, answers);
+});
+
+test("real privacy batches user answers with secret ancestry and preserves all question IDs", async () => {
+  const { createAiPrivacyService } = require("../../../shared/aiPrivacyService.cjs");
+  for (const route of ["codex", "codebuddy"]) {
+    for (const content of [
+      { echo: "synthetic-secret", password: "synthetic-secret" },
+      { echo: "synthetic-secret", credentials: { value: "synthetic-secret" } },
+      {
+        "synthetic-secret": { answers: ["synthetic-secret"] },
+        credentials: { value: "synthetic-secret" },
+      },
+    ]) {
+      const service = createAiPrivacyService();
+      service.configure({ enabled: true });
+      let batches = 0;
+      const privacy = {
+        ...service,
+        redact(chatId, value) { batches += 1; return service.redact(chatId, value); },
+      };
+      const h = createPrivacyStreamHarness(privacy);
+      let protectedContent;
+      if (route === "codex") {
+        protectedContent = h.ctx.codexAppServerRuntime.transformUserInputAnswers(content, { chatSessionId: "chat-1" });
+      } else {
+        h.ctx.codebuddySessionManager.elicitationPending.set("batch-private", {
+          chatSessionId: "chat-1",
+          resolve(response) { protectedContent = response.content; },
+        });
+        const result = await h.handlers.get("netcatty:ai:sdk-agent:elicitation-response")({}, {
+          elicitationId: "batch-private", action: "accept", content,
+        });
+        assert.equal(result.ok, true, result.error);
+      }
+      const compare = (original, masked) => {
+        if (typeof original === "string") {
+          assert.notEqual(masked, original);
+          assert.equal(service.restore("chat-1", masked), original);
+        } else if (Array.isArray(original)) {
+          original.forEach((entry, index) => compare(entry, masked[index]));
+        } else {
+          assert.deepEqual(Object.keys(masked), Object.keys(original));
+          Object.entries(original).forEach(([key, entry]) => compare(entry, masked[key]));
+        }
+      };
+      compare(content, protectedContent);
+      assert.equal(batches, 1, "answer values share a single secret-discovery pass");
+    }
+  }
+});
+
+test("Codex native approval arguments remain exact while question display restores content and preserves IDs", () => {
+  const h = createPrivacyStreamHarness();
+  const token = h.privacy.redact("chat-1", "secret-user");
+  const nativeArgs = {
+    command: `echo ${token}`,
+    cwd: `/work/${token}`,
+    commandActions: [{ type: "read", path: token }],
+    itemId: token,
+  };
+  h.ctx.codexAppServerRuntime.sendInteractionRequest({
+    interactionId: token,
+    args: nativeArgs,
+    questions: [{
+      id: token, header: token, question: token,
+      options: [{ label: token, description: token }],
+    }],
+  }, { chatSessionId: "chat-1", sender: {} });
+  const displayed = h.messages.at(-1).payload;
+  assert.equal(displayed.interactionId, token);
+  assert.strictEqual(displayed.args, nativeArgs);
+  assert.equal(displayed.args.itemId, token);
+  assert.equal(displayed.args.command, `echo ${token}`);
+  assert.equal(displayed.questions[0].id, token);
+  assert.equal(displayed.questions[0].question, "secret-user");
+  assert.equal(displayed.questions[0].options[0].label, "secret-user");
+});
 
 test("sdk-agent:cleanup aborts and removes request entries for the target chat only", async () => {
   const { handlers, ctx } = registerWithStubbedCtx();
@@ -1606,4 +2049,29 @@ test("list-models persists a first current-only success for later failures", asy
   } finally {
     cleanup();
   }
+});
+
+test("SDK adapter passes a live privacy guard through asynchronous driver startup even when initially disabled", async () => {
+  const { createAiPrivacyService } = require("../../../shared/aiPrivacyService.cjs");
+  const privacy = createAiPrivacyService();
+  let notifyReady;
+  let release;
+  let sent = false;
+  const ready = new Promise((resolve) => { notifyReady = resolve; });
+  const gate = new Promise((resolve) => { release = resolve; });
+  const h = createPrivacyStreamHarness(privacy, async (context) => {
+    notifyReady();
+    await gate;
+    context.assertSessionValid();
+    sent = true;
+  });
+  const run = h.stream();
+  await ready;
+  privacy.configure({ enabled: true });
+  release();
+  const result = await run;
+  assert.equal(result.ok, false);
+  assert.match(result.error, /start a new chat/);
+  assert.equal(sent, false);
+  assert.equal(h.ctx.sdkActiveStreams.size, 0);
 });

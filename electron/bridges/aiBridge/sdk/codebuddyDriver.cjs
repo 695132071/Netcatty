@@ -557,7 +557,7 @@ function buildCodebuddyPromptInput(prompt, attachments) {
  * @param {object} args.emitter  createStreamEmitter(...)
  * @param {Function} [args.queryFn] inject @tencent-ai/agent-sdk query (for tests)
  */
-async function runCodebuddyTurn({ prompt, attachments, options, emitter, queryFn }) {
+async function runCodebuddyTurn({ prompt, attachments, options, emitter, queryFn, assertSessionValid }) {
   if (options.abortController?.signal?.aborted) {
     emitter.emitDone();
     return { sessionId: null };
@@ -585,6 +585,7 @@ async function runCodebuddyTurn({ prompt, attachments, options, emitter, queryFn
   let queryRef = null;
   let removeAbortListener = null;
   try {
+    assertSessionValid?.();
     queryRef = query({ prompt: promptInput, options });
     const signal = options.abortController?.signal;
     const interruptQuery = () => {

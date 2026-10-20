@@ -1,10 +1,21 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { createAiPrivacyService } from '../../electron/shared/aiPrivacyService.cjs';
+import {
+  hasReversibleModelPrivacy,
+  setReversibleModelPrivacy,
+} from '../../infrastructure/ai/harness/modelSecretRedaction';
 import type { AISession } from '../../infrastructure/ai/types';
+import { localStorageAdapter } from '../../infrastructure/persistence/localStorageAdapter';
 import {
   cleanupClosedTerminalSessions,
   cleanupDeletedAIChatSessions,
+  cleanupOrphanedAISessions,
   cleanupSdkAgentSessions,
+  latestAIActiveSessionMapSnapshot,
+  latestAISessionsSnapshot,
+  setLatestAIActiveSessionMapSnapshot,
+  setLatestAISessionsSnapshot,
 } from './aiStateSnapshots';
 
 test('orphan cleanup keeps durable Catty output while explicit deletion removes it', async () => {
@@ -60,6 +71,92 @@ function makeSession(id: string, updatedAt: number, messages: unknown[]): AISess
     updatedAt,
   } as never;
 }
+
+test('orphan cleanup preserves resumable privacy maps until explicit chat deletion', (t) => {
+  const service = createAiPrivacyService({ maxSessions: 3 });
+  service.configure({ enabled: true });
+  const sessions = [
+    { ...makeSession('privacy-orphan', 1, []), scope: { type: 'terminal' as const, targetId: 'closed' } },
+    { ...makeSession('privacy-live', 2, []), scope: { type: 'terminal' as const, targetId: 'open' } },
+    { ...makeSession('privacy-resumed', 3, []), scope: { type: 'terminal' as const, targetId: 'closed' } },
+  ];
+  const aliases = sessions.map(session => {
+    setReversibleModelPrivacy(session.id, true);
+    return service.redact(session.id, '8.8.8.8');
+  });
+  const sdkCleanups: string[] = [];
+  const privacyCleanups: string[] = [];
+  const outputCleanups: string[] = [];
+  const previousWindow = globalThis.window;
+  const previousSessions = latestAISessionsSnapshot;
+  const previousActiveSessionMap = latestAIActiveSessionMapSnapshot;
+  t.mock.method(localStorageAdapter, 'write', () => true);
+  Object.defineProperty(globalThis, 'window', {
+    configurable: true,
+    value: {
+      dispatchEvent: () => true,
+      netcatty: {
+        aiSdkAgentCleanup: async (id: string) => {
+          sdkCleanups.push(id);
+          return { ok: true };
+        },
+        aiPrivacyClearSession: async (id: string) => {
+          privacyCleanups.push(id);
+          service.clearSession(id);
+          return { ok: true };
+        },
+        deleteChatToolOutputsTemp: async (id: string) => {
+          outputCleanups.push(id);
+          return { deletedCount: 1 };
+        },
+      },
+    },
+  });
+  setLatestAISessionsSnapshot(sessions);
+  setLatestAIActiveSessionMapSnapshot({
+    'terminal:closed': 'privacy-orphan',
+    'terminal:open': 'privacy-live',
+    'terminal:resumed-into': 'privacy-resumed',
+  });
+
+  try {
+    cleanupOrphanedAISessions(new Set(['open', 'resumed-into']));
+
+    assert.equal(latestAISessionsSnapshot, sessions);
+    assert.deepEqual(latestAIActiveSessionMapSnapshot, {
+      'terminal:open': 'privacy-live',
+      'terminal:resumed-into': 'privacy-resumed',
+    });
+    assert.deepEqual(sdkCleanups, ['privacy-orphan']);
+    assert.deepEqual(privacyCleanups, []);
+    assert.deepEqual(outputCleanups, []);
+    for (const [index, session] of sessions.entries()) {
+      assert.equal(hasReversibleModelPrivacy(session.id), true);
+      assert.equal(service.redact(session.id, '8.8.8.8'), aliases[index]);
+      assert.equal(service.restore(session.id, aliases[index]), '8.8.8.8');
+    }
+    assert.throws(() => service.checkSession('privacy-next'), /session limit reached/);
+
+    cleanupDeletedAIChatSessions(['privacy-orphan']);
+
+    assert.deepEqual(privacyCleanups, ['privacy-orphan']);
+    assert.deepEqual(outputCleanups, ['privacy-orphan']);
+    assert.equal(hasReversibleModelPrivacy('privacy-orphan'), false);
+    assert.equal(service.hasSession('privacy-orphan'), false);
+    assert.throws(() => service.checkSession('privacy-orphan'), /start a new chat/);
+    assert.equal(service.checkSession('privacy-next'), true);
+    for (const [index, session] of sessions.entries()) {
+      if (session.id === 'privacy-orphan') continue;
+      assert.equal(hasReversibleModelPrivacy(session.id), true);
+      assert.equal(service.restore(session.id, aliases[index]), '8.8.8.8');
+    }
+  } finally {
+    for (const session of sessions) setReversibleModelPrivacy(session.id, false);
+    setLatestAISessionsSnapshot(previousSessions ?? []);
+    setLatestAIActiveSessionMapSnapshot(previousActiveSessionMap ?? {});
+    Object.defineProperty(globalThis, 'window', { configurable: true, value: previousWindow });
+  }
+});
 
 test('serializeSessionsForStorage strips oldest ciphertext before dropping visible sessions', async () => {
   const { serializeSessionsForStorage } = await import('./aiStateSnapshots');

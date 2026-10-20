@@ -33,17 +33,17 @@ export function fitTerminalExecuteResultForModel(
   options?: FitTerminalExecuteResultOptions,
 ): TerminalExecuteResult {
   const stdout = truncateTextWithHeadAndTail(
-    redactSecretsForModel(compressVerboseText(result.stdout)),
+    redactSecretsForModel(compressVerboseText(result.stdout), options?.chatSessionId),
     MAX_LIVE_TERMINAL_STDOUT_CHARS,
   );
   const stderr = truncateTextWithHeadAndTail(
-    redactSecretsForModel(compressVerboseText(result.stderr)),
+    redactSecretsForModel(compressVerboseText(result.stderr), options?.chatSessionId),
     MAX_LIVE_TERMINAL_STDERR_CHARS,
   );
 
   const fitted: TerminalExecuteResult = {
     ...result,
-    command: result.command ? redactSecretsForModel(result.command) : result.command,
+    command: result.command ? redactSecretsForModel(result.command, options?.chatSessionId) : result.command,
     stdout,
     stderr,
   };
@@ -71,7 +71,7 @@ export function fitTerminalExecuteResultForModel(
     const handle: TerminalOutputHandle = {
       kind: 'terminal-output',
       sessionId: result.sessionId ?? 'unknown',
-      command: result.command ? redactSecretsForModel(result.command) : result.command,
+      command: result.command ? redactSecretsForModel(result.command, options?.chatSessionId) : result.command,
       totalStdoutChars: result.stdout.length,
       totalStderrChars: result.stderr.length,
       handleId,

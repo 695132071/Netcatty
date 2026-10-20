@@ -45,7 +45,7 @@ const DRIVER_REGISTRY = {
         resume: ctx.resumeSessionId,
         toolIntegrationMode: ctx.toolIntegrationMode,
       });
-      return claude.runClaudeTurn({ prompt: ctx.prompt, attachments: ctx.attachments, options, emitter: ctx.emitter });
+      return claude.runClaudeTurn({ prompt: ctx.prompt, attachments: ctx.attachments, options, emitter: ctx.emitter, assertSessionValid: ctx.assertSessionValid });
     },
     async listModels(ctx) {
       return claude.listClaudeModels({
@@ -68,6 +68,7 @@ const DRIVER_REGISTRY = {
       const threadOptions = codex.buildCodexThreadOptions({ cwd: ctx.cwd, model: ctx.model });
       return codex.runCodexTurn({
         prompt: ctx.prompt,
+        assertSessionValid: ctx.assertSessionValid,
         attachments: ctx.attachments,
         constructorOptions,
         threadOptions,
@@ -91,6 +92,7 @@ const DRIVER_REGISTRY = {
       });
       return copilot.runCopilotTurn({
         prompt: ctx.prompt,
+        assertSessionValid: ctx.assertSessionValid,
         attachments: ctx.attachments,
         clientOptions,
         sessionOptions,
@@ -116,6 +118,7 @@ const DRIVER_REGISTRY = {
       if (authMode === "cli-login") {
         return cursorCli.runCursorCliTurn({
           prompt: ctx.prompt,
+          assertSessionValid: ctx.assertSessionValid,
           binPath: ctx.cursorCliBinPath || ctx.binPath,
           cwd: ctx.cwd,
           chatSessionId: ctx.chatSessionId,
@@ -138,6 +141,7 @@ const DRIVER_REGISTRY = {
       });
       return cursor.runCursorTurn({
         prompt: ctx.prompt,
+        assertSessionValid: ctx.assertSessionValid,
         attachments: ctx.attachments,
         agentOptions,
         runtimeEnv: ctx.env,
@@ -251,6 +255,7 @@ const DRIVER_REGISTRY = {
         const v2Result = await codebuddySessionManager.runTurn({
           sessionKey,
           prompt: ctx.prompt,
+          assertSessionValid: ctx.assertSessionValid,
           attachments: ctx.attachments,
           options,
           emitter: ctx.emitter,
@@ -267,6 +272,7 @@ const DRIVER_REGISTRY = {
       // Fallback: legacy query() per-turn (supports all Options fields).
       return codebuddy.runCodebuddyTurn({
         prompt: ctx.prompt,
+        assertSessionValid: ctx.assertSessionValid,
         attachments: ctx.attachments,
         options,
         emitter: ctx.emitter,
@@ -282,6 +288,7 @@ const DRIVER_REGISTRY = {
       return codebuddySessionManager.steer({
         sessionKey,
         prompt: ctx.prompt,
+        assertSessionValid: ctx.assertSessionValid,
         attachments: ctx.attachments,
       });
     },
@@ -298,6 +305,7 @@ const DRIVER_REGISTRY = {
     async runTurn(ctx) {
       return opencode.runOpenCodeTurn({
         prompt: ctx.prompt,
+        assertSessionValid: ctx.assertSessionValid,
         systemPrompt: ctx.systemPrompt,
         attachments: ctx.attachments,
         cwd: ctx.cwd,
@@ -337,6 +345,7 @@ const DRIVER_REGISTRY = {
         // is handled on ACP (default runtime) via historySeed + session/new.
         return grok.runGrokTurn({
           prompt: ctx.prompt,
+          assertSessionValid: ctx.assertSessionValid,
           binPath: ctx.binPath,
           cwd: ctx.cwd,
           model: ctx.model,
@@ -351,6 +360,7 @@ const DRIVER_REGISTRY = {
       }
       return grokAcp.runGrokAcpTurn({
         prompt: ctx.prompt,
+        assertSessionValid: ctx.assertSessionValid,
         systemPrompt: ctx.systemPrompt,
         binPath: ctx.binPath,
         cwd: ctx.cwd,
@@ -431,6 +441,7 @@ const DRIVER_REGISTRY = {
     async runTurn(ctx) {
       return mimo.runMimoTurn({
         prompt: ctx.prompt,
+        assertSessionValid: ctx.assertSessionValid,
         systemPrompt: ctx.systemPrompt,
         attachments: ctx.attachments,
         cwd: ctx.cwd,

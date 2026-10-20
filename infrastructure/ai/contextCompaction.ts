@@ -202,10 +202,10 @@ export async function prepareContextCompaction({
   };
 }
 
-export function formatMessagesForCompaction(messages: ModelMessage[]): string {
+export function formatMessagesForCompaction(messages: ModelMessage[], chatSessionId?: string): string {
   return messages
     .map((message, index) => {
-      return `<message index="${index + 1}" role="${escapeXml(String(message.role))}">\n${escapeXml(formatMessageContent(message.content))}\n</message>`;
+      return `<message index="${index + 1}" role="${escapeXml(String(message.role))}">\n${escapeXml(formatMessageContent(message.content, chatSessionId))}\n</message>`;
     })
     .join("\n\n");
 }
@@ -233,9 +233,9 @@ function endsWithToolCall(message: ModelMessage | undefined): boolean {
   });
 }
 
-function formatMessageContent(content: ModelMessage["content"]): string {
-  if (typeof content === "string") return redactSecretsForModel(content);
-  return redactSecretsForModel(JSON.stringify(sanitizeContentForCompaction(content), null, 2));
+function formatMessageContent(content: ModelMessage["content"], chatSessionId?: string): string {
+  if (typeof content === "string") return redactSecretsForModel(content, chatSessionId);
+  return redactSecretsForModel(JSON.stringify(sanitizeContentForCompaction(content), null, 2), chatSessionId);
 }
 
 function sanitizeContentForCompaction(content: Exclude<ModelMessage["content"], string>): unknown {

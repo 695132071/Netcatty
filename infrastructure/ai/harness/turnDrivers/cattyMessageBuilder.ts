@@ -342,7 +342,7 @@ export function buildCattySdkMessages(input: BuildCattySdkMessagesInput): ModelM
             type: 'tool-call' as const,
             toolCallId: tc.id,
             toolName: tc.name,
-            input: redactSecretsInValueForModel(tc.arguments ?? {}),
+            input: redactSecretsInValueForModel(tc.arguments ?? {}, chatSessionId),
             ...(providerOptions ? { providerOptions } : {}),
           });
         }
@@ -397,7 +397,7 @@ export function buildCattySdkMessages(input: BuildCattySdkMessagesInput): ModelM
                 // Context-budget pruning still owns necessary reductions.
                 value: redactSecretsForModel(buildHistoricalToolResultReplayText(tr, toolCall, {
                   preserveTerminalOutput: true,
-                })),
+                }), chatSessionId),
               },
             };
           }),

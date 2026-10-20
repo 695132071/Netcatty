@@ -58,3 +58,92 @@ test("convenience helpers emit the canonical event shapes", () => {
   assert.equal(calls[7].payload.event.totalTokens, 15);
   assert.equal(calls[9].payload.event.sessionId, "sess-9");
 });
+
+const PRIVATE_TOKEN = "[NC_aabbccddeeff_SECRET_1]";
+function restoreTestValue(value) {
+  if (typeof value === "string") {
+    return value.replace(/\[NC_[^\]]*(?:\]|$)/g, (token) => {
+      if (token !== PRIVATE_TOKEN) throw new Error("Unknown privacy token");
+      return "private-original";
+    });
+  }
+  if (Array.isArray(value)) return value.map(restoreTestValue);
+  if (value && typeof value === "object") {
+    return Object.fromEntries(Object.entries(value).map(([key, entry]) => [key, restoreTestValue(entry)]));
+  }
+  return value;
+}
+
+test("privacy restoration buffers tokens at every text and reasoning split boundary", () => {
+  for (const stream of ["text", "reasoning"]) {
+    for (let split = 1; split < PRIVATE_TOKEN.length; split += 1) {
+      const { calls, safeSend } = recordingSend();
+      const emitter = createStreamEmitter({
+        safeSend, sender: {}, requestId: "private", restoreValue: restoreTestValue,
+      });
+      emitter[stream](`Before ${PRIVATE_TOKEN.slice(0, split)}`);
+      emitter[stream](`${PRIVATE_TOKEN.slice(split)} after`);
+      if (stream === "reasoning") emitter.reasoningEnd();
+      emitter.emitDone();
+      const text = calls.map((entry) => entry.payload.event?.textDelta || entry.payload.event?.delta || "").join("");
+      assert.equal(text, "Before private-original after", `${stream} split ${split}`);
+      assert.doesNotMatch(JSON.stringify(calls), /\[NC_/);
+    }
+  }
+});
+
+test("privacy restoration supports character-at-a-time tokens and preserves event routing identifiers", () => {
+  const { calls, safeSend } = recordingSend();
+  const emitter = createStreamEmitter({
+    safeSend, sender: {}, requestId: PRIVATE_TOKEN, restoreValue: restoreTestValue,
+  });
+  for (const character of PRIVATE_TOKEN) emitter.emitEvent({ type: "text-delta", textDelta: character });
+  emitter.toolCall(PRIVATE_TOKEN, { command: `echo ${PRIVATE_TOKEN}` }, PRIVATE_TOKEN);
+  emitter.sessionId(PRIVATE_TOKEN);
+  emitter.emitDone();
+  const events = calls.filter((entry) => entry.payload.event).map((entry) => entry.payload.event);
+  assert.equal(events[0].textDelta, "private-original");
+  assert.equal(events[1].toolName, PRIVATE_TOKEN);
+  assert.equal(events[1].toolCallId, PRIVATE_TOKEN);
+  assert.deepEqual(events[1].args, { command: "echo private-original" });
+  assert.equal(events[2].sessionId, PRIVATE_TOKEN);
+  assert.ok(calls.every((entry) => entry.payload.requestId === PRIVATE_TOKEN));
+});
+
+test("privacy restoration restores activity fields and never emits an unfinished token on abort", () => {
+  const { calls, safeSend } = recordingSend();
+  const emitter = createStreamEmitter({
+    safeSend, sender: {}, requestId: "private", restoreValue: restoreTestValue,
+  });
+  emitter.toolResult("tool-1", { output: PRIVATE_TOKEN }, "tool");
+  emitter.fileChange("file-1", [{ path: PRIVATE_TOKEN }], "completed");
+  emitter.planUpdate("plan-1", [{ text: PRIVATE_TOKEN }], "running");
+  emitter.webSearch("search-1", PRIVATE_TOKEN, "completed");
+  emitter.warning("warning-1", PRIVATE_TOKEN);
+  emitter.text("Before [NC_aabb");
+  emitter.emitError("Aborted");
+  assert.doesNotMatch(JSON.stringify(calls), /\[NC_/);
+  assert.equal(calls.at(-1).payload.error, "Aborted");
+  assert.match(JSON.stringify(calls), /private-original/);
+});
+
+test("privacy restoration fails closed on unknown complete tokens and incomplete final tokens", () => {
+  const { calls, safeSend } = recordingSend();
+  const emitter = createStreamEmitter({
+    safeSend, sender: {}, requestId: "private", restoreValue: restoreTestValue,
+  });
+  assert.throws(() => emitter.text("[NC_other_SECRET_1]"), /Unknown privacy token/);
+  emitter.text("[NC_incomplete");
+  assert.throws(() => emitter.emitDone(), /Unknown privacy token/);
+  emitter.emitError("[NC_other_SECRET_1]");
+  assert.equal(calls.length, 1);
+  assert.match(calls[0].payload.error, /Start a new conversation/);
+  assert.doesNotMatch(JSON.stringify(calls), /\[NC_/);
+});
+
+test("disabled emitter does not buffer token-looking literal text", () => {
+  const { calls, safeSend } = recordingSend();
+  const emitter = createStreamEmitter({ safeSend, sender: {}, requestId: "plain" });
+  emitter.text("[NC_");
+  assert.equal(calls[0].payload.event.textDelta, "[NC_");
+});
