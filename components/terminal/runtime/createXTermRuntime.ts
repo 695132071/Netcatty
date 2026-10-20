@@ -130,7 +130,11 @@ import {
   shouldFlushDeferredImeTextInputOnKeyUp,
   shouldFlushStaleDeferredImeTextInput,
 } from "./terminalImeTextInput";
-import { keepImeCommittedTextThroughModifierKeyDowns } from "./imeModifierKeyDownSeenGuard";
+import {
+  keepImeCommittedTextThroughModifierKeyDowns,
+  keepLateImeTextInsert,
+  markImeDeferralConsumedInput,
+} from "./imeModifierKeyDownSeenGuard";
 import { keepLiveImeTranscriptionSingle } from "./imeCompositionRewrite";
 import { formatSerialLocalEcho } from "./serialLocalEcho";
 import { getLastChar, removeLastChar, isPrintableInput } from "../../../domain/serialCharMetrics";
@@ -666,6 +670,11 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
   // Chinese/English mode; a pure modifier keydown must not arm xterm's
   // insertText dedupe guard or the committed text is dropped (#3441).
   keepImeCommittedTextThroughModifierKeyDowns(term);
+  // Sogou Chinese mode also commits latin text on Enter via a late
+  // insertText after keyCode 229, with no composition events. The listener
+  // has to be armed before open() so it runs before xterm's input handler
+  // (#3185).
+  keepLateImeTextInsert(term);
 
   type MaybeRenderer = {
     constructor?: { name?: string };
@@ -2895,6 +2904,8 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
   const markKittyTextInput = (event: InputEvent) => {
     if (shouldCommitDeferredImeTextInput(imeTextInputDeferredKey, event)) {
       commitImeTextInput(event.data);
+      // This insert was already sent. Leave xterm's dedupe flag armed.
+      markImeDeferralConsumedInput(event);
       // Keep the helper textarea empty so the next composition does not treat
       // the deferred punctuation as pre-existing suffix text.
       try {
