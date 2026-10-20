@@ -6,6 +6,7 @@ import { act, create, type ReactTestRenderer } from 'react-test-renderer';
 import { TerminalComposeBar } from './TerminalComposeBar';
 import { TooltipProvider } from '../ui/tooltip';
 import { getComposeBarHistory, pruneComposeBarHistory, recordComposeBarHistory } from '../../application/state/composeBarHistoryStore';
+import { terminalReconnectRegistry } from '../../application/state/terminalReconnectRegistry';
 
 test('compose bar preserves a draft on pane focus and records only successful async sends', async (t) => {
   const dom = new JSDOM('<!doctype html><html><body></body></html>', { url: 'http://localhost' });
@@ -101,4 +102,96 @@ test('compose bar preserves a draft on pane focus and records only successful as
   assert.deepEqual(getComposeBarHistory('b'), ['accepted command', 'first', 'second', 'after rejected', 'after exception']);
   await act(async () => { root.unmount(); });
   pruneComposeBarHistory([]);
+});
+
+test('empty compose draft Enter reconnects; a typed draft still sends', async (t) => {
+  const dom = new JSDOM('<!doctype html><html><body></body></html>', { url: 'http://localhost' });
+  const originals = new Map<string, PropertyDescriptor | undefined>();
+  for (const name of ['window', 'document', 'localStorage']) {
+    originals.set(name, Object.getOwnPropertyDescriptor(globalThis, name));
+    Object.defineProperty(globalThis, name, { configurable: true, value: dom.window[name as keyof Window] });
+  }
+  const sessionId = 'compose-enter-reconnect';
+  const reconnects: string[] = [];
+  const unregister = terminalReconnectRegistry.register(sessionId, () => {
+    reconnects.push(sessionId);
+  });
+  t.after(() => {
+    unregister();
+    terminalReconnectRegistry.setEnterReconnectEnabled(sessionId, false);
+    dom.window.close();
+    for (const [name, descriptor] of originals) {
+      if (descriptor) Object.defineProperty(globalThis, name, descriptor);
+      else Reflect.deleteProperty(globalThis, name);
+    }
+  });
+  Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
+  const createTextarea = () => ({
+    value: '', selectionStart: 0, selectionEnd: 0,
+    focus() {},
+    setSelectionRange() {},
+  });
+  let textarea = createTextarea();
+  const sent: string[] = [];
+  let root!: ReactTestRenderer;
+  await act(async () => {
+    root = create(
+      <TooltipProvider>
+        <TerminalComposeBar sessionId={sessionId} onSend={(text) => { sent.push(text); return true; }} onClose={() => {}} />
+      </TooltipProvider>,
+      { createNodeMock: (el) => {
+        if (el.type !== 'textarea') return null;
+        textarea = createTextarea();
+        return textarea;
+      } },
+    );
+  });
+  const key = (name: string, extra: Record<string, unknown> = {}) => {
+    let prevented = false;
+    root.root.findByType('textarea').props.onKeyDown({
+      key: name,
+      shiftKey: false,
+      altKey: false,
+      ctrlKey: false,
+      metaKey: false,
+      nativeEvent: {},
+      currentTarget: textarea,
+      preventDefault() { prevented = true; },
+      ...extra,
+    });
+    return prevented;
+  };
+
+  terminalReconnectRegistry.setEnterReconnectEnabled(sessionId, true);
+  assert.equal(key('Enter'), true);
+  assert.deepEqual(reconnects, [sessionId]);
+  assert.deepEqual(sent, []);
+  assert.equal(textarea.value, '');
+
+  textarea.value = 'echo hi';
+  assert.equal(key('Enter'), true);
+  assert.deepEqual(reconnects, [sessionId]);
+  assert.deepEqual(sent, ['echo hi']);
+  assert.equal(textarea.value, '');
+
+  textarea.value = 'keep me';
+  assert.equal(key('Enter', { shiftKey: true }), false);
+  assert.equal(textarea.value, 'keep me');
+  assert.deepEqual(sent, ['echo hi']);
+  assert.deepEqual(reconnects, [sessionId]);
+
+  textarea.value = '';
+  assert.equal(key('Enter', { ctrlKey: true }), true);
+  assert.deepEqual(sent, ['echo hi']);
+  assert.deepEqual(reconnects, [sessionId]);
+
+  assert.equal(key('Enter', { nativeEvent: { isComposing: true, keyCode: 229 } }), false);
+  assert.deepEqual(reconnects, [sessionId]);
+
+  terminalReconnectRegistry.setEnterReconnectEnabled(sessionId, false);
+  assert.equal(key('Enter'), true);
+  assert.deepEqual(reconnects, [sessionId]);
+  assert.deepEqual(sent, ['echo hi']);
+
+  await act(async () => { root.unmount(); });
 });

@@ -98,6 +98,7 @@ test("disconnected dialog focus claim never steals from other panes", () => {
         id: string;
         parent?: FakeNode | null;
         interactive?: boolean;
+        composeBar?: boolean;
         children?: FakeNode[];
       },
     ) {
@@ -118,6 +119,7 @@ test("disconnected dialog focus claim never steals from other panes", () => {
       return false;
     }
     closest(selector: string) {
+      if (selector.includes("terminal-compose-bar") && this.opts.composeBar) return this;
       if (selector.includes("button") && this.opts.interactive) return this;
       return null;
     }
@@ -223,6 +225,23 @@ test("disconnected dialog focus claim never steals from other panes", () => {
         activeElement: dialog as unknown as Element,
         dialogNode: dialog as unknown as HTMLElement,
         sessionRoot: session as unknown as Element,
+        documentBody: body as unknown as Element,
+      }),
+      false,
+    );
+    // Compose-bar focus stays put so an empty draft can reconnect and a
+    // non-empty draft is not stolen by the disconnected dialog (#3767).
+    const composeInput = new FakeNode({ id: "compose", composeBar: true });
+    const composeDialog = new FakeNode({ id: "compose-dialog" });
+    const composeSession = new FakeNode({
+      id: "compose-session",
+      children: [composeInput, composeDialog],
+    });
+    assert.equal(
+      shouldClaimDisconnectedDialogFocus({
+        activeElement: composeInput as unknown as Element,
+        dialogNode: composeDialog as unknown as HTMLElement,
+        sessionRoot: composeSession as unknown as Element,
         documentBody: body as unknown as Element,
       }),
       false,

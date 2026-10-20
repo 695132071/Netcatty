@@ -220,7 +220,6 @@ test("disconnected terminal reconnects on plain Enter when input is not claimed 
       key: "Enter",
       status: "disconnected",
       hasRetryHandler: true,
-      isComposeBarOpen: false,
       needsAuth: false,
       needsHostKeyVerification: false,
       hasBlockingOverlay: false,
@@ -234,7 +233,6 @@ test("terminal enter reconnect ignores active controls and non-disconnected stat
     key: "Enter",
     status: "disconnected" as const,
     hasRetryHandler: true,
-    isComposeBarOpen: false,
     needsAuth: false,
     needsHostKeyVerification: false,
     hasBlockingOverlay: false,
@@ -243,14 +241,16 @@ test("terminal enter reconnect ignores active controls and non-disconnected stat
   assert.equal(shouldReconnectTerminalOnEnterKey({ ...base, status: "connected" }), false);
   assert.equal(shouldReconnectTerminalOnEnterKey({ ...base, key: "a" }), false);
   assert.equal(shouldReconnectTerminalOnEnterKey({ ...base, hasRetryHandler: false }), false);
-  // Open search must not globally suppress Enter reconnect / the hint (#2546).
+  // Open search and an open compose bar must not globally suppress Enter
+  // reconnect / the hint (#2546 / #3767).
   assert.equal(shouldReconnectTerminalOnEnterKey({ ...base }), true);
-  assert.equal(shouldReconnectTerminalOnEnterKey({ ...base, isComposeBarOpen: true }), false);
   assert.equal(shouldReconnectTerminalOnEnterKey({ ...base, needsAuth: true }), false);
   assert.equal(shouldReconnectTerminalOnEnterKey({ ...base, needsHostKeyVerification: true }), false);
   assert.equal(shouldReconnectTerminalOnEnterKey({ ...base, hasBlockingOverlay: true }), false);
   assert.equal(shouldReconnectTerminalOnEnterKey({ ...base, isReconnectActive: true }), false);
   assert.equal(shouldReconnectTerminalOnEnterKey({ ...base, altKey: true }), false);
+  assert.equal(shouldReconnectTerminalOnEnterKey({ ...base, shiftKey: true }), false);
+  assert.equal(shouldReconnectTerminalOnEnterKey({ ...base, isComposing: true }), false);
 });
 
 test("terminal enter reconnect ignores interactive controls outside xterm only", () => {

@@ -4,6 +4,7 @@ export const createTerminalReconnectRegistry = () => {
   const handlers = new Map<string, TerminalReconnectHandler>();
   const pendingRequests = new Set<string>();
   const activeSessionIds = new Set<string>();
+  const enterReconnectEnabledIds = new Set<string>();
   const listeners = new Set<() => void>();
 
   const emit = () => {
@@ -51,7 +52,27 @@ export const createTerminalReconnectRegistry = () => {
     return true;
   };
 
-  return { register, request, setActive, isActive, subscribe };
+  // Enter-reconnect while a compose bar is open. Explicit reconnect clicks use
+  // request(); this path stays off during auth, host-key, and blocking overlays.
+  const setEnterReconnectEnabled = (sessionId: string, enabled: boolean): void => {
+    if (enabled) enterReconnectEnabledIds.add(sessionId);
+    else enterReconnectEnabledIds.delete(sessionId);
+  };
+
+  const requestEnterReconnect = (sessionId: string): boolean => {
+    if (!enterReconnectEnabledIds.has(sessionId)) return false;
+    return request(sessionId);
+  };
+
+  return {
+    register,
+    request,
+    requestEnterReconnect,
+    setEnterReconnectEnabled,
+    setActive,
+    isActive,
+    subscribe,
+  };
 };
 
 export const terminalReconnectRegistry = createTerminalReconnectRegistry();

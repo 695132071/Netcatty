@@ -448,6 +448,11 @@ export function shouldClaimDisconnectedDialogFocus({
     // Sink already focused.
     return active !== dialogNode;
   }
+  // An open compose draft owns Enter: empty reconnects from the bar, and a
+  // non-empty draft must keep send behavior (#3767). Do not park focus here.
+  if (active.closest("[data-section='terminal-compose-bar']")) {
+    return false;
+  }
   const terminalRoot = resolveDisconnectedDialogTerminalRoot(dialogNode, sessionRoot);
   if (terminalRoot?.contains(active)) {
     return true;

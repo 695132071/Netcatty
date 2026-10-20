@@ -7,6 +7,7 @@ import { isSessionReconnectDisabled } from '../top-tabs/SessionTabContextMenuCon
 import { resolveEffectiveTerminalProtocol } from '../../domain/terminalProtocol';
 import { classifyDistroId } from '../../domain/host';
 import type { HostInfoBarTitleMode } from '../../domain/models';
+import { terminalReconnectRegistry } from '../../application/state/terminalReconnectRegistry';
 import { useNetworkDeviceModeSuggestion } from '../../application/state/useNetworkDeviceModeSuggestion';
 import { isPluginHostProtocol } from '../../domain/pluginConnection';
 import { OSC7_SETUP_TARGETS } from './osc7Setup';
@@ -184,7 +185,6 @@ export function shouldReconnectTerminalOnEnterKey({
   key,
   status,
   hasRetryHandler,
-  isComposeBarOpen,
   needsAuth,
   needsHostKeyVerification,
   hasBlockingOverlay,
@@ -198,7 +198,6 @@ export function shouldReconnectTerminalOnEnterKey({
   key: string;
   status?: string;
   hasRetryHandler: boolean;
-  isComposeBarOpen: boolean;
   needsAuth: boolean;
   needsHostKeyVerification: boolean;
   hasBlockingOverlay: boolean;
@@ -209,15 +208,15 @@ export function shouldReconnectTerminalOnEnterKey({
   shiftKey?: boolean;
   isComposing?: boolean;
 }): boolean {
-  // Search-bar open state is intentionally not a global gate. While disconnected,
-  // find-next is less useful than reconnect; the capture handler still refuses
-  // Enter only when a real interactive control outside xterm owns the event
-  // (compose/auth/buttons). The terminal search input is allow-listed so an open
-  // search bar cannot hide the hint or swallow reconnect (#2544 / #2546).
+  // Search and compose bars are not global gates. While disconnected, plain
+  // Enter still reconnects from the terminal and the disconnected dialog.
+  // Capture still skips real controls outside xterm (compose textarea, auth,
+  // buttons). Search input is allow-listed so an open search bar cannot hide
+  // the hint or swallow reconnect (#2544 / #2546). An empty compose draft
+  // reconnects from TerminalComposeBar; a non-empty draft keeps send (#3767).
   return key === "Enter"
     && status === "disconnected"
     && hasRetryHandler
-    && !isComposeBarOpen
     && !needsAuth
     && !needsHostKeyVerification
     && !hasBlockingOverlay
@@ -529,18 +528,24 @@ function TerminalViewInner({ ctx, isPaneMagnified = false }: { ctx: TerminalView
     key: "Enter",
     status,
     hasRetryHandler: Boolean(handleRetry) && terminalReconnectAvailable !== false,
-    isComposeBarOpen,
     needsAuth: Boolean(auth.needsAuth),
     needsHostKeyVerification: Boolean(needsHostKeyVerification),
     hasBlockingOverlay: hasBlockingReconnectOverlay,
     isReconnectActive,
   });
+  // Publish Enter-reconnect so an empty compose draft can reconnect this
+  // session, including the workspace compose bar (#3767).
+  useEffect(() => {
+    terminalReconnectRegistry.setEnterReconnectEnabled(sessionId, showEnterReconnectHint);
+    return () => {
+      terminalReconnectRegistry.setEnterReconnectEnabled(sessionId, false);
+    };
+  }, [sessionId, showEnterReconnectHint]);
   const handleTerminalKeyDownCapture = useCallback((event: React.KeyboardEvent<HTMLDivElement>) => {
     if (!shouldReconnectTerminalOnEnterKey({
       key: event.key,
       status,
       hasRetryHandler: Boolean(handleRetry) && terminalReconnectAvailable !== false,
-      isComposeBarOpen,
       needsAuth: Boolean(auth.needsAuth),
       needsHostKeyVerification: Boolean(needsHostKeyVerification),
       hasBlockingOverlay: hasBlockingReconnectOverlay,
@@ -563,7 +568,6 @@ function TerminalViewInner({ ctx, isPaneMagnified = false }: { ctx: TerminalView
     auth.needsAuth,
     handleRetry,
     hasBlockingReconnectOverlay,
-    isComposeBarOpen,
     isReconnectActive,
     needsHostKeyVerification,
     status,

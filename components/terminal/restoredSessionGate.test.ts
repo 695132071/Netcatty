@@ -389,6 +389,23 @@ test("disconnected connection dialog keeps an Enter-reconnect focus sink", () =>
   assert.match(source, /restoreTerminalFocusFromDisconnectedDialog\(\{[\s\S]*isFocusedPane/);
 });
 
+test("open compose bar does not globally gate enter reconnect", () => {
+  const viewSource = readFileSync(new URL("./TerminalView.tsx", import.meta.url), "utf8");
+  const gateIndex = viewSource.indexOf("export function shouldReconnectTerminalOnEnterKey");
+  const bodyEnd = viewSource.indexOf("export function shouldBlockTerminalReconnectForTarget", gateIndex);
+  const gateBody = viewSource.slice(gateIndex, bodyEnd);
+  assert.equal(gateBody.includes("!isComposeBarOpen"), false);
+  assert.match(viewSource, /setEnterReconnectEnabled\(sessionId, showEnterReconnectHint\)/);
+  assert.match(
+    readFileSync(new URL("./TerminalComposeBar.tsx", import.meta.url), "utf8"),
+    /requestEnterReconnect\(sessionId\)/,
+  );
+  assert.match(
+    readFileSync(new URL("./terminalHelpers.ts", import.meta.url), "utf8"),
+    /data-section='terminal-compose-bar'/,
+  );
+});
+
 test("open terminal search does not globally gate enter reconnect", () => {
   const viewSource = readFileSync(new URL("./TerminalView.tsx", import.meta.url), "utf8");
   const gateIndex = viewSource.indexOf("export function shouldReconnectTerminalOnEnterKey");
@@ -402,7 +419,7 @@ test("open terminal search does not globally gate enter reconnect", () => {
   );
 });
 
-test("terminal view receives the effective compose bar state for enter reconnect gating", () => {
+test("terminal view receives the effective compose bar state", () => {
   const source = readFileSync(new URL("../Terminal.tsx", import.meta.url), "utf8");
   const effectiveDefinitionIndex = source.indexOf("const effectiveComposeBarOpen =");
   const viewIndex = source.indexOf("<TerminalView ctx={{");
@@ -413,7 +430,7 @@ test("terminal view receives the effective compose bar state for enter reconnect
   assert.notEqual(passEffectiveIndex, -1);
   assert.ok(
     effectiveDefinitionIndex < passEffectiveIndex,
-    "TerminalView must use the visible workspace compose state before deciding whether Enter can reconnect",
+    "TerminalView must receive the visible workspace compose state",
   );
 });
 

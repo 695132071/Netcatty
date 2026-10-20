@@ -5,6 +5,7 @@
  */
 import { GripHorizontal, Pin, Plus, Radio, Search, X } from 'lucide-react';
 import React, { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { terminalReconnectRegistry } from '../../application/state/terminalReconnectRegistry';
 import { useComposeBarHistory } from '../../application/state/useComposeBarHistory';
 import { canNavigateComposeBarHistory } from '../../domain/composeBarHistory';
 import { STORAGE_KEY_TERMINAL_BROADCAST_PASSWORD_BYPASS } from '../../infrastructure/config/storageKeys';
@@ -496,12 +497,22 @@ export const TerminalComposeBar: React.FC<TerminalComposeBarProps> = ({
     }
     if (e.key === 'Enter' && !e.shiftKey && !isComposingRef.current) {
       e.preventDefault();
+      // Plain Enter on an empty draft reconnects a disconnected session.
+      // Modified Enter and a non-empty draft keep the existing send path (#3767).
+      const plainEnter = !e.altKey && !e.ctrlKey && !e.metaKey;
+      if (
+        plainEnter
+        && !e.currentTarget.value
+        && terminalReconnectRegistry.requestEnterReconnect(sessionId)
+      ) {
+        return;
+      }
       handleSend();
     } else if (e.key === 'Escape') {
       e.preventDefault();
       onClose();
     }
-  }, [handleSend, navigate, onClose]);
+  }, [handleSend, navigate, onClose, sessionId]);
 
   const handleResizeStart = useCallback((e: React.MouseEvent) => {
     e.preventDefault();

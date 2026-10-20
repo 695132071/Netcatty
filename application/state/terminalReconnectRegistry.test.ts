@@ -56,6 +56,28 @@ test('active reconnect state blocks duplicate requests and notifies subscribers'
   unsubscribe();
 });
 
+test('enter reconnect stays off until the session allows it and does not queue', () => {
+  const registry = createTerminalReconnectRegistry();
+  const requests: string[] = [];
+
+  assert.equal(registry.requestEnterReconnect('session-1'), false);
+  registry.register('session-1', () => requests.push('session-1'));
+  assert.deepEqual(requests, []);
+
+  registry.setEnterReconnectEnabled('session-1', true);
+  assert.equal(registry.requestEnterReconnect('session-1'), true);
+  assert.deepEqual(requests, ['session-1']);
+
+  registry.setActive('session-1', true);
+  assert.equal(registry.requestEnterReconnect('session-1'), false);
+  assert.deepEqual(requests, ['session-1']);
+
+  registry.setActive('session-1', false);
+  registry.setEnterReconnectEnabled('session-1', false);
+  assert.equal(registry.requestEnterReconnect('session-1'), false);
+  assert.deepEqual(requests, ['session-1']);
+});
+
 test('unregistering the current handler clears active reconnect state', () => {
   const registry = createTerminalReconnectRegistry();
   const unregister = registry.register('session-1', () => {});
