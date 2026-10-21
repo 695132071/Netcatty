@@ -15,6 +15,7 @@ const tempDirBridge = require("./tempDirBridge.cjs");
 const {
   DOWNLOAD_TRANSFER_CONCURRENCY,
   TRANSFER_CHUNK_SIZE,
+  SMALL_UPLOAD_SHARED_MAX_BYTES,
   UPLOAD_TRANSFER_CONCURRENCY,
 } = require("./transferLimits.cjs");
 
@@ -5239,6 +5240,252 @@ test("uploads prefer concurrent shared channel over serial WriteStream", async (
   );
 });
 
+test("small shared upload cancel leaves the browse session usable", async (t) => {
+  // A file that fits one fanout window skips the isolated sftp-server. Cancel
+  // must drain in-flight WRITEs and close the remote handle without sftp.end(),
+  // then a later upload on the same channel still has to succeed.
+  const tempDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "netcatty-small-upload-shared-cancel-"));
+  t.after(async () => fs.promises.rm(tempDir, { recursive: true, force: true }));
+  const payload = Buffer.alloc(SMALL_UPLOAD_SHARED_MAX_BYTES, 91);
+  const localPath = path.join(tempDir, "upload.bin");
+  await fs.promises.writeFile(localPath, payload);
+  const targetPath = "/tmp/small-shared-cancel.bin";
+
+  let isolatedOpens = 0;
+  let endCalls = 0;
+  let closeCalls = 0;
+  let sharedOpens = 0;
+  let holdWrites = true;
+  const pendingWrites = [];
+  const browse = (method, remotePath) => new Promise((resolve, reject) => {
+    sharedSftp[method](remotePath, (error, value) => {
+      if (error) reject(error);
+      else resolve(value);
+    });
+  });
+  const sharedSftp = createFastSftp({
+    open(_remotePath, flags, callback) {
+      sharedOpens += 1;
+      assert.equal(flags, "w");
+      callback(null, Buffer.from("shared-handle"));
+    },
+    write(_handle, _buffer, _offset, _length, _position, callback) {
+      if (holdWrites) {
+        pendingWrites.push(callback);
+        return;
+      }
+      setImmediate(() => callback(null));
+    },
+    close(_handle, callback) {
+      closeCalls += 1;
+      callback(null);
+    },
+    readdir(_remotePath, callback) {
+      if (endCalls > 0) {
+        callback(new Error("browse session ended"));
+        return;
+      }
+      callback(null, [{ filename: "keep" }]);
+    },
+    stat(_remotePath, callback) {
+      if (endCalls > 0) {
+        callback(new Error("browse session ended"));
+        return;
+      }
+      callback(null, { size: payload.length });
+    },
+    end() {
+      endCalls += 1;
+    },
+  });
+  const client = {
+    sftp: sharedSftp,
+    stat() {
+      return Promise.resolve({ size: payload.length });
+    },
+    rename() {
+      return Promise.resolve();
+    },
+    delete() {
+      return Promise.resolve();
+    },
+    client: {
+      sftp(callback) {
+        isolatedOpens += 1;
+        callback(new Error("small upload must not open an isolated channel"));
+      },
+    },
+  };
+  transferBridge.init({ sftpClients: new Map([["target", client]]) });
+
+  const sender = createSender();
+  const transferId = "small-shared-upload-cancel";
+  let settled = false;
+  const running = transferBridge.startTransfer({ sender }, {
+    transferId,
+    sourcePath: localPath,
+    targetPath,
+    sourceType: "local",
+    targetType: "sftp",
+    targetSftpId: "target",
+    totalBytes: payload.length,
+    resumable: false,
+  }).finally(() => {
+    settled = true;
+  });
+
+  const ready = await waitUntil(
+    () => pendingWrites.length >= UPLOAD_TRANSFER_CONCURRENCY,
+    2000,
+  );
+  assert.equal(ready, true, "expected the full shared fanout window to be in flight");
+  assert.equal(isolatedOpens, 0);
+  assert.equal(sharedOpens, 1);
+  assert.deepEqual(await browse("readdir", "/tmp"), [{ filename: "keep" }]);
+
+  await transferBridge.cancelTransfer(null, { transferId });
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(settled, false, "cancel must drain in-flight shared WRITEs");
+  assert.equal(endCalls, 0, "cancel must not end the shared browse channel");
+  assert.deepEqual(await browse("stat", targetPath), { size: payload.length });
+
+  holdWrites = false;
+  for (const callback of pendingWrites.splice(0)) callback(null);
+  const result = await running;
+  assert.match(result.error || "", /cancel/i);
+  assert.equal(endCalls, 0);
+  assert.ok(closeCalls >= 1, "shared upload cancel must close the remote handle");
+  assert.equal(sender.sent.some((entry) => entry.channel === "netcatty:transfer:cancelled"), true);
+  assert.equal(sender.sent.some((entry) => entry.channel === "netcatty:transfer:complete"), false);
+  assert.deepEqual(await browse("readdir", "/tmp"), [{ filename: "keep" }]);
+
+  const followUp = await transferBridge.startTransfer({ sender: createSender() }, {
+    transferId: "small-shared-upload-after-cancel",
+    sourcePath: localPath,
+    targetPath,
+    sourceType: "local",
+    targetType: "sftp",
+    targetSftpId: "target",
+    totalBytes: payload.length,
+    resumable: false,
+  });
+  assert.equal(followUp.error, undefined, followUp.error);
+  assert.equal(isolatedOpens, 0);
+  assert.equal(endCalls, 0);
+  assert.deepEqual(await browse("readdir", "/tmp"), [{ filename: "keep" }]);
+});
+
+test("small shared upload pause leaves the browse session usable", async (t) => {
+  const tempDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "netcatty-small-upload-shared-pause-"));
+  t.after(async () => fs.promises.rm(tempDir, { recursive: true, force: true }));
+  const payload = Buffer.alloc(2 * TRANSFER_CHUNK_SIZE, 92);
+  const localPath = path.join(tempDir, "upload.bin");
+  await fs.promises.writeFile(localPath, payload);
+  const targetPath = "/tmp/small-shared-pause.bin";
+
+  let isolatedOpens = 0;
+  let endCalls = 0;
+  let holdWrites = true;
+  const pendingWrites = [];
+  const browse = (method, remotePath) => new Promise((resolve, reject) => {
+    sharedSftp[method](remotePath, (error, value) => {
+      if (error) reject(error);
+      else resolve(value);
+    });
+  });
+  const sharedSftp = createFastSftp({
+    open(_remotePath, flags, callback) {
+      assert.equal(flags, "w");
+      callback(null, Buffer.from("shared-handle"));
+    },
+    write(_handle, _buffer, _offset, _length, _position, callback) {
+      if (holdWrites) {
+        pendingWrites.push(callback);
+        return;
+      }
+      setImmediate(() => callback(null));
+    },
+    close(_handle, callback) {
+      callback(null);
+    },
+    readdir(_remotePath, callback) {
+      if (endCalls > 0) {
+        callback(new Error("browse session ended"));
+        return;
+      }
+      callback(null, [{ filename: "keep" }]);
+    },
+    stat(_remotePath, callback) {
+      if (endCalls > 0) {
+        callback(new Error("browse session ended"));
+        return;
+      }
+      callback(null, { size: payload.length });
+    },
+    end() {
+      endCalls += 1;
+    },
+  });
+  const client = {
+    sftp: sharedSftp,
+    stat() {
+      return Promise.resolve({ size: payload.length });
+    },
+    rename() {
+      return Promise.resolve();
+    },
+    delete() {
+      return Promise.resolve();
+    },
+    client: {
+      sftp(callback) {
+        isolatedOpens += 1;
+        callback(new Error("small upload must not open an isolated channel"));
+      },
+    },
+  };
+  transferBridge.init({ sftpClients: new Map([["target", client]]) });
+
+  const transferId = "small-shared-upload-pause";
+  const running = transferBridge.startTransfer({ sender: createSender() }, {
+    transferId,
+    sourcePath: localPath,
+    targetPath,
+    sourceType: "local",
+    targetType: "sftp",
+    targetSftpId: "target",
+    totalBytes: payload.length,
+    resumable: true,
+  });
+
+  const ready = await waitUntil(() => pendingWrites.length >= 2, 2000);
+  assert.equal(ready, true, "expected both shared chunks to be in flight");
+  assert.equal(isolatedOpens, 0);
+
+  const paused = await transferBridge.pauseTransfer(null, { transferId });
+  assert.equal(paused.success, true, paused.reason);
+  assert.equal(endCalls, 0, "pause must not end the shared browse channel");
+  assert.deepEqual(await browse("readdir", "/tmp"), [{ filename: "keep" }]);
+  assert.deepEqual(await browse("stat", "/tmp"), { size: payload.length });
+
+  // The whole file already fits in the in-flight window, so releasing those
+  // WRITEs finishes the upload. The shared channel still must stay up.
+  holdWrites = false;
+  for (const callback of pendingWrites.splice(0)) callback(null);
+  const result = await Promise.race([
+    running,
+    new Promise((resolve) => {
+      setTimeout(() => resolve({ timedOut: true }), 2000);
+    }),
+  ]);
+  assert.equal(result.timedOut, undefined, "paused small upload should finish its in-flight window");
+  assert.equal(result.error, undefined, result.error);
+  assert.equal(isolatedOpens, 0);
+  assert.equal(endCalls, 0);
+  assert.deepEqual(await browse("readdir", "/tmp"), [{ filename: "keep" }]);
+  assert.deepEqual(await browse("stat", targetPath), { size: payload.length });
+});
+
 test("cancel during stalled shared upload OPEN drains before remote cleanup", async (t) => {
   // Codex P2 on a7f96c94: cancel rejected shared write OPEN immediately, so
   // runRemoteUploadTransaction cleaned up the stage before a late "w" OPEN
@@ -6122,7 +6369,7 @@ test("fastPut fallback fails closed when prior isolated write OPEN gate never se
     await fs.promises.rm(tempDir, { recursive: true, force: true });
   });
 
-  const payload = Buffer.alloc(TRANSFER_CHUNK_SIZE, 62);
+  const payload = Buffer.alloc(SMALL_UPLOAD_SHARED_MAX_BYTES + TRANSFER_CHUNK_SIZE, 62);
   const localPath = path.join(tempDir, "upload.bin");
   const targetPath = "/tmp/upload-fastput-gate-timeout.bin";
   const remoteFiles = new Map([[targetPath, Buffer.from("old")]]);
@@ -6263,7 +6510,7 @@ test("later same-path upload fails promptly after prior write OPEN gate is poiso
     await fs.promises.rm(tempDir, { recursive: true, force: true });
   });
 
-  const payload = Buffer.alloc(TRANSFER_CHUNK_SIZE, 63);
+  const payload = Buffer.alloc(SMALL_UPLOAD_SHARED_MAX_BYTES + TRANSFER_CHUNK_SIZE, 63);
   const localPath = path.join(tempDir, "upload.bin");
   const targetPath = "/tmp/upload-inplace-gate-fail-closed.bin";
   const remoteFiles = new Map([[targetPath, Buffer.from("old")]]);
@@ -6655,7 +6902,7 @@ test("path gate poison clears after late original OPEN settles past successor", 
     await fs.promises.rm(tempDir, { recursive: true, force: true });
   });
 
-  const payload = Buffer.alloc(TRANSFER_CHUNK_SIZE, 66);
+  const payload = Buffer.alloc(SMALL_UPLOAD_SHARED_MAX_BYTES + TRANSFER_CHUNK_SIZE, 66);
   const localPath = path.join(tempDir, "upload.bin");
   const targetPath = "/tmp/upload-inplace-gate-poison-clear.bin";
   const remoteFiles = new Map([[targetPath, Buffer.from("old")]]);
@@ -7035,7 +7282,7 @@ test("path gate poison clears after owning isolated transport ends", async (t) =
     await fs.promises.rm(tempDir, { recursive: true, force: true });
   });
 
-  const payload = Buffer.alloc(TRANSFER_CHUNK_SIZE, 67);
+  const payload = Buffer.alloc(SMALL_UPLOAD_SHARED_MAX_BYTES + TRANSFER_CHUNK_SIZE, 67);
   const localPath = path.join(tempDir, "upload.bin");
   const targetPath = "/tmp/upload-inplace-gate-transport-clear.bin";
   const remoteFiles = new Map([[targetPath, Buffer.from("old")]]);
@@ -13096,7 +13343,7 @@ test("a closed disposable upload channel falls back once to the healthy shared c
   const tempDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "netcatty-disposable-upload-fallback-"));
   t.after(async () => fs.promises.rm(tempDir, { recursive: true, force: true }));
   const localPath = path.join(tempDir, "fresh.bin");
-  const payload = Buffer.from("disposable-fallback");
+  const payload = Buffer.concat([Buffer.from("disposable-fallback"), Buffer.alloc(SMALL_UPLOAD_SHARED_MAX_BYTES)]);
   await fs.promises.writeFile(localPath, payload);
   const targetPath = "/tmp/fresh.bin";
   const remoteFiles = new Map();

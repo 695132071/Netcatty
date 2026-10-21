@@ -28,8 +28,16 @@ const SFTP_REQUEST_TIMEOUT_MS = 30_000;
 // channel pool caps - they must never fall back to serial body streams.
 const FAST_DOWNLOAD_CHANNELS_PER_SESSION = 1;
 
+// A file that fits in one fanout window finishes in a couple of round trips.
+// Opening a dedicated sftp-server channel for it (channel open + subsystem +
+// SFTP init) costs more than the body itself on WAN links and spawns one
+// remote process per file in folder uploads, so small files use the shared
+// session's pipelined WRITE path instead.
+const SMALL_UPLOAD_SHARED_MAX_BYTES = UPLOAD_TRANSFER_CONCURRENCY * TRANSFER_CHUNK_SIZE;
+
 module.exports = {
   DOWNLOAD_TRANSFER_CONCURRENCY,
+  SMALL_UPLOAD_SHARED_MAX_BYTES,
   FAST_DOWNLOAD_CHANNELS_PER_SESSION,
   SFTP_OPEN_TIMEOUT_MS,
   SFTP_REQUEST_TIMEOUT_MS,

@@ -27,6 +27,7 @@ const { openBoundedSftpChannel } = require("./boundedSftpOpen.cjs");
 const {
   DOWNLOAD_TRANSFER_CONCURRENCY,
   FAST_DOWNLOAD_CHANNELS_PER_SESSION,
+  SMALL_UPLOAD_SHARED_MAX_BYTES,
   SFTP_OPEN_TIMEOUT_MS,
   SFTP_REQUEST_TIMEOUT_MS,
   TRANSFER_CHUNK_SIZE,
@@ -2476,7 +2477,11 @@ async function uploadFile(
 
   // Prefer an isolated SFTP channel so cancellation cannot kill the browse session.
   let isolated = null;
-  if (!client.__netcattySudoMode) {
+  const preferSharedChannel = Number(fileSize) > 0
+    && Number(fileSize) <= SMALL_UPLOAD_SHARED_MAX_BYTES
+    && typeof sftp?.open === "function"
+    && typeof sftp?.write === "function";
+  if (!client.__netcattySudoMode && !preferSharedChannel) {
     try {
       isolated = markDisposableUploadChannel(
         await openIsolatedSftpChannel(client, transfer?.signal),
@@ -2544,7 +2549,7 @@ async function uploadFile(
     }
   }
 
-  if (!isolated && !client.__netcattySudoMode) {
+  if (!isolated && !client.__netcattySudoMode && !preferSharedChannel) {
     try {
       isolated = markDisposableUploadChannel(
         await openIsolatedSftpChannel(client, transfer?.signal),
