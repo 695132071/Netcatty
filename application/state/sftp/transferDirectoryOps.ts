@@ -23,6 +23,7 @@ import {
   DEFAULT_SFTP_DIRECTORY_LISTING_CONCURRENCY,
   resolveSftpDirectoryListingConcurrency,
   resolveSftpSkipUnchangedEnabled,
+  resolveSftpTransferConcurrency,
   runSftpTransferWorkers,
 } from "./transferConcurrency";
 import { getSftpTransferResourceKeys, globalSftpTransferScheduler } from "./globalTransferScheduler";
@@ -78,11 +79,30 @@ function createDirectoryListingGate(concurrency = DEFAULT_SFTP_DIRECTORY_LISTING
   };
 }
 
+/** Observed at queue time so a mid-walk rejection is not unhandled. */
+type QueuedFileBatch =
+  | { ok: true; errors: number }
+  | { ok: false; error: unknown };
+
 type DirectoryDiscoveryProgress = {
   discoveredFiles: number;
   nextEntryIndex: number;
   /** Tree-wide semaphore so nested parallel walks cannot multiply listings. */
   listingGate?: ReturnType<typeof createDirectoryListingGate>;
+  /**
+   * Tree-wide file-transfer gate (transfer concurrency setting). Each directory
+   * hands its files to workers that share this gate, and the walk does not wait
+   * for a directory's files before moving on, so there is no per-directory
+   * barrier: trees of many small directories keep N files in flight.
+   */
+  fileGate?: ReturnType<typeof createDirectoryListingGate>;
+  /**
+   * Per-directory file batches. Each promise is settled when queued; the root
+   * walk inspects the outcomes after discovery.
+   */
+  pendingFileBatches?: Promise<QueuedFileBatch>[];
+  /** First session loss seen by any batch; later batches stop claiming files. */
+  sessionLostError?: Error | null;
 };
 
 function isCancelledLocalOrGlobal(
@@ -527,7 +547,7 @@ export function useSftpDirectoryTransferOps({
   };
 
   /** Returns number of failed child file transfers */
-  const transferDirectory = async (
+  const walkDirectory = async (
     task: TransferTask,
     sourceSftpId: string | null,
     targetSftpId: string | null,
@@ -541,7 +561,8 @@ export function useSftpDirectoryTransferOps({
     followSymlinks = false, // Only true for downloadToLocal — uploads/copies treat symlinks as files
     discoveryProgress?: DirectoryDiscoveryProgress,
     traversalBudget?: SftpDirectoryTraversalBudget,
-  ) => {
+    rootProgress?: DirectoryDiscoveryProgress,
+  ): Promise<number> => {
     // Check if task or root task was cancelled before starting
     if (cancelledTasksRef.current.has(task.id) || cancelledTasksRef.current.has(rootTaskId)) {
       throw new Error("Transfer cancelled");
@@ -552,11 +573,12 @@ export function useSftpDirectoryTransferOps({
     // as soon as each directory is listed; compressed upload is a separate path.
     // UI should treat totalBytes as "discovered so far", not a fixed grand total.
     let totalErrors = 0;
-    const progress = discoveryProgress ?? {
+    const progress: DirectoryDiscoveryProgress = discoveryProgress ?? rootProgress ?? {
       discoveredFiles: 0,
       nextEntryIndex: 0,
       listingGate: createDirectoryListingGate(resolveSftpDirectoryListingConcurrency()),
     };
+    if (!progress.pendingFileBatches) progress.pendingFileBatches = [];
     if (!progress.listingGate) {
       progress.listingGate = createDirectoryListingGate(resolveSftpDirectoryListingConcurrency());
     }
@@ -684,7 +706,7 @@ export function useSftpDirectoryTransferOps({
         };
 
         const isSymlink = dir.type === "symlink";
-        totalErrors += await transferDirectory(
+        totalErrors += await walkDirectory(
           childTask,
           sourceSftpId,
           targetSftpId,
@@ -721,11 +743,21 @@ export function useSftpDirectoryTransferOps({
       let sessionLostError: Error | null = null;
       const directoryEntryBase = progress.nextEntryIndex;
       progress.nextEntryIndex += regularFiles.length;
+      const directoryFiles = regularFiles;
+      if (!progress.fileGate) {
+        // Same setting runSftpTransferWorkers reads, created on first file.
+        progress.fileGate = createDirectoryListingGate(resolveSftpTransferConcurrency(
+          () => localStorageAdapter.readNumber(STORAGE_KEY_SFTP_TRANSFER_CONCURRENCY),
+        ));
+      }
+      const fileGate = progress.fileGate;
 
+      const fileBatch = (async (): Promise<number> => {
       await runSftpTransferWorkers(
-        regularFiles,
+        directoryFiles,
         () => localStorageAdapter.readNumber(STORAGE_KEY_SFTP_TRANSFER_CONCURRENCY),
-        async (file, fileIndex) => {
+        async (file, fileIndex) => fileGate.run(async () => {
+          if (!sessionLostError && progress.sessionLostError) sessionLostError = progress.sessionLostError;
           if (sessionLostError) throw sessionLostError;
           if (cancelledTasksRef.current.has(task.id) || cancelledTasksRef.current.has(rootTaskId)) {
             throw new Error("Transfer cancelled");
@@ -993,6 +1025,7 @@ export function useSftpDirectoryTransferOps({
             );
             if (isSessionError(err) && !sessionLostError) {
               sessionLostError = err instanceof Error ? err : new Error(message);
+              progress.sessionLostError = progress.sessionLostError ?? sessionLostError;
               // Fail remaining queued siblings quickly with a clear cause.
               setTransfers((prev) => prev.map((t) => (
                 t.parentTaskId === rootTaskId
@@ -1015,10 +1048,10 @@ export function useSftpDirectoryTransferOps({
               await waitWhileTransferPaused(rootTaskId);
             }
           }
-        },
+        }),
         {
           beforeClaim: async () => {
-            if (sessionLostError) return;
+            if (sessionLostError || progress.sessionLostError) return;
             await waitWhileTransferPaused(rootTaskId);
           },
         },
@@ -1030,15 +1063,67 @@ export function useSftpDirectoryTransferOps({
         throw err;
       });
 
-      totalErrors += errors.length;
       if (sessionLostError) {
         logger.warn("[SFTP] Directory transfer stopped early: session lost", sessionLostError.message);
       } else if (errors.length > 0) {
         logger.debug?.("[SFTP] Some files in directory transfer failed", errors);
       }
+      return errors.length;
+      })();
+      // Do not wait here: the walk continues into sibling directories while
+      // this directory's files drain through the shared fileGate. Settle the
+      // batch now so a failure during that walk (unsafe filename, unexpected
+      // worker error) is handled. The root drain still surfaces the error.
+      progress.pendingFileBatches.push(fileBatch.then(
+        (errors): QueuedFileBatch => ({ ok: true, errors }),
+        (error: unknown): QueuedFileBatch => ({ ok: false, error }),
+      ));
     }
 
     return totalErrors;
+  };
+
+  const transferDirectory = async (
+    ...args: Parameters<typeof walkDirectory>
+  ): Promise<number> => {
+    const [, , , , , , , , , , , discoveryProgress, traversalBudget] = args;
+    if (discoveryProgress) return walkDirectory(...args);
+    // Root of a folder task: own the tree-wide progress so we can drain every
+    // directory's file batch, even when the walk itself throws, before the
+    // caller decides the folder's final state.
+    const rootProgress: DirectoryDiscoveryProgress = {
+      discoveredFiles: 0,
+      nextEntryIndex: 0,
+      listingGate: createDirectoryListingGate(resolveSftpDirectoryListingConcurrency()),
+      pendingFileBatches: [],
+    };
+    let walkErrors = 0;
+    let walkError: unknown = null;
+    try {
+      const [task, sourceSftpId, targetSftpId, sourceIsLocal, targetIsLocal, sourceEncoding,
+        targetEncoding, rootTaskId, sameHost, symlinkDepth, followSymlinks] = args;
+      walkErrors = await walkDirectory(
+        task, sourceSftpId, targetSftpId, sourceIsLocal, targetIsLocal, sourceEncoding,
+        targetEncoding, rootTaskId, sameHost, symlinkDepth, followSymlinks,
+        undefined, traversalBudget, rootProgress,
+      );
+    } catch (error) {
+      walkError = error;
+    }
+    let fileErrors = 0;
+    let batchError: unknown = null;
+    const batches = rootProgress.pendingFileBatches!;
+    for (let index = 0; index < batches.length; index += 1) {
+      const outcome = await batches[index];
+      if (outcome.ok) {
+        fileErrors += outcome.errors;
+      } else {
+        batchError = batchError ?? outcome.error;
+      }
+    }
+    if (walkError) throw walkError;
+    if (batchError) throw batchError;
+    return walkErrors + fileErrors;
   };
 
 

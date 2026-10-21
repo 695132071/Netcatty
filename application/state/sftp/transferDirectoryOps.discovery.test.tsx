@@ -334,6 +334,111 @@ test("live directory download rejects a Windows backslash traversal entry", asyn
   }
 });
 
+test("a file batch that rejects mid-walk does not emit unhandledRejection", async () => {
+  const previousWindow = (globalThis as { window?: unknown }).window;
+  const previousLocalStorage = (globalThis as { localStorage?: unknown }).localStorage;
+  const previousActEnvironment = (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT;
+  (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+
+  const root = {
+    ...rootTask(),
+    targetPath: "C:\\Users\\alice\\Downloads\\folder",
+  };
+  let tasks: TransferTask[] = [root];
+  const transfersRef = { current: tasks };
+  const setTransfers = (update: React.SetStateAction<TransferTask[]>) => {
+    tasks = typeof update === "function" ? update(tasks) : update;
+    transfersRef.current = tasks;
+  };
+  let releaseLater!: () => void;
+  const laterGate = new Promise<void>((resolve) => {
+    releaseLater = resolve;
+  });
+  let laterListingStarted!: () => void;
+  const laterListing = new Promise<void>((resolve) => {
+    laterListingStarted = resolve;
+  });
+  (globalThis as { window?: unknown }).window = {
+    netcatty: {
+      mkdirLocal: async () => undefined,
+      statLocal: async () => ({ type: "directory" }),
+    },
+  };
+  (globalThis as { localStorage?: unknown }).localStorage = {
+    getItem: () => null,
+    setItem: () => undefined,
+    removeItem: () => undefined,
+  };
+
+  let operations: ReturnType<typeof useSftpDirectoryTransferOps> | undefined;
+  let renderer: ReactTestRenderer | null = null;
+  const Probe = () => {
+    operations = useSftpDirectoryTransferOps({
+      ownerId: "owner",
+      cancelledTasksRef: { current: new Set() },
+      pausedTasksRef: { current: new Set() },
+      waitUntilTransferResumed: async () => undefined,
+      activeChildIdsRef: { current: new Map() },
+      transfersRef,
+      setTransfers,
+      listLocalFiles: async () => [],
+      listRemoteFiles: async (_sftpId: string, path: string) => {
+        if (path === "/source") return [directoryEntry("bad"), directoryEntry("later")];
+        if (path === "/source/bad") return [fileEntry("..\\outside.txt")];
+        laterListingStarted();
+        await laterGate;
+        return [];
+      },
+    });
+    return null;
+  };
+  const unhandled: unknown[] = [];
+  const onUnhandled = (reason: unknown) => {
+    unhandled.push(reason);
+  };
+  const rejectionText = (reason: unknown) => (
+    reason instanceof Error ? reason.message : String(reason)
+  );
+  process.on("unhandledRejection", onUnhandled);
+
+  let running: Promise<number> | undefined;
+  try {
+    await act(async () => {
+      renderer = create(React.createElement(Probe));
+    });
+    assert.ok(operations);
+    running = operations.transferDirectory(
+      root,
+      "source-sftp",
+      null,
+      false,
+      true,
+      "auto",
+      "auto",
+      root.id,
+    );
+    await laterListing;
+    // The bad directory's batch is already queued. End this turn while the
+    // sibling listing is still blocked so an unhandled rejection can surface.
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.deepEqual(unhandled.map(rejectionText), []);
+    releaseLater();
+    await assert.rejects(running, /unsafe transfer path/i);
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.deepEqual(unhandled.map(rejectionText), []);
+  } finally {
+    releaseLater();
+    await running?.catch(() => {});
+    process.off("unhandledRejection", onUnhandled);
+    await act(async () => {
+      renderer?.unmount();
+    });
+    (globalThis as { window?: unknown }).window = previousWindow;
+    (globalThis as { localStorage?: unknown }).localStorage = previousLocalStorage;
+    (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = previousActEnvironment;
+  }
+});
+
 for (const ownerChange of ["same", "changed-active", "changed-completed"] as const) {
 test(`live folder settles superseded ownership without clobbering its replacement: ${ownerChange}`, async () => {
   const { sftpTransferCenterStore } = await import("../sftpTransferCenterStore");
