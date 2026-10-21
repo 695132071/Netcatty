@@ -83,6 +83,10 @@ export default defineConfig(() => {
         },
       },
       build: {
+        // The shared runtime is also required by Electron; convert it for browser builds.
+        commonjsOptions: {
+          include: [/node_modules/, /domain\/systemManager\/containerRuntime\.shared\.cjs$/],
+        },
         chunkSizeWarningLimit: 3000,
         target: 'esnext', // Required for top-level await in WASM modules
         sourcemap: false, // Disable source maps to avoid missing map file warnings
@@ -124,6 +128,8 @@ export default defineConfig(() => {
       plugins: [suppressMonacoSourcemapWarning(), devContentSecurityPolicyPlugin(), warnOnOutdatedOptimizeDep(), tailwindcss(), react()],
       optimizeDeps: {
         include: [
+          // Keep the renderer alias pre-bundled so dev serves ESM instead of raw CommonJS.
+          '@/domain/systemManager/containerRuntime.shared.cjs',
           'ai',
           '@ai-sdk/openai',
           '@ai-sdk/anthropic',

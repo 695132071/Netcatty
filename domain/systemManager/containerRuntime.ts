@@ -1,4 +1,4 @@
-import { runtimeFailureMessage } from "./containerRuntime.shared.cjs";
+import { runtimeFailureMessage } from "@/domain/systemManager/containerRuntime.shared.cjs";
 
 export type {
   ContainerRuntimeId,
@@ -6,7 +6,7 @@ export type {
   KubeContextInfo,
   KubectlPodInfo,
   RuntimeProbeFlags,
-} from "./containerRuntime.shared.cjs";
+} from "@/domain/systemManager/containerRuntime.shared.cjs";
 
 export {
   NETCATTY_POPUP_HISTORY_MARKER,
@@ -24,7 +24,7 @@ export {
   reconcileContainerSource,
   rememberedContainerSource,
   sourcesFromCapabilities,
-} from "./containerRuntime.shared.cjs";
+} from "@/domain/systemManager/containerRuntime.shared.cjs";
 
 export function describeRuntimeFailure(
   result: { error?: string; errorCode?: string } | null | undefined,
