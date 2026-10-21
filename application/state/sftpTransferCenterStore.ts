@@ -365,9 +365,13 @@ export function mergeOwnerPublishedTask(
     } else if (
       existingPaused
       && (incoming.status === "transferring" || incoming.status === "pending" || incoming.status === "queued")
-      // Only a strictly older epoch is a stale snapshot. Equal/missing epochs must
-      // allow intentional Resume (publishOwner after unlatch) to re-open the row.
-      && incomingLifecycleEpoch < existingLifecycleEpoch
+      // A strictly older epoch is a stale snapshot. Equal epochs are how Resume
+      // republishes after the latch drops. While the pause latch is still held,
+      // that republish is a pre-pause panel snapshot and must not reopen the row.
+      && (
+        incomingLifecycleEpoch < existingLifecycleEpoch
+        || isTransferOrRootPauseLatched(existing.parentTaskId ?? existing.id, existing.id)
+      )
     ) {
       // Soft-drain / late progress publish must not un-pause without resume epoch.
       merged.status = existing.status;

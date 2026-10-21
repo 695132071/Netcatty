@@ -440,6 +440,9 @@ test("stat-less remote source keeps the listing size in the overwrite dialog and
         "left",
         "right",
       );
+      // Lifecycle paints coalesce to one frame. The plan lives on the ref
+      // immediately; React state catches up on the queued animation frame.
+      await new Promise((resolve) => setTimeout(resolve, 0));
     });
 
     assert.equal(started.length, 0, "an unresolved conflict must not start the transfer");
