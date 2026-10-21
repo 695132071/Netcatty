@@ -3,6 +3,7 @@ const assert = require("node:assert/strict");
 
 const {
   FAST_DOWNLOAD_CHANNELS_PER_SESSION,
+  SMALL_DOWNLOAD_SLOT_EXEMPT_BYTES,
   DOWNLOAD_TRANSFER_CONCURRENCY,
   SMALL_UPLOAD_SHARED_MAX_BYTES,
   UPLOAD_TRANSFER_CONCURRENCY,
@@ -26,4 +27,11 @@ test("SFTP transfer limits preserve upload safety and the pre-regression downloa
   // enough parallel reads to preserve the 2MB in-flight window that existed
   // after #1533, otherwise high-latency proxy paths collapse to KB/s speeds.
   assert.equal(DOWNLOAD_TRANSFER_CONCURRENCY * TRANSFER_CHUNK_SIZE, 2 * 1024 * 1024);
+});
+
+test("small downloads (one READ window) are exempt from the per-session fast slot", () => {
+  // Big files still serialize on FAST_DOWNLOAD_CHANNELS_PER_SESSION (#1507).
+  assert.equal(FAST_DOWNLOAD_CHANNELS_PER_SESSION, 1);
+  assert.equal(SMALL_DOWNLOAD_SLOT_EXEMPT_BYTES, DOWNLOAD_TRANSFER_CONCURRENCY * TRANSFER_CHUNK_SIZE);
+  assert.equal(SMALL_DOWNLOAD_SLOT_EXEMPT_BYTES, 2 * 1024 * 1024);
 });
