@@ -42,6 +42,7 @@ import {
 } from "./sftp/globalSftpTransferControl";
 import { restoreSftpTransferHistoryCooperatively } from "./sftp/transferHistoryRestoreMigration";
 import { cancelExternalUploadRuntime } from "./sftp/externalUploadRuntime";
+import { canRetryFromCheckpoint } from "./sftp/retryFromCheckpoint";
 
 type Listener = () => void;
 type TaskSettlementObserver = {
@@ -2056,6 +2057,24 @@ export function createSftpTransferCenterStore(persistence?: StorePersistence): S
       const controller = ownerId === "background-agent"
         ? undefined
         : controllers.get(ownerId ?? "");
+      // Live panel task whose connection dropped mid-file: the stage is valid
+      // up to the checkpoint. Continue through the reconnect-resume path a
+      // restored task uses (same id, so the same staged .part) instead of a
+      // fresh id from byte 0, which strands the old stage on the server.
+      // Orphaned rows (no live owner) keep the restart-from-0 contract below.
+      if (controller && canRetryFromCheckpoint(task)) {
+        tasks = tasks.map((candidate) => candidate.id === taskId ? {
+          ...candidate,
+          status: "interrupted" as const,
+          error: undefined,
+          reconnectRequired: true,
+          speed: 0,
+          endTime: undefined,
+        } : candidate);
+        emit();
+        await this.resume(taskId);
+        return;
+      }
       if (controller) {
         await controller.retry(taskId);
         return;
