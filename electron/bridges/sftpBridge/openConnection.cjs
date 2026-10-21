@@ -9,6 +9,7 @@ const {
   terminateSshExecStream,
 } = require("../boundedSshExec.cjs");
 const { openBoundedSftpChannel } = require("../boundedSftpOpen.cjs");
+const { enableSshNoDelay } = require("../tcpNoDelay.cjs");
 const { openBoundedForwardOutCallback } = require("../boundedSshChannelOpen.cjs");
 const { remoteSoftwareRequiresSingleChannel } = require("../../../domain/singleChannelSshBanner.shared.cjs");
 
@@ -420,6 +421,10 @@ function createOpenConnectionApi(ctx) {
               if (settled) return;
               settled = true;
               clearAuthReadyTimer();
+              // SFTP RPCs are small request/response packets; with Nagle on, a
+              // second request behind an unacked one waits for the peer's
+              // delayed ACK (~40 ms per round trip on Linux, up to 200 ms on Windows).
+              enableSshNoDelay(conn);
               console.log(`[SFTP Chain] Hop ${i + 1}/${jumpHosts.length}: ${hopLabel} connected`);
               sendSftpProgress(sender, connId, hopLabel, 'connected');
               resolve();
@@ -1452,6 +1457,8 @@ function createOpenConnectionApi(ctx) {
           sshClient.once('ready', () => {
             clearAuthReadyTimer();
             cleanup();
+            // See jump-hop note above: SFTP is RPC-bound, so disable Nagle.
+            enableSshNoDelay(sshClient);
             if (remoteSoftwareRequiresSingleChannel(sshClient._remoteVer)) {
               peerSingleChannelSsh = true;
             }

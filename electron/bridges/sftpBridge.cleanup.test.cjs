@@ -120,6 +120,12 @@ test("openSftp clears its authentication timer when SSH becomes ready", () => {
   );
 });
 
+test("openSftp disables Nagle on direct and jump-hop SSH sockets", () => {
+  const source = readFileSync(require.resolve("./sftpBridge/openConnection.cjs"), "utf8");
+  assert.match(source, /sshClient\.once\('ready', \(\) => \{\s*clearAuthReadyTimer\(\);\s*cleanup\(\);[\s\S]{0,200}enableSshNoDelay\(sshClient\);/);
+  assert.match(source, /conn\.once\('ready', \(\) => \{[\s\S]{0,400}enableSshNoDelay\(conn\);/);
+});
+
 test("openSftp forwards target hostId to keyboard-interactive prompts", () => {
   const source = readFileSync(require.resolve("./sftpBridge/openConnection.cjs"), "utf8");
   assert.match(
