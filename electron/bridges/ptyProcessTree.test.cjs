@@ -101,7 +101,7 @@ test("default posix process listing bounds the child lifetime and captured outpu
     { pid: 2003, command: "python worker.py" },
   ]);
   assert.equal(invocation.command, "ps");
-  assert.deepEqual(invocation.args, ["-A", "-o", "pid=,ppid=,args="]);
+  assert.deepEqual(invocation.args, ["-A", "-o", "pid=", "-o", "ppid=", "-o", "args="]);
   assert.equal(invocation.options.timeout, POSIX_PROCESS_LIST_TIMEOUT_MS);
   assert.equal(invocation.options.maxBuffer, POSIX_PROCESS_LIST_MAX_BUFFER_BYTES);
   assert.equal(invocation.options.windowsHide, true);

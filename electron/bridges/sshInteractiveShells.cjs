@@ -8,7 +8,7 @@ const discoveryDisabledConnections = new WeakSet();
 
 function buildInteractiveShellPidCommand(quoteShellArg) {
   const script = `SELF=$$
-ps_output=$(ps -e -o pid=,ppid=,tty=,comm=,etimes= 2>/dev/null) || ps_output=$(ps -e -o pid=,ppid=,tty=,comm= 2>/dev/null) || exit 69
+ps_output=$(ps -e -o pid= -o ppid= -o tty= -o comm= -o etimes= 2>/dev/null) || ps_output=$(ps -e -o pid= -o ppid= -o tty= -o comm= 2>/dev/null) || exit 69
 {
   printf '%s\n' "$ps_output" | awk -v pp="$PPID" -v self="$SELF" '
     function isshell(c) { sub(/^.*\\//, "", c); sub(/^-/, "", c); return c ~ /^(ba|z|fi|k|da|a|c|tc)?sh$/ }

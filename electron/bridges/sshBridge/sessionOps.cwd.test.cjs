@@ -333,6 +333,9 @@ test("cwd probe forces POSIX sh, captures sshd PPID, and keeps the watchdog", as
   assert.ok(command.includes(") </dev/null >/dev/null 2>&1 & nc_watchdog_pid=$!"));
   assert.ok(command.includes('kill -9 $nc_kids "$nc_watchdog_pid"'));
   assert.ok(command.includes('find_login_shell "${NC_SSHD_PPID:-$PPID}"'));
+  assert.match(command, /ps -e -o pid= -o ppid= -o tty= -o comm=/);
+  assert.match(command, /ps -e -o pid= -o ppid= -o stat= -o comm=/);
+  assert.equal(command.includes("pid=,"), false);
 });
 
 test("immediate parked reconnect does not guess cwd from an exiting shell", async () => {

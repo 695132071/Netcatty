@@ -34,10 +34,11 @@ function createProcessTree({ platform, listPosix, listWindows } = {}) {
 
 function defaultListPosix(ppid, { execFileFn = execFile } = {}) {
   return new Promise((resolve) => {
-    // `ps -A -o pid=,ppid=,args=` works on both BSD (macOS) and GNU (Linux).
-    // `args=` shows the full command line (not truncated like `comm=`).
-    // The trailing `=` on each column suppresses the header row.
-    execFileFn("ps", ["-A", "-o", "pid=,ppid=,args="], {
+    // Separate `-o col=` options. A single `-o pid=,ppid=,args=` spec is
+    // misread by procps-ng 3.3.x: the text after the first `=` becomes the
+    // header, so only pid is printed. The split form works on BSD (macOS),
+    // modern procps, and BusyBox. `args=` is the full command line.
+    execFileFn("ps", ["-A", "-o", "pid=", "-o", "ppid=", "-o", "args="], {
       timeout: POSIX_PROCESS_LIST_TIMEOUT_MS,
       maxBuffer: POSIX_PROCESS_LIST_MAX_BUFFER_BYTES,
       windowsHide: true,
