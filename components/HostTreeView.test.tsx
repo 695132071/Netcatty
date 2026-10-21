@@ -235,6 +235,7 @@ test("HostTreeView exposes selected hosts to keyboard and assistive technology",
   assert.match(markup, /data-host-id="host-1"[^>]*data-tree-depth="0"/);
   assert.match(markup, /data-host-id="host-1"[^>]*aria-level="1"/);
   assert.match(markup, /data-host-id="host-1"[^>]*tabindex="0"/);
+  assert.match(markup, /data-host-id="host-1"[^>]*draggable="true"/);
 });
 
 test("HostTreeView exposes only one tree item in the tab order", () => {

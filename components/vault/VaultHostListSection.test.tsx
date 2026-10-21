@@ -360,6 +360,36 @@ test("VaultHostListSection exposes normal group cards to keyboard", () => {
   assert.match(markup, /data-group-path="production"[^>]*tabindex="0"/);
 });
 
+test("VaultHostListSection keeps selected host cards draggable and leaves unselected cards in place", () => {
+  const otherHost = makeHost("other-host", "Other Router");
+  const markup = renderHostList({
+    viewMode: "list",
+    displayedGroups: [],
+    displayedHosts: [mainHost, otherHost],
+    visibleDisplayedHosts: [mainHost, otherHost],
+    isMultiSelectMode: true,
+    selectedHostIds: new Set([mainHost.id]),
+  });
+
+  assert.match(markup, /data-host-id="main-host"[^>]*draggable="true"/);
+  assert.match(markup, /data-host-id="other-host"[^>]*draggable="false"/);
+  const source = readFileSync(new URL("./VaultHostListSection.tsx", import.meta.url), "utf8");
+  assert.match(source, /useVaultHostMarquee/);
+  assert.match(source, /data-vault-marquee/);
+  assert.match(source, /moveHostsToGroup/);
+});
+
+test("VaultHostListSection keeps a normal host card draggable outside multi-select", () => {
+  const markup = renderHostList({
+    viewMode: "grid",
+    displayedGroups: [],
+    displayedHosts: [mainHost],
+    visibleDisplayedHosts: [mainHost],
+  });
+
+  assert.match(markup, /data-host-id="main-host"[^>]*draggable="true"/);
+});
+
 test("VaultHostListSection exposes ungrouped hosts to keyboard and assistive technology", () => {
   const markup = renderHostList({
     viewMode: "list",

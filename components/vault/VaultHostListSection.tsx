@@ -27,7 +27,10 @@ import {
 import type { GroupNode, Host } from "../../domain/models";
 import { isPluginHostProtocol } from "../../domain/pluginConnection";
 import { OpenDualPaneSftpMenuItem, OpenHostBrowserMenuItem } from "../host/HostTreeContextMenus";
+import { VAULT_HOST_DRAG_IDS, isVaultHostDraggable } from "../../domain/vaultHostDrag";
 import { getVaultHostRowSubtitle } from "../../domain/localShellHost";
+import { beginVaultHostCardDrag } from "./vaultHostDragImage";
+import { useVaultHostMarquee } from "./useVaultHostMarquee";
 
 type VaultHostListSectionContext = Record<string, any>;
 
@@ -54,12 +57,15 @@ const isRelatedTargetInside = (
 };
 
 const EMPTY_GROUP_PATH_SET = new Set<string>();
+const EMPTY_HOST_ID_SET: ReadonlySet<string> = new Set();
+const noopSetMultiSelectMode = (_enabled: boolean) => {};
+const noopSetSelectedHostIds = (_ids: Set<string>) => {};
 
 export function VaultHostListSection({ ctx }: { ctx: VaultHostListSectionContext }) {
-  const { Badge, Boolean, Button, cancelInlineGroupEdit, CheckSquare, ClipboardCopy, Clock, cn, commitInlineGroupRename, ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuTrigger, Copy, displayedGroups, displayedHosts, DistroAvatar, Edit2, FileSymlink, FolderPlus, FolderTree, getDropTargetClasses, getEffectiveHostDistro, groupConfigs, groupedDisplayHosts, handleCopyCredentials, handleCopyHostname, handleDuplicateHost, handleEditGroupConfig, handleEditHost, handleHostConnect, handleOpenHostBrowser, hostClickBehavior: hostClickBehaviorProp, handleUnmanageGroup, hasHostsSidePanel, hostListScrollRef, HostTreeView, isHostsSectionActive, isMultiSelectMode, lastPinnedId, LayoutGrid, managedGroupPaths, moveGroup, moveHostToGroup, onDeleteHost, Pin, pinnedHosts, Plug, recentHosts, reorderGroup, reorderHost, sanitizeHost, search, selectedGroupPath, selectedGroupPaths, selectedHostIds, selectedTags, sessionCount, setDeleteTargetPath, setDragOverDropTarget, setGroupDragOverDropTarget, setIsDeleteGroupOpen, setIsNewFolderOpen, setLastPinnedId, setNewFolderName, setSelectedGroupPath, setTargetParentPath, shouldHideEmptyRootHostsSection, showRecentHosts, sortMode, Square, Star, startInlineDeleteGroup, startInlineNewGroup, startInlineRenameGroup, t, toggleGroupSelection, toggleHostPinned, toggleHostSelection, Trash2, treeExpandedState, treeViewGroupTree, treeViewHosts, viewMode, visibleDisplayedHosts } = ctx;
+  const { Badge, Boolean, Button, cancelInlineGroupEdit, CheckSquare, ClipboardCopy, Clock, cn, commitInlineGroupRename, ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuTrigger, Copy, displayedGroups, displayedHosts, DistroAvatar, Edit2, FileSymlink, FolderPlus, FolderTree, getDropTargetClasses, getEffectiveHostDistro, groupConfigs, groupedDisplayHosts, handleCopyCredentials, handleCopyHostname, handleDuplicateHost, handleEditGroupConfig, handleEditHost, handleHostConnect, handleOpenHostBrowser, hostClickBehavior: hostClickBehaviorProp, handleUnmanageGroup, hasHostsSidePanel, hostListScrollRef, HostTreeView, isHostsSectionActive, isMultiSelectMode, lastPinnedId, LayoutGrid, managedGroupPaths, moveGroup, moveHostToGroup, moveHostsToGroup, onDeleteHost, Pin, pinnedHosts, Plug, recentHosts, reorderGroup, reorderHost, sanitizeHost, search, selectedGroupPath, selectedGroupPaths, selectedHostIds, selectedTags, sessionCount, setDeleteTargetPath, setDragOverDropTarget, setGroupDragOverDropTarget, setIsDeleteGroupOpen, setIsMultiSelectMode = noopSetMultiSelectMode, setIsNewFolderOpen, setLastPinnedId, setNewFolderName, setSelectedGroupPath, setSelectedHostIds = noopSetSelectedHostIds, setTargetParentPath, shouldHideEmptyRootHostsSection, showRecentHosts, sortMode, Square, Star, startInlineDeleteGroup, startInlineNewGroup, startInlineRenameGroup, t, toggleGroupSelection, toggleHostPinned, toggleHostSelection, Trash2, treeExpandedState, treeViewGroupTree, treeViewHosts, viewMode, visibleDisplayedHosts } = ctx;
   const hostClickBehavior: HostClickBehavior = hostClickBehaviorProp === 'select' ? 'select' : 'connect';
   const multiSelectedGroupPaths: Set<string> = selectedGroupPaths ?? EMPTY_GROUP_PATH_SET;
-  const [draggingHostId, setDraggingHostId] = React.useState<string | null>(null);
+  const [draggingHostIds, setDraggingHostIds] = React.useState<ReadonlySet<string> | null>(null);
   const draggingHostIdRef = React.useRef<string | null>(null);
   const lastPreviewReorderRef = React.useRef<string | null>(null);
   const prepareGridLayoutAnimation = useVaultGridLayoutAnimation(hostListScrollRef);
@@ -119,6 +125,19 @@ export function VaultHostListSection({ ctx }: { ctx: VaultHostListSectionContext
     setFocusedHostId(null);
     setFocusedGroupPath(null);
   }, [selectedGroupPath, viewMode, hostClickBehavior]);
+
+  const {
+    marqueeRect,
+    onPointerDown: onMarqueePointerDown,
+    onClickCapture: onMarqueeClickCapture,
+  } = useVaultHostMarquee({
+    containerRef: hostListScrollRef,
+    viewMode,
+    isMultiSelectMode: Boolean(isMultiSelectMode),
+    selectedHostIds: selectedHostIds ?? EMPTY_HOST_ID_SET,
+    setIsMultiSelectMode,
+    setSelectedHostIds,
+  });
 
   const activateHost = React.useCallback((host: Host) => {
     const action = resolveHostActivateAction({
@@ -284,17 +303,25 @@ export function VaultHostListSection({ ctx }: { ctx: VaultHostListSectionContext
 
   const resetHostDragState = React.useCallback(() => {
     draggingHostIdRef.current = null;
-    setDraggingHostId(null);
+    setDraggingHostIds(null);
     lastPreviewReorderRef.current = null;
     setDragOverDropTarget(null);
   }, [setDragOverDropTarget]);
 
   const handleHostDragStart = React.useCallback((e: React.DragEvent, hostId: string) => {
-    // copyMove: vault reorder uses move; focus-sidebar append uses copy.
-    e.dataTransfer.effectAllowed = "copyMove";
-    e.dataTransfer.setData("host-id", hostId);
+    const ids = beginVaultHostCardDrag({
+      dataTransfer: e.dataTransfer,
+      hostId,
+      isMultiSelectMode: !!isMultiSelectMode,
+      selectedHostIds,
+      countLabel: (count) => t("vault.hosts.dragSelectionCount", { count }),
+    });
+    if (!ids) {
+      e.preventDefault();
+      return;
+    }
     draggingHostIdRef.current = hostId;
-    setDraggingHostId(hostId);
+    setDraggingHostIds(new Set(ids));
     lastPreviewReorderRef.current = null;
 
     // Grid preview reorder can move the card into another virtual row, and rows
@@ -308,7 +335,7 @@ export function VaultHostListSection({ ctx }: { ctx: VaultHostListSectionContext
       resetHostDragState();
     };
     sourceNode.addEventListener("dragend", handleNativeDragEnd);
-  }, [resetHostDragState]);
+  }, [isMultiSelectMode, resetHostDragState, selectedHostIds, t]);
 
   const renderHostEditButton = (host: any, compact = false) => (
     <Button
@@ -351,14 +378,21 @@ export function VaultHostListSection({ ctx }: { ctx: VaultHostListSectionContext
   return <div
           ref={hostListScrollRef}
           className={cn(
-            "flex-1 overflow-auto px-4 pb-4 space-y-3",
+            "relative flex-1 overflow-auto px-4 pb-4 [&>:not([data-vault-marquee])~:not([data-vault-marquee])]:mt-3",
             viewMode === "tree" ? "pt-1.5" : "pt-0",
             !isHostsSectionActive && "hidden",
+            marqueeRect && "select-none",
           )}
           data-section="vault-host-list"
           onClick={handleHostListClick}
+          onClickCapture={onMarqueeClickCapture}
+          onPointerDown={onMarqueePointerDown}
           onDragOverCapture={(e) => {
             const target = (e.target as Element | null)?.closest("[data-host-id], [data-group-path]");
+            if (hasVaultDragType(e.dataTransfer, VAULT_HOST_DRAG_IDS)) {
+              const groupTarget = target instanceof HTMLElement && target.hasAttribute("data-group-path");
+              if (!groupTarget) return;
+            }
             if (target) e.preventDefault();
             if (!(target instanceof HTMLElement)) return;
             const draggedGroupPath = e.dataTransfer.getData("group-path");
@@ -392,6 +426,10 @@ export function VaultHostListSection({ ctx }: { ctx: VaultHostListSectionContext
           }}
           onDragOver={(e) => {
             const target = (e.target as Element | null)?.closest("[data-host-id], [data-group-path]");
+            if (hasVaultDragType(e.dataTransfer, VAULT_HOST_DRAG_IDS)) {
+              const groupTarget = target instanceof HTMLElement && target.hasAttribute("data-group-path");
+              if (!groupTarget) return;
+            }
             if (!(target instanceof HTMLElement) || viewMode === "grid") return;
             const draggedGroupPath = e.dataTransfer.getData("group-path");
             const isDraggingGroup = hasVaultDragType(e.dataTransfer, "group-path");
@@ -419,7 +457,12 @@ export function VaultHostListSection({ ctx }: { ctx: VaultHostListSectionContext
             if (!(target instanceof HTMLElement)) return;
             const targetHostId = target.getAttribute("data-host-id");
             const targetGroupPath = target.getAttribute("data-group-path");
-            if (draggedHostId && targetHostId && draggedHostId !== targetHostId) {
+            if (
+              draggedHostId
+              && targetHostId
+              && draggedHostId !== targetHostId
+              && !hasVaultDragType(e.dataTransfer, VAULT_HOST_DRAG_IDS)
+            ) {
               e.preventDefault();
               e.stopPropagation();
               const position = getVaultDropPosition(target, e.clientX, e.clientY, viewMode === "grid");
@@ -447,6 +490,19 @@ export function VaultHostListSection({ ctx }: { ctx: VaultHostListSectionContext
             resetHostDragState();
           }}
         >
+          {marqueeRect && (
+            <div
+              data-vault-marquee="true"
+              aria-hidden="true"
+              className="pointer-events-none absolute z-20 border border-primary/80 bg-primary/15"
+              style={{
+                left: marqueeRect.left,
+                top: marqueeRect.top,
+                width: marqueeRect.right - marqueeRect.left,
+                height: marqueeRect.bottom - marqueeRect.top,
+              }}
+            />
+          )}
                 {viewMode !== "tree" && (
                   <section className="space-y-2 pt-2">
                     <div className="flex items-center gap-2 text-sm font-semibold">
@@ -476,6 +532,7 @@ export function VaultHostListSection({ ctx }: { ctx: VaultHostListSectionContext
                             setDragOverDropTarget,
                             moveGroup,
                             moveHostToGroup,
+                            moveHostsToGroup,
                             resetHostDragState,
                           });
                         }}
@@ -546,7 +603,7 @@ export function VaultHostListSection({ ctx }: { ctx: VaultHostListSectionContext
                                     viewMode === "grid"
                                       ? cn(
                                         "soft-card elevate rounded-xl h-[68px] px-3 py-2 will-change-transform transition-[opacity,box-shadow,border-color,background-color] duration-150",
-                                        draggingHostId === host.id && "opacity-45",
+                                        draggingHostIds?.has(host.id) && "opacity-45",
                                         hostCardFocusClassName(viewMode, isHostFocusSelected(host.id)),
                                       )
                                       : cn(
@@ -565,7 +622,7 @@ export function VaultHostListSection({ ctx }: { ctx: VaultHostListSectionContext
                                   tabIndex={getHostTabIndex(host.id)}
                                   style={lastPinnedId === host.id ? { animation: "pop-in 0.4s cubic-bezier(0.34, 1.56, 0.64, 1) both" } : undefined}
                                   onAnimationEnd={() => { if (lastPinnedId === host.id) setLastPinnedId(null); }}
-                                  draggable={!isMultiSelectMode}
+                                  draggable={isVaultHostDraggable(Boolean(isMultiSelectMode), selectedHostIds, host.id)}
                                   onDragStart={(e) => handleHostDragStart(e, host.id)}
                                   onClick={() => {
                                     activateHost(safeHost);
@@ -672,7 +729,7 @@ export function VaultHostListSection({ ctx }: { ctx: VaultHostListSectionContext
                                     viewMode === "grid"
                                       ? cn(
                                         "soft-card elevate rounded-xl h-[68px] px-3 py-2 will-change-transform transition-[opacity,box-shadow,border-color,background-color] duration-150",
-                                        draggingHostId === host.id && "opacity-45",
+                                        draggingHostIds?.has(host.id) && "opacity-45",
                                         hostCardFocusClassName(viewMode, isHostFocusSelected(host.id)),
                                       )
                                       : cn(
@@ -689,7 +746,7 @@ export function VaultHostListSection({ ctx }: { ctx: VaultHostListSectionContext
                                     ? selectedHostIds.has(host.id)
                                     : undefined}
                                   tabIndex={getHostTabIndex(host.id)}
-                                  draggable={!isMultiSelectMode}
+                                  draggable={isVaultHostDraggable(Boolean(isMultiSelectMode), selectedHostIds, host.id)}
                                   onDragStart={(e) => handleHostDragStart(e, host.id)}
                                   onClick={() => {
                                     activateHost(safeHost);
@@ -794,6 +851,7 @@ export function VaultHostListSection({ ctx }: { ctx: VaultHostListSectionContext
                           dataTransfer: e.dataTransfer,
                           groupPath: selectedGroupPath,
                           moveHostToGroup,
+                          moveHostsToGroup,
                           resetHostDragState,
                         })) return;
                         const groupPath = e.dataTransfer.getData("group-path");
@@ -874,6 +932,7 @@ export function VaultHostListSection({ ctx }: { ctx: VaultHostListSectionContext
                                   dataTransfer: e.dataTransfer,
                                   groupPath: node.path,
                                   moveHostToGroup,
+                                  moveHostsToGroup,
                                   resetHostDragState,
                                 })) return;
                                 const groupPath =
@@ -983,6 +1042,7 @@ export function VaultHostListSection({ ctx }: { ctx: VaultHostListSectionContext
                       cancelInlineGroupEdit={cancelInlineGroupEdit}
                       onDeleteGroup={startInlineDeleteGroup}
                       moveHostToGroup={moveHostToGroup}
+                      moveHostsToGroup={moveHostsToGroup}
                       moveGroup={moveGroup}
                       managedGroupPaths={managedGroupPaths}
                       onUnmanageGroup={handleUnmanageGroup}
@@ -1041,7 +1101,7 @@ export function VaultHostListSection({ ctx }: { ctx: VaultHostListSectionContext
                                           viewMode === "grid"
                                             ? cn(
                                               "soft-card elevate rounded-xl h-[68px] px-3 py-2 will-change-transform transition-[opacity,box-shadow,border-color,background-color] duration-150",
-                                              draggingHostId === host.id && "opacity-45",
+                                              draggingHostIds?.has(host.id) && "opacity-45",
                                               hostCardFocusClassName(viewMode, isHostFocusSelected(host.id)),
                                             )
                                             : cn(
@@ -1058,7 +1118,7 @@ export function VaultHostListSection({ ctx }: { ctx: VaultHostListSectionContext
                                           ? selectedHostIds.has(host.id)
                                           : undefined}
 	                                        tabIndex={getHostTabIndex(host.id)}
-                                        draggable={!isMultiSelectMode}
+                                        draggable={isVaultHostDraggable(Boolean(isMultiSelectMode), selectedHostIds, host.id)}
                                         onDragStart={(e) => handleHostDragStart(e, host.id)}
                                         onClick={() => {
                                           activateHost(safeHost);
@@ -1192,7 +1252,7 @@ export function VaultHostListSection({ ctx }: { ctx: VaultHostListSectionContext
                                     viewMode === "grid"
                                       ? cn(
                                         "soft-card elevate rounded-xl h-[68px] px-3 py-2 will-change-transform transition-[opacity,box-shadow,border-color,background-color] duration-150",
-                                        draggingHostId === host.id && "opacity-45",
+                                        draggingHostIds?.has(host.id) && "opacity-45",
                                         hostCardFocusClassName(viewMode, isHostFocusSelected(host.id)),
                                       )
                                       : cn(
@@ -1209,7 +1269,7 @@ export function VaultHostListSection({ ctx }: { ctx: VaultHostListSectionContext
                                     ? selectedHostIds.has(host.id)
                                     : undefined}
                                   tabIndex={getHostTabIndex(host.id)}
-                                  draggable={!isMultiSelectMode}
+                                  draggable={isVaultHostDraggable(Boolean(isMultiSelectMode), selectedHostIds, host.id)}
                                   onDragStart={(e) => handleHostDragStart(e, host.id)}
                                   onClick={() => {
                                     activateHost(safeHost);

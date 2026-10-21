@@ -1139,6 +1139,7 @@ Resalta el panel dividido enfocado:
   'vault.hosts.moveSelected': 'Mover al grupo ({count})',
   'vault.hosts.moveSelected.description': 'Mueve los hosts seleccionados a un grupo existente o los deja sin grupo. Los grupos seleccionados no se mueven.',
   'vault.hosts.moveMultiple.success': 'Se movieron {count} hosts a {group}',
+  'vault.hosts.dragSelectionCount': '{count} hosts',
   'vault.hosts.moveToGroup.success': 'Se movió {host} a {group}',
   'vault.hosts.errors.nameRequired': 'Se requiere el nombre del host.',
   'vault.hosts.empty.title': 'Configura tus hosts',

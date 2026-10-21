@@ -131,6 +131,7 @@ export const ruVaultMessages: Messages = {
   'vault.hosts.moveSelected': 'Переместить в группу ({count})',
   'vault.hosts.moveSelected.description': 'Переместить выбранные хосты в существующую группу или оставить без группы. Выбранные группы не перемещаются.',
   'vault.hosts.moveMultiple.success': 'Перемещено {count} хостов в {group}',
+  'vault.hosts.dragSelectionCount': '{count} хостов',
   'vault.hosts.moveToGroup.success': 'Хост {host} перемещён в {group}',
   'vault.hosts.empty.title': 'Настройте свои хосты',
   'vault.hosts.empty.desc': 'Сохраняйте хосты, чтобы быстро подключаться к серверам, виртуальным машинам и контейнерам.',

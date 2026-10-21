@@ -17,6 +17,7 @@ import {
 } from '../domain/hostClickBehavior';
 import { sortByVaultOrder } from '../domain/vaultOrder';
 import { getVaultHostRowSubtitle } from '../domain/localShellHost';
+import { isVaultHostDraggable } from '../domain/vaultHostDrag';
 import { STORAGE_KEY_VAULT_HOSTS_TREE_EXPANDED } from '../infrastructure/config/storageKeys';
 import { GroupConfig, GroupNode, Host } from '../types';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from './ui/collapsible';
@@ -25,6 +26,8 @@ import { ContextMenu, ContextMenuTrigger } from './ui/context-menu';
 import { DistroAvatar } from './DistroAvatar';
 import { HostNotesIndicator } from './host/HostNotesIndicator';
 import { Button } from './ui/button';
+import { handleVaultHostDropToGroup } from './vault/vaultReorderDrag';
+import { beginVaultHostCardDrag } from './vault/vaultHostDragImage';
 import { VaultTreeGroupRow, VaultTreeItemRow } from './vault/VaultTreeRow';
 
 const getTreeGroupDropIntent = (
@@ -293,6 +296,7 @@ interface HostTreeViewProps {
   onEditGroup: (groupPath: string) => void;
   onDeleteGroup: (groupPath: string) => void;
   moveHostToGroup: (hostId: string, groupPath: string | null) => void;
+  moveHostsToGroup?: (hostIds: ReadonlySet<string>, groupPath: string | null) => void;
   moveGroup: (sourcePath: string, targetParent: string | null) => void;
   commitInlineGroupRename?: (name: string) => boolean | void | Promise<boolean | void>;
   cancelInlineGroupEdit?: () => void;
@@ -334,6 +338,7 @@ interface TreeNodeProps {
   onEditGroup: (groupPath: string) => void;
   onDeleteGroup: (groupPath: string) => void;
   moveHostToGroup: (hostId: string, groupPath: string | null) => void;
+  moveHostsToGroup?: (hostIds: ReadonlySet<string>, groupPath: string | null) => void;
   moveGroup: (sourcePath: string, targetParent: string | null) => void;
   commitInlineGroupRename?: (name: string) => boolean | void | Promise<boolean | void>;
   cancelInlineGroupEdit?: () => void;
@@ -381,6 +386,7 @@ const TreeNode: React.FC<TreeNodeProps> = ({
   onEditGroup,
   onDeleteGroup,
   moveHostToGroup,
+  moveHostsToGroup,
   moveGroup,
   managedGroupPaths,
   onUnmanageGroup,
@@ -526,9 +532,14 @@ const TreeNode: React.FC<TreeNodeProps> = ({
                   e.preventDefault();
                   e.stopPropagation();
                   setDragOverDropTarget?.(null);
-                  const hostId = e.dataTransfer.getData("host-id");
+                  if (handleVaultHostDropToGroup({
+                    dataTransfer: e.dataTransfer,
+                    groupPath: node.path,
+                    moveHostToGroup,
+                    moveHostsToGroup,
+                    resetHostDragState: () => {},
+                  })) return;
                   const groupPath = e.dataTransfer.getData("group-path");
-                  if (hostId) moveHostToGroup(hostId, node.path);
                   if (groupPath && getTreeGroupDropIntent(e.currentTarget, e.clientY) === "inside") {
                     moveGroup(groupPath, node.path);
                   }
@@ -598,6 +609,7 @@ const TreeNode: React.FC<TreeNodeProps> = ({
               onEditGroup={onEditGroup}
               onDeleteGroup={onDeleteGroup}
               moveHostToGroup={moveHostToGroup}
+              moveHostsToGroup={moveHostsToGroup}
               moveGroup={moveGroup}
               managedGroupPaths={managedGroupPaths}
               onUnmanageGroup={onUnmanageGroup}
@@ -774,11 +786,16 @@ const HostTreeItem: React.FC<HostTreeItemProps> = ({
             ? 0
             : -1}
           onFocus={() => onActiveTreeItemChange(`host:${host.id}`)}
-          draggable={!isMultiSelectMode}
+          draggable={isVaultHostDraggable(Boolean(isMultiSelectMode), selectedHostIds, host.id)}
           onDragStart={(e) => {
-            // copyMove: vault reorder uses move; focus-sidebar append uses copy.
-            e.dataTransfer.effectAllowed = "copyMove";
-            e.dataTransfer.setData("host-id", host.id);
+            const ids = beginVaultHostCardDrag({
+              dataTransfer: e.dataTransfer,
+              hostId: host.id,
+              isMultiSelectMode: Boolean(isMultiSelectMode),
+              selectedHostIds,
+              countLabel: (count) => t("vault.hosts.dragSelectionCount", { count }),
+            });
+            if (!ids) e.preventDefault();
           }}
           onClick={() => {
             const action = resolveHostActivateAction({
@@ -909,6 +926,7 @@ const HostTreeViewInner: React.FC<HostTreeViewProps> = ({
   onEditGroup,
   onDeleteGroup,
   moveHostToGroup,
+  moveHostsToGroup,
   moveGroup,
   managedGroupPaths,
   onUnmanageGroup,
@@ -1219,6 +1237,7 @@ const HostTreeViewInner: React.FC<HostTreeViewProps> = ({
                 onEditGroup={onEditGroup}
                 onDeleteGroup={onDeleteGroup}
                 moveHostToGroup={moveHostToGroup}
+                moveHostsToGroup={moveHostsToGroup}
                 moveGroup={moveGroup}
                 managedGroupPaths={managedGroupPaths}
                 onUnmanageGroup={onUnmanageGroup}
@@ -1311,6 +1330,7 @@ function hostTreeViewAreEqual(prev: HostTreeViewProps, next: HostTreeViewProps):
     && prev.onEditGroup === next.onEditGroup
     && prev.onDeleteGroup === next.onDeleteGroup
     && prev.moveHostToGroup === next.moveHostToGroup
+    && prev.moveHostsToGroup === next.moveHostsToGroup
     && prev.moveGroup === next.moveGroup
     && prev.commitInlineGroupRename === next.commitInlineGroupRename
     && prev.cancelInlineGroupEdit === next.cancelInlineGroupEdit

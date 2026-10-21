@@ -1,5 +1,10 @@
 import React from "react";
 
+import {
+  dispatchVaultHostGroupMove,
+  readVaultDraggedHostIds,
+} from "../../domain/vaultHostDrag";
+
 export type VaultDropPosition = "before" | "after";
 export type VaultDropIntent = VaultDropPosition | "inside";
 export type VaultDropAxis = "x" | "y";
@@ -47,6 +52,7 @@ export const handleVaultRootDrop = ({
   setDragOverDropTarget,
   moveGroup,
   moveHostToGroup,
+  moveHostsToGroup,
   resetHostDragState,
 }: {
   dataTransfer: Pick<DataTransfer, "getData">;
@@ -54,15 +60,20 @@ export const handleVaultRootDrop = ({
   setDragOverDropTarget: (target: null) => void;
   moveGroup: (groupPath: string, targetParentPath: string | null) => void;
   moveHostToGroup: (hostId: string, targetPath: string | null) => void;
+  moveHostsToGroup?: (hostIds: ReadonlySet<string>, targetPath: string | null) => void;
   resetHostDragState: () => void;
 }) => {
   preventDefault();
   setDragOverDropTarget(null);
   const groupPath = dataTransfer.getData("group-path");
-  const hostId = dataTransfer.getData("host-id");
+  const hostIds = readVaultDraggedHostIds((type) => dataTransfer.getData(type));
   if (groupPath) moveGroup(groupPath, null);
-  if (hostId) {
-    moveHostToGroup(hostId, null);
+  if (dispatchVaultHostGroupMove({
+    hostIds,
+    groupPath: null,
+    moveHostToGroup,
+    moveHostsToGroup,
+  })) {
     resetHostDragState();
   }
 };
@@ -71,17 +82,23 @@ export const handleVaultHostDropToGroup = ({
   dataTransfer,
   groupPath,
   moveHostToGroup,
+  moveHostsToGroup,
   resetHostDragState,
 }: {
   dataTransfer: Pick<DataTransfer, "getData">;
   groupPath: string | null;
-  moveHostToGroup: (hostId: string, targetPath: string | null) => void;
+  moveHostToGroup?: (hostId: string, targetPath: string | null) => void;
+  moveHostsToGroup?: (hostIds: ReadonlySet<string>, targetPath: string | null) => void;
   resetHostDragState: () => void;
 }) => {
-  const hostId = dataTransfer.getData("host-id");
-  if (!hostId) return false;
+  const moved = dispatchVaultHostGroupMove({
+    hostIds: readVaultDraggedHostIds((type) => dataTransfer.getData(type)),
+    groupPath,
+    moveHostToGroup,
+    moveHostsToGroup,
+  });
+  if (!moved) return false;
 
-  moveHostToGroup(hostId, groupPath);
   resetHostDragState();
   return true;
 };

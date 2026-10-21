@@ -115,6 +115,58 @@ test("group host drop resets host drag state after moving the host to the group"
   ]);
 });
 
+test("group drop of a multi-id payload batches every selected host once", () => {
+  const singleCalls: string[] = [];
+  const batchCalls: Array<{ ids: string[]; group: string | null }> = [];
+
+  const handled = handleVaultHostDropToGroup({
+    dataTransfer: {
+      getData: (type: string) => (
+        type === "host-ids" ? JSON.stringify(["a", "b", "c"]) : type === "host-id" ? "a" : ""
+      ),
+    },
+    groupPath: "team/nested",
+    moveHostToGroup: (hostId, targetPath) => {
+      singleCalls.push(`${hostId}:${String(targetPath)}`);
+    },
+    moveHostsToGroup: (hostIds, targetPath) => {
+      batchCalls.push({ ids: [...hostIds], group: targetPath });
+    },
+    resetHostDragState: () => {
+      singleCalls.push("reset");
+    },
+  });
+
+  assert.equal(handled, true);
+  assert.deepEqual(singleCalls, ["reset"]);
+  assert.deepEqual(batchCalls, [{ ids: ["a", "b", "c"], group: "team/nested" }]);
+});
+
+test("root drop of a multi-id payload batches every selected host into all hosts", () => {
+  const calls: string[] = [];
+
+  handleVaultRootDrop({
+    dataTransfer: {
+      getData: (type: string) => (type === "host-ids" ? JSON.stringify(["a", "b"]) : ""),
+    },
+    preventDefault: () => calls.push("preventDefault"),
+    setDragOverDropTarget: () => calls.push("drop:null"),
+    moveGroup: () => calls.push("group"),
+    moveHostToGroup: () => calls.push("single"),
+    moveHostsToGroup: (hostIds, targetPath) => {
+      calls.push(`batch:${[...hostIds].join(",")}:${String(targetPath)}`);
+    },
+    resetHostDragState: () => calls.push("resetHostDragState"),
+  });
+
+  assert.deepEqual(calls, [
+    "preventDefault",
+    "drop:null",
+    "batch:a,b:null",
+    "resetHostDragState",
+  ]);
+});
+
 test("group drop without a host leaves host drag state alone", () => {
   const calls: string[] = [];
 

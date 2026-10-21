@@ -3,6 +3,7 @@ import test from 'node:test';
 import React from 'react';
 import { act, create, type ReactTestRenderer } from 'react-test-renderer';
 import type { Host, ManagedSource } from '../../types';
+import { handleVaultHostDropToGroup } from './vaultReorderDrag';
 import { useVaultGroupDragHandlers } from './useVaultGroupDragHandlers';
 
 const host = (id: string, extra: Partial<Host> = {}): Host => ({
@@ -41,6 +42,37 @@ test('mixed protocols entering and leaving managed groups retain single-host mov
     act(() => actions.moveHostsToGroup(new Set(original.map(h => h.id)), null));
     assert.deepEqual(writes[1].map(h => h.group), ['', '', '']);
     assert.ok(writes[1].every(h => h.managedSourceId === undefined));
+  }, writes);
+});
+
+test('a multi-id group drop publishes the whole selection through the batched move', async () => {
+  const original = [host('ssh'), host('telnet', { protocol: 'telnet' }), host('local', { protocol: 'local' })];
+  const sources = [{ id: 'parent', groupName: 'Managed' }, { id: 'child', groupName: 'Managed/Nested' }] as ManagedSource[];
+  const writes: Host[][] = [];
+  await withActions(original, sources, actions => {
+    let handled = false;
+    act(() => {
+      handled = handleVaultHostDropToGroup({
+        dataTransfer: {
+          getData: (type: string) => type === 'host-ids' ? JSON.stringify(['ssh', 'telnet', 'local']) : '',
+        },
+        groupPath: 'Managed/Nested',
+        moveHostToGroup: () => {
+          throw new Error('multi-id drop must not move hosts one at a time');
+        },
+        moveHostsToGroup: actions.moveHostsToGroup,
+        resetHostDragState: () => {},
+      });
+    });
+    assert.equal(handled, true);
+    assert.equal(writes.length, 1);
+    assert.deepEqual(writes[0].map(item => item.group), ['Managed/Nested', 'Managed/Nested', 'Managed/Nested']);
+    assert.equal(writes[0][0].managedSourceId, 'child');
+    assert.equal(writes[0][0].label, 'Hostssh');
+    assert.equal(writes[0][1].managedSourceId, undefined);
+    assert.equal(writes[0][1].label, 'Host telnet');
+    assert.equal(writes[0][2].managedSourceId, undefined);
+    assert.equal(writes[0][2].label, 'Host local');
   }, writes);
 });
 

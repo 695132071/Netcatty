@@ -47,6 +47,15 @@ test("plugin importer merge and commit workflow is owned by application state", 
   assert.match(pluginImporterCommitHookSource, /buildPluginImporterSafePreview/);
 });
 
+test("host list section receives marquee selection and batched group move", () => {
+  const sectionStart = vaultViewLayoutSource.indexOf("<VaultHostListSection");
+  const sectionEnd = vaultViewLayoutSource.indexOf("/>", sectionStart);
+  const section = vaultViewLayoutSource.slice(sectionStart, sectionEnd);
+  assert.match(section, /\bmoveHostsToGroup,/);
+  assert.match(section, /\bsetIsMultiSelectMode,/);
+  assert.match(section, /\bsetSelectedHostIds,/);
+});
+
 test("Vault import entry is disabled while an import is running", () => {
   assert.match(vaultViewLayoutSource, /disabled=\{importProgress\?\.status === "running"\}/);
   assert.match(vaultViewLayoutSource, /if \(importProgress\?\.status === "running"\) return;/);
