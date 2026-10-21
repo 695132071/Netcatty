@@ -1,4 +1,5 @@
 import type {
+  VaultImportExistingHostRef,
   VaultImportFormat,
   VaultImportResult,
 } from "../../domain/vaultImport";
@@ -22,6 +23,7 @@ export type VaultImportWorkerRequest = {
   relativePaths: string[];
   encoding: VaultImportFileEncoding | undefined;
   masterPassword?: string;
+  existingHosts?: VaultImportExistingHostRef[];
 };
 
 export type VaultImportWorkerResponse =
@@ -44,6 +46,7 @@ interface ImportVaultHostsInWorkerOptions {
   files: File[];
   encoding?: VaultImportFileEncoding;
   masterPassword?: string;
+  existingHosts?: readonly VaultImportExistingHostRef[];
   signal?: AbortSignal;
   createWorker?: () => VaultImportWorkerLike;
   onProgress?: (progress: VaultImportWorkerProgress) => void;
@@ -60,6 +63,7 @@ export function importVaultHostsInWorker({
   files,
   encoding,
   masterPassword,
+  existingHosts,
   signal,
   createWorker = createVaultImportWorker,
   onProgress,
@@ -114,6 +118,7 @@ export function importVaultHostsInWorker({
       relativePaths: files.map((file) => file.webkitRelativePath),
       encoding,
       ...(masterPassword ? { masterPassword } : {}),
+      ...(existingHosts && existingHosts.length > 0 ? { existingHosts: [...existingHosts] } : {}),
     });
   });
 }

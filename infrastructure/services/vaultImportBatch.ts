@@ -3,6 +3,7 @@ import {
   buildVaultHostMergeKey,
   importVaultHostsFromText,
   mergeVaultImportIssues,
+  type VaultImportExistingHostRef,
   type VaultImportFormat,
   type VaultImportIssue,
   type VaultImportResult,
@@ -24,6 +25,7 @@ interface ImportVaultHostFilesOptions {
   relativePaths?: string[];
   encoding?: VaultImportFileEncoding;
   masterPassword?: string;
+  existingHosts?: readonly VaultImportExistingHostRef[];
   onProgress?: (progress: VaultImportBatchProgress) => void;
 }
 
@@ -78,6 +80,7 @@ export async function importVaultHostFiles({
   relativePaths,
   encoding,
   masterPassword,
+  existingHosts,
   onProgress,
 }: ImportVaultHostFilesOptions): Promise<VaultImportResult> {
   const sourceFiles = files.map((file, index) => ({
@@ -104,6 +107,7 @@ export async function importVaultHostFiles({
       const result = importVaultHostsFromText(format, text, {
         fileName: file.name,
         masterPassword,
+        existingHosts,
       });
       const group = format === "securecrt"
         ? secureCrtGroupFromFile(file, relativePath)

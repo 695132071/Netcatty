@@ -2,6 +2,7 @@ const FORMULA_PREFIX = /^[=+\-@\t\r]/u;
 const KEY_PATH_MARKER = "__netcatty_csv_keypath_v1__:";
 const PASSPHRASE_MARKER = "__netcatty_csv_passphrase_v1__:";
 const PROXY_MARKER = "__netcatty_csv_proxy_v1__:";
+const PROXY_JUMP_MARKER = "__netcatty_csv_proxyjump_v1__:";
 const LOCAL_SHELL_MARKER = "__netcatty_csv_localshell_v1__:";
 
 const encodeMarkedField = (value: string, marker: string): string => (
@@ -41,6 +42,14 @@ export const encodeCsvProxy = (value: string): string => (
 
 export const decodeCsvProxy = (value: string): string => (
   decodeMarkedField(value, PROXY_MARKER)
+);
+
+export const encodeCsvProxyJump = (value: string): string => (
+  encodeMarkedField(value, PROXY_JUMP_MARKER)
+);
+
+export const decodeCsvProxyJump = (value: string): string => (
+  decodeMarkedField(value, PROXY_JUMP_MARKER)
 );
 
 export interface CsvLocalShellSpec {

@@ -2,7 +2,8 @@ import type { GroupConfig, Host, Identity, ProxyProfile } from '../models';
 import { applyGroupDefaults, resolveGroupDefaults } from '../groupConfig';
 import { isPluginHostProtocol } from '../pluginConnection';
 import { hasUnreadableProxyCredential, materializeHostProxyProfile, resolveProxyConfigAuth } from '../proxyProfiles';
-import { CsvLocalShellSpec, encodeCsvKeyPath, encodeCsvLocalShell, encodeCsvPassphrase, encodeCsvProxy } from './csvCredentialFields';
+import { canServeAsSshJumpHost } from '../terminalProtocol';
+import { CsvLocalShellSpec, encodeCsvKeyPath, encodeCsvLocalShell, encodeCsvPassphrase, encodeCsvProxy, encodeCsvProxyJump } from './csvCredentialFields';
 import { CSV_DIRECT_PROXY_VALUE, formatCsvProxy } from './csvProxy';
 
 const UTF8_BOM = "\uFEFF";
@@ -36,7 +37,7 @@ export const getVaultCsvTemplate = (
   opts: VaultCsvTemplateOptions = {},
 ): string => {
   const includeExampleRows = opts.includeExampleRows !== false;
-  const header = ["Groups", "Label", "Tags", "Notes", "Hostname/IP", "Protocol", "Port", "Username", "Password", "KeyPath", "Passphrase", "Proxy", "LocalShell"];
+  const header = ["Groups", "Label", "Tags", "Notes", "Hostname/IP", "Protocol", "Port", "Username", "Password", "KeyPath", "Passphrase", "Proxy", "ProxyJump", "LocalShell"];
   const rows: string[][] = [header];
   if (includeExampleRows) {
     rows.push(["Project/Dev", "Web Server (dev)", "dev,web", "Dev web tier", "192.168.1.10", "ssh", "22", "root", "", "~/.ssh/id_ed25519", "", "socks5://127.0.0.1:1080"]);
@@ -77,8 +78,44 @@ const getLocalShellSpec = (host: Host): CsvLocalShellSpec | null => (
     : null
 );
 
+const UNSAFE_PROXY_JUMP_USERNAME = /[\s,#@]/;
+const UNSAFE_PROXY_JUMP_HOSTNAME = /[\s,#@]/;
+const DEFAULT_PROXY_JUMP_PORT = 22;
+
+// OpenSSH ProxyJump: [user@]host[:port], repeated. Port 22 is omitted.
+// IPv6 is bracketed so the port separator stays unambiguous.
+const formatCsvProxyJumpHop = (host: Host): string | null => {
+  if (!canServeAsSshJumpHost(host)) return null;
+  const username = host.username?.trim() ?? "";
+  const hostname = host.hostname.trim().replace(/^\[(.*)\]$/u, "$1");
+  if (!hostname) return null;
+  if (username && UNSAFE_PROXY_JUMP_USERNAME.test(username)) return null;
+  if (UNSAFE_PROXY_JUMP_HOSTNAME.test(hostname)) return null;
+  const port = host.port ?? DEFAULT_PROXY_JUMP_PORT;
+  if (!Number.isInteger(port) || port < 1 || port > 65535) return null;
+  const hostPart = hostname.includes(":") ? `[${hostname}]` : hostname;
+  const withUser = username ? `${username}@${hostPart}` : hostPart;
+  return port === DEFAULT_PROXY_JUMP_PORT ? withUser : `${withUser}:${port}`;
+};
+
+// An empty cell means "no chain". A chain is omitted entirely when any hop
+// cannot be represented, so a shortened list is not written back as the truth.
+const formatCsvProxyJump = (host: Host, allHosts: readonly Host[]): string => {
+  const ids = host.hostChain?.hostIds ?? [];
+  if (ids.length === 0) return "";
+  const byId = new Map(allHosts.map((item) => [item.id, item]));
+  const parts: string[] = [];
+  for (const id of ids) {
+    const hop = byId.get(id);
+    const formatted = hop ? formatCsvProxyJumpHop(hop) : null;
+    if (!formatted) return "";
+    parts.push(formatted);
+  }
+  return parts.join(",");
+};
+
 const exportHostsToCsv = (hosts: Host[], options: VaultCsvExportOptions) => {
-  const header = ["Groups", "Label", "Tags", "Notes", "Hostname/IP", "Protocol", "Port", "Username", "Password", "KeyPath", "Passphrase", "Proxy", "LocalShell"];
+  const header = ["Groups", "Label", "Tags", "Notes", "Hostname/IP", "Protocol", "Port", "Username", "Password", "KeyPath", "Passphrase", "Proxy", "ProxyJump", "LocalShell"];
   const rows: string[][] = [header];
   let unreadableProxyCredentialCount = 0;
 
@@ -161,6 +198,9 @@ const exportHostsToCsv = (hosts: Host[], options: VaultCsvExportOptions) => {
       }
     }
     const localShellSpec = getLocalShellSpec(host);
+    // Group defaults are already on effectiveHost, same as Proxy, so a chain
+    // inherited from the group survives a file that has no group-config section.
+    const proxyJumpValue = formatCsvProxyJump(effectiveHost, exportableHosts);
 
     rows.push([
       host.group ?? "",
@@ -175,6 +215,7 @@ const exportHostsToCsv = (hosts: Host[], options: VaultCsvExportOptions) => {
       encodeCsvKeyPath(keyPath),
       encodeCsvPassphrase(passphrase),
       encodeCsvProxy(proxyValue),
+      encodeCsvProxyJump(proxyJumpValue),
       localShellSpec ? encodeCsvLocalShell(localShellSpec) : "",
     ]);
   }
@@ -183,9 +224,10 @@ const exportHostsToCsv = (hosts: Host[], options: VaultCsvExportOptions) => {
   const keyPathColIdx = header.indexOf("KeyPath");
   const passphraseColIdx = header.indexOf("Passphrase");
   const proxyColIdx = header.indexOf("Proxy");
+  const proxyJumpColIdx = header.indexOf("ProxyJump");
   const csv = rows.map((r, rowIdx) => r.map((c, i) => escapeCsv(
     c,
-    rowIdx > 0 && (i === passwordColIdx || i === keyPathColIdx || i === passphraseColIdx || i === proxyColIdx),
+    rowIdx > 0 && (i === passwordColIdx || i === keyPathColIdx || i === passphraseColIdx || i === proxyColIdx || i === proxyJumpColIdx),
   )).join(",")).join("\r\n") + "\r\n";
   return { csv, unreadableProxyCredentialCount };
 };

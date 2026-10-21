@@ -14,8 +14,9 @@ export {
   buildVaultHostMergeKey,
 } from "./vaultHostCreate";
 import { parseQuickConnectInput } from "./quickConnect";
+import { canServeAsSshJumpHost } from "./terminalProtocol";
 import { findExactHeaderIndex, findHeaderIndex, parseCsv } from "./vaultImport/csvUtils";
-import { decodeCsvKeyPath, decodeCsvLocalShell, decodeCsvPassphrase } from "./vaultImport/csvCredentialFields";
+import { decodeCsvKeyPath, decodeCsvLocalShell, decodeCsvPassphrase, decodeCsvProxyJump } from "./vaultImport/csvCredentialFields";
 import { isCsvDirectProxyValue, parseCsvProxy } from "./vaultImport/csvProxy";
 import { attachMobaXtermPasswords } from "./vaultImport/mobaXtermPasswords";
 import { decodeFinalShellPassword } from "./finalShellPassword";
@@ -99,6 +100,29 @@ const parseProxyJump = (value: string): ParsedJumpHost[] => {
     .map(parseJumpHostSpec)
     .filter((h): h is ParsedJumpHost => h !== null);
 };
+
+/** Vault host fields needed to bind a CSV ProxyJump hop without copying secrets. */
+export interface VaultImportExistingHostRef {
+  id: string;
+  label: string;
+  hostname: string;
+  port?: number;
+  username?: string;
+  protocol?: Host["protocol"];
+  group?: string;
+}
+
+export const toVaultImportExistingHostRef = (
+  host: Pick<Host, "id" | "label" | "hostname" | "port" | "username" | "protocol" | "group">,
+): VaultImportExistingHostRef => ({
+  id: host.id,
+  label: host.label,
+  hostname: host.hostname,
+  port: host.port,
+  username: host.username,
+  protocol: host.protocol,
+  group: host.group,
+});
 
 export type VaultImportFormat =
   | "putty"
@@ -254,9 +278,32 @@ export function applyVaultImportDestination(
     return remapped;
   };
 
+  // Collapsing two group copies must not leave a chain pointed at the dropped id.
+  // Ids that are not part of this import (an existing vault hop) stay as they are.
+  const remappedHosts = hosts.map((host) => {
+    const currentIds = host.hostChain?.hostIds;
+    if (!currentIds?.length) return host;
+    const hostIds: string[] = [];
+    for (const hostId of currentIds) {
+      const mapped = remapHostId(hostId);
+      const nextId = mapped ?? (originalById.has(hostId) ? undefined : hostId);
+      if (!nextId || nextId === host.id || hostIds.includes(nextId)) continue;
+      hostIds.push(nextId);
+    }
+    if (hostIds.length === currentIds.length && hostIds.every((id, index) => id === currentIds[index])) {
+      return host;
+    }
+    if (hostIds.length === 0) {
+      const next = { ...host };
+      delete next.hostChain;
+      return next;
+    }
+    return { ...host, hostChain: { hostIds } };
+  });
+
   return {
     ...result,
-    hosts,
+    hosts: remappedHosts,
     groups: [group],
     keyPassphrases: remapKeyPassphrases(result.keyPassphrases, { matchSelectedKey: true }),
     // Keep remapped candidates for alias conflict checks (same as CSV same-group
@@ -421,8 +468,176 @@ const parseTarget = (
   return null;
 };
 
+const CSV_JUMP_PORT = 22;
 
-const importFromCsv = (text: string): VaultImportResult => {
+const csvJumpPort = (port: number | undefined): number => (
+  port !== undefined && Number.isInteger(port) && port >= 1 && port <= 65535 ? port : CSV_JUMP_PORT
+);
+
+type CsvJumpCandidate = {
+  id: string;
+  label: string;
+  hostname: string;
+  port?: number;
+  username?: string;
+  protocol?: Host["protocol"];
+  group?: string;
+};
+
+const csvJumpEndpointMatches = (hop: ParsedJumpHost, candidate: CsvJumpCandidate): boolean => {
+  if (!canServeAsSshJumpHost(candidate)) return false;
+  if (candidate.hostname.trim().toLowerCase() !== hop.hostname.toLowerCase()) return false;
+  if (csvJumpPort(candidate.port) !== csvJumpPort(hop.port)) return false;
+  if (hop.username && (candidate.username ?? "").trim().toLowerCase() !== hop.username.toLowerCase()) return false;
+  return true;
+};
+
+const csvJumpLabelMatches = (hop: ParsedJumpHost, candidate: CsvJumpCandidate): boolean => {
+  if (!canServeAsSshJumpHost(candidate)) return false;
+  const label = candidate.label.trim().toLowerCase();
+  if (!label || label !== hop.hostname.toLowerCase()) return false;
+  if (csvJumpPort(candidate.port) !== csvJumpPort(hop.port)) return false;
+  if (hop.username && (candidate.username ?? "").trim().toLowerCase() !== hop.username.toLowerCase()) return false;
+  return true;
+};
+
+const pickCsvJumpCandidate = <T extends { group?: string }>(matches: readonly T[], group: string | undefined): T => (
+  matches.find((candidate) => (candidate.group ?? "") === (group ?? "")) ?? matches[0]
+);
+
+const attachCsvProxyJumpChains = (
+  hosts: Host[],
+  proxyJumpByHost: ReadonlyMap<Host, { value: string; row: number }>,
+  issues: VaultImportIssue[],
+  existingHosts: readonly VaultImportExistingHostRef[],
+): Host[] => {
+  const inlineHosts: Host[] = [];
+  const matchable: CsvJumpCandidate[] = [...hosts];
+
+  const resolveHop = (hop: ParsedJumpHost, group: string | undefined): string | null => {
+    const endpointMatches = [
+      ...matchable.filter((candidate) => csvJumpEndpointMatches(hop, candidate)),
+      ...existingHosts.filter((candidate) => csvJumpEndpointMatches(hop, candidate)),
+    ];
+    if (endpointMatches.length > 0) return pickCsvJumpCandidate(endpointMatches, group).id;
+    const labelMatches = [
+      ...matchable.filter((candidate) => csvJumpLabelMatches(hop, candidate)),
+      ...existingHosts.filter((candidate) => csvJumpLabelMatches(hop, candidate)),
+    ];
+    if (labelMatches.length > 0) return pickCsvJumpCandidate(labelMatches, group).id;
+
+    const inlineKey = `${hop.hostname.toLowerCase()}|${csvJumpPort(hop.port)}|${(hop.username ?? "").toLowerCase()}`;
+    const existingInline = inlineHosts.find((host) => (
+      `${host.hostname.toLowerCase()}|${csvJumpPort(host.port)}|${(host.username ?? "").toLowerCase()}` === inlineKey
+    ));
+    if (existingInline) return existingInline.id;
+    if (!looksLikeHostnameToken(hop.hostname)) return null;
+    try {
+      const inlineHost = createHost({
+        label: hop.hostname,
+        hostname: hop.hostname,
+        username: hop.username,
+        port: hop.port,
+        protocol: "ssh",
+      });
+      inlineHosts.push(inlineHost);
+      matchable.push(inlineHost);
+      return inlineHost.id;
+    } catch {
+      return null;
+    }
+  };
+
+  for (const host of hosts) {
+    const entry = proxyJumpByHost.get(host);
+    if (!entry) continue;
+    const specs = entry.value
+      .split(",")
+      .map((part) => part.trim())
+      .filter((part) => part && part.toLowerCase() !== "none");
+    if (specs.length === 0) continue;
+
+    const resolvedIds: string[] = [];
+    const unresolved: string[] = [];
+    const inlineCountBefore = inlineHosts.length;
+    let chainRejected = false;
+    for (const spec of specs) {
+      const jump = parseJumpHostSpec(spec);
+      if (!jump) {
+        issues.push({
+          level: "warning",
+          message: `CSV row ${entry.row}: ProxyJump hop "${spec}" was ignored because it is not a valid jump host.`,
+        });
+        chainRejected = true;
+        continue;
+      }
+      const inlineCount = inlineHosts.length;
+      const resolvedId = resolveHop(jump, host.group);
+      if (!resolvedId) {
+        issues.push({
+          level: "warning",
+          message: `CSV row ${entry.row}: ProxyJump hop "${spec}" was ignored because it is not a valid jump host.`,
+        });
+        chainRejected = true;
+        continue;
+      }
+      if (inlineHosts.length > inlineCount) unresolved.push(jump.hostname);
+      if (!resolvedIds.includes(resolvedId)) resolvedIds.push(resolvedId);
+    }
+
+    if (chainRejected || resolvedIds.includes(host.id)) {
+      if (inlineHosts.length > inlineCountBefore) {
+        const droppedIds = new Set(inlineHosts.splice(inlineCountBefore).map((item) => item.id));
+        for (let index = matchable.length - 1; index >= 0; index -= 1) {
+          if (droppedIds.has(matchable[index].id)) matchable.splice(index, 1);
+        }
+      }
+      if (resolvedIds.includes(host.id)) {
+        issues.push({
+          level: "warning",
+          message: `CSV: detected circular reference in ProxyJump for "${host.label}", skipping chain.`,
+        });
+      }
+      continue;
+    }
+    if (resolvedIds.length > 0) host.hostChain = { hostIds: resolvedIds };
+    if (unresolved.length > 0) {
+      issues.push({
+        level: "warning",
+        message: `CSV: created inline jump host(s) for "${host.label}": ${unresolved.join(", ")}`,
+      });
+    }
+  }
+
+  const allHosts = [...hosts, ...inlineHosts];
+  const participatesInCycle = (hostId: string, visited: Set<string>): boolean => {
+    if (visited.has(hostId)) return true;
+    visited.add(hostId);
+    const current = allHosts.find((item) => item.id === hostId);
+    for (const chainId of current?.hostChain?.hostIds ?? []) {
+      if (!allHosts.some((item) => item.id === chainId)) continue;
+      if (participatesInCycle(chainId, visited)) return true;
+    }
+    visited.delete(hostId);
+    return false;
+  };
+  const cyclicHosts = allHosts.filter((host) => (
+    Boolean(host.hostChain?.hostIds?.length) && participatesInCycle(host.id, new Set())
+  ));
+  for (const host of cyclicHosts) {
+    issues.push({
+      level: "warning",
+      message: `CSV: detected circular dependency in jump chain for "${host.label}", removing chain.`,
+    });
+    delete host.hostChain;
+  }
+  return allHosts;
+};
+
+const importFromCsv = (
+  text: string,
+  existingHosts: readonly VaultImportExistingHostRef[] = [],
+): VaultImportResult => {
   const issues: VaultImportIssue[] = [];
   const rows = parseCsv(text).filter((r) => r.some((c) => c.trim() !== ""));
   if (rows.length === 0) {
@@ -448,6 +663,7 @@ const importFromCsv = (text: string): VaultImportResult => {
   const keyPathIdx = findExactHeaderIndex(header, ["keypath", "key path", "identityfile", "identity file"]);
   const explicitPassphraseIdx = findExactHeaderIndex(header, ["passphrase", "keypassphrase", "key passphrase"]);
   const proxyIdx = findExactHeaderIndex(header, ["proxy", "proxyserver", "proxy server"]);
+  const proxyJumpIdx = findExactHeaderIndex(header, ["proxyjump"]);
   const localShellIdx = findExactHeaderIndex(header, ["localshell"]);
   const passphraseIdx = keyPathIdx >= 0 ? explicitPassphraseIdx : -1;
   const exactPasswordIdx = findExactHeaderIndex(header, ["password", "pass", "passwd"]);
@@ -482,6 +698,7 @@ const importFromCsv = (text: string): VaultImportResult => {
   }
 
   const parsedHosts: Host[] = [];
+  const proxyJumpByHost = new Map<Host, { value: string; row: number }>();
   const keyPassphraseCandidates: Array<{
     hostKey: string;
     keyPathKey: string;
@@ -549,6 +766,8 @@ const importFromCsv = (text: string): VaultImportResult => {
         message: `CSV row ${i + 2}: LocalShell was ignored because it is not a valid encoded local-shell value.`,
       });
     }
+    const proxyJumpRaw = (proxyJumpIdx >= 0 ? row[proxyJumpIdx] : undefined)?.trim();
+    const proxyJump = proxyJumpRaw ? decodeCsvProxyJump(proxyJumpRaw).trim() : "";
 
     if (decodedPassphrase && isEncryptedCredentialPlaceholder(decodedPassphrase)) {
       issues.push({
@@ -586,6 +805,9 @@ const importFromCsv = (text: string): VaultImportResult => {
       if (localShellSpec.startDir) host.localStartDir = localShellSpec.startDir;
       if (localShellSpec.os) host.os = localShellSpec.os;
     }
+    if (proxyJump && proxyJump.toLowerCase() !== "none") {
+      proxyJumpByHost.set(host, { value: proxyJump, row: i + 2 });
+    }
     parsedHosts.push(host);
     if (keyPath && passphrase) {
       const keyPathKey = normalizeKeyPathKey(keyPath);
@@ -612,7 +834,8 @@ const importFromCsv = (text: string): VaultImportResult => {
   // the shell identity is part of buildVaultHostMergeKey; otherwise importing a
   // backup with CMD and PowerShell in the same group silently keeps only the
   // first shell and flags the rest as duplicates.
-  const { hosts, duplicates } = dedupeHosts(parsedHosts);
+  const { hosts: dedupedHosts, duplicates } = dedupeHosts(parsedHosts);
+  const hosts = attachCsvProxyJumpChains(dedupedHosts, proxyJumpByHost, issues, existingHosts);
   const keyPassphrases = hosts.flatMap((host) => {
     const selectedKeyPath = host.identityFilePaths?.find((path) => path.trim())?.trim();
     if (!selectedKeyPath) return [];
@@ -1409,15 +1632,22 @@ const importFromMobaXterm = (
   };
 };
 
+export interface VaultImportTextOptions {
+  fileName?: string;
+  masterPassword?: string;
+  /** Hosts already in the vault. CSV ProxyJump hops bind to these by endpoint. */
+  existingHosts?: readonly VaultImportExistingHostRef[];
+}
+
 export const importVaultHostsFromText = (
   format: VaultImportFormat,
   text: string,
-  options?: { fileName?: string; masterPassword?: string },
+  options?: VaultImportTextOptions,
 ): VaultImportResult => {
   const input = text ?? "";
   switch (format) {
     case "csv":
-      return importFromCsv(input);
+      return importFromCsv(input, options?.existingHosts);
     case "putty":
       return importFromPuttyReg(input);
     case "ssh_config":
@@ -1508,15 +1738,40 @@ export function applyVaultHostImport(
   addedHosts: Host[];
 } {
   const skipDuplicates = options?.skipDuplicates !== false;
-  const existingKeys = new Set(existingHosts.map(buildVaultHostMergeKey));
+  const existingByKey = new Map(existingHosts.map((host) => [buildVaultHostMergeKey(host), host]));
+  const droppedIdToExistingId = new Map<string, string>();
   let newHosts = importResult.hosts;
   let skippedExistingCount = 0;
 
   if (skipDuplicates) {
     newHosts = importResult.hosts.filter((host) => {
-      const duplicate = existingKeys.has(buildVaultHostMergeKey(host));
-      if (duplicate) skippedExistingCount++;
-      return !duplicate;
+      const existing = existingByKey.get(buildVaultHostMergeKey(host));
+      if (!existing) return true;
+      skippedExistingCount++;
+      if (existing.id !== host.id) droppedIdToExistingId.set(host.id, existing.id);
+      return false;
+    });
+  }
+
+  if (droppedIdToExistingId.size > 0) {
+    newHosts = newHosts.map((host) => {
+      const currentIds = host.hostChain?.hostIds;
+      if (!currentIds?.length) return host;
+      const hostIds: string[] = [];
+      for (const hostId of currentIds) {
+        const mapped = droppedIdToExistingId.get(hostId) ?? hostId;
+        if (mapped === host.id || hostIds.includes(mapped)) continue;
+        hostIds.push(mapped);
+      }
+      if (hostIds.length === currentIds.length && hostIds.every((id, index) => id === currentIds[index])) {
+        return host;
+      }
+      if (hostIds.length === 0) {
+        const next = { ...host };
+        delete next.hostChain;
+        return next;
+      }
+      return { ...host, hostChain: { hostIds } };
     });
   }
 

@@ -33,6 +33,7 @@ import {
   filterVaultImportKeyPassphrasesAgainstExisting,
   mergeVaultImportIssues,
   resolveVaultImportKeyPassphraseConflicts,
+  toVaultImportExistingHostRef,
   type VaultImportFormat,
 } from "../../domain/vaultImport";
 import type { GroupConfig, Host, ManagedSource, SSHKey } from "../../types";
@@ -175,6 +176,7 @@ export function useVaultImportHandlers({
             files,
             encoding: options?.encoding,
             masterPassword: options?.masterPassword,
+            existingHosts: hostsRef.current.map(toVaultImportExistingHostRef),
             signal,
             onProgress: (progress) => {
               if (!signal.aborted) updateProgress(progress);

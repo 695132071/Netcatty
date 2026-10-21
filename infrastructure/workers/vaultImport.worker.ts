@@ -23,6 +23,7 @@ workerScope.addEventListener("message", async (event: MessageEvent<VaultImportWo
       relativePaths: event.data.relativePaths,
       encoding: event.data.encoding,
       masterPassword: event.data.masterPassword,
+      existingHosts: event.data.existingHosts,
       onProgress: ({ completedFiles, totalFiles, fileName }) => {
         post({
           type: "progress",

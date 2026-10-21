@@ -51,6 +51,7 @@ import {
   importVaultHostsFromText,
   mergeVaultImportIssues,
   resolveVaultImportKeyPassphraseConflicts,
+  toVaultImportExistingHostRef,
   VAULT_IMPORT_FORMATS,
   type VaultImportFormat,
 } from '../../domain/vaultImport';
@@ -946,7 +947,10 @@ export async function handleVaultAgentOp(
         ? params.fileName.trim()
         : undefined;
 
-      const importResult = importVaultHostsFromText(resolvedFormat, text, { fileName });
+      const importResult = importVaultHostsFromText(resolvedFormat, text, {
+        fileName,
+        existingHosts: deps.getHosts().map(toVaultImportExistingHostRef),
+      });
       const previewHosts = importResult.hosts.map((host) => sanitizeHostForAgent(host));
       const merged = applyVaultHostImport(
         deps.getHosts(),

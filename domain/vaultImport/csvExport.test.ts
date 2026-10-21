@@ -3,8 +3,9 @@ import test from "node:test";
 
 import { publishActiveGlobalDefaultProxyProfileId } from "../globalDefaultProxy.ts";
 import { applyGroupDefaults } from "../groupConfig.ts";
-import { importVaultHostsFromText } from "../vaultImport.ts";
+import { applyVaultHostImport, applyVaultImportDestination, importVaultHostsFromText } from "../vaultImport.ts";
 import { exportHostsToCsvWithStats, getVaultCsvTemplate } from "./csvExport.ts";
+import { parseCsv } from "./csvUtils.ts";
 import type { Host } from "../models.ts";
 
 const hostDefaults = { username: "root", tags: [], os: "linux" as const };
@@ -604,6 +605,230 @@ test("CSV round-trips local-shell vault host settings", () => {
   assert.equal(roundTrippedDefault.os, "windows");
   assert.equal(roundTrippedDefault.localShell, undefined);
   assert.equal(roundTrippedDefault.localStartDir, undefined);
+});
+
+const proxyJumpCell = (csv: string, hostname: string): string => {
+  const rows = parseCsv(csv.replace(/^\uFEFF/, "")).filter((row) => row.some((cell) => cell.trim() !== ""));
+  const header = rows[0] ?? [];
+  const jumpIndex = header.indexOf("ProxyJump");
+  const hostIndex = header.findIndex((cell) => cell.toLowerCase().includes("hostname"));
+  const row = rows.slice(1).find((cells) => cells[hostIndex] === hostname);
+  return jumpIndex >= 0 ? (row?.[jumpIndex] ?? "") : "";
+};
+
+const chainHost = (id: string, label: string, hostname: string, username: string, port = 22): Host => ({
+  ...hostDefaults,
+  id,
+  label,
+  hostname,
+  username,
+  port,
+});
+
+test("CSV export writes one-hop and two-hop ProxyJump chains", () => {
+  const bastion = chainHost("jump-1", "Bastion", "bastion.example.com", "alice");
+  const second = chainHost("jump-2", "Second hop", "jump.example.com", "bob", 2222);
+  const v6 = chainHost("jump-v6", "IPv6 hop", "2001:db8::1", "carol", 2222);
+  const oneHop = chainHost("app-1", "One hop", "one.example.com", "root");
+  oneHop.hostChain = { hostIds: [bastion.id] };
+  const twoHop = chainHost("app-2", "Two hop", "two.example.com", "root");
+  twoHop.hostChain = { hostIds: [bastion.id, second.id] };
+  const viaV6 = chainHost("app-v6", "Via IPv6", "v6.example.com", "root");
+  viaV6.hostChain = { hostIds: [v6.id] };
+  const direct = chainHost("app-3", "Direct", "direct.example.com", "root");
+
+  const { csv } = exportHostsToCsvWithStats([bastion, second, v6, oneHop, twoHop, viaV6, direct]);
+
+  assert.equal(proxyJumpCell(csv, bastion.hostname), "");
+  assert.equal(proxyJumpCell(csv, oneHop.hostname), "alice@bastion.example.com");
+  assert.equal(proxyJumpCell(csv, twoHop.hostname), "alice@bastion.example.com,bob@jump.example.com:2222");
+  assert.equal(proxyJumpCell(csv, viaV6.hostname), "carol@[2001:db8::1]:2222");
+  assert.equal(proxyJumpCell(csv, direct.hostname), "");
+  assert.match(getVaultCsvTemplate().split(/\r?\n/, 1)[0] ?? "", /(^|,)ProxyJump(,|$)/);
+});
+
+test("CSV round-trips a jump host chain onto the imported hosts", () => {
+  const bastion = chainHost("jump-1", "Bastion", "bastion.example.com", "alice");
+  const second = chainHost("jump-2", "Second hop", "jump.example.com", "bob", 2222);
+  const target = chainHost("app", "App", "app.example.com", "root");
+  target.group = "Prod";
+  target.hostChain = { hostIds: [bastion.id, second.id] };
+
+  const { csv } = exportHostsToCsvWithStats([bastion, second, target]);
+  const imported = importVaultHostsFromText("csv", csv);
+  const byHostname = new Map(imported.hosts.map((host) => [host.hostname, host]));
+  const importedTarget = byHostname.get(target.hostname);
+  const importedBastion = byHostname.get(bastion.hostname);
+  const importedSecond = byHostname.get(second.hostname);
+
+  assert.equal(imported.issues.length, 0);
+  assert.deepEqual(importedTarget?.hostChain?.hostIds, [importedBastion?.id, importedSecond?.id]);
+  assert.equal(importedBastion?.hostChain, undefined);
+  assert.equal(importedSecond?.port, 2222);
+  assert.equal(importedSecond?.username, "bob");
+});
+
+test("CSV import creates an inline jump host when the hop is not in the file", () => {
+  const imported = importVaultHostsFromText("csv", [
+    "Hostname,Username,ProxyJump",
+    "app.example.com,root,alice@bastion.example.com:2222",
+  ].join("\n"));
+  const target = imported.hosts.find((host) => host.hostname === "app.example.com");
+  const jump = imported.hosts.find((host) => host.hostname === "bastion.example.com");
+
+  assert.equal(imported.hosts.length, 2);
+  assert.equal(jump?.username, "alice");
+  assert.equal(jump?.port, 2222);
+  assert.equal(jump?.protocol, "ssh");
+  assert.deepEqual(target?.hostChain?.hostIds, jump ? [jump.id] : []);
+  assert.ok(imported.issues.some((issue) => issue.level === "warning" && /inline jump host/i.test(issue.message)));
+});
+
+test("CSV import binds a missing hop to an existing vault host by endpoint", () => {
+  const existing = chainHost("vault-jump", "Old bastion", "bastion.example.com", "alice", 2222);
+  const imported = importVaultHostsFromText("csv", [
+    "Hostname,Username,ProxyJump",
+    "app.example.com,root,alice@bastion.example.com:2222",
+  ].join("\n"), { existingHosts: [existing] });
+
+  assert.equal(imported.hosts.length, 1);
+  assert.equal(imported.hosts[0]?.hostname, "app.example.com");
+  assert.deepEqual(imported.hosts[0]?.hostChain, { hostIds: [existing.id] });
+  assert.deepEqual(imported.issues, []);
+
+  const moved = applyVaultImportDestination(imported, { mode: "group", group: "Moved" });
+  assert.deepEqual(moved.hosts[0]?.hostChain, { hostIds: [existing.id] });
+});
+
+test("CSV import keeps an old file without a ProxyJump column unchanged", () => {
+  const imported = importVaultHostsFromText("csv", [
+    "Hostname,Username,Password",
+    "legacy.example.com,root,secret",
+  ].join("\n"));
+
+  assert.equal(imported.hosts.length, 1);
+  assert.equal(imported.hosts[0]?.hostname, "legacy.example.com");
+  assert.equal(imported.hosts[0]?.username, "root");
+  assert.equal(imported.hosts[0]?.password, "secret");
+  assert.equal(imported.hosts[0]?.hostChain, undefined);
+  assert.deepEqual(imported.issues, []);
+});
+
+test("CSV import retargets a chain when the jump host is already in the vault", () => {
+  const bastion = chainHost("jump-1", "Bastion", "bastion.example.com", "alice");
+  bastion.group = "Prod";
+  const target = chainHost("app", "App", "app.example.com", "root");
+  target.group = "Prod";
+  target.hostChain = { hostIds: [bastion.id] };
+  const existing = chainHost("vault-jump", "Bastion", "bastion.example.com", "alice");
+  existing.group = "Prod";
+
+  const { csv } = exportHostsToCsvWithStats([bastion, target]);
+  const imported = importVaultHostsFromText("csv", csv, { existingHosts: [existing] });
+  const merged = applyVaultHostImport([existing], ["Prod"], imported);
+
+  assert.equal(merged.addedHosts.length, 1);
+  assert.equal(merged.addedHosts[0]?.hostname, "app.example.com");
+  assert.deepEqual(merged.addedHosts[0]?.hostChain, { hostIds: [existing.id] });
+  assert.equal(merged.hosts.some((host) => host.id !== existing.id && host.hostname === bastion.hostname), false);
+});
+
+test("CSV export materializes a jump chain inherited from group defaults", () => {
+  const bastion = chainHost("jump-1", "Bastion", "bastion.example.com", "alice");
+  const target = chainHost("app", "App", "app.example.com", "root");
+  target.group = "Corp";
+
+  const { csv } = exportHostsToCsvWithStats([bastion, target], {
+    groupConfigs: [{ path: "Corp", hostChain: { hostIds: [bastion.id] } }],
+  });
+
+  assert.equal(proxyJumpCell(csv, target.hostname), "alice@bastion.example.com");
+});
+
+test("CSV import warns and drops a circular ProxyJump chain", () => {
+  const imported = importVaultHostsFromText("csv", [
+    "Hostname,Username,ProxyJump",
+    "a.example.com,root,b.example.com",
+    "b.example.com,root,a.example.com",
+  ].join("\n"));
+
+  assert.equal(imported.hosts.length, 2);
+  assert.equal(imported.hosts.every((host) => host.hostChain === undefined), true);
+  assert.ok(imported.issues.some((issue) => issue.level === "warning" && /circular/i.test(issue.message)));
+});
+
+test("CSV import drops inline hops created only for a rejected self-referential ProxyJump", () => {
+  const imported = importVaultHostsFromText("csv", [
+    "Hostname,Username,ProxyJump",
+    "ok.example.com,root,kept-hop.example.com",
+    "app.example.com,root,\"new-hop.example.com,app.example.com\"",
+  ].join("\n"));
+
+  const hostnames = imported.hosts.map((host) => host.hostname).sort();
+  assert.deepEqual(hostnames, ["app.example.com", "kept-hop.example.com", "ok.example.com"]);
+  const app = imported.hosts.find((host) => host.hostname === "app.example.com");
+  const ok = imported.hosts.find((host) => host.hostname === "ok.example.com");
+  const kept = imported.hosts.find((host) => host.hostname === "kept-hop.example.com");
+  assert.equal(app?.hostChain, undefined);
+  assert.deepEqual(ok?.hostChain?.hostIds, kept ? [kept.id] : []);
+  assert.ok(imported.issues.some((issue) => issue.level === "warning" && /circular/i.test(issue.message)));
+});
+
+test("CSV import prefers a same-group existing hop over a cross-group imported match", () => {
+  const existing = chainHost("vault-jump", "Bastion", "bastion.example.com", "alice");
+  existing.group = "Prod";
+  const imported = importVaultHostsFromText("csv", [
+    "Groups,Hostname,Username,ProxyJump",
+    "Other,bastion.example.com,alice,",
+    "Prod,app.example.com,root,alice@bastion.example.com",
+  ].join("\n"), { existingHosts: [existing] });
+
+  const app = imported.hosts.find((host) => host.hostname === "app.example.com");
+  const importedBastion = imported.hosts.find((host) => host.hostname === "bastion.example.com");
+  assert.equal(importedBastion?.group, "Other");
+  assert.notEqual(importedBastion?.id, existing.id);
+  assert.deepEqual(app?.hostChain, { hostIds: [existing.id] });
+});
+
+test("CSV import prefers a same-group existing label hop over a cross-group imported label", () => {
+  const existing = chainHost("vault-jump", "Bastion", "vault-bastion.internal", "alice");
+  existing.group = "Prod";
+  const imported = importVaultHostsFromText("csv", [
+    "Groups,Label,Hostname,Username,ProxyJump",
+    "Other,Bastion,other-bastion.internal,alice,",
+    "Prod,App,app.example.com,root,alice@Bastion",
+  ].join("\n"), { existingHosts: [existing] });
+
+  const app = imported.hosts.find((host) => host.hostname === "app.example.com");
+  const importedBastion = imported.hosts.find((host) => host.hostname === "other-bastion.internal");
+  assert.equal(importedBastion?.group, "Other");
+  assert.equal(importedBastion?.label, "Bastion");
+  assert.notEqual(importedBastion?.id, existing.id);
+  assert.deepEqual(app?.hostChain, { hostIds: [existing.id] });
+});
+
+test("CSV import warns and ignores a ProxyJump value that is not a jump host", () => {
+  const imported = importVaultHostsFromText("csv", [
+    "Hostname,Username,ProxyJump",
+    "app.example.com,root,not a hop",
+  ].join("\n"));
+
+  assert.equal(imported.hosts.length, 1);
+  assert.equal(imported.hosts[0]?.hostChain, undefined);
+  assert.ok(imported.issues.some((issue) => issue.level === "warning" && issue.message.includes("ProxyJump")));
+});
+
+test("CSV import rejects a ProxyJump chain that contains a malformed hop", () => {
+  const imported = importVaultHostsFromText("csv", [
+    "Hostname,Username,ProxyJump",
+    "app.example.com,root,\"bastion.example.com,not a hop\"",
+  ].join("\n"));
+
+  assert.deepEqual(imported.hosts.map((host) => host.hostname), ["app.example.com"]);
+  assert.equal(imported.hosts[0]?.hostChain, undefined);
+  assert.ok(imported.issues.some((issue) => (
+    issue.level === "warning" && issue.message.includes("not a hop")
+  )));
 });
 
 test("CSV import warns and ignores a malformed LocalShell value", () => {
