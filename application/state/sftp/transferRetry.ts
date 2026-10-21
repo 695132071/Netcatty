@@ -6,6 +6,9 @@ import { isSessionError } from "./errors";
  * path) should not be retried.
  */
 export function isTransientTransferError(err: unknown): boolean {
+  // The channel is gone. Retrying opens a new dial, and an OTP host then
+  // sits on keyboard-interactive while the transfer stays active.
+  if (err instanceof Error && /sftp channel closed/i.test(err.message)) return false;
   if (isSessionError(err)) return true;
   if (!(err instanceof Error)) return false;
   const msg = err.message.toLowerCase();

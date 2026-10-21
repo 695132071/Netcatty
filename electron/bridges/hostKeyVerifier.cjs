@@ -209,13 +209,32 @@ const createHostVerifier = ({
   knownHosts = [],
   verifyHostKeys = true,
   bootEpoch,
+  // Transfer dials have no SFTP-page prompt owner. Waiting out the request
+  // TTL leaves the upload on "Waiting..." with no dialog and no error.
+  unattended = false,
+  onAccepted,
 }) => (rawKey, callback) => {
+  const keyInfo = describeHostKey(rawKey);
+  const noteAccepted = () => {
+    try {
+      onAccepted?.({
+        hostname,
+        port,
+        keyType: keyInfo.keyType,
+        fingerprint: keyInfo.fingerprint,
+        publicKey: keyInfo.publicKey,
+      });
+    } catch {
+      // Recording the accepted key must not change the verifier result.
+    }
+  };
+
   if (verifyHostKeys === false) {
+    noteAccepted();
     callback(true);
     return;
   }
 
-  const keyInfo = describeHostKey(rawKey);
   const decision = classifyHostKey({
     knownHosts,
     hostname,
@@ -225,7 +244,13 @@ const createHostVerifier = ({
   });
 
   if (decision.status === "trusted") {
+    noteAccepted();
     callback(true);
+    return;
+  }
+
+  if (unattended) {
+    callback(false);
     return;
   }
 
@@ -241,6 +266,7 @@ const createHostVerifier = ({
     knownFingerprint: decision.expectedFingerprint,
     ...(Number.isFinite(bootEpoch) ? { bootEpoch: Number(bootEpoch) } : {}),
   }).then((response) => {
+    if (response?.accept) noteAccepted();
     callback(Boolean(response?.accept));
   }).catch(() => {
     callback(false);

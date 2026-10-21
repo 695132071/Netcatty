@@ -369,7 +369,13 @@ function parseKnownHostTarget(value) {
  * text or the full known-hosts vault.
  */
 function fingerprintKnownHostTrust(endpoint) {
-  if (!endpoint || endpoint.verifyHostKeys === false) return "disabled";
+  if (!endpoint) return "disabled";
+  const jumps = Array.isArray(endpoint.jumpHosts) ? endpoint.jumpHosts : [];
+  // A jump host can force verification while the target turns it off. The
+  // target flag alone must not drop that hop's pin from the digest.
+  const anyVerification = endpoint.verifyHostKeys !== false
+    || jumps.some((hop) => (hop?.verifyHostKeys ?? endpoint.verifyHostKeys) !== false);
+  if (!anyVerification) return "disabled";
   const targets = [];
   const addTarget = (hostname, port, verifyHostKeys = true) => {
     if (verifyHostKeys === false) return;
@@ -378,7 +384,7 @@ function fingerprintKnownHostTrust(endpoint) {
     targets.push(`${normalizedHostname}|${Number(port) || 22}`);
   };
   addTarget(endpoint.hostname, endpoint.port, endpoint.verifyHostKeys);
-  for (const hop of Array.isArray(endpoint.jumpHosts) ? endpoint.jumpHosts : []) {
+  for (const hop of jumps) {
     addTarget(
       hop?.hostname,
       hop?.port,
@@ -481,7 +487,12 @@ function fingerprintAuth(endpoint) {
     certificate: endpoint.certificate ? secureDigest(endpoint.certificate) : "none",
     requiresMfa: Boolean(endpoint.requiresMfa),
     verifyHostKeys: endpoint.verifyHostKeys !== false,
-    knownHostTrust: fingerprintKnownHostTrust(endpoint),
+    // Channel adoption may compare a sibling key that ignores this digest, then
+    // checks the connection's accepted host key against the caller's records.
+    // Parked transport reuse still uses the full key.
+    knownHostTrust: endpoint.ignoreKnownHostTrustForReuse
+      ? "ignored"
+      : fingerprintKnownHostTrust(endpoint),
     authPolicyVersion: endpoint.authPolicyVersion ?? null,
     useSshAgent: endpoint.useSshAgent ?? null,
     identityAgent: endpoint.identityAgent ?? null,
@@ -626,6 +637,16 @@ function buildEndpointKey(endpoint) {
     auth,
     `keepalive:${ep.keepaliveIntervalMs}:${ep.keepaliveCountMax}`,
   ].join("|");
+}
+
+/**
+ * Same route as buildEndpointKey, but the known-host trust digest is ignored.
+ * Used only to find an already-authenticated SFTP channel after the renderer
+ * known-host list changes (trust during this app session).
+ */
+function buildChannelAdoptionKey(endpoint) {
+  if (!endpoint || typeof endpoint !== "object") return null;
+  return buildEndpointKey({ ...endpoint, ignoreKnownHostTrustForReuse: true });
 }
 
 function sameEndpoint(a, b) {
@@ -1544,6 +1565,7 @@ module.exports = {
   setDefaultTransportIdleTtlMs,
   getDefaultTransportIdleTtlMs,
   buildEndpointKey,
+  buildChannelAdoptionKey,
   buildConnectionReuseEndpoint,
   resolveConnectionKeepalivePolicy,
   normalizeEndpoint,

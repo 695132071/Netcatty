@@ -1830,6 +1830,16 @@ function execSshCommandCancellable(sshClient, command, transfer) {
   });
 }
 
+function markDisposableUploadChannel(channel) {
+  if (!channel || typeof channel !== "object") return channel;
+  // This subsystem can die without taking the shared browse connection with it.
+  try { channel.__netcattyDisposableChannel = true; } catch { /* ignore */ }
+  if (channel.sftp && typeof channel.sftp === "object" && channel.sftp !== channel) {
+    try { channel.sftp.__netcattyDisposableChannel = true; } catch { /* ignore */ }
+  }
+  return channel;
+}
+
 async function openIsolatedSftpChannel(client, signal = null) {
   // The dedicated one-channel login already holds its only session channel.
   // Opening another SFTP subsystem drops that login, so stay on the browse channel.
@@ -2468,7 +2478,9 @@ async function uploadFile(
   let isolated = null;
   if (!client.__netcattySudoMode) {
     try {
-      isolated = await openIsolatedSftpChannel(client, transfer?.signal);
+      isolated = markDisposableUploadChannel(
+        await openIsolatedSftpChannel(client, transfer?.signal),
+      );
     } catch (err) {
       rememberPipelineError(err);
       console.warn(
@@ -2534,7 +2546,9 @@ async function uploadFile(
 
   if (!isolated && !client.__netcattySudoMode) {
     try {
-      isolated = await openIsolatedSftpChannel(client, transfer?.signal);
+      isolated = markDisposableUploadChannel(
+        await openIsolatedSftpChannel(client, transfer?.signal),
+      );
     } catch (err) {
       rememberPipelineError(err);
       console.warn(
@@ -3058,10 +3072,8 @@ function openSftpHandleForTransfer(sftp, filePath, flags, transfer, options = {}
         transfer.abort = previousAbort;
       }
       try { sftp.removeListener?.("error", onOpenChannelError); } catch { /* ignore */ }
-      if (!isWriteOpen) {
-        sftp.removeListener?.("end", onOpenChannelClosed);
-        sftp.removeListener?.("close", onOpenChannelClosed);
-      }
+      sftp.removeListener?.("end", onOpenChannelClosed);
+      sftp.removeListener?.("close", onOpenChannelClosed);
       fn(value);
     };
 
@@ -3119,7 +3131,9 @@ function openSftpHandleForTransfer(sftp, filePath, flags, transfer, options = {}
     };
 
     const onOpenChannelClosed = () => {
-      onOpenChannelError(new Error("SFTP channel closed before the source file was opened"));
+      onOpenChannelError(isWriteOpen
+        ? sftpChannelClosedError(null, sftp)
+        : new Error("SFTP channel closed before the source file was opened"));
     };
 
     if (transfer.cancelled) {
@@ -3131,15 +3145,15 @@ function openSftpHandleForTransfer(sftp, filePath, flags, transfer, options = {}
 
     transfer.abort = abortDuringOpen;
     sftp.on?.("error", onOpenChannelError);
-    if (!isWriteOpen) {
-      sftp.on?.("end", onOpenChannelClosed);
-      sftp.on?.("close", onOpenChannelClosed);
+    // Write OPEN used to skip close/end. Killing the server channel then left
+    // the OPEN callback unanswered, so the upload stayed active with no error.
+    sftp.on?.("end", onOpenChannelClosed);
+    sftp.on?.("close", onOpenChannelClosed);
+    if (!isWriteOpen && sftp.readable === false) {
       // A failed isolated download may fall back after the browse channel's
       // end event already fired. ssh2 never answers a new OPEN on that channel.
-      if (sftp.readable === false) {
-        onOpenChannelClosed();
-        return;
-      }
+      onOpenChannelClosed();
+      return;
     }
 
     try {
@@ -3398,10 +3412,13 @@ async function readSftpRange(sftp, handle, buffer, position, length, options = {
       let settled = false;
       let timer = null;
       let unwatchAbort = null;
+      let unwatchDeath = () => {};
       const cleanup = () => {
         if (timer) clearTimeout(timer);
         unwatchAbort?.();
         unwatchAbort = null;
+        try { unwatchDeath(); } catch { /* ignore */ }
+        unwatchDeath = () => {};
         signal?.removeEventListener?.("abort", onAbort);
       };
       const finish = (error, count) => {
@@ -3411,6 +3428,7 @@ async function readSftpRange(sftp, handle, buffer, position, length, options = {
         if (error) reject(error);
         else resolve(Number(count) || 0);
       };
+      unwatchDeath = watchSftpChannelDeath(sftp, (error) => finish(error));
       const onAbort = () => {
         const error = new Error("Transfer cancelled");
         error.code = "ABORT_ERR";
@@ -3440,7 +3458,7 @@ async function readSftpRange(sftp, handle, buffer, position, length, options = {
           received,
           length - received,
           position + received,
-          (error, count) => finish(error, count),
+          (error, count) => finish(error ? normalizeSftpChannelLoss(sftp, error) : error, count),
         );
       } catch (error) {
         finish(error);
@@ -3680,12 +3698,181 @@ async function readLocalRange(fileHandle, buffer, position, length) {
   }
 }
 
+/**
+ * One close/error listener per channel. ssh2 does not invoke pending READ/WRITE
+ * callbacks when the owner connection is destroyed, so each in-flight request
+ * must fail itself or the transfer stays at a partial percent forever.
+ * EOF (`end`) and the parent SSH client/socket are included: killing the
+ * server SFTP process often ends the channel without a client-side `error`,
+ * and a TCP reset is delivered on the SSH client rather than the SFTP stream.
+ */
+const sftpChannelDeathWaiters = new WeakMap();
+
+function disposableUploadChannel(sftp) {
+  return sftp?.__netcattyDisposableChannel === true
+    || sftp?.sftp?.__netcattyDisposableChannel === true;
+}
+
+function sftpChannelClosedError(cause, sftp) {
+  const error = new Error("SFTP channel closed");
+  error.code = "ERR_SFTP_CHANNEL_CLOSED";
+  error.sftpChannelClosed = true;
+  // The owner/borrowed/sudo channel is gone: do not fall through into another
+  // dial. A disposable upload subsystem can still fail over to the live browse
+  // channel.
+  if (!disposableUploadChannel(sftp)) error.noTransferFallback = true;
+  if (cause) error.cause = cause;
+  return error;
+}
+
+function isSftpChannelLossError(error) {
+  if (!error || typeof error !== "object") return false;
+  if (error.sftpChannelClosed) return true;
+  const code = String(error.code || "");
+  if (
+    code === "ECONNRESET"
+    || code === "EPIPE"
+    || code === "ECONNABORTED"
+    || code === "ERR_SFTP_CHANNEL_CLOSED"
+  ) {
+    return true;
+  }
+  const message = String(error.message || "");
+  return /no response from server/i.test(message)
+    || /socket hang up/i.test(message)
+    || /connection reset/i.test(message)
+    || error.level === "client-socket";
+}
+
+function normalizeSftpChannelLoss(sftp, error) {
+  if (!error) return error;
+  if (error.sftpChannelClosed && (error.noTransferFallback || disposableUploadChannel(sftp))) {
+    return error;
+  }
+  const dead = !sftp || sftp.readable === false || sftp.destroyed === true;
+  if (dead || isSftpChannelLossError(error)) return sftpChannelClosedError(error, sftp);
+  return error;
+}
+
+function sftpChannelDeathTargets(sftp) {
+  const targets = [];
+  const add = (value) => {
+    if (!value || typeof value.on !== "function" || targets.includes(value)) return;
+    targets.push(value);
+  };
+  // ssh2-sftp-client `.on` listens on the SSH connection. Channel close/end
+  // is emitted on the inner stream the borrowed owner actually writes.
+  if (sftp?.sftp && sftp.sftp !== sftp) add(sftp.sftp);
+  add(sftp);
+  return targets;
+}
+
+function rejectPendingSftpRequests(sftp, error) {
+  const requests = sftp?._requests;
+  if (!requests || typeof requests !== "object") return;
+  const pending = requests;
+  sftp._requests = {};
+  for (const key of Object.keys(pending)) {
+    const callback = pending[key]?.cb;
+    if (typeof callback !== "function") continue;
+    try { callback(error); } catch { /* ignore */ }
+  }
+}
+
+function watchSftpChannelDeath(sftp, onDeath) {
+  const channels = sftpChannelDeathTargets(sftp);
+  const primary = channels[0];
+  if (!primary) return () => {};
+  let entry = sftpChannelDeathWaiters.get(primary);
+  if (!entry) {
+    const waiters = new Set();
+    const fail = (error, { flushRequests = false } = {}) => {
+      const wrapped = normalizeSftpChannelLoss(
+        primary,
+        error instanceof Error
+          ? error
+          : new Error(String(error?.message || error || "SFTP channel error")),
+      );
+      // CHANNEL_CLOSE emits close/end and leaves READ/WRITE without a reply.
+      // A normal SFTP status error must not cancel the other in-flight requests.
+      if (flushRequests) {
+        for (const channel of channels) rejectPendingSftpRequests(channel, wrapped);
+      }
+      for (const waiter of [...waiters]) waiter(wrapped);
+    };
+    const client = primary._client || sftp?._client;
+    entry = {
+      waiters,
+      channels,
+      client,
+      onError: (error) => fail(error || new Error("SFTP channel error")),
+      onClose: () => fail(sftpChannelClosedError(null, sftp), { flushRequests: true }),
+      onClientError: (error) => {
+        if (isSftpChannelLossError(error)) fail(error || sftpChannelClosedError());
+      },
+    };
+    for (const channel of channels) {
+      channel.on("error", entry.onError);
+      channel.on("close", entry.onClose);
+      channel.on("end", entry.onClose);
+    }
+    if (client && typeof client.on === "function" && !channels.includes(client)) {
+      client.on("close", entry.onClose);
+      client.on("end", entry.onClose);
+      client.on("error", entry.onClientError);
+    }
+    sftpChannelDeathWaiters.set(primary, entry);
+  }
+  entry.waiters.add(onDeath);
+  // end/close is not replayed. OPEN can finish, the channel can die, and only
+  // then does WRITE/READ subscribe — readable is already false and the callback
+  // never comes. Fail this waiter after returning so the caller can unwatch.
+  const alreadyDead = channels.some((channel) => channel.readable === false || channel.destroyed === true);
+  if (alreadyDead) {
+    queueMicrotask(() => {
+      if (!entry.waiters.has(onDeath)) return;
+      onDeath(sftpChannelClosedError(null, sftp));
+    });
+  }
+  return () => {
+    const current = sftpChannelDeathWaiters.get(primary);
+    if (!current) return;
+    current.waiters.delete(onDeath);
+    if (current.waiters.size > 0) return;
+    for (const channel of current.channels) {
+      try { channel.removeListener("error", current.onError); } catch { /* ignore */ }
+      try { channel.removeListener("close", current.onClose); } catch { /* ignore */ }
+      try { channel.removeListener("end", current.onClose); } catch { /* ignore */ }
+    }
+    if (current.client && typeof current.client.removeListener === "function") {
+      try { current.client.removeListener("close", current.onClose); } catch { /* ignore */ }
+      try { current.client.removeListener("end", current.onClose); } catch { /* ignore */ }
+      try { current.client.removeListener("error", current.onClientError); } catch { /* ignore */ }
+    }
+    if (sftpChannelDeathWaiters.get(primary) === current) sftpChannelDeathWaiters.delete(primary);
+  };
+}
+
 function writeSftpRange(sftp, handle, buffer, position, length) {
   return new Promise((resolve, reject) => {
-    sftp.write(handle, buffer, 0, length, position, (error) => {
+    let settled = false;
+    let unwatch = () => {};
+    const finish = (error) => {
+      if (settled) return;
+      settled = true;
+      try { unwatch(); } catch { /* ignore */ }
       if (error) reject(error);
       else resolve();
-    });
+    };
+    unwatch = watchSftpChannelDeath(sftp, finish);
+    try {
+      sftp.write(handle, buffer, 0, length, position, (error) => {
+        if (error) finish(normalizeSftpChannelLoss(sftp, error));
+        else finish();
+      });
+    } catch (error) {
+      finish(error);
+    }
   });
 }
 
@@ -4729,7 +4916,10 @@ async function uploadFileConcurrent(
     // CLOSE request would hang forever with no callback from ssh2.
     if (remoteHandle) {
       const skipClose = disposeChannel && (failed || transfer.cancelled);
-      if (!skipClose) {
+      // A closed channel never answers CLOSE. Skip it; the 2s race is only for
+      // a live shared session. Falling through to another strategy on a dead
+      // channel is handled by noTransferFallback on the close error.
+      if (!skipClose && sftp?.readable !== false) {
         let closeTimeout = null;
         try {
           await Promise.race([

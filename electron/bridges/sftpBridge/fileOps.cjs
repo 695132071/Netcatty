@@ -556,6 +556,41 @@ function createFileOpsApi(ctx) {
     }
     
     /**
+     * Drop the alias's lease on the login client. If the SFTP page already
+     * asked to close that client, end it only after the last borrower leaves.
+     */
+    function releaseSharedChannelOwner(client) {
+      const ownerId = client?.__netcattySharedChannelOwnerId;
+      const aliasId = client?.__netcattySharedChannelAliasId;
+      if (!ownerId || !aliasId || client.__netcattyOwnerLeaseReleased) return;
+      client.__netcattyOwnerLeaseReleased = true;
+      let store;
+      let result;
+      try {
+        const lease = require("../sftpTransferSessionLease.cjs");
+        store = lease.sftpTransferSessionLeaseStore;
+        result = store.release(ownerId, lease.channelAliasLeaseId(aliasId));
+      } catch {
+        return;
+      }
+      if (!result?.shouldHardClose) return;
+      const closeToken = store.getPendingHardCloseToken(ownerId);
+      setImmediate(() => {
+        if (store.isHeld(ownerId)) {
+          store.markSoftClosed(ownerId);
+          return;
+        }
+        if (!store.commitHardClose(ownerId, closeToken)) return;
+        void closeSftp(null, { sftpId: ownerId, force: true }).catch((err) => {
+          console.warn(
+            `[SFTP] Deferred close of borrowed owner ${ownerId} failed:`,
+            err?.message || err,
+          );
+        });
+      });
+    }
+
+    /**
      * Close an SFTP connection.
      * Also cleans up any jump host connections and file watchers if present.
      *
@@ -666,8 +701,16 @@ function createFileOpsApi(ctx) {
             };
           }
         } catch { /* optional */ }
-        // Transport-managed / session-backed: close channel + return lease only.
-        if (client.__netcattyRefHolder || client.__netcattyTransportManaged || client.__netcattySessionBacked) {
+        // Alias handles share the login channel. Closing the transfer id must
+        // not end that channel or the SFTP page listing dies with the upload.
+        // Releasing the owner lease lets a deferred closeSftp(owner) finish
+        // only after every borrower is gone.
+        if (client.__netcattySharedChannelAlias) {
+          client.__netcattyDisposed = true;
+          client.sftp = null;
+          try { await client.end?.(); } catch { /* alias end only detaches */ }
+          releaseSharedChannelOwner(client);
+        } else if (client.__netcattyRefHolder || client.__netcattyTransportManaged || client.__netcattySessionBacked) {
           try {
             if (client.sftp && typeof client.sftp.end === "function") client.sftp.end();
             else if (client.sftp && typeof client.sftp.close === "function") client.sftp.close();

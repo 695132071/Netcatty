@@ -1576,17 +1576,32 @@ async function runRemoteUploadTransaction(client, localPath, remotePath, options
   }
 
   const cleanupStage = async () => {
+    // The owner channel is already gone. unlink/delete would wait forever for
+    // a callback ssh2 never sends, and the transfer would stay on screen.
+    const channel = client?.sftp;
+    if (channel && (channel.readable === false || channel.destroyed === true)) return;
+    const removeStage = scpMode
+      ? getScpBackendForClient(client).remove(stagedLogical, {
+        recursive: false,
+        encoding,
+      })
+      : typeof client.delete === "function"
+        ? client.delete(encodedStagedPath)
+        : null;
+    if (!removeStage) return;
+    let timer = null;
     try {
-      if (scpMode) {
-        await getScpBackendForClient(client).remove(stagedLogical, {
-          recursive: false,
-          encoding,
-        });
-      } else if (typeof client.delete === "function") {
-        await client.delete(encodedStagedPath);
-      }
+      await Promise.race([
+        Promise.resolve(removeStage),
+        new Promise((_, reject) => {
+          timer = setTimeout(() => reject(new Error("SFTP channel closed")), 2000);
+          if (typeof timer.unref === "function") timer.unref();
+        }),
+      ]);
     } catch {
       // Best-effort cleanup of a partial stage.
+    } finally {
+      if (timer) clearTimeout(timer);
     }
   };
 
@@ -2385,6 +2400,7 @@ const {
   completeTransportDial,
   failTransportDial,
   buildEndpointKey,
+  buildChannelAdoptionKey,
   buildConnectionReuseEndpoint,
   resolveConnectionKeepalivePolicy,
   endpointAllowsReuse,
@@ -2407,6 +2423,7 @@ const openConnectionApi = createOpenConnectionApi({
   createTransport, borrowTransport, findTransportByEndpoint,
   beginTransportDial, waitForTransportDial, completeTransportDial, failTransportDial,
   buildEndpointKey,
+  buildChannelAdoptionKey,
   buildConnectionReuseEndpoint,
   resolveConnectionKeepalivePolicy,
 });

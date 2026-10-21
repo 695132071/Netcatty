@@ -56,6 +56,166 @@ test(`failed ${direction} connection replaces Waiting with the actual error (#36
 });
 }
 
+test("upload open uses known hosts trusted after the transfer callback was created (#3310)", async () => {
+  const seen: string[] = [];
+  let fingerprint = "";
+  let ops: ReturnType<typeof useSftpTransfers> | undefined;
+  let renderer: ReactTestRenderer | undefined;
+  let firstStart: ReturnType<typeof useSftpTransfers>["startTransfer"] | undefined;
+  const restore = installGlobals({});
+  function Probe() {
+    const captured = fingerprint;
+    const acquireTransferSession = React.useCallback(async () => {
+      seen.push(captured);
+      throw new Error(`known-hosts:${captured || "empty"}`);
+    }, [captured]);
+    ops = useSftpTransfers({
+      ownerId: "known-hosts-after-trust-3310",
+      getActivePane: (side) => makePane(side === "left" ? "right" : "left"),
+      getPaneByConnectionId: () => null,
+      getTabByConnectionId: () => null,
+      updateTab: () => undefined,
+      refresh: async () => undefined,
+      clearCacheForConnection: () => undefined,
+      handleSessionError: () => undefined,
+      sftpSessionsRef: { current: new Map() },
+      connectionCacheKeyMapRef: { current: new Map() },
+      listLocalFiles: async () => [],
+      listRemoteFiles: async () => [],
+      acquireTransferSession,
+    });
+    if (!firstStart) firstStart = ops.startTransfer;
+    return null;
+  }
+  try {
+    await act(async () => { renderer = create(React.createElement(Probe)); });
+    fingerprint = "trusted-this-session";
+    await act(async () => { renderer?.update(React.createElement(Probe)); });
+    await act(async () => {
+      await firstStart!(
+        [{ name: "upload.txt", isDirectory: false }],
+        "left",
+        "right",
+      );
+    });
+    assert.deepEqual(seen, ["trusted-this-session"]);
+    const task = sftpTransferCenterStore.getOwnerTasks("known-hosts-after-trust-3310")[0];
+    assert.equal(task?.error, "known-hosts:trusted-this-session");
+  } finally {
+    await act(async () => { renderer?.unmount(); });
+    restore();
+  }
+});
+
+test("channel death fails the upload without a second session open (#3310)", async () => {
+  let acquires = 0;
+  let streams = 0;
+  const restore = installGlobals({
+    statLocal: async () => ({ size: 48, lastModified: 1 }),
+    statSftp: async () => null,
+    startStreamTransfer: async () => {
+      streams += 1;
+      return { error: "SFTP channel closed" };
+    },
+    pauseTransfer: async () => ({ success: false, reason: "Transfer is no longer active" }),
+    resumeTransfer: async () => ({ success: false, reason: "Transfer is no longer active" }),
+  });
+  let ops: ReturnType<typeof useSftpTransfers> | undefined;
+  let renderer: ReactTestRenderer | undefined;
+  const ownerId = "channel-death-no-reconnect-3310";
+  function Probe() {
+    ops = useSftpTransfers({
+      ownerId,
+      getActivePane: (side) => makePane(side === "left" ? "right" : "left"),
+      getPaneByConnectionId: () => null,
+      getTabByConnectionId: () => null,
+      updateTab: () => undefined,
+      refresh: async () => undefined,
+      clearCacheForConnection: () => undefined,
+      handleSessionError: () => undefined,
+      sftpSessionsRef: { current: new Map() },
+      connectionCacheKeyMapRef: { current: new Map() },
+      listLocalFiles: async () => [],
+      listRemoteFiles: async () => [],
+      acquireTransferSession: async () => {
+        acquires += 1;
+        return {
+          sftpId: "sftp-borrowed",
+          release: () => undefined,
+          discard: () => undefined,
+        };
+      },
+    });
+    return null;
+  }
+  try {
+    await act(async () => { renderer = create(React.createElement(Probe)); });
+    await act(async () => {
+      await ops!.startTransfer(
+        [{ name: "upload.txt", isDirectory: false }],
+        "left",
+        "right",
+      );
+    });
+    assert.equal(streams, 1, "channel death must not start another transfer dial");
+    assert.equal(acquires, 2, "work lease plus the file lease, and no retry open");
+    const task = sftpTransferCenterStore.getOwnerTasks(ownerId)[0];
+    assert.equal(task?.status, "failed");
+    assert.equal(task?.error, "SFTP channel closed");
+    assert.equal(
+      sftpTransferCenterStore.getOwnerTasks(ownerId)
+        .filter((row) => ["pending", "queued", "transferring", "pausing"].includes(row.status))
+        .length,
+      0,
+    );
+  } finally {
+    await act(async () => { renderer?.unmount(); });
+    restore();
+  }
+});
+
+test("transfer failure strips the Electron IPC wrapper (#3310)", async () => {
+  const restore = installGlobals({});
+  let ops: ReturnType<typeof useSftpTransfers> | undefined;
+  let renderer: ReactTestRenderer | undefined;
+  const ownerId = "ipc-prefix-3310";
+  function Probe() {
+    ops = useSftpTransfers({
+      ownerId,
+      getActivePane: (side) => makePane(side === "left" ? "right" : "left"),
+      getPaneByConnectionId: () => null,
+      getTabByConnectionId: () => null,
+      updateTab: () => undefined,
+      refresh: async () => undefined,
+      clearCacheForConnection: () => undefined,
+      handleSessionError: () => undefined,
+      sftpSessionsRef: { current: new Map() },
+      connectionCacheKeyMapRef: { current: new Map() },
+      listLocalFiles: async () => [],
+      listRemoteFiles: async () => [],
+      acquireTransferSession: async () => {
+        throw new Error("Error invoking remote method 'netcatty:sftp:open': Error: Host key verification required for 127.0.0.1");
+      },
+    });
+    return null;
+  }
+  try {
+    await act(async () => { renderer = create(React.createElement(Probe)); });
+    await act(async () => {
+      await ops!.startTransfer(
+        [{ name: "upload.txt", isDirectory: false }],
+        "left",
+        "right",
+      );
+    });
+    const task = sftpTransferCenterStore.getOwnerTasks(ownerId)[0];
+    assert.equal(task?.error, "Host key verification required for 127.0.0.1");
+  } finally {
+    await act(async () => { renderer?.unmount(); });
+    restore();
+  }
+});
+
 type StartOptions = {
   transferId: string;
   sourcePath: string;

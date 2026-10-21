@@ -24,7 +24,7 @@ import { netcattyBridge } from "../../../infrastructure/services/netcattyBridge"
 import { logger } from "../../../lib/logger";
 import { sftpTransferCenterStore } from "../sftpTransferCenterStore";
 import { SftpPane } from "./types";
-import { isMissingStatError } from "./errors";
+import { isMissingStatError, unwrapSftpIpcError } from "./errors";
 import { useSftpDirectoryTransferOps } from "./transferDirectoryOps";
 import { useSftpTransferConflictOps } from "./transferConflictOps";
 import { useSftpTransferTaskOps } from "./transferTaskOps";
@@ -191,6 +191,21 @@ export const useSftpTransfers = ({
   const { t } = useI18n();
   const tRef = useRef(t);
   tRef.current = t;
+  // startTransfer keeps the processTransfer closure from its first render.
+  // Read the latest acquire fn so a host key trusted after that render is
+  // included in the transfer open, instead of the empty list from mount.
+  const acquireTransferSessionRef = useRef(acquireTransferSession);
+  acquireTransferSessionRef.current = acquireTransferSession;
+  const acquireTransferSessionLive = useCallback<NonNullable<UseSftpTransfersParams["acquireTransferSession"]>>(
+    (hostId, transferId, connectHost) => {
+      const acquire = acquireTransferSessionRef.current;
+      if (!acquire) {
+        return Promise.reject(new Error("SFTP transfer session acquisition is unavailable"));
+      }
+      return acquire(hostId, transferId, connectHost);
+    },
+    [],
+  );
   // Ref so progress flushes always see the latest visibility without rebinding.
   const surfaceVisibleRef = useRef(surfaceVisible);
   surfaceVisibleRef.current = surfaceVisible;
@@ -468,7 +483,7 @@ export const useSftpTransfers = ({
     setTransfers,
     listLocalFiles,
     listRemoteFiles,
-    acquireTransferSession,
+    acquireTransferSession: acquireTransferSession ? acquireTransferSessionLive : undefined,
   });
 
   const processTransfer = async (
@@ -602,8 +617,9 @@ export const useSftpTransfers = ({
     // survive browse park and tab hide (pool holders, not panel map ids).
     if (!sourcePane.connection?.isLocal) {
       const sourceHostId = task.sourceHostId || sourcePane.connection?.hostId;
-      if (acquireTransferSession && sourceHostId) {
-        sourceWorkLease = await acquireTransferSession(sourceHostId, `${task.id}:work-source`);
+      const acquireSourceSession = acquireTransferSessionRef.current;
+      if (acquireSourceSession && sourceHostId) {
+        sourceWorkLease = await acquireSourceSession(sourceHostId, `${task.id}:work-source`);
         sourceSftpId = sourceWorkLease.sftpId;
       }
       if (!sourceSftpId) {
@@ -615,8 +631,9 @@ export const useSftpTransfers = ({
 
     if (!targetPane.connection?.isLocal) {
       const targetHostId = task.targetHostId || targetPane.connection?.hostId;
-      if (acquireTransferSession && targetHostId) {
-        targetWorkLease = await acquireTransferSession(targetHostId, `${task.id}:work-target`);
+      const acquireTargetSession = acquireTransferSessionRef.current;
+      if (acquireTargetSession && targetHostId) {
+        targetWorkLease = await acquireTargetSession(targetHostId, `${task.id}:work-target`);
         targetSftpId = targetWorkLease.sftpId;
       }
       if (!targetSftpId) {
@@ -1122,7 +1139,7 @@ export const useSftpTransfers = ({
 
       updateTask({
         status: "failed",
-        error: err instanceof Error ? err.message : "Transfer failed",
+        error: unwrapSftpIpcError(err) || "Transfer failed",
         endTime: Date.now(),
         speed: 0,
       });
@@ -1507,8 +1524,8 @@ export const useSftpTransfers = ({
         try {
           const result = await retryExternalDragDropFileUpload(task, {
             getBrowseSftpId: (connectionId) => sftpSessionsRef.current.get(connectionId),
-            acquireTransferSession: acquireTransferSession
-              ? (hostId, id) => acquireTransferSession(hostId, id)
+            acquireTransferSession: acquireTransferSessionRef.current
+              ? (hostId, id) => acquireTransferSessionLive(hostId, id)
               : undefined,
             startStreamTransfer: async (options) => {
               const bridge = netcattyBridge.get();
@@ -2000,8 +2017,9 @@ export const useSftpTransfers = ({
         let sourceWorkLease: TransferConnectionLease | null = null;
         let workingSourceSftpId = params.sftpId;
         try {
-          if (acquireTransferSession && params.sourceHostId) {
-            sourceWorkLease = await acquireTransferSession(
+          const acquireDownloadSession = acquireTransferSessionRef.current;
+          if (acquireDownloadSession && params.sourceHostId) {
+            sourceWorkLease = await acquireDownloadSession(
               params.sourceHostId,
               `${task.id}:work-source`,
             );
@@ -2067,7 +2085,7 @@ export const useSftpTransfers = ({
           const isCancelled = cancelledTasksRef.current.has(task.id);
           // Clean up cancelled task tracking to prevent memory leak
           if (isCancelled) cancelledTasksRef.current.delete(task.id);
-          const errMsg = err instanceof Error ? err.message : String(err);
+          const errMsg = unwrapSftpIpcError(err);
           patchDownload({
             status: isCancelled ? "cancelled" : "failed",
             error: isCancelled ? undefined : errMsg,

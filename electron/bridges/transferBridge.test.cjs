@@ -13092,6 +13092,158 @@ test("single-channel SFTP upload does not open a second subsystem", async (t) =>
   assert.deepEqual(remoteFiles.get(targetPath), payload);
 });
 
+test("a closed disposable upload channel falls back once to the healthy shared channel", async (t) => {
+  const tempDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "netcatty-disposable-upload-fallback-"));
+  t.after(async () => fs.promises.rm(tempDir, { recursive: true, force: true }));
+  const localPath = path.join(tempDir, "fresh.bin");
+  const payload = Buffer.from("disposable-fallback");
+  await fs.promises.writeFile(localPath, payload);
+  const targetPath = "/tmp/fresh.bin";
+  const remoteFiles = new Map();
+  let isolatedOpens = 0;
+  let sharedWrites = 0;
+
+  const rememberFile = (sftp) => {
+    sftp.lstat = (remotePath, callback) => {
+      const key = String(remotePath);
+      if (!remoteFiles.has(key)) {
+        const error = new Error("ENOENT");
+        error.code = 2;
+        callback(error);
+        return;
+      }
+      callback(null, {
+        size: remoteFiles.get(key).length,
+        mode: 0o100644,
+        isDirectory: () => false,
+        isSymbolicLink: () => false,
+      });
+    };
+    sftp.open = (remotePath, _flags, callback) => {
+      const key = String(remotePath);
+      if (!remoteFiles.has(key)) remoteFiles.set(key, Buffer.alloc(0));
+      callback(null, Buffer.from(key));
+    };
+    sftp.close = (_handle, callback) => callback(null);
+  };
+
+  const shared = createFastSftp({});
+  rememberFile(shared);
+  shared.write = (handle, buffer, offset, length, position, callback) => {
+    sharedWrites += 1;
+    const key = handle.toString();
+    const next = Buffer.alloc(Math.max(remoteFiles.get(key)?.length || 0, position + length));
+    if (remoteFiles.has(key)) remoteFiles.get(key).copy(next);
+    buffer.copy(next, position, offset, offset + length);
+    remoteFiles.set(key, next);
+    setImmediate(() => callback(null));
+  };
+
+  const client = {
+    sftp: shared,
+    stat: async (remotePath) => {
+      const key = String(remotePath);
+      if (!remoteFiles.has(key)) {
+        const error = new Error("ENOENT");
+        error.code = 2;
+        throw error;
+      }
+      return { size: remoteFiles.get(key).length, isDirectory: false };
+    },
+    delete: async (remotePath) => { remoteFiles.delete(String(remotePath)); },
+    async rename(fromPath, toPath) {
+      remoteFiles.set(String(toPath), remoteFiles.get(String(fromPath)));
+      remoteFiles.delete(String(fromPath));
+    },
+    client: {
+      sftp(callback) {
+        isolatedOpens += 1;
+        const isolated = createFastSftp({});
+        rememberFile(isolated);
+        isolated.write = () => {
+          isolated.readable = false;
+          isolated.emit("close");
+        };
+        callback(null, isolated);
+      },
+    },
+  };
+  transferBridge.init({ sftpClients: new Map([["target", client]]) });
+
+  const result = await transferBridge.startTransfer({ sender: createSender() }, {
+    transferId: "disposable-upload-fallback",
+    sourcePath: localPath,
+    targetPath,
+    sourceType: "local",
+    targetType: "sftp",
+    targetSftpId: "target",
+    totalBytes: payload.length,
+    resumable: false,
+  });
+
+  assert.equal(result.error, undefined, result.error);
+  assert.ok(isolatedOpens >= 1);
+  assert.ok(sharedWrites >= 1);
+  assert.deepEqual(remoteFiles.get(targetPath), payload);
+});
+
+for (const mode of ["single-channel", "sudo"]) {
+  test(`a closed ${mode} owner channel fails the upload without another dial`, async (t) => {
+    const tempDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), `netcatty-${mode}-owner-close-`));
+    t.after(async () => fs.promises.rm(tempDir, { recursive: true, force: true }));
+    const localPath = path.join(tempDir, "fresh.bin");
+    const payload = Buffer.from("owner-channel-closed");
+    await fs.promises.writeFile(localPath, payload);
+    let secondChannelOpens = 0;
+    const shared = createFastSftp({
+      open(_remotePath, _flags, callback) {
+        callback(null, Buffer.from("remote-handle"));
+      },
+      write() {
+        shared.readable = false;
+        shared.emit("close");
+      },
+      close(_handle, callback) {
+        callback(null);
+      },
+    });
+    const client = {
+      __netcattySingleChannelSsh: mode === "single-channel",
+      __netcattySudoMode: mode === "sudo",
+      sftp: shared,
+      stat: async () => ({ size: 0, isDirectory: false }),
+      delete: async () => {},
+      rename: async () => {},
+      client: {
+        sftp(callback) {
+          secondChannelOpens += 1;
+          callback(new Error("second SFTP channel must not open"));
+        },
+      },
+    };
+    transferBridge.init({ sftpClients: new Map([["target", client]]) });
+
+    const result = await Promise.race([
+      transferBridge.startTransfer({ sender: createSender() }, {
+        transferId: `${mode}-owner-channel-closed`,
+        sourcePath: localPath,
+        targetPath: "/tmp/fresh.bin",
+        sourceType: "local",
+        targetType: "sftp",
+        targetSftpId: "target",
+        totalBytes: payload.length,
+        resumable: false,
+      }),
+      new Promise((_, reject) => {
+        setTimeout(() => reject(new Error("upload hung after the owner channel closed")), 3000);
+      }),
+    ]);
+
+    assert.match(result.error || "", /SFTP channel closed/);
+    assert.equal(secondChannelOpens, 0);
+  });
+}
+
 test("single-channel SFTP download does not open a second subsystem", async (t) => {
   const tempDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "netcatty-single-channel-download-"));
   t.after(async () => fs.promises.rm(tempDir, { recursive: true, force: true }));

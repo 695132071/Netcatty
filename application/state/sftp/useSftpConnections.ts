@@ -4,6 +4,7 @@ import { netcattyBridge } from "../../../infrastructure/services/netcattyBridge"
 import type { Host, Identity, KnownHost, SftpConnection, SftpFileEntry, SftpFilenameEncoding, SSHKey } from "../../../domain/models";
 import { createKnownHostFromHostKeyInfo } from "../../../domain/knownHosts";
 import type { SftpHostKeyInfo, SftpHostKeyVerificationState, SftpPane } from "./types";
+import { unwrapSftpIpcError } from "./errors";
 import { useSftpDirectoryListing } from "./useSftpDirectoryListing";
 import { useSftpHostCredentials } from "./useSftpHostCredentials";
 import { buildCacheKey, getSharedRemoteHostCache, setSharedRemoteHostCache } from "./sharedRemoteHostCache";
@@ -957,7 +958,7 @@ export const useSftpConnections = ({
           if (!isTargetConnectionAtPath(startPath)) return;
           updateTargetTab((prev) => ({
             ...prev,
-            error: err instanceof Error ? err.message : "Failed to list directory",
+            error: unwrapSftpIpcError(err) || "Failed to list directory",
             loading: false,
             reconnecting: false,
           }));
@@ -1263,14 +1264,14 @@ export const useSftpConnections = ({
                   ? {
                       ...prev.connection,
                       status: "error",
-                      error: err instanceof Error ? err.message : "Connection failed",
+                      error: unwrapSftpIpcError(err) || "Connection failed",
                     }
                   : null,
                 files: isReconnectAttempt ? [] : prev.files,
                 selectedFiles: isReconnectAttempt ? new Set<string>() : prev.selectedFiles,
                 error: isReconnectAttempt
                   ? "sftp.error.reconnectFailed"
-                  : (err instanceof Error ? err.message : "Connection failed"),
+                  : (unwrapSftpIpcError(err) || "Connection failed"),
                 loading: false,
                 reconnecting: false,
               }));

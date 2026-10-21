@@ -27,6 +27,7 @@ const {
   setDefaultTransportIdleTtlMs,
   getDefaultTransportIdleTtlMs,
   buildEndpointKey,
+  buildChannelAdoptionKey,
   buildConnectionReuseEndpoint,
   normalizeEndpoint,
   endpointAllowsReuse,
@@ -903,6 +904,46 @@ test("endpoint key changes when known-host trust content changes", () => {
     JSON.stringify(normalizeEndpoint(jumpRotatedEndpoint)).includes("AAAA_JUMP_ROTATED"),
     false,
   );
+});
+
+test("a jump host pin changes the endpoint key when the target disables verification", () => {
+  const base = {
+    hostId: "jump-pin-target-disabled",
+    hostname: "target.example",
+    port: 22,
+    username: "alice",
+    authMethod: "password",
+    password: "secret",
+    verifyHostKeys: false,
+    jumpHosts: [{ hostname: "bastion.example", port: 2222, verifyHostKeys: true }],
+  };
+  const pinned = (publicKey) => buildConnectionReuseEndpoint({
+    ...base,
+    knownHosts: [{
+      hostname: "[bastion.example]:2222",
+      port: 2222,
+      keyType: "ssh-ed25519",
+      publicKey,
+    }],
+  });
+  const first = pinned("ssh-ed25519 AAAA_JUMP_FIRST");
+  const rotated = pinned("ssh-ed25519 AAAA_JUMP_ROTATED");
+  assert.notEqual(buildEndpointKey(rotated), buildEndpointKey(first));
+  assert.equal(buildChannelAdoptionKey(rotated), buildChannelAdoptionKey(first));
+
+  const bothOff = {
+    ...base,
+    jumpHosts: [{ hostname: "bastion.example", port: 2222, verifyHostKeys: false }],
+  };
+  const offFirst = buildEndpointKey(buildConnectionReuseEndpoint({
+    ...bothOff,
+    knownHosts: [{ hostname: "[bastion.example]:2222", port: 2222, publicKey: "ssh-ed25519 AAAA_JUMP_FIRST" }],
+  }));
+  const offRotated = buildEndpointKey(buildConnectionReuseEndpoint({
+    ...bothOff,
+    knownHosts: [{ hostname: "[bastion.example]:2222", port: 2222, publicKey: "ssh-ed25519 AAAA_JUMP_ROTATED" }],
+  }));
+  assert.equal(offRotated, offFirst);
 });
 
 test("endpoint key changes when an identity file changes in place", (t) => {

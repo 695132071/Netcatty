@@ -16,7 +16,17 @@
  *
  * This is intentionally independent of UI panels. Browse can go away; transfers
  * keep their leased sessions until they complete.
+ *
+ * A borrowed SFTP handle (single-channel / sudo alias) also acquires a lease
+ * on the owner sftpId for the alias lifetime. closeSftp(owner) then soft-closes
+ * until the last borrower releases, instead of ending the shared channel.
  */
+
+const CHANNEL_ALIAS_LEASE_PREFIX = "sftp-channel-alias:";
+
+function channelAliasLeaseId(aliasId) {
+  return `${CHANNEL_ALIAS_LEASE_PREFIX}${aliasId}`;
+}
 
 /**
  * @typedef {object} SftpTransferSessionLeaseStore
@@ -196,4 +206,5 @@ const sftpTransferSessionLeaseStore = createSftpTransferSessionLeaseStore();
 module.exports = {
   createSftpTransferSessionLeaseStore,
   sftpTransferSessionLeaseStore,
+  channelAliasLeaseId,
 };

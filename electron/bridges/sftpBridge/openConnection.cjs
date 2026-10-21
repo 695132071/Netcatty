@@ -77,6 +77,17 @@ function shouldRegisterFreshSftpTransport(options) {
   return allowsSharedSftpTransport(options);
 }
 
+function sftpChannelIsLive(sftp) {
+  // A closed ssh2 SFTP stream still has readdir/stat/open. readable/destroyed
+  // are what change when the subsystem or the socket has already ended.
+  return !!sftp
+    && sftp.readable !== false
+    && sftp.destroyed !== true
+    && typeof sftp.readdir === "function"
+    && typeof sftp.stat === "function"
+    && typeof sftp.open === "function";
+}
+
 /** Sudo is part of the requested connection contract; never downgrade it. */
 async function openRequiredSudoSftp({
   connectSudoSftp,
@@ -239,6 +250,12 @@ function createOpenConnectionApi(ctx) {
             port: jump.port || 22,
             knownHosts: options.knownHosts,
             verifyHostKeys: jump.verifyHostKeys ?? options.verifyHostKeys,
+            unattended: options.hostKeyUnattended === true,
+            onAccepted: (info) => {
+              if (!info) return;
+              if (!Array.isArray(options._acceptedHostKeys)) options._acceptedHostKeys = [];
+              options._acceptedHostKeys.push(info);
+            },
           });
     
           // Auth - support agent (certificate), key, and password fallback
@@ -769,6 +786,142 @@ function createOpenConnectionApi(ctx) {
     }
     
     /**
+     * A live SFTP channel that was not parked in the SSH transport registry
+     * (single-channel bastion, or sudo elevation). Another open must borrow
+     * that channel. A second subsystem drops TERM-SSHD / similar logins, and
+     * a fresh SSH dial would ask for OTP again.
+     */
+    function hopsRequiringHostKeyCheck(request) {
+      const hops = [];
+      const add = (hostname, port) => {
+        const normalized = String(hostname || "").trim().toLowerCase();
+        if (!normalized) return;
+        hops.push({ hostname: normalized, port: Number(port) || 22 });
+      };
+      if (request?.verifyHostKeys !== false) add(request?.hostname, request?.port);
+      for (const hop of Array.isArray(request?.jumpHosts) ? request.jumpHosts : []) {
+        if ((hop?.verifyHostKeys ?? request?.verifyHostKeys) === false) continue;
+        add(hop?.hostname, hop?.port);
+      }
+      return hops;
+    }
+
+    function acceptedHostKeysStillTrusted(source, request) {
+      // Every hop whose effective policy still verifies must have an accepted
+      // key that classifies as trusted. Disabling the target does not skip a
+      // jump host that explicitly verifies.
+      const required = hopsRequiringHostKeyCheck(request);
+      if (required.length === 0) return true;
+      const keys = source?.__netcattyAcceptedHostKeys;
+      if (!Array.isArray(keys) || keys.length === 0) return false;
+      const knownHosts = Array.isArray(request?.knownHosts) ? request.knownHosts : [];
+      return required.every((hop) => keys.some((key) => {
+        const hostname = String(key?.hostname || "").trim().toLowerCase();
+        const port = Number(key?.port) || 22;
+        if (hostname !== hop.hostname || port !== hop.port) return false;
+        return hostKeyVerifier.classifyHostKey({
+          knownHosts,
+          hostname: key.hostname,
+          port: key.port || 22,
+          keyType: key.keyType,
+          fingerprint: key.fingerprint,
+        }).status === "trusted";
+      }));
+    }
+
+    function authenticatedChannelMatches(client, endpoint, request) {
+      const exact = buildEndpointKey(endpoint);
+      const exactMatch = !!(exact && client.__netcattyEndpointKey === exact);
+      if (!exactMatch) {
+        // The known-host digest can change when a still-valid key is saved, or
+        // when an unrelated record is added. That may reuse the live channel.
+        if (typeof buildChannelAdoptionKey !== "function") return false;
+        const adoption = buildChannelAdoptionKey(endpoint);
+        if (!adoption || client.__netcattyChannelAdoptionKey !== adoption) return false;
+      }
+      // Exact endpoint keys are not enough. A session trusted from an empty
+      // list and a later open that is also empty (the key was removed) share
+      // a digest, and must still be checked against the caller's records.
+      return acceptedHostKeysStillTrusted(client, request);
+    }
+
+    function channelContractMatches(options, source) {
+      if (Boolean(options?.sudo) !== Boolean(source?.__netcattySudoMode)) return false;
+      const requested = normalizeFileProtocol(options?.fileProtocol);
+      const owner = source?.__netcattyFileProtocol === "scp" ? "scp" : "sftp";
+      // auto follows the live channel. A forced protocol must be the same one
+      // already open, or SCP would silently come back as SFTP.
+      if (requested === "auto") return true;
+      return requested === owner;
+    }
+
+    function findAuthenticatedChannelOwner(endpoint, request) {
+      if (!endpoint || !sftpClients || typeof sftpClients.entries !== "function") return null;
+      for (const [sftpId, client] of sftpClients.entries()) {
+        if (!sftpId || !client || client.__netcattyDisposed || client.__netcattySharedChannelAlias) continue;
+        if (client.__netcattyTransportManaged) continue;
+        if (!authenticatedChannelMatches(client, endpoint, request)) continue;
+        if (!client.__netcattySingleChannelSsh && !client.__netcattySudoMode) continue;
+        if (!sftpChannelIsLive(client.sftp)) continue;
+        return { sftpId, client };
+      }
+      return null;
+    }
+
+    function adoptAuthenticatedSftpChannel(endpoint, connId, options) {
+      const found = findAuthenticatedChannelOwner(endpoint, options);
+      if (!found || typeof createSessionBackedSftpClient !== "function") return null;
+      const { sftpId: ownerId, client: source } = found;
+      if (!channelContractMatches(options, source)) return null;
+      // A pane reconnect can ask for the owner's own id while a transfer still
+      // holds that soft-closed session. Storing the alias under that id would
+      // drop the SSH client and lease the id to itself, so closeSftp could
+      // never hard-close it.
+      const aliasId = connId === ownerId ? `${ownerId}:reconnect:${randomUUID()}` : connId;
+      let leaseStore = null;
+      let leaseId = null;
+      try {
+        const lease = require("../sftpTransferSessionLease.cjs");
+        leaseStore = lease.sftpTransferSessionLeaseStore;
+        leaseId = lease.channelAliasLeaseId(aliasId);
+        // Hold the owner until this alias is torn down. closeSftp(owner) then
+        // soft-closes instead of ending the only SFTP channel mid-transfer.
+        if (!leaseStore.acquire(ownerId, leaseId)) return null;
+      } catch {
+        return null;
+      }
+      try {
+        const alias = createSessionBackedSftpClient(aliasId, source.client, {
+          singleChannelSsh: true,
+        });
+        alias.sftp = source.sftp;
+        alias.__netcattyFileProtocol = source.__netcattyFileProtocol || "sftp";
+        alias.__netcattySudoMode = !!source.__netcattySudoMode;
+        // Keep uploads on this channel. A disposable subsystem would either drop
+        // the single-channel login or bypass sudo elevation.
+        alias.__netcattySingleChannelSsh = true;
+        alias.__netcattySharedChannelAlias = true;
+        alias.__netcattySharedChannelOwnerId = ownerId;
+        alias.__netcattySharedChannelAliasId = aliasId;
+        alias.__netcattyEndpointKey = source.__netcattyEndpointKey;
+        alias.__netcattyChannelAdoptionKey = source.__netcattyChannelAdoptionKey;
+        alias.__netcattyTransportManaged = false;
+        alias.end = async () => {
+          alias.__netcattyDisposed = true;
+          alias.sftp = null;
+        };
+        sftpClients.set(aliasId, alias);
+        return {
+          sftpId: aliasId,
+          fileProtocol: alias.__netcattyFileProtocol === "scp" ? "scp" : "sftp",
+        };
+      } catch (err) {
+        try { leaseStore?.release(ownerId, leaseId); } catch { /* ignore */ }
+        throw err;
+      }
+    }
+
+    /**
      * Open a new SFTP connection
      * Supports jump host connections when options.jumpHosts is provided
      */
@@ -778,6 +931,32 @@ function createOpenConnectionApi(ctx) {
         sftpSudo: Boolean(options.sudo),
       });
       let pendingDialCoordination = options._pendingDialCoordination || null;
+
+      // Same rejection as openSftpForSession / the post-ready fresh path.
+      // Doing it before adoption stops {sudo, fileProtocol:'scp'} from
+      // borrowing an elevated SFTP channel and reporting success.
+      if (Boolean(options.sudo) && normalizeFileProtocol(options.fileProtocol) === "scp") {
+        throw new Error(
+          "Sudo Mode is not supported with File Protocol set to SCP. Disable Sudo Mode or use Auto/SFTP.",
+        );
+      }
+
+      // Do this before dial coordination. An in-flight single-channel login is
+      // the dial leader and never registers a transport; joining it waits
+      // forever and never shows keyboard-interactive.
+      if (options.reuseTransport !== false && !pendingDialCoordination) {
+        const adopted = adoptAuthenticatedSftpChannel(reuseEndpoint, connId, options);
+        if (adopted) {
+          sendSftpProgress(
+            event.sender,
+            connId,
+            options.hostname,
+            "connected",
+            "reused authenticated SFTP session",
+          );
+          return adopted;
+        }
+      }
 
       const openOnSharedTransport = async (transport, detail = "reusing shared SSH transport") => {
         if (
@@ -871,6 +1050,20 @@ function createOpenConnectionApi(ctx) {
               : await waitForTransportDial(coordination);
             return await openOnSharedTransport(transport, "reused coordinated transport");
           } catch (coordinationErr) {
+            // The leader may have published a live channel and then rejected
+            // this dial (single-channel bastion, or sudo which is not parked).
+            // Adopt that channel before failing the transfer or dialing again.
+            const adopted = adoptAuthenticatedSftpChannel(reuseEndpoint, connId, options);
+            if (adopted) {
+              sendSftpProgress(
+                event.sender,
+                connId,
+                options.hostname,
+                "connected",
+                "reused authenticated SFTP session",
+              );
+              return adopted;
+            }
             if (
               coordination.role === "join"
               && coordinationErr?.code !== "ERR_SFTP_SINGLE_CHANNEL_BASTION"
@@ -898,6 +1091,9 @@ function createOpenConnectionApi(ctx) {
       const client = new SftpClient();
       let peerSingleChannelSsh = options.singleChannelSsh === true;
       client.__netcattyEndpointKey = buildEndpointKey(reuseEndpoint);
+      if (typeof buildChannelAdoptionKey === "function") {
+        client.__netcattyChannelAdoptionKey = buildChannelAdoptionKey(reuseEndpoint);
+      }
       let freshClientClosed = false;
       const closeFreshClient = () => {
         if (freshClientClosed) return;
@@ -994,6 +1190,12 @@ function createOpenConnectionApi(ctx) {
         port: options.port || 22,
         knownHosts: options.knownHosts,
         verifyHostKeys: options.verifyHostKeys,
+        unattended: options.hostKeyUnattended === true,
+        onAccepted: (info) => {
+          if (!info) return;
+          if (!Array.isArray(options._acceptedHostKeys)) options._acceptedHostKeys = [];
+          options._acceptedHostKeys.push(info);
+        },
       });
     
       // Use the tunneled socket if we have one
@@ -1400,7 +1602,25 @@ function createOpenConnectionApi(ctx) {
         if (client.client) {
           client.client.__netcattySingleChannelSsh = peerSingleChannelSsh;
         }
+        if (Array.isArray(options._acceptedHostKeys) && options._acceptedHostKeys.length > 0) {
+          client.__netcattyAcceptedHostKeys = options._acceptedHostKeys.slice();
+        }
         sftpClients.set(connId, client);
+
+        // Publish the live channel before rejecting waiters. A single-channel
+        // login cannot join the transport registry; leaving the dial pending
+        // makes the next SFTP-page transfer wait forever with no OTP prompt.
+        if (pendingDialCoordination && !client.__netcattyTransportManaged) {
+          const unshared = new Error(
+            peerSingleChannelSsh || options.singleChannelSsh === true
+              ? "This host allows one SSH channel. Reuse the authenticated SFTP session instead of opening another."
+              : "SFTP connection was not added to the shared SSH transport registry",
+          );
+          if (peerSingleChannelSsh || options.singleChannelSsh === true) {
+            unshared.code = "ERR_SFTP_SINGLE_CHANNEL_BASTION";
+          }
+          failTransportDial(pendingDialCoordination, unshared);
+        }
     
         // Store jump connections for cleanup when SFTP is closed (legacy path
         // only — transport-managed connections park chain on the registry).
@@ -1417,6 +1637,16 @@ function createOpenConnectionApi(ctx) {
         // Cleanup jump connections on error
         cleanupPendingConnection();
         closeFreshClient();
+        if (
+          options.hostKeyUnattended === true
+          && /Host denied \(verification failed\)|Host key rejected/i.test(String(err?.message || ""))
+        ) {
+          const denied = new Error(`Host key verification required for ${options.hostname || "host"}`);
+          denied.code = "ERR_HOST_KEY_UNVERIFIED";
+          denied.cause = err;
+          if (pendingDialCoordination) failTransportDial(pendingDialCoordination, denied);
+          throw denied;
+        }
         if (shouldRetrySftpKeyboardInteractiveFirst(options, authConfig, err)) {
           console.log("[SFTP] Password auth removed keyboard-interactive; retrying with keyboard-interactive first...");
           return openSftp(event, {
