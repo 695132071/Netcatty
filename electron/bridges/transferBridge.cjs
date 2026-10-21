@@ -1841,6 +1841,16 @@ function markDisposableUploadChannel(channel) {
   return channel;
 }
 
+/**
+ * ssh2 never answers (or fails) a request issued on an SFTP channel that has
+ * already ended: cleanupRequests ran at close, later requests are dropped.
+ * ssh2-sftp-client also keeps its stale `sftp` after a TCP reset, so its
+ * stat()/open() hang forever. Check before issuing any recovery request.
+ */
+function isSftpChannelEnded(sftp) {
+  return Boolean(sftp) && sftp.readable === false;
+}
+
 async function openIsolatedSftpChannel(client, signal = null) {
   // The dedicated one-channel login already holds its only session channel.
   // Opening another SFTP subsystem drops that login, so stay on the browse channel.
@@ -1879,6 +1889,7 @@ async function truncateRemoteStagedToCheckpoint(client, stagedRemote, checkpoint
   const checkpoint = Math.max(0, Number(checkpointBytes) || 0);
   if (!client || !stagedRemote?.path) return;
   if (isScpModeClient(client)) return;
+  if (isSftpChannelEnded(client.sftp)) return;
   try {
     const encoded = encodePathForSession(
       stagedRemote.sftpId,
@@ -2274,6 +2285,9 @@ async function prepareUploadFallbackCheckpoint(transfer, client, fileSize, sendP
     let stagedSize = Number.POSITIVE_INFINITY;
     try {
       const staged = transfer.stagedRemote;
+      if (isSftpChannelEnded((staged.client || client)?.sftp)) {
+        throw new Error("SFTP channel closed");
+      }
       const encoded = encodePathForSession(staged.sftpId, staged.path, staged.encoding);
       stagedSize = Number((await (staged.client || client).stat(encoded))?.size);
     } catch { /* missing staged file — restart */ }
@@ -2525,6 +2539,10 @@ async function uploadFile(
       // uploadFileConcurrent ends the isolated channel itself.
       isolated = null;
       if (transfer.cancelled) throw err;
+      // Whole connection lost (reset/VPN drop/sshd killed): the browse channel
+      // is dead too, and every fallback request on it would hang. Fail now so
+      // the task shows an error and can be resumed/retried after reconnect.
+      if (isSftpChannelEnded(sftp)) throw err;
       if (err?.noTransferFallback || transfer.noTransferFallback) {
         if (err && typeof err === "object" && transfer.noTransferFallback) {
           err.noTransferFallback = true;
@@ -3154,9 +3172,21 @@ function openSftpHandleForTransfer(sftp, filePath, flags, transfer, options = {}
     // the OPEN callback unanswered, so the upload stayed active with no error.
     sftp.on?.("end", onOpenChannelClosed);
     sftp.on?.("close", onOpenChannelClosed);
-    if (!isWriteOpen && sftp.readable === false) {
-      // A failed isolated download may fall back after the browse channel's
-      // end event already fired. ssh2 never answers a new OPEN on that channel.
+    if (sftp.readable === false) {
+      // The channel already ended (TCP reset, sshd/sftp-server killed, VPN
+      // drop). ssh2 never answers a request issued after close, and the
+      // end/close events above will not fire again, so OPEN — read or write —
+      // would wait forever and leave the task frozen at "Transferring".
+      // No OPEN was sent. A write must release the path gate the same way a
+      // pre-OPEN failure does: the generic write-error path keeps a generated
+      // stage gate held, and a resumable upload skips the bounded fastPut
+      // wait, so every later strategy on this path would wait forever.
+      if (isWriteOpen) {
+        settle(reject, sftpChannelClosedError(null, sftp));
+        completeSharedWriteDrain();
+        releasePathGate();
+        return;
+      }
       onOpenChannelClosed();
       return;
     }

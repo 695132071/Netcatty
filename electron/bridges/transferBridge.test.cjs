@@ -13434,6 +13434,205 @@ test("a closed disposable upload channel falls back once to the healthy shared c
   assert.deepEqual(remoteFiles.get(targetPath), payload);
 });
 
+test("connection loss mid-upload fails instead of hanging on the dead shared channel", async (t) => {
+  // ssh2 drops requests issued after an SFTP channel has closed: the callback
+  // never fires (cleanupRequests already ran). A TCP reset kills the isolated
+  // and the shared browse channel together, so the concurrent-shared fallback
+  // must not issue a write OPEN on the closed browse channel.
+  const tempDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "netcatty-dead-connection-upload-"));
+  t.after(async () => fs.promises.rm(tempDir, { recursive: true, force: true }));
+  const localPath = path.join(tempDir, "fresh.bin");
+  const payload = Buffer.alloc(TRANSFER_CHUNK_SIZE * 4, 7);
+  await fs.promises.writeFile(localPath, payload);
+  let connected = true;
+  let sharedOpensAfterLoss = 0;
+  const makeChannel = () => {
+    const ch = createFastSftp({});
+    ch.lstat = (_p, cb) => { const e = new Error("ENOENT"); e.code = 2; cb(e); };
+    ch.open = (_p, _f, cb) => {
+      if (ch.readable === false) { if (ch === shared) sharedOpensAfterLoss += 1; return; } // ssh2: never answered
+      cb(null, Buffer.from("h"));
+    };
+    ch.close = (_h, cb) => { if (ch.readable !== false) cb(null); };
+    return ch;
+  };
+  const shared = makeChannel();
+  shared.write = () => {};
+  const dropConnection = (channels) => {
+    connected = false;
+    for (const ch of channels) { ch.readable = false; ch.emit("end"); ch.emit("close"); }
+  };
+  const client = {
+    sftp: shared,
+    // ssh2-sftp-client keeps its stale `sftp` after a reset, so stat() is
+    // issued on the closed channel and never settles (observed in the app).
+    stat: async () => {
+      if (!connected) return new Promise(() => {});
+      const e = new Error("ENOENT"); e.code = 2; throw e;
+    },
+    delete: async () => {},
+    rename: async () => {},
+    client: {
+      sftp(callback) {
+        if (!connected) throw new Error("Not connected");
+        const isolated = makeChannel();
+        isolated.write = (_h, _b, _o, _l, _p, cb) => {
+          dropConnection([isolated, shared]);
+          setImmediate(() => cb(new Error("No response from server")));
+        };
+        callback(null, isolated);
+      },
+    },
+  };
+  transferBridge.init({ sftpClients: new Map([["target", client]]) });
+
+  const result = await Promise.race([
+    transferBridge.startTransfer({ sender: createSender() }, {
+      transferId: "dead-connection-upload",
+      sourcePath: localPath,
+      targetPath: "/tmp/fresh.bin",
+      sourceType: "local",
+      targetType: "sftp",
+      targetSftpId: "target",
+      totalBytes: payload.length,
+      resumable: true,
+    }),
+    new Promise((resolve) => setTimeout(() => resolve({ hung: true }), 5000)),
+  ]);
+
+  assert.notEqual(result.hung, true, "upload hung after connection loss");
+  assert.ok(result.error, "upload must fail with an error after connection loss");
+  assert.equal(sharedOpensAfterLoss, 0, "no OPEN may be issued on the closed browse channel");
+});
+
+test("isolated channel ending before OPEN on a resumable stage does not stick the path gate", async (t) => {
+  // The isolated subsystem can die before OPEN while the shared browse channel
+  // stays healthy. markOpenIssued already ran, but no OPEN was sent. A generated
+  // stage must release that gate; otherwise the resumable flow skips the bounded
+  // fastPut wait and every later upload on this connection sits on the gate.
+  const tempDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "netcatty-pre-open-stage-gate-"));
+  t.after(async () => fs.promises.rm(tempDir, { recursive: true, force: true }));
+  const localPath = path.join(tempDir, "fresh.bin");
+  const laterLocalPath = path.join(tempDir, "later.bin");
+  const payload = Buffer.from("pre-open-stage");
+  const laterPayload = Buffer.from("later-upload");
+  await fs.promises.writeFile(localPath, payload);
+  await fs.promises.writeFile(laterLocalPath, laterPayload);
+  const targetPath = "/tmp/pre-open-stage.bin";
+  const laterTargetPath = "/tmp/later-upload.bin";
+  const remoteFiles = new Map();
+  let isolatedOpenCalls = 0;
+  let sharedOpenCalls = 0;
+
+  const rememberFile = (sftp) => {
+    sftp.lstat = (remotePath, callback) => {
+      const key = String(remotePath);
+      if (!remoteFiles.has(key)) {
+        const error = new Error("ENOENT");
+        error.code = 2;
+        callback(error);
+        return;
+      }
+      callback(null, {
+        size: remoteFiles.get(key).length,
+        mode: 0o100644,
+        isDirectory: () => false,
+        isSymbolicLink: () => false,
+      });
+    };
+    sftp.open = (remotePath, _flags, callback) => {
+      if (sftp.readable === false) {
+        isolatedOpenCalls += 1;
+        return;
+      }
+      sharedOpenCalls += 1;
+      const key = String(remotePath);
+      if (!remoteFiles.has(key)) remoteFiles.set(key, Buffer.alloc(0));
+      callback(null, Buffer.from(key));
+    };
+    sftp.close = (_handle, callback) => callback(null);
+  };
+
+  const shared = createFastSftp({});
+  rememberFile(shared);
+  shared.write = (handle, buffer, offset, length, position, callback) => {
+    const key = handle.toString();
+    const next = Buffer.alloc(Math.max(remoteFiles.get(key)?.length || 0, position + length));
+    if (remoteFiles.has(key)) remoteFiles.get(key).copy(next);
+    buffer.copy(next, position, offset, offset + length);
+    remoteFiles.set(key, next);
+    setImmediate(() => callback(null));
+  };
+
+  const client = {
+    sftp: shared,
+    stat: async (remotePath) => {
+      const key = String(remotePath);
+      if (!remoteFiles.has(key)) {
+        const error = new Error("ENOENT");
+        error.code = 2;
+        throw error;
+      }
+      return { size: remoteFiles.get(key).length, isDirectory: false };
+    },
+    delete: async (remotePath) => { remoteFiles.delete(String(remotePath)); },
+    async rename(fromPath, toPath) {
+      remoteFiles.set(String(toPath), remoteFiles.get(String(fromPath)));
+      remoteFiles.delete(String(fromPath));
+    },
+    client: {
+      sftp(callback) {
+        const isolated = createFastSftp({});
+        rememberFile(isolated);
+        // Ended before the caller reaches sftp.open. ssh2 will not answer.
+        isolated.readable = false;
+        callback(null, isolated);
+      },
+    },
+  };
+  transferBridge.init({ sftpClients: new Map([["target", client]]) });
+
+  const first = await Promise.race([
+    transferBridge.startTransfer({ sender: createSender() }, {
+      transferId: "pre-open-stage",
+      sourcePath: localPath,
+      targetPath,
+      sourceType: "local",
+      targetType: "sftp",
+      targetSftpId: "target",
+      totalBytes: payload.length,
+      resumable: true,
+    }),
+    new Promise((resolve) => setTimeout(() => resolve({ hung: true }), 3000)),
+  ]);
+
+  assert.notEqual(first.hung, true, "resumable staged upload hung after the isolated channel ended before OPEN");
+  assert.equal(first.error, undefined, first.error);
+  assert.equal(isolatedOpenCalls, 0, "no OPEN may be sent on the already-ended isolated channel");
+  assert.ok(sharedOpenCalls >= 1, "shared fallback must reach OPEN once the pre-OPEN gate is released");
+  assert.deepEqual(remoteFiles.get(targetPath), payload);
+
+  const sharedOpensBeforeLater = sharedOpenCalls;
+  const later = await Promise.race([
+    transferBridge.startTransfer({ sender: createSender() }, {
+      transferId: "later-upload",
+      sourcePath: laterLocalPath,
+      targetPath: laterTargetPath,
+      sourceType: "local",
+      targetType: "sftp",
+      targetSftpId: "target",
+      totalBytes: laterPayload.length,
+      resumable: true,
+    }),
+    new Promise((resolve) => setTimeout(() => resolve({ hung: true }), 3000)),
+  ]);
+
+  assert.notEqual(later.hung, true, "later upload on the same connection stuck on the path gate");
+  assert.equal(later.error, undefined, later.error);
+  assert.ok(sharedOpenCalls > sharedOpensBeforeLater, "later upload must issue its own OPEN");
+  assert.deepEqual(remoteFiles.get(laterTargetPath), laterPayload);
+});
+
 for (const mode of ["single-channel", "sudo"]) {
   test(`a closed ${mode} owner channel fails the upload without another dial`, async (t) => {
     const tempDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), `netcatty-${mode}-owner-close-`));
