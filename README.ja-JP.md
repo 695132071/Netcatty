@@ -10,6 +10,12 @@
 </p>
 
 <p align="center">
+  <a href="https://trendshift.io/repositories/18391?utm_source=trendshift-badge&amp;utm_medium=badge&amp;utm_campaign=badge-trendshift-18391" target="_blank" rel="noopener noreferrer">
+    <img src="https://trendshift.io/api/badge/trendshift/repositories/18391/daily?language=TypeScript" alt="binaricat/Netcatty | Trendshift" width="250" height="55"/>
+  </a>
+</p>
+
+<p align="center">
   Electron、React、xterm.js で構築された機能豊富な SSH ワークスペース。<br/>
   🔥 内蔵 AI Agent · 分割ターミナル · Vault ビュー · SFTP ワークフロー · カスタムテーマ — すべてが一つに。
 </p>
@@ -40,7 +46,7 @@
 
 ---
 
-<img width="3358" height="1984" alt="image" src="https://github.com/user-attachments/assets/e1302660-dece-46be-9857-1678a9b13d00" />
+<img width="3358" height="1984" alt="image" src="docs/assets/readme/overview.webp" />
 
 ---
 
@@ -63,13 +69,13 @@
 
 Catty Agent にサーバーの健全性チェックを依頼すると、適切なコマンドを実行し、出力を分析して数秒で明確なサマリーを提示します。
 
-<img width="3302" height="1978" alt="image" src="https://github.com/user-attachments/assets/3ec30145-d226-4e26-834b-52ee75b5e205" />
+<img width="3302" height="1978" alt="image" src="docs/assets/readme/catty-single-host.webp" />
 
 #### 🚀 マルチホスト — Docker Swarm クラスターのセットアップ
 
 1 つの会話で 2 台のサーバーをまたいで Docker Swarm クラスターをオーケストレーションする Catty Agent をご覧ください。初期化、トークン交換、ノード参加まですべてこなします — あなたは望む結果を伝えるだけ。
 
-<img width="3294" height="1974" alt="image" src="https://github.com/user-attachments/assets/ca17e857-6163-4067-a615-cacdfd5be4fc" />
+<img width="3294" height="1974" alt="image" src="docs/assets/readme/catty-multi-host.webp" />
 
 ---
 
@@ -150,34 +156,34 @@ Catty Agent にサーバーの健全性チェックを依頼すると、適切�
 
 メインウィンドウは、長時間の SSH 作業を前提に設計されています。セッション、ナビゲーション、主要ツールへ素早くアクセスできます。
 
-<img width="3290" height="1988" alt="image" src="https://github.com/user-attachments/assets/ab3afd3e-a819-46fc-9251-40acb592ba69" />
+<img width="3290" height="1988" alt="image" src="docs/assets/readme/main-window.webp" />
 
-<img width="3324" height="1992" alt="image" src="https://github.com/user-attachments/assets/7c7f6e7f-fb20-4574-8e7f-74397682b873" />
+<img width="3324" height="1992" alt="image" src="docs/assets/readme/main-window-terminal.webp" />
 
 <a name="vault-ビュー"></a>
 ## Vault ビュー
 
 作業に合わせて見え方を切り替え：グリッドで全体像、リストでスキャン、ツリーで整理と階層ナビゲーション。
 
-<img width="3292" height="1984" alt="image" src="https://github.com/user-attachments/assets/29642143-3fd6-4693-a30c-b7f656053ca3" />
+<img width="3292" height="1984" alt="image" src="docs/assets/readme/vault-grid.webp" />
 
-<img width="3322" height="1998" alt="image" src="https://github.com/user-attachments/assets/6041efe2-607e-4314-838c-eba3db4c852c" />
+<img width="3322" height="1998" alt="image" src="docs/assets/readme/vault-list.webp" />
 
 <a name="モニタリングビュー"></a>
 ## モニタリングビュー
 
 CPU、メモリ、ディスク、ネットワーク、レイテンシーを確認でき、対応する環境では GPU の詳細も表示されます。表示する列の選択、列幅や更新設定の調整ができ、監視対象のホストから直接ターミナルを開くこともできます。
 
-<img width="3364" height="1982" alt="image" src="https://github.com/user-attachments/assets/d0f495b5-25c8-494f-bb9c-8c20b0a921b6" />
+<img width="3364" height="1982" alt="image" src="docs/assets/readme/monitoring.webp" />
 
-<img width="3362" height="1980" alt="image" src="https://github.com/user-attachments/assets/245c234e-2b22-43f2-a4fd-8057d229c56f" />
+<img width="3362" height="1980" alt="image" src="docs/assets/readme/monitoring-columns.webp" />
 
 <a name="分割ターミナル"></a>
 ## 分割ターミナル
 
 分割ペインで複数のサーバー/タスクを同時に扱えます（例：デプロイ + ログ + 監視）。
 
-<img width="1560" height="871" alt="split" src="https://github.com/user-attachments/assets/c93a8523-6256-4bb3-8b6e-d599831f2f9f" />
+<img width="1560" height="871" alt="split" src="docs/assets/readme/split-terminals.webp" />
 
 ---
 

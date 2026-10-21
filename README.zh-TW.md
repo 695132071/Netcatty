@@ -10,6 +10,12 @@
 </p>
 
 <p align="center">
+  <a href="https://trendshift.io/repositories/18391?utm_source=trendshift-badge&amp;utm_medium=badge&amp;utm_campaign=badge-trendshift-18391" target="_blank" rel="noopener noreferrer">
+    <img src="https://trendshift.io/api/badge/trendshift/repositories/18391/daily?language=TypeScript" alt="binaricat/Netcatty | Trendshift" width="250" height="55"/>
+  </a>
+</p>
+
+<p align="center">
   以 Electron、React 與 xterm.js 打造，介面精緻、功能完整的 SSH 工作區。<br/>
   🔥 內建 AI Agent · 分割終端 · Vault 檢視 · SFTP 工作流 · 自訂主題 —— 全部整合在一起。
 </p>
@@ -40,7 +46,7 @@
 
 ---
 
-<img width="3358" height="1984" alt="image" src="https://github.com/user-attachments/assets/e1302660-dece-46be-9857-1678a9b13d00" />
+<img width="3358" height="1984" alt="image" src="docs/assets/readme/overview.webp" />
 
 ---
 
@@ -63,13 +69,13 @@
 
 請 Catty Agent 檢查伺服器健康狀況，它會自動執行合適的指令、分析輸出，並在幾秒內給你一份清楚的總結。
 
-<img width="3302" height="1978" alt="image" src="https://github.com/user-attachments/assets/3ec30145-d226-4e26-834b-52ee75b5e205" />
+<img width="3302" height="1978" alt="image" src="docs/assets/readme/catty-single-host.webp" />
 
 #### 🚀 多主機 —— 建立 Docker Swarm 叢集
 
 看 Catty Agent 在一次對話裡，跨兩台伺服器編排出一個 Docker Swarm 叢集。初始化、權杖交換、節點加入都由它處理 —— 你只要說出你想要的結果。
 
-<img width="3294" height="1974" alt="image" src="https://github.com/user-attachments/assets/ca17e857-6163-4067-a615-cacdfd5be4fc" />
+<img width="3294" height="1974" alt="image" src="docs/assets/readme/catty-multi-host.webp" />
 
 ---
 
@@ -150,34 +156,34 @@
 
 主視窗是為了長時間的 SSH 工作流程而設計：工作階段、導覽與常用工具都集中在同一個地方。
 
-<img width="3290" height="1988" alt="image" src="https://github.com/user-attachments/assets/ab3afd3e-a819-46fc-9251-40acb592ba69" />
+<img width="3290" height="1988" alt="image" src="docs/assets/readme/main-window.webp" />
 
-<img width="3324" height="1992" alt="image" src="https://github.com/user-attachments/assets/7c7f6e7f-fb20-4574-8e7f-74397682b873" />
+<img width="3324" height="1992" alt="image" src="docs/assets/readme/main-window-terminal.webp" />
 
 <a name="vault-檢視"></a>
 ## Vault 檢視
 
 用最適合當下情境的方式整理與瀏覽主機：網格看全局、清單快速掃視、樹狀理層級。
 
-<img width="3292" height="1984" alt="image" src="https://github.com/user-attachments/assets/29642143-3fd6-4693-a30c-b7f656053ca3" />
+<img width="3292" height="1984" alt="image" src="docs/assets/readme/vault-grid.webp" />
 
-<img width="3322" height="1998" alt="image" src="https://github.com/user-attachments/assets/6041efe2-607e-4314-838c-eba3db4c852c" />
+<img width="3322" height="1998" alt="image" src="docs/assets/readme/vault-list.webp" />
 
 <a name="監控檢視"></a>
 ## 監控檢視
 
 查看 CPU、記憶體、磁碟、網路與延遲資料；支援的環境還可顯示 GPU 詳情。你可以選擇顯示的欄位、調整欄寬與重新整理設定，並直接從受監控的主機開啟終端機。
 
-<img width="3364" height="1982" alt="image" src="https://github.com/user-attachments/assets/d0f495b5-25c8-494f-bb9c-8c20b0a921b6" />
+<img width="3364" height="1982" alt="image" src="docs/assets/readme/monitoring.webp" />
 
-<img width="3362" height="1980" alt="image" src="https://github.com/user-attachments/assets/245c234e-2b22-43f2-a4fd-8057d229c56f" />
+<img width="3362" height="1980" alt="image" src="docs/assets/readme/monitoring-columns.webp" />
 
 <a name="分割終端"></a>
 ## 分割終端
 
 分割窗格讓你同時盯著多台伺服器或多個服務（部署 + 日誌 + 監控指標），不用一直切視窗。
 
-<img width="1560" height="871" alt="split" src="https://github.com/user-attachments/assets/c93a8523-6256-4bb3-8b6e-d599831f2f9f" />
+<img width="1560" height="871" alt="split" src="docs/assets/readme/split-terminals.webp" />
 
 ---
 

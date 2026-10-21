@@ -46,7 +46,7 @@
 
 ---
 
-<img width="3358" height="1984" alt="image" src="https://github.com/user-attachments/assets/e1302660-dece-46be-9857-1678a9b13d00" />
+<img width="3358" height="1984" alt="image" src="docs/assets/readme/overview.webp" />
 
 
 ---
@@ -69,14 +69,14 @@
 
 Ask Catty Agent to check a server's health, and it runs the right commands, analyzes the output, and gives you a clear summary — all in seconds.
 
-<img width="3302" height="1978" alt="image" src="https://github.com/user-attachments/assets/3ec30145-d226-4e26-834b-52ee75b5e205" />
+<img width="3302" height="1978" alt="image" src="docs/assets/readme/catty-single-host.webp" />
 
 
 #### 🚀 Multi-Host — Docker Swarm Cluster Setup
 
 Watch Catty Agent orchestrate a Docker Swarm cluster across two servers in one conversation. It handles the init, token exchange, and node joining — you just tell it what you want.
 
-<img width="3294" height="1974" alt="image" src="https://github.com/user-attachments/assets/ca17e857-6163-4067-a615-cacdfd5be4fc" />
+<img width="3294" height="1974" alt="image" src="docs/assets/readme/catty-multi-host.webp" />
 
 
 ---
@@ -159,10 +159,10 @@ If you regularly work with a fleet of servers, Netcatty is built for speed and f
 
 The main window is designed for long-running SSH workflows: quick access to sessions, navigation, and core tools in one place.
 
-<img width="3290" height="1988" alt="image" src="https://github.com/user-attachments/assets/ab3afd3e-a819-46fc-9251-40acb592ba69" />
+<img width="3290" height="1988" alt="image" src="docs/assets/readme/main-window.webp" />
 
 
-<img width="3324" height="1992" alt="image" src="https://github.com/user-attachments/assets/7c7f6e7f-fb20-4574-8e7f-74397682b873" />
+<img width="3324" height="1992" alt="image" src="docs/assets/readme/main-window-terminal.webp" />
 
 
 
@@ -171,10 +171,10 @@ The main window is designed for long-running SSH workflows: quick access to sess
 
 Organize and navigate your hosts using the view that best fits the moment: grid for overview, list for scanning, tree for structure.
 
-<img width="3292" height="1984" alt="image" src="https://github.com/user-attachments/assets/29642143-3fd6-4693-a30c-b7f656053ca3" />
+<img width="3292" height="1984" alt="image" src="docs/assets/readme/vault-grid.webp" />
 
 
-<img width="3322" height="1998" alt="image" src="https://github.com/user-attachments/assets/6041efe2-607e-4314-838c-eba3db4c852c" />
+<img width="3322" height="1998" alt="image" src="docs/assets/readme/vault-list.webp" />
 
 
 
@@ -183,9 +183,9 @@ Organize and navigate your hosts using the view that best fits the moment: grid 
 
 Inspect CPU, memory, disk, network, and latency readings, with GPU details where available. Choose visible columns, resize them, adjust refresh controls, and open a terminal directly from a monitored host.
 
-<img width="3364" height="1982" alt="image" src="https://github.com/user-attachments/assets/d0f495b5-25c8-494f-bb9c-8c20b0a921b6" />
+<img width="3364" height="1982" alt="image" src="docs/assets/readme/monitoring.webp" />
 
-<img width="3362" height="1980" alt="image" src="https://github.com/user-attachments/assets/245c234e-2b22-43f2-a4fd-8057d229c56f" />
+<img width="3362" height="1980" alt="image" src="docs/assets/readme/monitoring-columns.webp" />
 
 
 
@@ -195,7 +195,7 @@ Inspect CPU, memory, disk, network, and latency readings, with GPU details where
 
 Split panes help you monitor multiple servers/services at the same time (deploy + logs + metrics) without juggling windows.
 
-<img width="1560" height="871" alt="split" src="https://github.com/user-attachments/assets/c93a8523-6256-4bb3-8b6e-d599831f2f9f" />
+<img width="1560" height="871" alt="split" src="docs/assets/readme/split-terminals.webp" />
 
 ---
 

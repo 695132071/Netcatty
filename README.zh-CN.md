@@ -10,6 +10,12 @@
 </p>
 
 <p align="center">
+  <a href="https://trendshift.io/repositories/18391?utm_source=trendshift-badge&amp;utm_medium=badge&amp;utm_campaign=badge-trendshift-18391" target="_blank" rel="noopener noreferrer">
+    <img src="https://trendshift.io/api/badge/trendshift/repositories/18391/daily?language=TypeScript" alt="binaricat/Netcatty | Trendshift" width="250" height="55"/>
+  </a>
+</p>
+
+<p align="center">
   一个基于 Electron、React 和 xterm.js 构建的功能丰富的 SSH 工作空间。<br/>
   🔥 内置 AI Agent · 分屏终端 · Vault 多视图 · SFTP 工作流 · 自定义主题 —— 一应俱全。
 </p>
@@ -40,7 +46,7 @@
 
 ---
 
-<img width="3358" height="1984" alt="image" src="https://github.com/user-attachments/assets/e1302660-dece-46be-9857-1678a9b13d00" />
+<img width="3358" height="1984" alt="image" src="docs/assets/readme/overview.webp" />
 
 ---
 
@@ -63,13 +69,13 @@
 
 让 Catty Agent 检查服务器健康状态，它会自动运行合适的命令、分析输出并给出清晰总结 —— 几秒内完成。
 
-<img width="3302" height="1978" alt="image" src="https://github.com/user-attachments/assets/3ec30145-d226-4e26-834b-52ee75b5e205" />
+<img width="3302" height="1978" alt="image" src="docs/assets/readme/catty-single-host.webp" />
 
 #### 🚀 多主机 —— Docker Swarm 集群搭建
 
 看 Catty Agent 在一次对话中跨两台服务器编排 Docker Swarm 集群。它负责初始化、令牌交换和节点加入 —— 你只需说出想要的结果。
 
-<img width="3294" height="1974" alt="image" src="https://github.com/user-attachments/assets/ca17e857-6163-4067-a615-cacdfd5be4fc" />
+<img width="3294" height="1974" alt="image" src="docs/assets/readme/catty-multi-host.webp" />
 
 ---
 
@@ -150,34 +156,34 @@
 
 主界面围绕长期 SSH 工作流设计：把会话、导航和常用工具集中到同一处，减少切换成本。
 
-<img width="3290" height="1988" alt="image" src="https://github.com/user-attachments/assets/ab3afd3e-a819-46fc-9251-40acb592ba69" />
+<img width="3290" height="1988" alt="image" src="docs/assets/readme/main-window.webp" />
 
-<img width="3324" height="1992" alt="image" src="https://github.com/user-attachments/assets/7c7f6e7f-fb20-4574-8e7f-74397682b873" />
+<img width="3324" height="1992" alt="image" src="docs/assets/readme/main-window-terminal.webp" />
 
 <a name="vault-视图"></a>
 ## Vault 视图
 
 用更适合当前任务的方式管理与浏览主机：网格看全局，列表做筛选，树形做整理与层级导航。
 
-<img width="3292" height="1984" alt="image" src="https://github.com/user-attachments/assets/29642143-3fd6-4693-a30c-b7f656053ca3" />
+<img width="3292" height="1984" alt="image" src="docs/assets/readme/vault-grid.webp" />
 
-<img width="3322" height="1998" alt="image" src="https://github.com/user-attachments/assets/6041efe2-607e-4314-838c-eba3db4c852c" />
+<img width="3322" height="1998" alt="image" src="docs/assets/readme/vault-list.webp" />
 
 <a name="监控视图"></a>
 ## 监控视图
 
 查看 CPU、内存、磁盘、网络和延迟数据；支持的环境还可显示 GPU 详情。你可以选择显示的列、调整列宽和刷新设置，并直接从受监控的主机打开终端。
 
-<img width="3364" height="1982" alt="image" src="https://github.com/user-attachments/assets/d0f495b5-25c8-494f-bb9c-8c20b0a921b6" />
+<img width="3364" height="1982" alt="image" src="docs/assets/readme/monitoring.webp" />
 
-<img width="3362" height="1980" alt="image" src="https://github.com/user-attachments/assets/245c234e-2b22-43f2-a4fd-8057d229c56f" />
+<img width="3362" height="1980" alt="image" src="docs/assets/readme/monitoring-columns.webp" />
 
 <a name="分屏终端"></a>
 ## 分屏终端
 
 分屏适合同时处理多个任务（例如部署 + 日志 + 排障），不用频繁切换窗口。
 
-<img width="1560" height="871" alt="split" src="https://github.com/user-attachments/assets/c93a8523-6256-4bb3-8b6e-d599831f2f9f" />
+<img width="1560" height="871" alt="split" src="docs/assets/readme/split-terminals.webp" />
 
 ---
 

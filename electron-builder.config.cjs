@@ -82,6 +82,9 @@ module.exports = {
         'lib/**/*.json',
         'skills/**/*',
         '!public/**/*',
+        // README screenshots live under docs/ and are not app resources.
+        // Keep them out of app.asar if the files globs ever become permissive.
+        '!docs/assets/readme/**/*',
         '!**/*.map',
         '!**/*.d.ts',
         '!**/*.d.mts',

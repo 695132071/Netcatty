@@ -203,6 +203,22 @@ test("build.files trims release-only dependency payloads", () => {
   }
 });
 
+test("build.files keeps README screenshot WebP out of the package", () => {
+  assert.ok(
+    config.files.includes("!docs/assets/readme/**/*"),
+    "README WebP screenshots must stay out of app.asar",
+  );
+  const { FileMatcher } = require("app-builder-lib/out/fileMatcher");
+  const root = path.resolve(__dirname, "..");
+  const matcher = new FileMatcher(root, path.join(root, "release"), (value) => value);
+  for (const pattern of config.files) matcher.addPattern(pattern);
+  const filter = matcher.createFilter();
+  const stat = { isDirectory: () => false };
+  assert.equal(filter(path.join(root, "docs/assets/readme/overview.webp"), stat), false);
+  assert.equal(filter(path.join(root, "electron/main.cjs"), stat), true);
+  assert.equal(filter(path.join(root, "public/icon.png"), stat), false);
+});
+
 test("build.files excludes Vite-bundled renderer-only packages", () => {
   const files = config.files;
   for (const glob of [
