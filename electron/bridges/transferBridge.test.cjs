@@ -13442,7 +13442,9 @@ test("connection loss mid-upload fails instead of hanging on the dead shared cha
   const tempDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "netcatty-dead-connection-upload-"));
   t.after(async () => fs.promises.rm(tempDir, { recursive: true, force: true }));
   const localPath = path.join(tempDir, "fresh.bin");
-  const payload = Buffer.alloc(TRANSFER_CHUNK_SIZE * 4, 7);
+  // Above the small-upload cutoff so the upload opens an isolated channel
+  // (files that fit one fanout window go straight to the shared session).
+  const payload = Buffer.alloc(SMALL_UPLOAD_SHARED_MAX_BYTES + TRANSFER_CHUNK_SIZE * 4, 7);
   await fs.promises.writeFile(localPath, payload);
   let connected = true;
   let sharedOpensAfterLoss = 0;
@@ -13505,6 +13507,66 @@ test("connection loss mid-upload fails instead of hanging on the dead shared cha
   assert.equal(sharedOpensAfterLoss, 0, "no OPEN may be issued on the closed browse channel");
 });
 
+test("connection loss mid-upload fails a small upload that runs on the shared channel", async (t) => {
+  // Files that fit one fanout window skip the isolated channel. A reset still
+  // has to fail them: ssh2 errors the in-flight writes when the channel closes.
+  const tempDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "netcatty-dead-connection-small-upload-"));
+  t.after(async () => fs.promises.rm(tempDir, { recursive: true, force: true }));
+  const localPath = path.join(tempDir, "small.bin");
+  const payload = Buffer.alloc(TRANSFER_CHUNK_SIZE * 4, 7);
+  assert.ok(payload.length <= SMALL_UPLOAD_SHARED_MAX_BYTES);
+  await fs.promises.writeFile(localPath, payload);
+  let connected = true;
+  let isolatedOpens = 0;
+  const shared = createFastSftp({});
+  shared.lstat = (_p, cb) => { const e = new Error("ENOENT"); e.code = 2; cb(e); };
+  shared.open = (_p, _f, cb) => { if (shared.readable !== false) cb(null, Buffer.from("h")); };
+  shared.close = (_h, cb) => { if (shared.readable !== false) cb(null); };
+  shared.write = (_h, _b, _o, _l, _p, cb) => {
+    if (shared.readable === false) return; // ssh2: never answered
+    connected = false;
+    shared.readable = false;
+    shared.emit("end");
+    shared.emit("close");
+    setImmediate(() => cb(new Error("No response from server")));
+  };
+  const client = {
+    sftp: shared,
+    stat: async () => {
+      if (!connected) return new Promise(() => {});
+      const e = new Error("ENOENT"); e.code = 2; throw e;
+    },
+    delete: async () => {},
+    rename: async () => {},
+    client: {
+      sftp(callback) {
+        isolatedOpens += 1;
+        if (!connected) throw new Error("Not connected");
+        callback(new Error("isolated channel must not be needed"));
+      },
+    },
+  };
+  transferBridge.init({ sftpClients: new Map([["target", client]]) });
+
+  const result = await Promise.race([
+    transferBridge.startTransfer({ sender: createSender() }, {
+      transferId: "dead-connection-small-upload",
+      sourcePath: localPath,
+      targetPath: "/tmp/small.bin",
+      sourceType: "local",
+      targetType: "sftp",
+      targetSftpId: "target",
+      totalBytes: payload.length,
+      resumable: true,
+    }),
+    new Promise((resolve) => setTimeout(() => resolve({ hung: true }), 5000)),
+  ]);
+
+  assert.notEqual(result.hung, true, "small shared-channel upload hung after connection loss");
+  assert.ok(result.error, "small upload must fail with an error after connection loss");
+  assert.equal(isolatedOpens, 0, "small upload must stay on the shared channel");
+});
+
 test("isolated channel ending before OPEN on a resumable stage does not stick the path gate", async (t) => {
   // The isolated subsystem can die before OPEN while the shared browse channel
   // stays healthy. markOpenIssued already ran, but no OPEN was sent. A generated
@@ -13514,8 +13576,10 @@ test("isolated channel ending before OPEN on a resumable stage does not stick th
   t.after(async () => fs.promises.rm(tempDir, { recursive: true, force: true }));
   const localPath = path.join(tempDir, "fresh.bin");
   const laterLocalPath = path.join(tempDir, "later.bin");
-  const payload = Buffer.from("pre-open-stage");
-  const laterPayload = Buffer.from("later-upload");
+  // Both payloads exceed the small-upload cutoff so each upload tries the
+  // isolated channel first instead of going straight to the shared session.
+  const payload = Buffer.alloc(SMALL_UPLOAD_SHARED_MAX_BYTES + 1, "pre-open-stage");
+  const laterPayload = Buffer.alloc(SMALL_UPLOAD_SHARED_MAX_BYTES + 1, "later-upload");
   await fs.promises.writeFile(localPath, payload);
   await fs.promises.writeFile(laterLocalPath, laterPayload);
   const targetPath = "/tmp/pre-open-stage.bin";
