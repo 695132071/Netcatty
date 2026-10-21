@@ -155,6 +155,7 @@ async function handleBeforeQuit({
   setQuitConfirmed,
   commitQuit,
   cancelPendingUpdateInstall,
+  dialog: injectedDialog,
 }) {
   if (quitConfirmed) return { committed: false, skipped: "quit-confirmed" };
   if (quitGuardChannelBusy) {
@@ -207,6 +208,7 @@ async function handleBeforeQuit({
         queryDirtyEditors(win.webContents, timeoutMs, { ipcMain }).then((hasDirty) => ({
           win,
           hasDirty: Boolean(hasDirty),
+          transfersOnly: hasDirty === "transfers",
         })),
       ),
     );
@@ -249,18 +251,24 @@ async function handleBeforeQuit({
     // App Lock overlay sits above renderer toasts (z-index). When the app is
     // already locked, focusing the dirty window does not make the unsaved
     // warning visible — surface a native dialog above the lock screen (Codex P2).
-    try {
-      const { dialog } = require("electron");
-      dialog.showMessageBoxSync({
-        type: "warning",
-        buttons: ["OK"],
-        defaultId: 0,
-        message: "Unsaved changes",
-        detail:
-          "One or more editors have unsaved changes. If the app is locked, unlock it, then save or discard before quitting.",
-      });
-    } catch {
-      // ignore missing dialog in tests
+    // Skip it when every refusal came from the renderer's unfinished-transfer
+    // prompt: the user already answered, and this synchronous box would block
+    // the main process (and every running transfer) behind a wrong message.
+    const dirtyEditorsRefused = dirtyResults.some((result) => result.hasDirty && !result.transfersOnly);
+    if (dirtyEditorsRefused) {
+      try {
+        const dialog = injectedDialog || require("electron").dialog;
+        dialog.showMessageBoxSync({
+          type: "warning",
+          buttons: ["OK"],
+          defaultId: 0,
+          message: "Unsaved changes",
+          detail:
+            "One or more editors have unsaved changes. If the app is locked, unlock it, then save or discard before quitting.",
+        });
+      } catch {
+        // ignore missing dialog in tests
+      }
     }
 
     if (windowManager?.isQuittingForUpdate?.()) {

@@ -221,3 +221,15 @@ test("resolves false when no ipcMain can be resolved", async () => {
   assert.equal(await queryDirtyEditors(wc, 5000), false);
   assert.deepEqual(wc.sent, []);
 });
+
+test("carries a declined unfinished-transfer prompt as a truthy \"transfers\" result", async () => {
+  const ipcMain = makeIpcMain();
+  const wc = makeWebContents();
+  const promise = queryDirtyEditors(wc, 5000, { ipcMain });
+  ipcMain.emit("app:dirty-editors-result", { sender: wc }, { hasDirty: true, reason: "transfers" });
+  assert.equal(await promise, "transfers");
+  // A clean reply that names a reason is still clean.
+  const clean = queryDirtyEditors(wc, 5000, { ipcMain });
+  ipcMain.emit("app:dirty-editors-result", { sender: wc }, { hasDirty: false, reason: "transfers" });
+  assert.equal(await clean, false);
+});

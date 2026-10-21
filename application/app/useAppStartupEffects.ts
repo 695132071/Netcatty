@@ -356,29 +356,50 @@ export function useAppStartupEffects(ctx: StartupEffectsContext) {
       // on a slow quit and then quitting anyway after the timeout is
       // exactly the same outcome.
       let hasDirty = false;
+      let reason: "editors" | "transfers" | undefined;
+      // Captured before pause. Only transferring/queued rows were active
+      // because of this prompt.
+      let tasksToResume: { id: string }[] = [];
       try {
         // Pending handoffs retain source contents; accepted handoffs clear them.
         hasDirty = editorTabStore.getTabs().some((tab) => tab.content !== tab.baselineContent);
-        if (hasDirty) toast.warning(t('sftp.editor.quitBlockedByDirty'), 'SFTP');
+        if (hasDirty) {
+          reason = "editors";
+          toast.warning(t('sftp.editor.quitBlockedByDirty'), 'SFTP');
+        }
         if (!hasDirty) {
           const unfinishedTasks = sftpTransferCenterStore.getSnapshot().tasks.filter((task) => (
             !task.parentTaskId && !["completed", "failed", "cancelled"].includes(task.status)
           ));
           if (unfinishedTasks.length > 0) {
+            const resumable = unfinishedTasks.filter((task) => (
+              task.status === "transferring" || task.status === "queued"
+            ));
             await Promise.allSettled(unfinishedTasks.map((task) => sftpTransferCenterStore.pause(task.id)));
             hasDirty = !window.confirm(t('sftp.transferCenter.quitConfirm', { count: unfinishedTasks.length }));
+            if (hasDirty) {
+              // The user chose to stay. Main must hear that before any resume:
+              // resume can outlive the 5s dirty-check timeout, and a late reply
+              // lets the app quit anyway. The synchronous dialog is also skipped
+              // because this prompt was already answered.
+              reason = "transfers";
+              tasksToResume = resumable;
+            }
           }
         }
       } catch (err) {
         console.error('[App] dirty-editors check failed:', err);
       }
       try {
-        bridge.reportDirtyEditorsResult?.(hasDirty);
+        bridge.reportDirtyEditorsResult?.(hasDirty, reason);
       } catch (err) {
         // Reporting itself shouldn't throw, but if the IPC bridge is in a
         // bad state we'd rather log than bubble out of the listener and
         // disable the quit guard for the rest of the session.
         console.error('[App] reportDirtyEditorsResult failed:', err);
+      }
+      if (tasksToResume.length > 0) {
+        void Promise.allSettled(tasksToResume.map((task) => sftpTransferCenterStore.resume(task.id)));
       }
     });
     return unsub;

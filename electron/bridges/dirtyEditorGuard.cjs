@@ -63,7 +63,10 @@ function queryDirtyEditors(webContents, timeoutMs, options = {}) {
       // consume the listener slot and let the real reply fall through. A
       // missing/falsy sender is anomalous and treated as a wrong-window reply.
       if (evt?.sender !== webContents) return;
-      settle(payload?.hasDirty === true);
+      // "transfers": the user already declined the renderer's unfinished-
+      // transfer quit prompt. Still truthy, so existing callers keep quit
+      // cancelled; handleBeforeQuit uses it to skip the editor dialog.
+      settle(payload?.hasDirty === true ? (payload?.reason === "transfers" ? "transfers" : true) : false);
     }
     ipcMain.on("app:dirty-editors-result", onResult);
 

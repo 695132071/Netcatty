@@ -1462,7 +1462,7 @@ function createPreloadApi(ctx) {
     return () => ipcRenderer.removeListener("app:query-dirty-editors", handler);
   },
   // Renderer reports the dirty-check result back to the main process.
-  reportDirtyEditorsResult: (hasDirty) => ipcRenderer.send("app:dirty-editors-result", { hasDirty }),
+  reportDirtyEditorsResult: (hasDirty, reason) => ipcRenderer.send("app:dirty-editors-result", { hasDirty, reason }),
   
   // Port Forwarding API
   startPortForward: async (options) => {

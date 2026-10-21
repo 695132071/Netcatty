@@ -444,3 +444,35 @@ test("handleBeforeQuit focuses only dirty windows when multiple renderers reply"
     "focus",
   ]);
 });
+
+test("handleBeforeQuit does not raise the blocking editor dialog when only the transfer quit prompt was declined", async () => {
+  const run = async (dirtyValue) => {
+    const calls = [];
+    const win = { isDestroyed: () => false, webContents: { isDestroyed: () => false, isCrashed: () => false, id: 1 } };
+    const result = await handleBeforeQuit({
+      event: { preventDefault() { calls.push("preventDefault"); } },
+      mainWindows: [win],
+      queryDirtyEditors: async () => dirtyValue,
+      appLockController: { setLocked(reason) { calls.push(`lock:${reason}`); } },
+      windowManager: { showAndFocusMainWindow() { calls.push("showAndFocus"); } },
+      app: { quit() { calls.push("app.quit"); } },
+      ipcMain: {},
+      quitConfirmed: false,
+      quitGuardChannelBusy: false,
+      timeoutMs: 10,
+      setQuitGuardChannelBusy() {},
+      setQuitConfirmed(value) { calls.push(`quitConfirmed:${value}`); },
+      dialog: { showMessageBoxSync() { calls.push("dialog"); return 0; } },
+    });
+    return { calls, result };
+  };
+
+  const declined = await run("transfers");
+  assert.equal(declined.result.skipped, "dirty", "the declined prompt still cancels quit");
+  assert.ok(!declined.calls.includes("dialog"), "no synchronous native dialog after the user already answered");
+  assert.ok(!declined.calls.includes("app.quit"));
+
+  const dirty = await run(true);
+  assert.equal(dirty.result.skipped, "dirty");
+  assert.deepEqual(dirty.calls.filter((c) => c === "dialog"), ["dialog"], "real unsaved editors keep the dialog");
+});

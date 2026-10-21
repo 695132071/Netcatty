@@ -298,7 +298,7 @@ declare global {
     // Listener is called with no arguments; return value is an unsubscribe function.
     onCheckDirtyEditors?(listener: () => void): () => void;
     // Report the dirty-check result back to the main process.
-    reportDirtyEditorsResult?(hasDirty: boolean): void;
+    reportDirtyEditorsResult?(hasDirty: boolean, reason?: "editors" | "transfers"): void;
 
     onLanguageChanged?(cb: (language: string) => void): () => void;
 
