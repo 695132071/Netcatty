@@ -73,6 +73,7 @@ import {
 } from "../application/state/terminalAutoReconnect";
 import { useStoredBoolean } from "../application/state/useStoredBoolean";
 import { readOptionalStoredStringValue, useStoredString } from "../application/state/useStoredString";
+import { performSessionLogAction, type SessionLogAction } from "../application/state/sessionLogActions";
 import { useSessionLogBackend } from "../application/state/useSessionLogBackend";
 import { useTerminalLayoutSuppressActive } from "../application/state/terminalLayoutSuppressStore";
 import { useAppearanceChromeStore } from "../application/state/appearanceChromeStore";
@@ -906,6 +907,7 @@ const TerminalComponent: React.FC<TerminalProps> = ({
   const [isCancelling, setIsCancelling] = useState(false);
   const [showSFTP, setShowSFTP] = useState(false);
   const [isSessionLogging, setIsSessionLogging] = useState(false);
+  const [canOpenSessionLog, setCanOpenSessionLog] = useState(false);
   const [progressValue, setProgressValue] = useState(CONNECTION_PROGRESS_START);
   const [isDisconnectedDialogDismissed, setIsDisconnectedDialogDismissed] = useState(false);
   const [connectionReuseFellBack, setConnectionReuseFellBack] = useState(false);
@@ -4127,6 +4129,15 @@ const TerminalComponent: React.FC<TerminalProps> = ({
     onClipboardImageUploadResult: handleClipboardImageUploadResult,
   });
 
+  const handleSessionLogAction = useCallback(async (action: SessionLogAction) => {
+    try {
+      await performSessionLogAction(sessionRef.current ?? sessionId, action);
+    } catch (err) {
+      logger.error("[Terminal] Failed to open or reveal session log:", err);
+      toast.error(t('terminal.toolbar.openSessionLogFailed'));
+    }
+  }, [sessionId, t]);
+
   const handleToggleSessionLog = useCallback(async () => {
     const currentSessionId = sessionRef.current ?? sessionId;
     if (!currentSessionId) {
@@ -4176,6 +4187,7 @@ const TerminalComponent: React.FC<TerminalProps> = ({
       if (startResult?.success) {
         if (!startResult?.started && startResult?.canceled) return;
         setIsSessionLogging(!!startResult?.started);
+        if (startResult?.started) setCanOpenSessionLog(true);
       } else {
         toast.error(startResult?.error || "Failed to start session log");
       }
@@ -4200,14 +4212,21 @@ const TerminalComponent: React.FC<TerminalProps> = ({
     const currentSessionId = sessionRef.current ?? sessionId;
     if (!currentSessionId) {
       setIsSessionLogging(false);
+      setCanOpenSessionLog(false);
       return;
     }
 
     let cancelled = false;
     void getManualSessionLogStatus({ sessionId: currentSessionId }).then((result) => {
-      if (!cancelled) setIsSessionLogging(!!result?.isLogging);
+      if (!cancelled) {
+        setIsSessionLogging(!!result?.isLogging);
+        setCanOpenSessionLog(!!result?.hasSessionLog);
+      }
     }).catch(() => {
-      if (!cancelled) setIsSessionLogging(false);
+      if (!cancelled) {
+        setIsSessionLogging(false);
+        setCanOpenSessionLog(false);
+      }
     });
 
     return () => {
@@ -4283,6 +4302,8 @@ const TerminalComponent: React.FC<TerminalProps> = ({
       isSearchOpen={isSearchOpen}
       onToggleSearch={handleToggleSearch}
       showLogButton
+      onSessionLogAction={handleSessionLogAction}
+      canOpenSessionLog={canOpenSessionLog}
       onToggleSessionLog={handleToggleSessionLog}
       isSessionLogging={isSessionLogging}
       isSessionLogDisabled={status !== "connected" && !isSessionLogging}
@@ -4315,6 +4336,8 @@ const TerminalComponent: React.FC<TerminalProps> = ({
     handleSendYmodem,
     handleSetTerminalEncoding,
     handleToggleSessionLog,
+    handleSessionLogAction,
+    canOpenSessionLog,
     handleToggleSearch,
     handleToolbarRecordingToggle,
     host,

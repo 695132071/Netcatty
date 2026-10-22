@@ -460,7 +460,10 @@ function createBridgeRegistrar(context) {
     tempDirBridge.ensureTempDir();
   
     // Register all IPC handlers
-    sshBridge.registerHandlers(ipcMain, { terminalWorkerManager });
+    sshBridge.registerHandlers(ipcMain, {
+      terminalWorkerManager,
+      manageSessionLogRestart: !terminalWorkerManager,
+    });
     const stopMonitoring = () => terminalWorkerManager
       ? terminalWorkerManager.request("netcatty:monitor:stop-all", {}, {}).catch(() => {})
       : sshBridge.stopAllMonitoring();
@@ -494,7 +497,10 @@ function createBridgeRegistrar(context) {
       });
       app.once?.("will-quit", () => hostBrowserManager.closeAll());
     }
-    terminalBridge.registerHandlers(ipcMain, { terminalWorkerManager });
+    terminalBridge.registerHandlers(ipcMain, {
+      terminalWorkerManager,
+      manageSessionLogRestart: !terminalWorkerManager,
+    });
 
     const scriptBridge = require("../bridges/scriptBridge.cjs");
     scriptBridge.init({

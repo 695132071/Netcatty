@@ -16,9 +16,16 @@ const { createProgrammaticCommandLogRewriter } = require("./programmaticCommandL
 
 // Active log streams keyed by sessionId
 const activeStreams = new Map();
+// Keep only the latest server-owned target for each session, including while
+// finalization is in flight. Finished records retain no terminal/parser data.
+const sessionLogs = new Map();
 
 // Buffer flush interval (ms)
 const FLUSH_INTERVAL = 500;
+// A failed snapshot retries without waiting for more output, but not in a
+// tight loop. The delay grows while the same failure persists.
+const SNAPSHOT_RETRY_MIN_MS = 250;
+const SNAPSHOT_RETRY_MAX_MS = 5000;
 // Max buffer size before immediate flush (bytes)
 const MAX_BUFFER_SIZE = 64 * 1024;
 const SUDO_AUTOFILL_MARKER_PATTERN = /__NETCATTY_SUDO_[a-z0-9_]+__/gi;
@@ -120,6 +127,7 @@ function startStream(sessionId, opts) {
     console.warn(`[SessionLogStream] Stream already active for ${sessionId}, stopping old one`);
     stopStream(sessionId, activeStreams.get(sessionId)?.startToken);
   }
+  forgetSessionLog(sessionId);
 
   const { hostLabel, hostname, directory, format, startTime } = opts;
   if (!directory) {
@@ -166,16 +174,6 @@ function createStreamEntry(sessionId, opts) {
     ? fs.createWriteStream(filePath, { flags: "w", encoding: "utf8" })
     : null;
 
-  if (writeStream) {
-    writeStream.on("error", (err) => {
-      console.error(`[SessionLogStream] Write error for ${sessionId}:`, err.message);
-      const entry = activeStreams.get(sessionId);
-      if (entry) {
-        entry.disabled = true;
-      }
-    });
-  }
-
   const startToken = Symbol("session-log-stream");
   const entry = {
     writeStream,
@@ -202,6 +200,13 @@ function createStreamEntry(sessionId, opts) {
     snapshotPromise: null,
     snapshotRequested: false,
     snapshotDirty: false,
+    snapshotError: null,
+    snapshotRetryTimer: null,
+    snapshotRetryDelay: 0,
+    // Set only while prepareSessionLog is waiting on a snapshot, so that
+    // caller can observe the failure before the delayed retry starts.
+    deferSnapshotRetry: false,
+    error: null,
     closing: false,
     disabled: false,
     startToken,
@@ -210,11 +215,21 @@ function createStreamEntry(sessionId, opts) {
     pendingInitialLineLeadingCarriageReturn: false,
   };
 
+  if (writeStream) {
+    writeStream.on("error", (err) => {
+      console.error(`[SessionLogStream] Write error for ${sessionId}:`, err.message);
+      // A delayed error from an old connection must not disable a new stream.
+      entry.disabled = true;
+      entry.error = err;
+    });
+  }
+
   entry.flushTimer = setInterval(() => {
     flushBuffer(entry);
   }, FLUSH_INTERVAL);
 
   activeStreams.set(sessionId, entry);
+  sessionLogs.set(sessionId, { entry, filePath, startToken, stopPromise: null, error: null });
   console.log(`[SessionLogStream] Started stream for ${sessionId} -> ${filePath}`);
   return startToken;
 }
@@ -283,6 +298,7 @@ function flushBuffer(entry) {
   } catch (err) {
     console.error("[SessionLogStream] Flush error:", err.message);
     entry.disabled = true;
+    entry.error = err;
   }
 }
 
@@ -318,9 +334,27 @@ function renderSnapshotContent(entry, { finalize = false } = {}) {
     : content;
 }
 
+function clearSnapshotRetry(entry) {
+  if (!entry?.snapshotRetryTimer) return;
+  clearTimeout(entry.snapshotRetryTimer);
+  entry.snapshotRetryTimer = null;
+}
+
+function scheduleSnapshotRetry(entry) {
+  if (!entry || entry.closing || entry.disabled || entry.isRaw || entry.snapshotRetryTimer) return;
+  const delay = entry.snapshotRetryDelay || SNAPSHOT_RETRY_MIN_MS;
+  entry.snapshotRetryTimer = setTimeout(() => {
+    entry.snapshotRetryTimer = null;
+    if (entry.closing || entry.disabled) return;
+    scheduleSnapshot(entry);
+  }, delay);
+  entry.snapshotRetryDelay = Math.min(delay * 2, SNAPSHOT_RETRY_MAX_MS);
+}
+
 function scheduleSnapshot(entry) {
   if (!entry || entry.disabled || entry.isRaw || entry.closing) return;
   if (!entry.snapshotDirty) return;
+  clearSnapshotRetry(entry);
 
   if (entry.snapshotPromise) {
     entry.snapshotRequested = true;
@@ -328,18 +362,26 @@ function scheduleSnapshot(entry) {
   }
 
   entry.snapshotDirty = false;
+  entry.snapshotError = null;
   entry.snapshotPromise = fs.promises
     .writeFile(entry.filePath, renderSnapshotContent(entry), "utf8")
+    .then(() => {
+      entry.snapshotRetryDelay = 0;
+    })
     .catch((err) => {
       console.error("[SessionLogStream] Snapshot write failed:", err.message);
       entry.snapshotDirty = true;
+      entry.snapshotError = err;
     })
     .finally(() => {
       entry.snapshotPromise = null;
-      if ((entry.snapshotRequested || entry.snapshotDirty) && !entry.closing) {
-        entry.snapshotRequested = false;
-        scheduleSnapshot(entry);
-      }
+      // prepareSessionLog must see this failure. Other callers retry on a
+      // delay, or sooner when new output is flushed.
+      if (entry.snapshotError && entry.deferSnapshotRetry) return;
+      if (!(entry.snapshotRequested || entry.snapshotDirty) || entry.closing) return;
+      entry.snapshotRequested = false;
+      if (entry.snapshotError) scheduleSnapshotRetry(entry);
+      else scheduleSnapshot(entry);
     });
 }
 
@@ -432,6 +474,21 @@ async function stopStream(sessionId, expectedToken) {
   activeStreams.delete(sessionId);
   entry.closing = true;
 
+  const record = sessionLogs.get(sessionId);
+  const stopPromise = finalizeStream(sessionId, entry);
+  if (record?.entry === entry) record.stopPromise = stopPromise;
+  const finalPath = await stopPromise;
+  if (record?.entry === entry) {
+    record.entry = null;
+    record.stopPromise = null;
+    record.error = finalPath ? null : (entry.error || new Error("Failed to finalize session log"));
+  }
+  return finalPath;
+}
+
+async function finalizeStream(sessionId, entry) {
+  clearSnapshotRetry(entry);
+
   // Stop periodic flush
   if (entry.flushTimer) {
     clearInterval(entry.flushTimer);
@@ -451,11 +508,21 @@ async function stopStream(sessionId, expectedToken) {
   flushBuffer(entry);
   await waitForSnapshotIdle(entry);
 
-  // Close the raw write stream and wait for it to finish.
+  // Close the raw write stream and wait for it to finish. A flush that
+  // already disabled the entry must still end the stream, or the fd leaks.
   if (entry.writeStream) {
-    await new Promise((resolve) => {
-      entry.writeStream.end(resolve);
-    });
+    let closeError = null;
+    try {
+      await new Promise((resolve, reject) => {
+        entry.writeStream.end((err) => err ? reject(err) : resolve());
+      });
+    } catch (err) {
+      closeError = err;
+    }
+    if (entry.disabled || closeError) {
+      entry.disabled = true;
+      entry.error = entry.error || closeError || new Error("Session log stream failed");
+    }
   } else if (!entry.disabled) {
     try {
       await fs.promises.writeFile(entry.filePath, renderSnapshotContent(entry, { finalize: true }), "utf8");
@@ -463,6 +530,7 @@ async function stopStream(sessionId, expectedToken) {
     } catch (err) {
       console.error(`[SessionLogStream] Final snapshot write failed for ${sessionId}:`, err.message);
       entry.disabled = true;
+      entry.error = err;
     }
   }
 
@@ -470,6 +538,101 @@ async function stopStream(sessionId, expectedToken) {
 
   console.log(`[SessionLogStream] Stopped stream for ${sessionId} -> ${finalPath}`);
   return entry.disabled ? null : finalPath;
+}
+
+/** Flush the session's current log without ending recording, or return its
+ * last finalized log. Paths are never inferred from labels or renderer input.
+ */
+async function prepareSessionLog(sessionId) {
+  const record = sessionLogs.get(sessionId);
+  if (!record) return null;
+
+  if (record.stopPromise) {
+    await record.stopPromise;
+  } else if (record.entry) {
+    const entry = record.entry;
+    if (entry.disabled) throw entry.error || new Error("Session log stream failed");
+    flushBuffer(entry);
+    if (entry.disabled) throw entry.error || new Error("Failed to flush session log");
+    if (entry.isRaw) {
+      // An empty write is a barrier for all earlier writes, not just the
+      // manager's buffer. Calling write() alone does not make the file ready.
+      await new Promise((resolve, reject) => {
+        entry.writeStream.write("", (err) => err ? reject(err) : resolve());
+      });
+    } else {
+      // Also materialize an empty txt/html log before its first output arrives.
+      // Hold the retry until this wait returns, then resume on the backoff timer.
+      entry.snapshotDirty = true;
+      entry.deferSnapshotRetry = true;
+      try {
+        scheduleSnapshot(entry);
+        await waitForSnapshotIdle(entry);
+        if (entry.snapshotError) throw entry.snapshotError;
+      } finally {
+        entry.deferSnapshotRetry = false;
+        if (!entry.snapshotPromise && !entry.closing
+          && (entry.snapshotRequested || entry.snapshotDirty)) {
+          if (entry.snapshotError) scheduleSnapshotRetry(entry);
+          else scheduleSnapshot(entry);
+        }
+      }
+    }
+    // Stop may have begun while the flush was pending; wait for its final file.
+    if (record.stopPromise) await record.stopPromise;
+  }
+
+  if (sessionLogs.get(sessionId) !== record) {
+    throw new Error("Session log changed; try again");
+  }
+  if (record.error || record.entry?.disabled) {
+    throw record.error || record.entry.error || new Error("Session log stream failed");
+  }
+  const stat = await fs.promises.stat(record.filePath);
+  if (!stat.isFile()) throw new Error("Session log is not a file");
+  if (sessionLogs.get(sessionId) !== record) {
+    throw new Error("Session log changed; try again");
+  }
+  return record.filePath;
+}
+
+/** Invalidate a previous connection's target without disturbing its writer.
+ * Late finalization cannot restore it because records are identity-scoped.
+ */
+function forgetSessionLog(sessionId) {
+  sessionLogs.delete(sessionId);
+}
+
+function getSessionLogToken(sessionId) {
+  return sessionLogs.get(sessionId)?.startToken ?? null;
+}
+
+/** Drop only the inactive target observed before an asynchronous reconnect.
+ * A continuing manual stream or a newly-created/finalized log must survive.
+ */
+function forgetInactiveSessionLog(sessionId, expectedToken) {
+  if (!expectedToken || activeStreams.has(sessionId)
+    || getSessionLogToken(sessionId) !== expectedToken) return false;
+  return sessionLogs.delete(sessionId);
+}
+
+/** Main-process fallback starts do not pass through the worker's lifecycle
+ * guard. Retire their prior inactive log only after a successful same-id start.
+ */
+function withSessionLogRestart(handler) {
+  return async (event, payload) => {
+    const sessionId = payload?.sessionId;
+    const previousToken = getSessionLogToken(sessionId);
+    const result = await handler(event, payload);
+    if (sessionId && result?.sessionId === sessionId && result.success !== false && !result.error) {
+      forgetInactiveSessionLog(sessionId, previousToken);
+    }
+    return result;
+  };
+}
+
+function hasSessionLog(sessionId) {
+  return sessionLogs.has(sessionId);
 }
 
 /**
@@ -502,6 +665,7 @@ async function cleanupAll() {
   console.log(`[SessionLogStream] Cleaning up ${activeStreams.size} active streams`);
   const entries = [...activeStreams.entries()];
   await Promise.allSettled(entries.map(([id, entry]) => stopStream(id, entry.startToken)));
+  sessionLogs.clear();
 }
 
 module.exports = {
@@ -511,6 +675,12 @@ module.exports = {
   registerSudoAutofillInput,
   registerProgrammaticCommandLogRewrite,
   stopStream,
+  prepareSessionLog,
+  forgetSessionLog,
+  getSessionLogToken,
+  forgetInactiveSessionLog,
+  withSessionLogRestart,
+  hasSessionLog,
   hasStream,
   getActiveLogPaths,
   cleanupAll,

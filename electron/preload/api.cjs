@@ -1680,6 +1680,10 @@ function createPreloadApi(ctx) {
     ipcRenderer.invoke("netcatty:sessionLog:manualStart", payload),
   stopManualSessionLog: (payload) =>
     ipcRenderer.invoke("netcatty:sessionLog:manualStop", payload),
+  prepareSessionLog: (payload) =>
+    ipcRenderer.invoke("netcatty:sessionLog:prepare", { sessionId: payload.sessionId }),
+  revealSessionLog: (payload) =>
+    ipcRenderer.invoke("netcatty:sessionLog:reveal", { sessionId: payload.sessionId }),
   getManualSessionLogStatus: (payload) =>
     ipcRenderer.invoke("netcatty:sessionLog:manualStatus", payload),
 

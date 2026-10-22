@@ -15,11 +15,11 @@ async function waitForPath(targetPath, { timeoutMs = 2000 } = {}) {
   throw new Error(`Timed out waiting for path: ${targetPath}`);
 }
 
-function loadBridgeWithDialog(dialogMock) {
+function loadBridgeWithDialog(dialogMock, shellMock = {}) {
   const originalLoad = Module._load;
   Module._load = function patchedLoad(request, parent, isMain) {
     if (request === "electron") {
-      return { dialog: dialogMock };
+      return { dialog: dialogMock, shell: shellMock };
     }
     return originalLoad.call(this, request, parent, isMain);
   };
@@ -999,5 +999,265 @@ test("screen export escapes HTML when the user selects an HTML filename", async 
     assert.ok(!html.includes("<script>"));
   } finally {
     fs.rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+function registerSessionLogTestHandlers(bridge, terminalWorkerManager) {
+  const handlers = new Map();
+  bridge.registerHandlers({ handle: (channel, handler) => handlers.set(channel, handler) }, { terminalWorkerManager });
+  return handlers;
+}
+
+test("prepare and reveal use the current manual log before querying automatic worker logs", async (t) => {
+  const directory = path.join(TEMP_ROOT, `shortcut-manual-${Date.now()}`);
+  const filePath = path.join(directory, "manual.txt");
+  const sessionId = "shortcut-manual";
+  const revealed = [];
+  const bridge = loadBridgeWithDialog(
+    { showSaveDialog: async () => ({ canceled: false, filePath }) },
+    { showItemInFolder: (target) => revealed.push(target) },
+  );
+  const manager = require("./sessionLogStreamManager.cjs");
+  const workerRequests = [];
+  const handlers = registerSessionLogTestHandlers(bridge, {
+    isRunning: () => true,
+    request: async (...args) => { workerRequests.push(args); return { success: true, filePath: "/worker/log.txt" }; },
+  });
+  t.after(async () => {
+    await manager.cleanupAll();
+    fs.rmSync(directory, { recursive: true, force: true });
+  });
+  await bridge.startManualSessionLog(null, { sessionId, format: "txt" });
+  manager.appendData(sessionId, "fresh output\n");
+  const prepare = handlers.get("netcatty:sessionLog:prepare");
+  const reveal = handlers.get("netcatty:sessionLog:reveal");
+  assert.deepEqual(await prepare(null, { sessionId, filePath: "/untrusted/path" }), { success: true, filePath });
+  assert.match(fs.readFileSync(filePath, "utf8"), /fresh output/);
+  assert.equal(manager.hasStream(sessionId), true);
+  assert.deepEqual(await reveal(null, { sessionId, filePath: "/untrusted/path" }), { success: true, filePath });
+  assert.deepEqual(revealed, [filePath]);
+  await bridge.stopManualSessionLog(null, { sessionId });
+  assert.deepEqual(await prepare(null, { sessionId }), { success: true, filePath });
+  assert.deepEqual(workerRequests, []);
+});
+
+test("prepare routes automatic logs only to an already running worker with sessionId only", async () => {
+  const bridge = loadBridgeWithDialog({});
+  const requests = [];
+  const handlers = registerSessionLogTestHandlers(bridge, {
+    isRunning: () => true,
+    request: async (...args) => {
+      requests.push(args);
+      return { success: true, filePath: "/server-owned/automatic.html" };
+    },
+  });
+  const result = await handlers.get("netcatty:sessionLog:prepare")(null, {
+    sessionId: "shortcut-auto", filePath: "/arbitrary/renderer/path", directory: "/untrusted",
+  });
+  assert.deepEqual(result, { success: true, filePath: "/server-owned/automatic.html" });
+  assert.deepEqual(requests, [["netcatty:sessionLog:prepareLocal", { sessionId: "shortcut-auto" }, {}]]);
+  assert.equal(handlers.has("netcatty:sessionLog:prepareLocal"), false, "internal lookup is not renderer IPC");
+});
+
+test("prepare rejects malformed ids and never cold-starts an idle worker", async () => {
+  const bridge = loadBridgeWithDialog({});
+  let requests = 0;
+  const worker = { isRunning: () => false, request: async () => { requests++; } };
+  for (const payload of [undefined, null, {}, { sessionId: "" }, { sessionId: " " }, { sessionId: {} }]) {
+    assert.deepEqual(await bridge.prepareSessionLog(null, payload, worker), { success: false, error: "Missing sessionId" });
+  }
+  assert.deepEqual(await bridge.prepareSessionLog(null, { sessionId: "unknown", filePath: __filename }, worker), {
+    success: false, error: "No saved log is available for this session",
+  });
+  assert.equal(requests, 0);
+});
+
+test("prepare and reveal surface missing logs, worker errors, and shell failures", async () => {
+  const bridge = loadBridgeWithDialog({}, { showItemInFolder: () => { throw new Error("file manager unavailable"); } });
+  const payload = { sessionId: "shortcut-error" };
+  const worker = {
+    isRunning: () => true,
+    request: async () => { throw new Error("worker unavailable"); },
+  };
+  assert.deepEqual(await bridge.prepareSessionLog(null, payload, worker), { success: false, error: "worker unavailable" });
+  worker.request = async () => ({ success: false, error: "No saved log is available for this session" });
+  assert.deepEqual(await bridge.revealSessionLog(null, payload, worker), { success: false, error: "No saved log is available for this session" });
+  worker.request = async () => ({ success: true });
+  assert.equal((await bridge.prepareSessionLog(null, payload, worker)).success, false);
+  worker.request = async () => ({ success: true, filePath: "/server-owned/log.txt" });
+  assert.deepEqual(await bridge.revealSessionLog(null, payload, worker), { success: false, error: "file manager unavailable" });
+});
+
+test("worker prepare handler flushes and retains only the requested session's log", async (t) => {
+  const directory = path.join(TEMP_ROOT, `shortcut-worker-${Date.now()}`);
+  const filePath = path.join(directory, "worker.txt");
+  const sessionId = "shortcut-worker";
+  const bridge = loadBridgeWithDialog({});
+  const manager = require("./sessionLogStreamManager.cjs");
+  const handlers = new Map();
+  bridge.registerWorkerHandlers({ handle: (channel, handler) => handlers.set(channel, handler) });
+  const prepare = handlers.get("netcatty:sessionLog:prepareLocal");
+  t.after(async () => {
+    await manager.cleanupAll();
+    fs.rmSync(directory, { recursive: true, force: true });
+  });
+  manager.startStreamToFile(sessionId, { filePath, format: "txt" });
+  manager.appendData(sessionId, "worker output\n");
+  assert.deepEqual(await prepare(null, { sessionId }), { success: true, filePath });
+  assert.match(fs.readFileSync(filePath, "utf8"), /worker output/);
+  assert.equal(manager.hasStream(sessionId), true);
+  assert.equal((await prepare(null, { sessionId: "wrong-session", filePath })).success, false);
+  await manager.stopStream(sessionId);
+  assert.deepEqual(await prepare(null, { sessionId }), { success: true, filePath });
+});
+
+test("a missing manual log reports an error instead of silently opening another worker log", async (t) => {
+  const directory = path.join(TEMP_ROOT, `shortcut-missing-${Date.now()}`);
+  const filePath = path.join(directory, "missing.txt");
+  const sessionId = "shortcut-missing";
+  const bridge = loadBridgeWithDialog({});
+  const manager = require("./sessionLogStreamManager.cjs");
+  t.after(async () => {
+    await manager.cleanupAll();
+    fs.rmSync(directory, { recursive: true, force: true });
+  });
+  manager.startStreamToFile(sessionId, { filePath, format: "txt" });
+  await manager.stopStream(sessionId);
+  fs.unlinkSync(filePath);
+  const result = await bridge.prepareSessionLog(null, { sessionId }, {
+    isRunning: () => true,
+    request: async () => assert.fail("must not fall back to an unrelated automatic log"),
+  });
+  assert.equal(result.success, false);
+  assert.match(result.error, /ENOENT/);
+});
+
+test("disconnect retains a manual log but reconnect clears its precedence over a new automatic log", async (t) => {
+  const directory = path.join(TEMP_ROOT, `shortcut-reconnect-${Date.now()}`);
+  const filePath = path.join(directory, "old-manual.txt");
+  const sessionId = "shortcut-reconnect";
+  const bridge = loadBridgeWithDialog({});
+  const manager = require("./sessionLogStreamManager.cjs");
+  let onClosed;
+  let onOwned;
+  const handlers = registerSessionLogTestHandlers(bridge, {
+    isRunning: () => true,
+    onSessionClosed: (listener) => { onClosed = listener; },
+    onSessionOwned: (listener) => { onOwned = listener; },
+    request: async () => ({ success: true, filePath: "/worker/new-connection.txt" }),
+  });
+  t.after(async () => {
+    await manager.cleanupAll();
+    fs.rmSync(directory, { recursive: true, force: true });
+  });
+  manager.startStreamToFile(sessionId, { filePath, format: "txt" });
+  await manager.stopStream(sessionId);
+  const prepare = handlers.get("netcatty:sessionLog:prepare");
+  onClosed({ sessionId, reason: "exited" });
+  assert.deepEqual(await prepare(null, { sessionId }), { success: true, filePath });
+  onOwned({ sessionId, webContentsId: 2 });
+  assert.deepEqual(await prepare(null, { sessionId }), { success: true, filePath: "/worker/new-connection.txt" });
+});
+
+test("a live manual recording keeps its target across disconnect and reconnect", async (t) => {
+  const directory = path.join(TEMP_ROOT, `shortcut-live-reconnect-${Date.now()}`);
+  const filePath = path.join(directory, "manual.txt");
+  const sessionId = "shortcut-live-reconnect";
+  const bridge = loadBridgeWithDialog({});
+  const manager = require("./sessionLogStreamManager.cjs");
+  let onClosed;
+  let onOwned;
+  const handlers = registerSessionLogTestHandlers(bridge, {
+    isRunning: () => true,
+    onSessionClosed: (listener) => { onClosed = listener; },
+    onSessionOwned: (listener) => { onOwned = listener; },
+    request: async () => assert.fail("live manual recording must retain precedence"),
+  });
+  t.after(async () => {
+    await manager.cleanupAll();
+    fs.rmSync(directory, { recursive: true, force: true });
+  });
+  manager.startStreamToFile(sessionId, { filePath, format: "txt" });
+  manager.appendData(sessionId, "before\n");
+  onClosed({ sessionId, reason: "exited" });
+  onOwned({ sessionId, webContentsId: 2 });
+  manager.appendData(sessionId, "after\n");
+  const prepare = handlers.get("netcatty:sessionLog:prepare");
+  assert.deepEqual(await prepare(null, { sessionId }), { success: true, filePath });
+  assert.match(fs.readFileSync(filePath, "utf8"), /before[\s\S]*after/);
+  onClosed({ sessionId, explicit: true });
+  assert.deepEqual(await prepare(null, { sessionId }), { success: true, filePath });
+});
+
+test("log menu availability follows the owning stream, not automatic logging settings", async () => {
+  const bridge = loadBridgeWithDialog({});
+  const workerHandlers = new Map();
+  bridge.registerWorkerHandlers({ handle: (channel, handler) => workerHandlers.set(channel, handler) });
+  const manager = require("./sessionLogStreamManager.cjs");
+  const workerLogs = new Set();
+  const handlers = registerSessionLogTestHandlers(bridge, {
+    isRunning: () => true,
+    request: async (channel, payload) => {
+      assert.equal(channel, "netcatty:sessionLog:statusLocal");
+      return { success: true, hasSessionLog: workerLogs.has(payload.sessionId) };
+    },
+  });
+  const status = handlers.get("netcatty:sessionLog:manualStatus");
+  for (const sessionId of ["enabled-after-connect", "failed-before-shell"]) {
+    assert.equal((await status(null, { sessionId, enabled: true })).hasSessionLog, false);
+  }
+  workerLogs.add("recording-after-disabled");
+  assert.deepEqual(await status(null, { sessionId: "recording-after-disabled", enabled: false }), {
+    success: true, isLogging: false, hasSessionLog: true,
+  });
+  assert.equal((await status(null, { sessionId: "another-session" })).hasSessionLog, false);
+  // A successful replacement without logging retires the worker-owned target.
+  workerLogs.delete("recording-after-disabled");
+  assert.equal((await status(null, { sessionId: "recording-after-disabled" })).hasSessionLog, false);
+  assert.equal(handlers.has("netcatty:sessionLog:statusLocal"), false);
+  assert.deepEqual(await workerHandlers.get("netcatty:sessionLog:statusLocal")(null, { sessionId: "missing" }), {
+    success: true, hasSessionLog: false,
+  });
+  assert.equal(manager.hasSessionLog("missing"), false);
+});
+
+test("log availability retains stopped main logs and never starts a worker to check", async (t) => {
+  const directory = path.join(TEMP_ROOT, `availability-${Date.now()}`);
+  const filePath = path.join(directory, "manual.txt");
+  const sessionId = "availability-main";
+  const bridge = loadBridgeWithDialog({ showSaveDialog: async () => ({ canceled: false, filePath }) });
+  const manager = require("./sessionLogStreamManager.cjs");
+  const handlers = registerSessionLogTestHandlers(bridge, {
+    isRunning: () => false,
+    request: () => assert.fail("must not cold-start a worker"),
+  });
+  t.after(async () => {
+    await manager.cleanupAll();
+    manager.forgetSessionLog(sessionId);
+    fs.rmSync(directory, { recursive: true, force: true });
+  });
+  const status = handlers.get("netcatty:sessionLog:manualStatus");
+  assert.equal((await status(null, { sessionId })).hasSessionLog, false);
+  assert.equal((await bridge.startManualSessionLog(null, { sessionId, format: "txt" })).started, true);
+  assert.deepEqual(await status(null, { sessionId }), { success: true, isLogging: true, hasSessionLog: true });
+  await bridge.stopManualSessionLog(null, { sessionId });
+  assert.deepEqual(await status(null, { sessionId }), { success: true, isLogging: false, hasSessionLog: true });
+  const workerHandlers = new Map();
+  bridge.registerWorkerHandlers({ handle: (channel, handler) => workerHandlers.set(channel, handler) });
+  assert.deepEqual(await workerHandlers.get("netcatty:sessionLog:statusLocal")(null, { sessionId }), {
+    success: true, hasSessionLog: true,
+  }, "worker lookup also retains stopped logs without requiring an active stream");
+});
+
+test("an unavailable worker does not offer a nonexistent log or change manual recording status", async () => {
+  const bridge = loadBridgeWithDialog({});
+  for (const request of [
+    async () => { throw new Error("worker stopped"); },
+    async () => ({ success: false, error: "session missing" }),
+  ]) {
+    const handlers = registerSessionLogTestHandlers(bridge, { isRunning: () => true, request });
+    assert.deepEqual(await handlers.get("netcatty:sessionLog:manualStatus")(null, { sessionId: "unavailable" }), {
+      success: true, isLogging: false, hasSessionLog: false,
+    });
   }
 });

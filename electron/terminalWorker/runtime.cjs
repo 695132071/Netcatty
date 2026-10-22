@@ -525,6 +525,9 @@ function createTerminalWorkerRuntime(options = {}) {
       const requestedSessionGeneration = requestedSessionId
         ? (sessionOutputGenerations.get(requestedSessionId) ?? 0)
         : null;
+      const previousSessionLogToken = requestedSessionId
+        ? require("../bridges/sessionLogStreamManager.cjs").getSessionLogToken(requestedSessionId)
+        : null;
       if (requestedSessionId) {
         sessionRequestIds.set(requestedSessionId, message.requestId);
         sessionLifecycleTombstoneTimes.delete(requestedSessionId);
@@ -556,6 +559,14 @@ function createTerminalWorkerRuntime(options = {}) {
         const requestedGenerationStillCurrent = requestedSessionGeneration === null
           || currentGeneration === requestedSessionGeneration;
         if (!exitedDuringRequest && requestedGenerationStillCurrent) {
+          // Failed reconnects retain the previous saved log. After a successful
+          // start without a replacement log, retire only the old inactive
+          // target, never a continuing manual or newly-finalized stream.
+          if (sessionId === requestedSessionId && result.success !== false && !result.error) {
+            require("../bridges/sessionLogStreamManager.cjs").forgetInactiveSessionLog(
+              sessionId, previousSessionLogToken,
+            );
+          }
           sessionRequestIds.set(sessionId, message.requestId);
           sessionStartMarkers.add(sessionId);
           sessionLifecycleTombstoneTimes.delete(sessionId);

@@ -2639,11 +2639,14 @@ function registerHandlers(ipcMain, options = {}) {
     });
     return;
   }
-  ipcMain.handle("netcatty:local:start", startLocalSession);
-  ipcMain.handle("netcatty:telnet:start", startTelnetSession);
-  ipcMain.handle("netcatty:mosh:start", startMoshSession);
-  ipcMain.handle("netcatty:et:start", startEtSession);
-  ipcMain.handle("netcatty:serial:start", startSerialSession);
+  const wrapSessionStart = options.manageSessionLogRestart === true
+    ? sessionLogStreamManager.withSessionLogRestart
+    : (handler) => handler;
+  ipcMain.handle("netcatty:local:start", wrapSessionStart(startLocalSession));
+  ipcMain.handle("netcatty:telnet:start", wrapSessionStart(startTelnetSession));
+  ipcMain.handle("netcatty:mosh:start", wrapSessionStart(startMoshSession));
+  ipcMain.handle("netcatty:et:start", wrapSessionStart(startEtSession));
+  ipcMain.handle("netcatty:serial:start", wrapSessionStart(startSerialSession));
   ipcMain.handle("netcatty:serial:list", listSerialPorts);
   ipcMain.handle("netcatty:serial:ymodem-send", sendSerialYmodem);
   ipcMain.handle("netcatty:serial:ymodem-receive", receiveSerialYmodem);

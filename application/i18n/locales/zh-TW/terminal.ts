@@ -1,6 +1,15 @@
 import type { Messages } from '../types';
 
 export const zhTWTerminalMessages: Messages = {
+  'terminal.toolbar.openSessionLog': '開啟工作階段日誌',
+  'terminal.toolbar.sessionLogActions': '工作階段日誌操作',
+  'terminal.toolbar.sessionLog.menu': '工作階段日誌',
+  'terminal.toolbar.sessionLog.open': '開啟',
+  'terminal.toolbar.sessionLog.reveal': '在資料夾中顯示',
+  'terminal.toolbar.sessionLog.chooseApplication': '開啟方式…',
+  'terminal.toolbar.sessionLog.systemDefault': '用系統預設應用程式開啟',
+  'terminal.toolbar.openSessionLogFailed': '無法開啟工作階段日誌。',
+
   'terminal.menu.saveScreen': '儲存目前畫面',
   'terminal.saveScreen.failed': '儲存終端畫面失敗。',
   // 多行貼上確認對話框（#3398）

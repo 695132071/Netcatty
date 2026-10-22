@@ -41,6 +41,8 @@ function createBridgeRegistrarForTest({
   tempDir,
   sftpClients = new Map(),
   transferBridge = createNoopBridge(),
+  sshBridge = null,
+  terminalBridge = null,
   electronModuleOverrides = {},
 }) {
   const noopBridge = createNoopBridge();
@@ -81,12 +83,12 @@ function createBridgeRegistrarForTest({
     sftpClients,
     CLOUD_SYNC_PASSWORD_FILE: "cloud-sync-password",
     getCliDiscoveryFilePath: () => path.join(tempDir, "cli-discovery.json"),
-    sshBridge: { ...noopBridge, ensureMoshStatsConnection() {} },
+    sshBridge: sshBridge || { ...noopBridge, ensureMoshStatsConnection() {} },
     sftpBridge,
     localFsBridge: noopBridge,
     transferBridge,
     portForwardingBridge: noopBridge,
-    terminalBridge: { ...noopBridge, execOnEtSession() {} },
+    terminalBridge: terminalBridge || { ...noopBridge, execOnEtSession() {} },
     crashLogBridge: noopBridge,
     ptyProcessTree: { getChildProcesses: () => [] },
     getOauthBridge: () => ({ setupOAuthBridge() {} }),
@@ -250,3 +252,33 @@ test("downloadToTempWithProgress proxies transfer work to the terminal worker in
     cancelled: false,
   });
 });
+
+for (const mode of ["disabled", "unavailable", "worker"]) {
+  test(`registrar enables saved-log restart guards only for main fallback (${mode})`, async (t) => {
+    const tempDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "netcatty-log-fallback-test-"));
+    const previousWorkerSetting = process.env.NETCATTY_TERMINAL_WORKER;
+    process.env.NETCATTY_TERMINAL_WORKER = mode === "disabled" ? "0" : "1";
+    t.after(async () => {
+      if (previousWorkerSetting === undefined) delete process.env.NETCATTY_TERMINAL_WORKER;
+      else process.env.NETCATTY_TERMINAL_WORKER = previousWorkerSetting;
+      await fs.promises.rm(tempDir, { recursive: true, force: true });
+    });
+    const observed = {};
+    const bridgeSpy = (name) => ({
+      ...createNoopBridge(),
+      registerHandlers(_ipcMain, options) { observed[name] = options; },
+    });
+    const registerBridges = createBridgeRegistrarForTest({
+      ipcMain: createIpcMainStub(), tempDir,
+      sshBridge: bridgeSpy("ssh"), terminalBridge: bridgeSpy("terminal"),
+      electronModuleOverrides: mode === "unavailable" ? {} : {
+        utilityProcess: { fork() { throw new Error("registration must not cold-start the worker"); } },
+      },
+    });
+    registerBridges({});
+    for (const name of ["ssh", "terminal"]) {
+      assert.equal(observed[name].manageSessionLogRestart, mode !== "worker");
+      assert.equal(Boolean(observed[name].terminalWorkerManager), mode === "worker");
+    }
+  });
+}

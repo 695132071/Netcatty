@@ -50,7 +50,7 @@ export const useSessionLogBackend = () => {
 
   const getManualSessionLogStatus = useCallback(async (payload: ManualStatusPayload) => {
     const bridge = netcattyBridge.get();
-    return bridge?.getManualSessionLogStatus?.(payload) ?? { success: false, isLogging: false, error: "Session log bridge unavailable" };
+    return bridge?.getManualSessionLogStatus?.(payload) ?? { success: false, isLogging: false, hasSessionLog: false, error: "Session log bridge unavailable" };
   }, []);
 
   return {

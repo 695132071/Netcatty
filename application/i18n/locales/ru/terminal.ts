@@ -1,6 +1,15 @@
 import type { Messages } from '../types';
 
 export const ruTerminalMessages: Messages = {
+  'terminal.toolbar.openSessionLog': 'Открыть журнал сессии',
+  'terminal.toolbar.sessionLogActions': 'Действия с журналом',
+  'terminal.toolbar.sessionLog.menu': 'Журнал сессии',
+  'terminal.toolbar.sessionLog.open': 'Открыть',
+  'terminal.toolbar.sessionLog.reveal': 'Показать в папке',
+  'terminal.toolbar.sessionLog.chooseApplication': 'Открыть с помощью…',
+  'terminal.toolbar.sessionLog.systemDefault': 'Открыть по умолчанию',
+  'terminal.toolbar.openSessionLogFailed': 'Не удалось открыть журнал.',
+
   'terminal.menu.saveScreen': 'Сохранить текущий экран',
   'terminal.saveScreen.failed': 'Не удалось сохранить экран терминала.',
   // Диалог подтверждения многострочной вставки (#3398)

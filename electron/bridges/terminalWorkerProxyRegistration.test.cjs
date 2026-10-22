@@ -360,3 +360,37 @@ test("terminal worker mode proxies system management requests", async () => {
     ],
   );
 });
+
+test("fallback log restart guard wraps all six starts only when main explicitly enables it", (t) => {
+  const manager = require("./sessionLogStreamManager.cjs");
+  const wrappers = new Map();
+  t.mock.method(manager, "withSessionLogRestart", (handler) => {
+    const wrapped = () => {};
+    wrappers.set(handler, wrapped);
+    return wrapped;
+  });
+  const workerHandlers = createFakeIpcMain();
+  sshBridge.registerHandlers(workerHandlers);
+  terminalBridge.registerHandlers(workerHandlers);
+  assert.equal(wrappers.size, 0, "utility-process registration keeps the runtime generation guard");
+
+  const fallbackHandlers = createFakeIpcMain();
+  sshBridge.registerHandlers(fallbackHandlers, { manageSessionLogRestart: true });
+  terminalBridge.registerHandlers(fallbackHandlers, { manageSessionLogRestart: true });
+  const startChannels = [
+    "netcatty:start", "netcatty:local:start", "netcatty:telnet:start",
+    "netcatty:mosh:start", "netcatty:et:start", "netcatty:serial:start",
+  ];
+  assert.equal(wrappers.size, startChannels.length);
+  for (const channel of startChannels) {
+    assert.equal(fallbackHandlers.handlers.get(channel), wrappers.get(workerHandlers.handlers.get(channel)), channel);
+  }
+  assert.equal(fallbackHandlers.handlers.get("netcatty:serial:list"), workerHandlers.handlers.get("netcatty:serial:list"));
+
+  wrappers.clear();
+  const proxyHandlers = createFakeIpcMain();
+  const terminalWorkerManager = createFakeWorkerManager();
+  sshBridge.registerHandlers(proxyHandlers, { terminalWorkerManager, manageSessionLogRestart: true });
+  terminalBridge.registerHandlers(proxyHandlers, { terminalWorkerManager, manageSessionLogRestart: true });
+  assert.equal(wrappers.size, 0, "worker proxies must not also apply the main fallback guard");
+});

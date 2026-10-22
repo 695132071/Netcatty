@@ -1532,3 +1532,120 @@ test("runtime contains throws from fire-and-forget send listeners", () => {
     { sessionId: "s1", data: "pwd\r" },
   ]);
 });
+
+test("a same-id restart with auto-save disabled forgets the prior saved-log target", async (t) => {
+  const fs = require("node:fs");
+  const path = require("node:path");
+  const manager = require("../bridges/sessionLogStreamManager.cjs");
+  const directory = path.join(__dirname, `.tmp-runtime-session-log-${Date.now()}`);
+  const filePath = path.join(directory, "old.txt");
+  const sessionId = "runtime-log-reconnect";
+  t.after(async () => {
+    await manager.cleanupAll();
+    fs.rmSync(directory, { recursive: true, force: true });
+  });
+  manager.startStreamToFile(sessionId, { filePath, format: "txt" });
+  manager.appendData(sessionId, "previous connection\n");
+  await manager.stopStream(sessionId);
+  assert.equal(await manager.prepareSessionLog(sessionId), filePath);
+  const parentPort = createParentPort();
+  const runtime = createTerminalWorkerRuntime({
+    parentPort,
+    registerBridges(ipcMain) {
+      ipcMain.handle("netcatty:start", async (_event, payload) => {
+        assert.equal(manager.hasSessionLog(payload.sessionId), true, "keep the old target until the replacement succeeds");
+        return { sessionId: payload.sessionId };
+      });
+    },
+  });
+  runtime.start();
+  parentPort.emitMessage({
+    kind: "request", requestId: "restart-no-log", channel: "netcatty:start",
+    payload: { sessionId, sessionLog: { enabled: false } }, webContentsId: 7,
+  });
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.ok(parentPort.messages.some((message) => message.requestId === "restart-no-log" && message.result?.sessionId === sessionId));
+  assert.equal(await manager.prepareSessionLog(sessionId), null);
+});
+
+async function createSavedLogRestartFixture(t, name, handler, { active = false } = {}) {
+  const fs = require("node:fs");
+  const path = require("node:path");
+  const manager = require("../bridges/sessionLogStreamManager.cjs");
+  const directory = path.join(__dirname, `.tmp-runtime-session-log-${name}-${Date.now()}`);
+  const filePath = path.join(directory, "old.txt");
+  const sessionId = `runtime-log-${name}`;
+  t.after(async () => {
+    await manager.cleanupAll();
+    fs.rmSync(directory, { recursive: true, force: true });
+  });
+  manager.startStreamToFile(sessionId, { filePath, format: "txt", stopRequiresToken: active });
+  manager.appendData(sessionId, "previous connection\n");
+  if (!active) await manager.stopStream(sessionId);
+  const oldToken = manager.getSessionLogToken(sessionId);
+  const parentPort = createParentPort();
+  let resolveResponse;
+  const response = new Promise((resolve) => { resolveResponse = resolve; });
+  const postMessage = parentPort.postMessage;
+  parentPort.postMessage = (message) => {
+    postMessage(message);
+    if (message.kind === "response" && message.requestId === name) resolveResponse(message);
+  };
+  const fixture = { manager, directory, filePath, sessionId, oldToken, parentPort };
+  const runtime = createTerminalWorkerRuntime({
+    parentPort,
+    registerBridges(ipcMain) {
+      ipcMain.handle("netcatty:start", (event, payload) => handler(fixture, event, payload));
+    },
+  });
+  runtime.start();
+  parentPort.emitMessage({
+    kind: "request", requestId: name, channel: "netcatty:start",
+    payload: { sessionId, sessionLog: { enabled: false } }, webContentsId: 7,
+  });
+  return { ...fixture, response: await response };
+}
+
+for (const failure of ["throw", "result"]) {
+  test(`failed reconnect (${failure}) retains the previous saved log`, async (t) => {
+    const fixture = await createSavedLogRestartFixture(t, `failed-${failure}`, async ({ manager, sessionId, filePath }) => {
+      assert.equal(await manager.prepareSessionLog(sessionId), filePath);
+      if (failure === "throw") throw new Error("authentication failed");
+      return { sessionId, success: false, error: "connection refused" };
+    });
+    const { manager, sessionId, filePath, oldToken, response } = fixture;
+    if (failure === "throw") assert.equal(response.error, "authentication failed");
+    else assert.equal(response.result.success, false);
+    assert.equal(manager.getSessionLogToken(sessionId), oldToken);
+    assert.equal(await manager.prepareSessionLog(sessionId), filePath);
+  });
+}
+
+for (const finalized of [false, true]) {
+  test(`successful reconnect preserves its new ${finalized ? "finalized" : "active"} log`, async (t) => {
+    let newPath;
+    const { manager, sessionId, oldToken, response } = await createSavedLogRestartFixture(t, `new-${finalized}`, async (fixture) => {
+      newPath = require("node:path").join(fixture.directory, "new.txt");
+      fixture.manager.startStreamToFile(fixture.sessionId, { filePath: newPath, format: "txt" });
+      fixture.manager.appendData(fixture.sessionId, "new connection\n");
+      if (finalized) await fixture.manager.stopStream(fixture.sessionId);
+      return { sessionId: fixture.sessionId };
+    });
+    assert.equal(response.result.sessionId, sessionId);
+    assert.notEqual(manager.getSessionLogToken(sessionId), oldToken);
+    assert.equal(manager.hasStream(sessionId), !finalized);
+    assert.equal(await manager.prepareSessionLog(sessionId), newPath);
+  });
+}
+
+test("successful reconnect leaves an existing active manual recording untouched", async (t) => {
+  const { manager, sessionId, filePath, oldToken, response } = await createSavedLogRestartFixture(
+    t, "live-manual", async (fixture) => ({ sessionId: fixture.sessionId }), { active: true },
+  );
+  assert.equal(response.result.sessionId, sessionId);
+  assert.equal(manager.hasStream(sessionId), true);
+  assert.equal(manager.getSessionLogToken(sessionId), oldToken);
+  manager.appendData(sessionId, "after reconnect\n");
+  assert.equal(await manager.prepareSessionLog(sessionId), filePath);
+  assert.match(require("node:fs").readFileSync(filePath, "utf8"), /previous connection[\s\S]*after reconnect/);
+});
