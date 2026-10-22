@@ -201,6 +201,8 @@ const requestHostKeyVerification = (sender, info) => new Promise((resolve) => {
   }
 });
 
+const toKeyBuffer = (rawKey) => (Buffer.isBuffer(rawKey) ? rawKey : Buffer.from(rawKey || ""));
+
 const createHostVerifier = ({
   sender,
   sessionId,
@@ -213,64 +215,79 @@ const createHostVerifier = ({
   // TTL leaves the upload on "Waiting..." with no dialog and no error.
   unattended = false,
   onAccepted,
-}) => (rawKey, callback) => {
-  const keyInfo = describeHostKey(rawKey);
-  const noteAccepted = () => {
-    try {
-      onAccepted?.({
-        hostname,
-        port,
-        keyType: keyInfo.keyType,
-        fingerprint: keyInfo.fingerprint,
-        publicKey: keyInfo.publicKey,
-      });
-    } catch {
-      // Recording the accepted key must not change the verifier result.
+}) => {
+  // ssh2 calls the verifier again on every rekey. A prompt there is async,
+  // and while it waits ssh2 keeps sending channel data ahead of its NEWKEYS,
+  // so the server drops the connection mid-transfer ("Bad packet length").
+  // Like OpenSSH, a rekey only has to present the key already accepted for
+  // this connection: answer it synchronously and never prompt again.
+  let acceptedKey = null;
+
+  return (rawKey, callback) => {
+    if (verifyHostKeys !== false && acceptedKey) {
+      callback(acceptedKey.equals(toKeyBuffer(rawKey)));
+      return;
     }
+
+    const keyInfo = describeHostKey(rawKey);
+    const noteAccepted = () => {
+      acceptedKey = Buffer.from(toKeyBuffer(rawKey));
+      try {
+        onAccepted?.({
+          hostname,
+          port,
+          keyType: keyInfo.keyType,
+          fingerprint: keyInfo.fingerprint,
+          publicKey: keyInfo.publicKey,
+        });
+      } catch {
+        // Recording the accepted key must not change the verifier result.
+      }
+    };
+
+    if (verifyHostKeys === false) {
+      noteAccepted();
+      callback(true);
+      return;
+    }
+
+    const decision = classifyHostKey({
+      knownHosts,
+      hostname,
+      port,
+      keyType: keyInfo.keyType,
+      fingerprint: keyInfo.fingerprint,
+    });
+
+    if (decision.status === "trusted") {
+      noteAccepted();
+      callback(true);
+      return;
+    }
+
+    if (unattended) {
+      callback(false);
+      return;
+    }
+
+    void requestHostKeyVerification(sender, {
+      sessionId,
+      hostname,
+      port,
+      status: decision.status,
+      keyType: keyInfo.keyType,
+      fingerprint: keyInfo.fingerprint,
+      publicKey: keyInfo.publicKey,
+      knownHostId: decision.knownHost?.id,
+      knownFingerprint: decision.expectedFingerprint,
+      ...(Number.isFinite(bootEpoch) ? { bootEpoch: Number(bootEpoch) } : {}),
+    }).then((response) => {
+      if (response?.accept) noteAccepted();
+      callback(Boolean(response?.accept));
+    }).catch(() => {
+      callback(false);
+    });
   };
-
-  if (verifyHostKeys === false) {
-    noteAccepted();
-    callback(true);
-    return;
-  }
-
-  const decision = classifyHostKey({
-    knownHosts,
-    hostname,
-    port,
-    keyType: keyInfo.keyType,
-    fingerprint: keyInfo.fingerprint,
-  });
-
-  if (decision.status === "trusted") {
-    noteAccepted();
-    callback(true);
-    return;
-  }
-
-  if (unattended) {
-    callback(false);
-    return;
-  }
-
-  void requestHostKeyVerification(sender, {
-    sessionId,
-    hostname,
-    port,
-    status: decision.status,
-    keyType: keyInfo.keyType,
-    fingerprint: keyInfo.fingerprint,
-    publicKey: keyInfo.publicKey,
-    knownHostId: decision.knownHost?.id,
-    knownFingerprint: decision.expectedFingerprint,
-    ...(Number.isFinite(bootEpoch) ? { bootEpoch: Number(bootEpoch) } : {}),
-  }).then((response) => {
-    if (response?.accept) noteAccepted();
-    callback(Boolean(response?.accept));
-  }).catch(() => {
-    callback(false);
-  });
 };
 
 const handleResponse = (_event, payload) => {
