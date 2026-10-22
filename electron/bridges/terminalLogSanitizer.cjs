@@ -292,6 +292,9 @@ class TerminalTextRenderer {
   }
 
   #applySgr(values) {
+    // Cells share style snapshots. Copy before SGR mutations so earlier output
+    // (including preserved cleared screens) keeps its original appearance.
+    this.style = { ...this.style };
     const codes = values.length > 0 ? values : [0];
 
     for (let i = 0; i < codes.length; i += 1) {
@@ -544,7 +547,7 @@ function createDefaultStyle() {
 function createCell(ch, style) {
   return {
     ch,
-    style: { ...style },
+    style,
   };
 }
 

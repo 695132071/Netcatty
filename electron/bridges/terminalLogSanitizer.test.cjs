@@ -330,3 +330,52 @@ test("erasing styled spaces updates the visible line timestamp", () => {
   renderer.feed("\r\x1b[2C\x1b[1K", 9000);
   assert.equal(renderer.toHtmlContent({ formatLine }), "[9000]    text");
 });
+
+test("cells share style snapshots without recoloring earlier output on SGR changes", () => {
+  const renderer = createTerminalTextRenderer();
+  renderer.feed("ab\x1b[31mcd\x1b[1mef\x1b[0mgh");
+  const cells = renderer.lines[0];
+  assert.equal(cells[0].style, cells[1].style);
+  assert.equal(cells[2].style, cells[3].style);
+  assert.notEqual(cells[1].style, cells[2].style);
+  assert.notEqual(cells[3].style, cells[4].style);
+  assert.equal(renderer.toString(), "abcdefgh");
+  assert.equal(renderer.toHtmlContent(), 'ab<span style="color: var(--ansi-1, #cd3131)">cd</span><span style="color: var(--ansi-1, #cd3131); font-weight: 700">ef</span>gh');
+});
+
+test("SGR attribute and color resets leave previous snapshots unchanged", () => {
+  const renderer = createTerminalTextRenderer();
+  renderer.feed("\x1b[1;3;4;7;38;5;196;48;2;1;2;3mA");
+  const snapshot = renderer.lines[0][0].style;
+  const original = { ...snapshot };
+  renderer.feed("\x1b[22;23;24;27;39;49mB\x1b[0;32;1mC\x1b[mD");
+  assert.deepEqual(snapshot, original);
+  assert.deepEqual(original, { fg: "#ff0000", bg: "#010203", bold: true, italic: true, underline: true, inverse: true });
+  assert.deepEqual(renderer.lines[0][1].style, { fg: null, bg: null, bold: false, italic: false, underline: false, inverse: false });
+  assert.equal(renderer.toString(), "ABCD");
+  assert.equal(renderer.toHtmlContent(), '<span style="color: #010203; background-color: #ff0000; font-weight: 700; font-style: italic; text-decoration: underline">A</span>B<span style="color: var(--ansi-2, #0dbc79); font-weight: 700">C</span>D');
+});
+
+test("cursor overwrites and erasure do not mutate adjacent shared styles", () => {
+  const renderer = createTerminalTextRenderer();
+  renderer.feed("\x1b[31mabcd\r\x1b[32mX\x1b[3G\x1b[0mY");
+  assert.equal(renderer.toString(), "XbYd");
+  assert.equal(renderer.toHtmlContent(), '<span style="color: var(--ansi-2, #0dbc79)">X</span><span style="color: var(--ansi-1, #cd3131)">b</span>Y<span style="color: var(--ansi-1, #cd3131)">d</span>');
+  renderer.feed("\x1b[1K");
+  assert.equal(renderer.toHtmlContent(), "");
+});
+
+test("pending cleared-screen clones share immutable styles but retain independent cells", () => {
+  const renderer = createTerminalTextRenderer();
+  renderer.feed("first\x1b[H\x1b[2J\x1b[31mold", 10);
+  const activeLine = renderer.lines.at(-1);
+  renderer.feed("\x1b[H\x1b[2J");
+  const savedLine = renderer.pendingClearedScreen.lines[0];
+  assert.notEqual(savedLine[0], activeLine[0]);
+  assert.equal(savedLine[0].style, activeLine[0].style);
+  assert.equal(savedLine.timestamp, 10);
+  renderer.feed("\x1b[32mnew", 20);
+  assert.equal(savedLine[0].style.fg, "var(--ansi-1, #cd3131)");
+  assert.equal(renderer.toString({ includePendingClearedScreen: true }), "first\nold\n\nnew");
+  assert.equal(renderer.toHtmlContent({ includePendingClearedScreen: true }), 'first\n<span style="color: var(--ansi-1, #cd3131)">old</span>\n\n<span style="color: var(--ansi-2, #0dbc79)">new</span>');
+});
