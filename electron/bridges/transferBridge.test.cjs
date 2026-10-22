@@ -10,6 +10,7 @@ const { EventEmitter } = require("node:events");
 const { PassThrough, Readable, Writable } = require("node:stream");
 
 const transferBridge = require("./transferBridge.cjs");
+const { openBoundedSftpChannel } = require("./boundedSftpOpen.cjs");
 // Most download tests here drive the session slot / isolated pool with tiny
 // fixture files. Keep them on that path; the small-file exemption has its own
 // test below that restores the production threshold.
@@ -14753,4 +14754,248 @@ test("small download does not open a fresh channel for ENOENT or EACCES", async 
   });
   assert.match(denied.error || "", /Permission denied|EACCES/);
   assert.equal(isolatedOpens, 0);
+});
+
+test("channel-open timeout skips the fastPut reopen and uses the shared channel", async (t) => {
+  // Lossy links abandon an isolated OPEN. Reopening for fastPut only waits out
+  // the abandon gate and pays another timeout (or PENDING). The body must move
+  // to the shared browse channel after the first poisoned open.
+  const tempDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "netcatty-sftp-open-poison-upload-"));
+  t.after(async () => {
+    transferBridge._setIsolatedSftpChannelOpenOptionsForTests(null);
+    await fs.promises.rm(tempDir, { recursive: true, force: true });
+  });
+  transferBridge._setIsolatedSftpChannelOpenOptionsForTests({
+    timeoutMs: 20,
+    abandonWaitMs: 30,
+  });
+
+  const localPath = path.join(tempDir, "fresh.bin");
+  const payload = Buffer.concat([
+    Buffer.from("open-poison"),
+    Buffer.alloc(SMALL_UPLOAD_SHARED_MAX_BYTES),
+  ]);
+  await fs.promises.writeFile(localPath, payload);
+  const targetPath = "/tmp/open-poison.bin";
+  const remoteFiles = new Map();
+  const lateChannels = [];
+  let isolatedOpens = 0;
+  let fastPutCalls = 0;
+  let sharedWrites = 0;
+
+  const rememberFile = (sftp) => {
+    sftp.lstat = (remotePath, callback) => {
+      const key = String(remotePath);
+      if (!remoteFiles.has(key)) {
+        const error = new Error("ENOENT");
+        error.code = 2;
+        callback(error);
+        return;
+      }
+      callback(null, {
+        size: remoteFiles.get(key).length,
+        mode: 0o100644,
+        isDirectory: () => false,
+        isSymbolicLink: () => false,
+      });
+    };
+    sftp.open = (remotePath, _flags, callback) => {
+      const key = String(remotePath);
+      if (!remoteFiles.has(key)) remoteFiles.set(key, Buffer.alloc(0));
+      callback(null, Buffer.from(key));
+    };
+    sftp.close = (_handle, callback) => callback(null);
+  };
+
+  const shared = createFastSftp({});
+  rememberFile(shared);
+  shared.write = (handle, buffer, offset, length, position, callback) => {
+    sharedWrites += 1;
+    const key = handle.toString();
+    const next = Buffer.alloc(Math.max(remoteFiles.get(key)?.length || 0, position + length));
+    if (remoteFiles.has(key)) remoteFiles.get(key).copy(next);
+    buffer.copy(next, position, offset, offset + length);
+    remoteFiles.set(key, next);
+    setImmediate(() => callback(null));
+  };
+  shared.fastPut = () => {
+    fastPutCalls += 1;
+    throw new Error("shared fastPut must not run after a poisoned channel open");
+  };
+
+  const client = {
+    sftp: shared,
+    stat: async (remotePath) => {
+      const key = String(remotePath);
+      if (!remoteFiles.has(key)) {
+        const error = new Error("ENOENT");
+        error.code = 2;
+        throw error;
+      }
+      return { size: remoteFiles.get(key).length, isDirectory: false };
+    },
+    delete: async (remotePath) => { remoteFiles.delete(String(remotePath)); },
+    async rename(fromPath, toPath) {
+      remoteFiles.set(String(toPath), remoteFiles.get(String(fromPath)));
+      remoteFiles.delete(String(fromPath));
+    },
+    client: {
+      sftp(callback) {
+        isolatedOpens += 1;
+        const late = createFastSftp({
+          fastPut() {
+            fastPutCalls += 1;
+            throw new Error("fastPut reopen must not run after channel-open timeout");
+          },
+          end() { late.endCalls += 1; },
+          close() { late.closeCalls += 1; },
+          destroy() { late.destroyCalls += 1; },
+        });
+        late.endCalls = 0;
+        late.closeCalls = 0;
+        late.destroyCalls = 0;
+        lateChannels.push({ callback, late });
+      },
+    },
+  };
+  transferBridge.init({ sftpClients: new Map([["target", client]]) });
+
+  const result = await transferBridge.startTransfer({ sender: createSender() }, {
+    transferId: "upload-channel-open-timeout-shared",
+    sourcePath: localPath,
+    targetPath,
+    sourceType: "local",
+    targetType: "sftp",
+    targetSftpId: "target",
+    totalBytes: payload.length,
+    resumable: false,
+    skipAdmission: true,
+  });
+
+  assert.equal(result.error, undefined, result.error);
+  assert.equal(isolatedOpens, 1, "fastPut must not reopen an isolated channel after open timeout");
+  assert.equal(fastPutCalls, 0);
+  assert.ok(sharedWrites >= 1);
+  assert.deepEqual(remoteFiles.get(targetPath), payload);
+
+  const abandoned = lateChannels[0];
+  abandoned.callback(null, abandoned.late);
+  assert.ok(
+    abandoned.late.endCalls > 0 || abandoned.late.closeCalls > 0 || abandoned.late.destroyCalls > 0,
+    "the abandoned channel is closed when its callback finally arrives",
+  );
+});
+
+test("pending channel-open skips the fastPut reopen and uses the shared channel", async (t) => {
+  const tempDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), "netcatty-sftp-open-pending-upload-"));
+  t.after(async () => {
+    transferBridge._setIsolatedSftpChannelOpenOptionsForTests(null);
+    await fs.promises.rm(tempDir, { recursive: true, force: true });
+  });
+
+  const localPath = path.join(tempDir, "fresh.bin");
+  const payload = Buffer.concat([
+    Buffer.from("open-pending"),
+    Buffer.alloc(SMALL_UPLOAD_SHARED_MAX_BYTES),
+  ]);
+  await fs.promises.writeFile(localPath, payload);
+  const targetPath = "/tmp/open-pending.bin";
+  const remoteFiles = new Map();
+  let isolatedOpens = 0;
+  let sharedWrites = 0;
+  const warnings = [];
+  const originalWarn = console.warn;
+  console.warn = (...args) => {
+    warnings.push(args.map((part) => String(part)).join(" "));
+    originalWarn.apply(console, args);
+  };
+  t.after(() => { console.warn = originalWarn; });
+
+  const rememberFile = (sftp) => {
+    sftp.lstat = (remotePath, callback) => {
+      const key = String(remotePath);
+      if (!remoteFiles.has(key)) {
+        const error = new Error("ENOENT");
+        error.code = 2;
+        callback(error);
+        return;
+      }
+      callback(null, {
+        size: remoteFiles.get(key).length,
+        mode: 0o100644,
+        isDirectory: () => false,
+        isSymbolicLink: () => false,
+      });
+    };
+    sftp.open = (remotePath, _flags, callback) => {
+      const key = String(remotePath);
+      if (!remoteFiles.has(key)) remoteFiles.set(key, Buffer.alloc(0));
+      callback(null, Buffer.from(key));
+    };
+    sftp.close = (_handle, callback) => callback(null);
+  };
+  const shared = createFastSftp({});
+  rememberFile(shared);
+  shared.write = (handle, buffer, offset, length, position, callback) => {
+    sharedWrites += 1;
+    const key = handle.toString();
+    const next = Buffer.alloc(Math.max(remoteFiles.get(key)?.length || 0, position + length));
+    if (remoteFiles.has(key)) remoteFiles.get(key).copy(next);
+    buffer.copy(next, position, offset, offset + length);
+    remoteFiles.set(key, next);
+    setImmediate(() => callback(null));
+  };
+
+  const sshClient = new EventEmitter();
+  sshClient.sftp = (callback) => {
+    isolatedOpens += 1;
+    sshClient.pending = callback;
+  };
+  const client = {
+    sftp: shared,
+    stat: async (remotePath) => {
+      const key = String(remotePath);
+      if (!remoteFiles.has(key)) {
+        const error = new Error("ENOENT");
+        error.code = 2;
+        throw error;
+      }
+      return { size: remoteFiles.get(key).length, isDirectory: false };
+    },
+    delete: async (remotePath) => { remoteFiles.delete(String(remotePath)); },
+    async rename(fromPath, toPath) {
+      remoteFiles.set(String(toPath), remoteFiles.get(String(fromPath)));
+      remoteFiles.delete(String(fromPath));
+    },
+    client: sshClient,
+  };
+
+  await assert.rejects(
+    openBoundedSftpChannel(sshClient, { timeoutMs: 15 }),
+    (error) => error.code === "SFTP_CHANNEL_OPEN_TIMEOUT",
+  );
+  assert.equal(isolatedOpens, 1);
+  transferBridge._setIsolatedSftpChannelOpenOptionsForTests({ abandonWaitMs: 0 });
+  transferBridge.init({ sftpClients: new Map([["target", client]]) });
+
+  const result = await transferBridge.startTransfer({ sender: createSender() }, {
+    transferId: "upload-channel-open-pending-shared",
+    sourcePath: localPath,
+    targetPath,
+    sourceType: "local",
+    targetType: "sftp",
+    targetSftpId: "target",
+    totalBytes: payload.length,
+    resumable: false,
+    skipAdmission: true,
+  });
+
+  assert.equal(result.error, undefined, result.error);
+  assert.equal(isolatedOpens, 1, "PENDING must not allocate another isolated OPEN");
+  assert.equal(
+    warnings.some((line) => line.includes("Failed to reopen isolated SFTP channel for fastPut")),
+    false,
+  );
+  assert.ok(sharedWrites >= 1);
+  assert.deepEqual(remoteFiles.get(targetPath), payload);
 });

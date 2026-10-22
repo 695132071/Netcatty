@@ -2065,6 +2065,23 @@ function isStaleOrClosedSharedChannelError(error, sftp) {
   return /channel closed/i.test(String(error.message || ""));
 }
 
+// Test seam: shorten channel-open timeout / abandon wait. Production leaves this null.
+let isolatedSftpChannelOpenOptionsForTests = null;
+
+function isolatedChannelOpenOptions(signal) {
+  const options = { signal };
+  const overrides = isolatedSftpChannelOpenOptionsForTests;
+  if (!overrides || typeof overrides !== "object") return options;
+  if (overrides.timeoutMs !== undefined) options.timeoutMs = overrides.timeoutMs;
+  if (overrides.abandonWaitMs !== undefined) options.abandonWaitMs = overrides.abandonWaitMs;
+  return options;
+}
+
+function isPoisonedSftpChannelOpenError(error) {
+  const code = error?.code;
+  return code === "SFTP_CHANNEL_OPEN_TIMEOUT" || code === "SFTP_CHANNEL_OPEN_PENDING";
+}
+
 async function openIsolatedSftpChannel(client, signal = null) {
   // The dedicated one-channel login already holds its only session channel.
   // Opening another SFTP subsystem drops that login, so stay on the browse channel.
@@ -2072,7 +2089,7 @@ async function openIsolatedSftpChannel(client, signal = null) {
     return null;
   }
   const sshClient = client?.client;
-  return openBoundedSftpChannel(sshClient, { signal });
+  return openBoundedSftpChannel(sshClient, isolatedChannelOpenOptions(signal));
 }
 
 /**
@@ -2712,6 +2729,7 @@ async function uploadFile(
 
   // Prefer an isolated SFTP channel so cancellation cannot kill the browse session.
   let isolated = null;
+  let isolatedOpenError = null;
   const preferSharedChannel = Number(fileSize) > 0
     && Number(fileSize) <= SMALL_UPLOAD_SHARED_MAX_BYTES
     && typeof sftp?.open === "function"
@@ -2723,6 +2741,7 @@ async function uploadFile(
       );
     } catch (err) {
       rememberPipelineError(err);
+      isolatedOpenError = err;
       console.warn(
         "[transferBridge] Failed to open isolated SFTP channel for upload:",
         err.message || String(err),
@@ -2788,7 +2807,12 @@ async function uploadFile(
     }
   }
 
-  if (!isolated && !client.__netcattySudoMode && !preferSharedChannel) {
+  // A timed-out or still-pending isolated OPEN has already spent the channel
+  // deadline (or is waiting on an abandoned one). Reopening for fastPut only
+  // pays another timeout or an immediate PENDING on a lossy link. Fall through
+  // to the shared browse channel instead (#3155).
+  const skipIsolatedFastPutReopen = isPoisonedSftpChannelOpenError(isolatedOpenError);
+  if (!isolated && !skipIsolatedFastPutReopen && !client.__netcattySudoMode && !preferSharedChannel) {
     try {
       isolated = markDisposableUploadChannel(
         await openIsolatedSftpChannel(client, transfer?.signal),
@@ -8283,6 +8307,11 @@ module.exports = {
   },
   _setLocalPrefixHashStreamOverrideForTests: (override) => {
     localPrefixHashStreamOverrideForTests = override;
+  },
+  _setIsolatedSftpChannelOpenOptionsForTests: (options) => {
+    isolatedSftpChannelOpenOptionsForTests = options && typeof options === "object"
+      ? options
+      : null;
   },
   _hasLocalUploadAcknowledgedPrefixForTests: (transferId) => (
     localUploadAcknowledgedPrefix.has(String(transferId))
