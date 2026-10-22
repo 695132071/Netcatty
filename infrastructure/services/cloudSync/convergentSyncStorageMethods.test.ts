@@ -256,3 +256,37 @@ test('failed local re-encryption leaves the active master key unchanged', async 
     EncryptionService.unlockMasterKey = oldUnlock;
   }
 });
+
+test('real verified unlock keys decrypt existing records and survive master-key rotation', async () => {
+  const oldConfig = await EncryptionService.createMasterKeyConfig('old-integration-fixture');
+  const oldUnlocked = await EncryptionService.unlockMasterKey('old-integration-fixture', oldConfig);
+  assert.ok(oldUnlocked);
+  const record = { fixture: 'private sync baseline', revision: 7 };
+  const storage = new Map<string, unknown>();
+  storage.set(SYNC_STORAGE_KEYS.MASTER_KEY_CONFIG, oldConfig);
+  const originalCiphertext = await encryptLocalStorageValue(record, oldUnlocked.derivedKey);
+  storage.set(SYNC_STORAGE_KEYS.CONVERGENT_REPLICA, originalCiphertext);
+  const subject = {
+    ...manager(storage, oldUnlocked.derivedKey),
+    state: {
+      masterKeyConfig: oldConfig, securityState: 'UNLOCKED',
+      unlockedKey: oldUnlocked, autoSyncEnabled: false,
+    },
+    masterPassword: 'old-integration-fixture',
+    bumpSyncSecurityGeneration: () => undefined,
+    emit: () => undefined,
+    async reencryptSyncStorage(oldKey: CryptoKey, newKey: CryptoKey, nextConfig: MasterKeyConfig) {
+      assert.deepEqual(await decryptLocalStorageValue(originalCiphertext, oldKey), record);
+      await reencryptSyncStorageImpl.call(this, oldKey, newKey, nextConfig);
+    },
+  };
+  assert.equal(await changeMasterKeyImpl.call(subject, 'old-integration-fixture', 'new-integration-fixture'), true);
+  const rotatedCiphertext = storage.get(SYNC_STORAGE_KEYS.CONVERGENT_REPLICA) as string;
+  assert.notEqual(rotatedCiphertext, originalCiphertext);
+  assert.deepEqual(await decryptLocalStorageValue(rotatedCiphertext, subject.state.unlockedKey.derivedKey), record);
+  await assert.rejects(decryptLocalStorageValue(rotatedCiphertext, oldUnlocked.derivedKey));
+  const reopened = await EncryptionService.unlockMasterKey('new-integration-fixture', subject.state.masterKeyConfig);
+  assert.ok(reopened);
+  assert.deepEqual(await decryptLocalStorageValue(rotatedCiphertext, reopened.derivedKey), record);
+  assert.equal(await EncryptionService.unlockMasterKey('old-integration-fixture', subject.state.masterKeyConfig), null);
+});

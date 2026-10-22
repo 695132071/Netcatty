@@ -385,21 +385,27 @@ export const unlockMasterKey = async (
   password: string,
   config: MasterKeyConfig
 ): Promise<UnlockedMasterKey | null> => {
-  const isValid = await verifyPassword(password, config);
-  if (!isValid) return null;
+  try {
+    const salt = base64ToUint8Array(config.salt);
+    const derivedKey = await deriveKey(
+      password,
+      salt,
+      config.kdfIterations || SYNC_CONSTANTS.PBKDF2_ITERATIONS
+    );
+    const hash = await createVerificationHash(derivedKey);
+    if (hash !== config.verificationHash) return null;
 
-  const salt = base64ToUint8Array(config.salt);
-  const derivedKey = await deriveKey(
-    password,
-    salt,
-    config.kdfIterations || SYNC_CONSTANTS.PBKDF2_ITERATIONS
-  );
-
-  return {
-    derivedKey,
-    salt,
-    unlockedAt: Date.now(),
-  };
+    // Return the exact key that passed verification, rather than deriving the
+    // same password/salt key again. Ownership remains with the unlock caller.
+    return {
+      derivedKey,
+      salt,
+      unlockedAt: Date.now(),
+    };
+  } catch {
+    // Match verifyPassword's failure contract for malformed data/crypto errors.
+    return null;
+  }
 };
 
 /**
