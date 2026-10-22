@@ -559,6 +559,8 @@ const GroupDetailsPanel: React.FC<GroupDetailsPanelPropsWithResize> = ({
 
     const result: GroupConfig = {
       path: newPath,
+      // Editing defaults or notes must not change the group's manual position.
+      ...(config?.order !== undefined && { order: config.order }),
       notes: form.notes?.trim() || undefined,
       // Only include SSH fields if SSH section is enabled
       ...(sshEnabled && {
