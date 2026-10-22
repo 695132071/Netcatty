@@ -475,6 +475,10 @@ export const createTerminalOutputHistoryPreview = (options?: {
   // mark / trailing surrogate in the next) while xterm's grapheme provider
   // joins them across writes, so the next span must be able to rejoin it.
   let openGrapheme: string | null = null;
+  // When set, `openGrapheme` still holds the whole non-ASCII piece the last
+  // append wrote; its last grapheme is only segmented out when a following
+  // span actually tries to rejoin it (rare), not on every append.
+  let openGraphemeUnresolved = false;
   let openGraphemeCell = 0;
   let cacheDirty = true;
   let cacheCols = -1;
@@ -551,6 +555,10 @@ export const createTerminalOutputHistoryPreview = (options?: {
       && cursor === current.length
       && cursorCell === openGraphemeCell
     ) {
+      if (openGraphemeUnresolved) {
+        openGrapheme = lastGraphemeUnits(openGrapheme);
+        openGraphemeUnresolved = false;
+      }
       const probeEnd = Math.min(span.length, WRAP_PROBE_UTF16_UNITS);
       const head = openGrapheme + span.slice(0, probeEnd);
       let first = firstGraphemeUnits(head);
@@ -703,7 +711,9 @@ export const createTerminalOutputHistoryPreview = (options?: {
       // clusters and corrupt the transcript, while a boundary-aligned cut
       // keeps every piece's segmentation identical to the span's.
       let pieceEnd = offset + (maxChars - current.length);
-      if (pieceEnd - offset > pieceCap) {
+      // A remainder no longer than the cap needs no boundary search: the
+      // segment walk below would consume all of it and cut at its end.
+      if (pieceEnd - offset > pieceCap && span.length - offset > pieceCap) {
         const window = span.slice(offset, offset + pieceCap + WRAP_PROBE_UTF16_UNITS);
         let cutLength = 0;
         let end = window.length;
@@ -794,7 +804,8 @@ export const createTerminalOutputHistoryPreview = (options?: {
         // continuing it (a split cluster) can be rejoined (see writeSpan).
         // An empty open grapheme would corrupt the join, so track null then.
         openGrapheme = !fitting ? null
-          : isAsciiOnly(fitting) ? fitting.slice(-1) : lastGraphemeUnits(fitting);
+          : pieceAscii ? fitting.slice(-1) : fitting;
+        openGraphemeUnresolved = !!fitting && !pieceAscii;
         openGraphemeCell = cursorCell;
       }
       cursor = appending ? current.length
