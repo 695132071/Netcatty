@@ -498,3 +498,75 @@ test("HostTreeView IP sorting stays inside each group and leaves manual order in
   assert.deepEqual(keys("ip"), ["group:prod", "group:prod/east", "host:east-two", "host:east-ten", "host:prod-two", "host:prod-ten", "host:root-two", "host:root-ten"]);
   assert.deepEqual(keys("manual"), ["group:prod", "group:prod/east", "host:east-ten", "host:east-two", "host:prod-ten", "host:prod-two", "host:root-ten", "host:root-two"]);
 });
+
+// Deterministic work-count assertions, not a wall-clock benchmark.
+test("HostTreeView scans manual group order only once across expanded leaf groups", () => {
+  const groupTree: GroupNode[] = ["c", "b", "a"].map((path) => ({
+    name: path, path, children: {}, hosts: [],
+  }));
+  const groupConfigs: GroupConfig[] = groupTree.map((node, order) => ({ path: node.path, order }));
+  let configVisits = 0;
+  Object.defineProperty(groupConfigs, "filter", {
+    value: (predicate: (value: GroupConfig, index: number, array: GroupConfig[]) => unknown) =>
+      Array.prototype.filter.call(groupConfigs, (value: GroupConfig, index: number, array: GroupConfig[]) => {
+        configVisits += 1;
+        return predicate(value, index, array);
+      }),
+  });
+  for (const expandedPaths of [new Set<string>(), new Set(["a", "b", "c"])]) {
+    configVisits = 0;
+    const manual = buildVisibleHostTreeItems({ groupTree, groupConfigs, expandedPaths, ungroupedHosts: [], sortMode: "manual" });
+    assert.equal(configVisits, 3);
+    assert.deepEqual(manual.map((item) => item.key), ["group:c", "group:b", "group:a"]);
+    for (const sortMode of ["az", "za", "newest", "oldest", "group", "ip"] as const) {
+      configVisits = 0;
+      const items = buildVisibleHostTreeItems({ groupTree, groupConfigs, expandedPaths, ungroupedHosts: [], sortMode });
+      assert.equal(configVisits, 0, `${sortMode} must not construct a manual order index`);
+      assert.deepEqual(items.map((item) => item.key), sortMode === "za"
+        ? ["group:c", "group:b", "group:a"]
+        : ["group:a", "group:b", "group:c"]);
+    }
+  }
+});
+
+test("HostTreeView shared order index preserves valid duplicates, ties and nested sibling metadata", () => {
+  const leaf = (path: string): GroupNode => ({ name: path.split("/").at(-1)!, path, children: {}, hosts: [] });
+  const parent: GroupNode = {
+    ...leaf("parent"),
+    children: { z: leaf("parent/z"), a: leaf("parent/a"), b: leaf("parent/b") },
+    hosts: [{ ...baseHost, id: "child-host", group: "parent" }],
+  };
+  const groupTree = [leaf("unordered-z"), leaf("tie-b"), parent, leaf("tie-a"), leaf("unordered-a")];
+  const groupConfigs: GroupConfig[] = [
+    { path: "parent", order: 10 }, { path: "parent", order: -1 },
+    { path: "parent", order: Number.NaN }, { path: "parent", order: Infinity },
+    { path: "tie-b", order: 0 }, { path: "tie-a", order: 0 },
+    { path: "unordered-a", order: Number.NaN },
+    { path: "parent/a", order: 0 }, { path: "parent/b", order: 0 },
+    { path: "parent/z", order: -2 },
+  ];
+  const ungroupedHosts = [{ ...baseHost, id: "root-host", group: "" }];
+  const expandedPaths = new Set(["parent", "parent/z", "parent/a", "parent/b"]);
+  const inputBefore = structuredClone({ groupTree, groupConfigs, ungroupedHosts, expandedPaths });
+  const items = buildVisibleHostTreeItems({ groupTree, groupConfigs, ungroupedHosts, expandedPaths, sortMode: "manual" });
+  assert.deepEqual(items.map(({ key, depth, posInSet, setSize }) => ({ key, depth, posInSet, setSize })), [
+    { key: "group:parent", depth: 0, posInSet: 1, setSize: 6 },
+    { key: "group:parent/z", depth: 1, posInSet: 1, setSize: 4 },
+    { key: "group:parent/b", depth: 1, posInSet: 2, setSize: 4 },
+    { key: "group:parent/a", depth: 1, posInSet: 3, setSize: 4 },
+    { key: "host:child-host", depth: 1, posInSet: 4, setSize: 4 },
+    { key: "group:tie-a", depth: 0, posInSet: 2, setSize: 6 },
+    { key: "group:tie-b", depth: 0, posInSet: 3, setSize: 6 },
+    { key: "group:unordered-z", depth: 0, posInSet: 4, setSize: 6 },
+    { key: "group:unordered-a", depth: 0, posInSet: 5, setSize: 6 },
+    { key: "host:root-host", depth: 0, posInSet: 6, setSize: 6 },
+  ]);
+  assert.equal(items[0].kind === "group" && items[0].node, parent);
+  assert.equal(items[4].kind === "host" && items[4].host, parent.hosts[0]);
+  assert.deepEqual({ groupTree, groupConfigs, ungroupedHosts, expandedPaths }, inputBefore);
+  const changed = buildVisibleHostTreeItems({
+    groupTree, groupConfigs: [...groupConfigs, { path: "tie-a", order: -10 }],
+    ungroupedHosts, expandedPaths, sortMode: "manual",
+  });
+  assert.equal(changed[0].key, "group:tie-a");
+});

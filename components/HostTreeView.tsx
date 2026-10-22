@@ -64,22 +64,25 @@ export type VisibleHostTreeItem =
     setSize: number;
   };
 
-const sortHostTreeGroups = (
-  nodes: GroupNode[],
-  sortMode: HostTreeSortMode,
-  groupConfigs: GroupConfig[],
-): GroupNode[] => {
-  const originalIndex = new Map(nodes.map((node, index) => [node.path, index]));
-  const orderByPath = new Map(
+const buildHostTreeGroupOrder = (groupConfigs: GroupConfig[]): Map<string, number> => (
+  new Map(
     groupConfigs
       .filter((config) => typeof config.order === 'number' && Number.isFinite(config.order))
       .map((config) => [config.path, config.order as number]),
-  );
+  )
+);
+
+const sortHostTreeGroups = (
+  nodes: GroupNode[],
+  sortMode: HostTreeSortMode,
+  orderByPath?: ReadonlyMap<string, number>,
+): GroupNode[] => {
+  const originalIndex = new Map(nodes.map((node, index) => [node.path, index]));
   return [...nodes].sort((a, b) => {
     if (sortMode === 'za') return b.name.localeCompare(a.name);
     if (sortMode === 'manual') {
-      const orderA = orderByPath.get(a.path);
-      const orderB = orderByPath.get(b.path);
+      const orderA = orderByPath?.get(a.path);
+      const orderB = orderByPath?.get(b.path);
       if (orderA !== undefined && orderB !== undefined && orderA !== orderB) return orderA - orderB;
       if (orderA !== undefined) return -1;
       if (orderB !== undefined) return 1;
@@ -115,8 +118,9 @@ export function buildVisibleHostTreeItems({
   groupConfigs: GroupConfig[];
 }): VisibleHostTreeItem[] {
   const items: VisibleHostTreeItem[] = [];
+  const orderByPath = sortMode === 'manual' ? buildHostTreeGroupOrder(groupConfigs) : undefined;
   const visitGroups = (nodes: GroupNode[], depth: number) => {
-    const sortedGroups = sortHostTreeGroups(nodes, sortMode, groupConfigs);
+    const sortedGroups = sortHostTreeGroups(nodes, sortMode, orderByPath);
     // Root-level ungrouped hosts are siblings of top-level groups.
     const rootUngrouped = depth === 0 ? sortHostTreeHosts(ungroupedHosts, sortMode) : [];
     const siblingSetSize = sortedGroups.length + rootUngrouped.length;
@@ -133,7 +137,7 @@ export function buildVisibleHostTreeItems({
       const childGroups = sortHostTreeGroups(
         Object.values(node.children ?? {}) as GroupNode[],
         sortMode,
-        groupConfigs,
+        orderByPath,
       );
       const childHosts = sortHostTreeHosts(node.hosts, sortMode);
       const childSetSize = childGroups.length + childHosts.length;
@@ -182,7 +186,7 @@ export function buildVisibleHostTreeItems({
       const childGroups = sortHostTreeGroups(
         Object.values(node.children ?? {}) as GroupNode[],
         sortMode,
-        groupConfigs,
+        orderByPath,
       );
       const childHosts = sortHostTreeHosts(node.hosts, sortMode);
       const childSetSize = childGroups.length + childHosts.length;
@@ -439,7 +443,7 @@ const TreeNode: React.FC<TreeNodeProps> = ({
   const childNodes = useMemo(() => sortHostTreeGroups(
     Object.values(node.children ?? {}) as GroupNode[],
     sortMode,
-    groupConfigs,
+    sortMode === 'manual' ? buildHostTreeGroupOrder(groupConfigs) : undefined,
   ), [groupConfigs, node.children, sortMode]);
   const sortedHosts = useMemo(
     () => sortHostTreeHosts(node.hosts, sortMode),
