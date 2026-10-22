@@ -409,6 +409,9 @@ function createTerminalWorkerManager(options = {}) {
   const workerSessionIds = new Set();
   const sessionWebContentsIds = new Map();
   const sessionHostIds = new Map();
+  // Lifetime ownership is independent of the output route (observe popups).
+  const rendererSessionOwners = new Map();
+  const trackedLifetimeRenderers = new WeakSet();
   const sessionGenerations = new Map();
   const closedSessionGenerations = new Map();
   const supersedingSessionGenerations = new Map();
@@ -658,6 +661,34 @@ function createTerminalWorkerManager(options = {}) {
     }
   }
 
+  function trackRendererSessionOwner(sessionId, entry) {
+    // External terminals belong to their agent/provider, not their display.
+    rendererSessionOwners.delete(sessionId);
+    if (!entry.rendererOwned) return;
+    const contents = electronModule?.webContents?.fromId?.(entry.webContentsId);
+    if (!contents) {
+      // A backend-assigned ID may arrive only after the renderer was removed.
+      if (electronModule?.webContents?.fromId) send("netcatty:close", { sessionId });
+      return;
+    }
+    rendererSessionOwners.set(sessionId, contents);
+    const closeOwnedSessions = () => {
+      for (const [ownedId, owner] of [...rendererSessionOwners]) {
+        if (owner !== contents || rendererSessionOwners.get(ownedId) !== contents) continue;
+        // Use the normal close path for pending boots, output/mirror cleanup,
+        // and reference-counted SSH/SFTP transport release in the worker.
+        // Lifetime teardown closes both an active boot and a queued replacement.
+        // Scoping to the pending epoch could leave the older active PTY alive.
+        send("netcatty:close", { sessionId: ownedId }, { webContentsId: contents.id });
+      }
+    };
+    if (!trackedLifetimeRenderers.has(contents)) {
+      trackedLifetimeRenderers.add(contents);
+      contents.once?.("destroyed", closeOwnedSessions);
+    }
+    if (contents.isDestroyed?.()) closeOwnedSessions();
+  }
+
   async function openOutputSession(sessionId, webContentsId, isStillCurrent = null) {
     if (!sessionId || !webContentsId) return false;
     if (closedSessions.has(sessionId)) {
@@ -858,7 +889,7 @@ function createTerminalWorkerManager(options = {}) {
     }
     const ok = await openOutputSession(sessionId, homeId);
     if (ok) {
-      attachHomeWebContentsIds.delete(sessionId);
+      clearAttachHome(sessionId, homeId);
     }
     return {
       success: ok,
@@ -894,8 +925,16 @@ function createTerminalWorkerManager(options = {}) {
     return attachHomeWebContentsIds.get(sessionId) ?? null;
   }
 
-  function clearAttachHome(sessionId) {
+  function clearAttachHome(sessionId, restoredHomeId) {
     if (sessionId) attachHomeWebContentsIds.delete(sessionId);
+    // A completed restore may explicitly adopt another main renderer as home.
+    // Do not overwrite a newer start's lifetime owner while it is still booting.
+    if (typeof restoredHomeId === "number"
+      && rendererSessionOwners.has(sessionId)
+      && !pendingSessionStartSequences.has(sessionId)
+      && sessionWebContentsIds.get(sessionId) === restoredHomeId) {
+      trackRendererSessionOwner(sessionId, { rendererOwned: true, webContentsId: restoredHomeId });
+    }
   }
 
   function deleteClosedSessionTombstone(sessionId) {
@@ -1089,6 +1128,7 @@ function createTerminalWorkerManager(options = {}) {
     outputPortReady.delete(sessionId);
     sessionWebContentsIds.delete(sessionId);
     sessionHostIds.delete(sessionId);
+    rendererSessionOwners.delete(sessionId);
     const activeGeneration = sessionGenerations.get(sessionId);
     recordClosedSessionGeneration(sessionId, activeGeneration);
     sessionGenerations.delete(sessionId);
@@ -1331,10 +1371,28 @@ function createTerminalWorkerManager(options = {}) {
           if (!sessionWebContentsIds.has(entry.requestedSessionId)
             && !outputRoutePending.has(entry.requestedSessionId)) {
             workerSessionIds.delete(entry.requestedSessionId);
+            rendererSessionOwners.delete(entry.requestedSessionId);
           }
         }
         finishPendingSessionStart(entry);
         pending.delete(message.requestId);
+        // A failed replacement may leave the previous backend alive. Restore
+        // its lifetime owner only if no newer start or generation took over.
+        if (entry.requestedSessionId
+          && latestSessionStartSequences.get(entry.requestedSessionId) === entry.requestSequence
+          && sessionWebContentsIds.has(entry.requestedSessionId)
+          && sessionGenerations.get(entry.requestedSessionId) === entry.previousSessionGeneration) {
+          rendererSessionOwners.delete(entry.requestedSessionId);
+          if (entry.previousRendererOwner) {
+            rendererSessionOwners.set(entry.requestedSessionId, entry.previousRendererOwner);
+            if (entry.previousRendererOwner.isDestroyed?.()) {
+              send("netcatty:close", {
+                sessionId: entry.requestedSessionId,
+                bootEpoch: resolveOwnerBootEpoch(entry.requestedSessionId),
+              });
+            }
+          }
+        }
         entry.reject(new Error(message.error));
       } else {
         const sessionId = message.result?.sessionId;
@@ -1379,6 +1437,7 @@ function createTerminalWorkerManager(options = {}) {
           return latestSequence === entry.requestSequence
             && !(currentClosedSequence != null && currentClosedSequence >= entry.requestSequence);
         };
+        if (!entry.requestedSessionId) trackRendererSessionOwner(sessionId, entry);
         void openOutputSession(sessionId, entry.webContentsId, isStillCurrent).then((opened) => {
           if (pending.get(message.requestId) !== entry) return;
           finishPendingSessionStart(entry);
@@ -1744,6 +1803,7 @@ function createTerminalWorkerManager(options = {}) {
     workerSessionIds.clear();
     sessionWebContentsIds.clear();
     sessionHostIds.clear();
+    rendererSessionOwners.clear();
     sessionGenerations.clear();
     closedSessionGenerations.clear();
     supersedingSessionGenerations.clear();
@@ -1825,6 +1885,13 @@ function createTerminalWorkerManager(options = {}) {
 
   function request(channel, payload, optionsForRequest = {}) {
     pruneClosedSessionTombstones();
+    const rendererOwned = SESSION_START_CHANNELS.has(channel) && channel !== "netcatty:external:start";
+    if (rendererOwned && electronModule?.webContents?.fromId && optionsForRequest.webContentsId) {
+      const contents = electronModule.webContents.fromId(optionsForRequest.webContentsId);
+      if (!contents || contents.isDestroyed?.()) {
+        return Promise.reject(new Error("Terminal window closed before startup"));
+      }
+    }
     if (channel === "netcatty:close:await"
       && payload?.sessionId
       && closedSessions.has(payload.sessionId)
@@ -1842,6 +1909,10 @@ function createTerminalWorkerManager(options = {}) {
     const requestedSessionId = payload?.sessionId && SESSION_START_CHANNELS.has(channel)
       ? payload.sessionId
       : null;
+    const previousStart = requestedSessionId
+      ? [...pending.values()].find(entry => entry.requestedSessionId === requestedSessionId
+        && entry.requestSequence === latestSessionStartSequences.get(requestedSessionId))
+      : null;
     const promise = new Promise((resolve, reject) => {
       pending.set(requestId, {
         resolve,
@@ -1851,6 +1922,11 @@ function createTerminalWorkerManager(options = {}) {
         bootEpoch: normalizeBootEpoch(payload?.bootEpoch),
         webContentsId: optionsForRequest.webContentsId,
         beforeExecute: optionsForRequest.beforeExecute,
+        rendererOwned,
+        previousRendererOwner: previousStart
+          ? previousStart.previousRendererOwner
+          : rendererSessionOwners.get(requestedSessionId),
+        previousSessionGeneration: sessionGenerations.get(requestedSessionId),
         opensOutputSession: channel === "netcatty:start"
           || channel === "netcatty:local:reconnect"
           || channel === "netcatty:external:start"
@@ -1876,6 +1952,7 @@ function createTerminalWorkerManager(options = {}) {
       pendingSessionStartSequences.set(requestedSessionId, requestSequence);
       latestSessionStartSequences.set(requestedSessionId, requestSequence);
       rememberPendingStartBootEpoch(requestedSessionId, payload?.bootEpoch);
+      trackRendererSessionOwner(requestedSessionId, pending.get(requestId));
       // Track host id for SFTP transfer session leases (global transfer center).
       if (typeof payload?.hostId === "string" && payload.hostId) {
         sessionHostIds.set(requestedSessionId, payload.hostId);
@@ -2114,6 +2191,7 @@ function createTerminalWorkerManager(options = {}) {
       workerSessionIds.clear();
       sessionWebContentsIds.clear();
       sessionHostIds.clear();
+      rendererSessionOwners.clear();
       sessionGenerations.clear();
       closedSessionGenerations.clear();
       supersedingSessionGenerations.clear();

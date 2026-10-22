@@ -137,6 +137,9 @@ function init(deps) {
 }
 
 function openTerminalOutputSession(sessionId, webContents) {
+  require("./rendererSessionLifetime.cjs").trackRendererSessionLifetime(
+    sessions, sessionId, webContents, closeSession,
+  );
   const generation = webContents?.claimSessionGeneration?.(sessionId);
   const session = sessions?.get?.(sessionId);
   if (session && Number.isSafeInteger(generation)) {
@@ -540,6 +543,9 @@ async function restoreAttachedSessionOutputOnce(
           } else {
             openTerminalOutputSession(sessionId, home);
             session.webContentsId = home.id;
+            require("./rendererSessionLifetime.cjs").trackRendererSessionLifetime(
+              sessions, sessionId, home, closeSession, true,
+            );
             attachHomeWebContentsIds.delete(sessionId);
             result = { success: true, restored: true, webContentsId: home.id };
           }
@@ -621,7 +627,7 @@ async function restoreTerminalSessionOutput(event, payload, terminalWorkerManage
       if (!result?.success) {
         return { success: false, error: result?.error || "Failed to restore session output" };
       }
-      terminalWorkerManager.clearAttachHome?.(sessionId);
+      terminalWorkerManager.clearAttachHome?.(sessionId, target.id);
       return { success: true, restored: true, webContentsId: target.id };
     } catch (err) {
       return { success: false, error: err?.message || String(err) };
@@ -636,6 +642,9 @@ async function restoreTerminalSessionOutput(event, payload, terminalWorkerManage
   try {
     openTerminalOutputSession(sessionId, target);
     session.webContentsId = target.id;
+    require("./rendererSessionLifetime.cjs").trackRendererSessionLifetime(
+      sessions, sessionId, target, closeSession, true,
+    );
     attachHomeWebContentsIds.delete(sessionId);
     return { success: true, restored: true, webContentsId: target.id };
   } catch (err) {

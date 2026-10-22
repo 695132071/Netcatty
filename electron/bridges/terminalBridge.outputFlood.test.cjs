@@ -626,3 +626,21 @@ test("worker replacements abort pending and skip superseded queued local starts"
     await drainMessages();
   });
 });
+
+test("in-process local session is killed on renderer destruction without closing another renderer's PTY", async () => {
+  const EventEmitter = require("node:events");
+  const spawns = [];
+  const bridge = loadBridgeWithFakes(spawns, []);
+  const sessions = new Map();
+  const renderers = [7, 8].map(id => Object.assign(new EventEmitter(), { id, send() {} }));
+  bridge.init({ sessions, electronModule: { webContents: { fromId: id => renderers.find(r => r.id === id) } } });
+  await bridge.startLocalSession({ sender: renderers[0] }, { sessionId: "lifetime-local", shell: "/bin/sh", bootEpoch: 1 });
+  await bridge.startLocalSession({ sender: renderers[1] }, { sessionId: "lifetime-other", shell: "/bin/sh", bootEpoch: 1 });
+  let killed = 0;
+  spawns[0].kill = () => { killed++; };
+  renderers[0].emit("destroyed");
+  assert.equal(killed, 1);
+  assert.equal(sessions.has("lifetime-local"), false);
+  assert.equal(sessions.has("lifetime-other"), true);
+  bridge.closeSession({}, { sessionId: "lifetime-other" });
+});

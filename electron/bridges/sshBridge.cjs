@@ -508,6 +508,10 @@ function init(deps) {
 }
 
 function openTerminalOutputSession(sessionId, webContents) {
+  require("./rendererSessionLifetime.cjs").trackRendererSessionLifetime(
+    sessions, sessionId, webContents,
+    (event, payload) => require("./terminalBridge.cjs").closeSession(event, payload),
+  );
   terminalOutputChannel?.openSession?.(sessionId, webContents);
 }
 

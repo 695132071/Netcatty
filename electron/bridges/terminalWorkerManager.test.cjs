@@ -771,7 +771,7 @@ test("destroying a renderer immediately cancels its pending session ownership", 
   assert.equal(outputOpened, false);
 });
 
-test("worker exit after renderer loss still closes a session with pending ownership", async () => {
+test("renderer loss closes pending ownership before worker exit without duplicate notification", async () => {
   const child = new FakeChild();
   const contents = new EventEmitter();
   contents.id = 7;
@@ -800,12 +800,12 @@ test("worker exit after renderer loss still closes a session with pending owners
   contents.emit("destroyed");
   releaseOwnership();
   await assert.rejects(start, /output route opened/u);
-  assert.deepEqual(closed, []);
+  assert.deepEqual(closed, [{ sessionId: "local-1", reason: "closed", explicit: true }]);
 
   child.emit("exit", 1);
-  assert.deepEqual(closed, [{ sessionId: "local-1", reason: "worker-exit" }]);
+  assert.deepEqual(closed, [{ sessionId: "local-1", reason: "closed", explicit: true }]);
   await new Promise((resolve) => setImmediate(resolve));
-  assert.deepEqual(closed, [{ sessionId: "local-1", reason: "worker-exit" }]);
+  assert.deepEqual(closed, [{ sessionId: "local-1", reason: "closed", explicit: true }]);
 });
 
 test("a start closed while ownership is pending rejects instead of creating a ghost session", async () => {
@@ -5002,4 +5002,284 @@ test("worker job diagnostics reach the main console with the diagnostic flag", (
   assert.deepEqual(lines, [line]);
   t.mock.method(console, "info", () => { throw new Error("unavailable log"); });
   assert.doesNotThrow(() => child.emit("message", { kind: "job-diagnostic", line }));
+});
+
+function createRendererLifetimeFixture(t) {
+  const child = new FakeChild();
+  const renderers = new Map([7, 8, 9].map((id) => {
+    const contents = new EventEmitter();
+    Object.assign(contents, { id, destroyed: false, send() {} });
+    contents.isDestroyed = () => contents.destroyed;
+    contents.destroy = () => { contents.destroyed = true; contents.emit("destroyed"); };
+    return [id, contents];
+  }));
+  const manager = createTerminalWorkerManager({
+    utilityProcess: { fork: () => child },
+    electronModule: { webContents: { fromId: id => renderers.get(id) } },
+    terminalOutputChannel: { openSession() {}, closeSession() {} },
+  });
+  t.after(() => manager.stop());
+  const begin = (id, owner = 7, bootEpoch = 1, channel = "netcatty:local:start") => {
+    const promise = manager.request(channel, { sessionId: id, bootEpoch }, { webContentsId: owner });
+    const message = child.messages.findLast(m => m.kind === "request");
+    return { promise, respond() {
+      child.emit("message", { kind: "response", requestId: message.requestId,
+        result: { sessionId: id }, sessionGeneration: bootEpoch });
+    } };
+  };
+  const start = async (...args) => { const pending = begin(...args); pending.respond(); await pending.promise; };
+  const closes = () => child.messages.filter(m => m.channel === "netcatty:close");
+  return { child, renderers, manager, begin, start, closes };
+}
+
+test("destroyed lifetime owner closes established sessions through normal worker close once", async t => {
+  const f = createRendererLifetimeFixture(t);
+  const closed = [];
+  f.manager.onSessionClosed(e => closed.push(e));
+  await f.start("local");
+  await f.start("ssh", 7, 1, "netcatty:start");
+  await f.start("other", 8);
+  f.renderers.get(7).destroy();
+  assert.deepEqual(f.closes().map(m => m.payload.sessionId), ["local", "ssh"]);
+  assert.equal(f.manager.hasOpenSession("local"), false);
+  assert.equal(f.manager.hasOpenSession("ssh"), false);
+  assert.equal(f.manager.hasOpenSession("other"), true);
+  assert.deepEqual(closed.map(e => e.sessionId), ["local", "ssh"]);
+  f.renderers.get(7).emit("destroyed");
+  assert.equal(f.closes().length, 2);
+});
+
+test("attached display destruction keeps the source session but source destruction closes it", async t => {
+  const f = createRendererLifetimeFixture(t);
+  await f.start("local");
+  assert.equal((await f.manager.rebindOutputSession("local", 9)).success, true);
+  f.renderers.get(9).destroy();
+  assert.equal(f.closes().length, 0);
+  assert.equal(f.manager.hasOpenSession("local"), true);
+  assert.equal((await f.manager.restoreAttachHome("local")).success, true);
+  f.renderers.get(7).destroy();
+  assert.equal(f.closes().length, 1);
+});
+
+test("new pending and established owners survive the old renderer's destruction", async t => {
+  const f = createRendererLifetimeFixture(t);
+  await f.start("local");
+  const replacement = f.begin("local", 8, 2);
+  f.renderers.get(7).destroy();
+  assert.equal(f.closes().length, 0);
+  replacement.respond();
+  await replacement.promise;
+  assert.equal(f.manager.getSessionWebContentsId("local"), 8);
+  f.renderers.get(7).emit("destroyed");
+  assert.equal(f.closes().length, 0);
+  f.renderers.get(8).destroy();
+  assert.deepEqual(f.closes()[0].payload, { sessionId: "local" });
+});
+
+test("owner destruction cancels a pending backend start before its response", async t => {
+  const f = createRendererLifetimeFixture(t);
+  const pending = f.begin("local");
+  f.renderers.get(7).destroy();
+  pending.respond();
+  await assert.rejects(pending.promise, /closed before its output route opened/);
+  assert.equal(f.closes().length, 1);
+  assert.equal(f.manager.hasOpenSession("local"), false);
+});
+
+test("external agent sessions are not owned by their renderer display", async t => {
+  const f = createRendererLifetimeFixture(t);
+  await f.start("external", 7, 1, "netcatty:external:start");
+  f.renderers.get(7).destroy();
+  assert.equal(f.closes().length, 0);
+  assert.equal(f.manager.hasOpenSession("external"), true);
+});
+
+test("explicit close and worker shutdown remove renderer lifetime cleanup targets", async t => {
+  const f = createRendererLifetimeFixture(t);
+  await f.start("local");
+  f.manager.send("netcatty:close", { sessionId: "local" });
+  await f.start("second");
+  f.manager.stop();
+  f.renderers.get(7).destroy();
+  assert.deepEqual(f.closes().map(m => m.payload.sessionId), ["local"]);
+});
+
+test("restoring an attached terminal into a new home transfers lifetime ownership", async t => {
+  const f = createRendererLifetimeFixture(t);
+  await f.start("local");
+  await f.manager.rebindOutputSession("local", 9);
+  assert.equal((await f.manager.restoreAttachHome("local", 8)).success, true);
+  f.renderers.get(7).destroy();
+  f.renderers.get(9).destroy();
+  assert.equal(f.closes().length, 0);
+  f.renderers.get(8).destroy();
+  assert.equal(f.closes().length, 1);
+});
+
+test("failed replacement does not transfer a surviving backend to the failed renderer", async t => {
+  const f = createRendererLifetimeFixture(t);
+  await f.start("local");
+  const replacement = f.begin("local", 8, 2);
+  const request = f.child.messages.findLast(m => m.kind === "request");
+  f.child.emit("message", { kind: "response", requestId: request.requestId, error: "start failed" });
+  await assert.rejects(replacement.promise, /start failed/);
+  f.renderers.get(8).destroy();
+  assert.equal(f.closes().length, 0);
+  f.renderers.get(7).destroy();
+  assert.deepEqual(f.closes()[0].payload, { sessionId: "local" });
+});
+
+test("failed handoff closes a surviving backend if its original renderer already disappeared", async t => {
+  const f = createRendererLifetimeFixture(t);
+  await f.start("local");
+  const replacement = f.begin("local", 8, 2);
+  f.renderers.get(7).destroy();
+  assert.equal(f.closes().length, 0);
+  const request = f.child.messages.findLast(m => m.kind === "request");
+  f.child.emit("message", { kind: "response", requestId: request.requestId, error: "start failed" });
+  await assert.rejects(replacement.promise, /start failed/);
+  assert.deepEqual(f.closes()[0].payload, { sessionId: "local", bootEpoch: 1 });
+});
+
+test("renderer lifetime close cancels queued replacement and closes the older active backend", async t => {
+  const terminalBridge = require("./terminalBridge.cjs");
+  const child = new LinkedRuntimeChild();
+  const contents = Object.assign(new EventEmitter(), { id: 7, send() {} });
+  const sessions = new Map();
+  let starts = 0;
+  let kills = 0;
+  terminalBridge.init({ sessions, electronModule: {} });
+  child.connectRuntime(ipcMain => {
+    ipcMain.handle("netcatty:local:start", (_event, payload) => {
+      starts++;
+      sessions.set(payload.sessionId, { bootEpoch: payload.bootEpoch, proc: { kill() { kills++; } } });
+      return { sessionId: payload.sessionId };
+    });
+    ipcMain.on("netcatty:close", terminalBridge.closeSession);
+    ipcMain.handle("netcatty:close:await", terminalBridge.closeSession);
+  });
+  const manager = createTerminalWorkerManager({
+    utilityProcess: { fork: () => child },
+    electronModule: { webContents: { fromId: () => contents } },
+  });
+  t.after(() => manager.stop());
+  await manager.request("netcatty:local:start", { sessionId: "queued-close", bootEpoch: 1 }, { webContentsId: 7 });
+  const replacement = manager.request("netcatty:local:start", { sessionId: "queued-close", bootEpoch: 2 }, { webContentsId: 7 });
+  contents.emit("destroyed");
+  await assert.rejects(replacement, /cancelled by close|closed before/);
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(starts, 1, "replacement was cancelled before its handler ran");
+  assert.equal(kills, 1, "the old active boot must still be closed");
+  assert.equal(sessions.has("queued-close"), false);
+  assert.equal(manager.hasOpenSession("queued-close"), false);
+});
+
+test("destroying a copied child window releases only its shells on a shared SSH transport", async t => {
+  const terminalBridge = require("./terminalBridge.cjs");
+  const {
+    createConnectionRef,
+    acquireConnectionRef,
+    resetSshTransportRegistryForTests,
+  } = require("./sshConnectionPool.cjs");
+  resetSshTransportRegistryForTests();
+  t.after(() => resetSshTransportRegistryForTests());
+
+  const sessions = new Map();
+  terminalBridge.init({ sessions, electronModule: {} });
+  const conn = { ended: 0, end() { this.ended += 1; } };
+  const shell = () => ({
+    stream: { closed: 0, close() { this.closed += 1; } },
+    conn,
+    chainConnections: [],
+    connRef: null,
+    zmodemSentry: { cancel() {} },
+    bootEpoch: 1,
+  });
+  const mainA = shell();
+  const transport = createConnectionRef(mainA, conn, []);
+  const mainB = shell();
+  const childA = shell();
+  const childB = shell();
+  acquireConnectionRef(mainB, transport);
+  acquireConnectionRef(childA, transport);
+  acquireConnectionRef(childB, transport);
+  sessions.set("main-a", mainA);
+  sessions.set("main-b", mainB);
+  sessions.set("child-a", childA);
+  sessions.set("child-b", childB);
+
+  const renderers = new Map([1, 2].map((id) => {
+    const contents = new EventEmitter();
+    Object.assign(contents, { id, destroyed: false, send() {} });
+    contents.isDestroyed = () => contents.destroyed;
+    contents.destroy = () => { contents.destroyed = true; contents.emit("destroyed"); };
+    return [id, contents];
+  }));
+  const child = new LinkedRuntimeChild();
+  child.connectRuntime((ipcMain) => {
+    ipcMain.handle("netcatty:start", (_event, payload) => ({ sessionId: payload.sessionId }));
+    ipcMain.on("netcatty:close", terminalBridge.closeSession);
+    ipcMain.handle("netcatty:close:await", terminalBridge.closeSession);
+  });
+  const manager = createTerminalWorkerManager({
+    utilityProcess: { fork: () => child },
+    electronModule: { webContents: { fromId: (id) => renderers.get(id) } },
+    terminalOutputChannel: { openSession() {}, closeSession() {} },
+  });
+  t.after(() => manager.stop());
+
+  const own = (sessionId, webContentsId) => manager.request(
+    "netcatty:start",
+    { sessionId, bootEpoch: 1, hostId: "shared-host" },
+    { webContentsId },
+  );
+  await own("main-a", 1);
+  await own("main-b", 1);
+  await own("child-a", 2);
+  await own("child-b", 2);
+  assert.equal(transport.count, 4);
+  assert.equal(transport.state, "live");
+
+  renderers.get(2).destroy();
+  await new Promise((resolve) => setImmediate(resolve));
+
+  assert.equal(childA.stream.closed, 1);
+  assert.equal(childB.stream.closed, 1);
+  assert.equal(mainA.stream.closed, 0);
+  assert.equal(mainB.stream.closed, 0);
+  assert.equal(conn.ended, 0, "shared SSH connection stays up for the main window");
+  assert.equal(transport.count, 2);
+  assert.equal(transport.state, "live");
+  assert.equal(sessions.has("main-a"), true);
+  assert.equal(sessions.has("main-b"), true);
+  assert.equal(sessions.has("child-a"), false);
+  assert.equal(sessions.has("child-b"), false);
+  assert.equal(manager.hasOpenSession("main-a"), true);
+  assert.equal(manager.hasOpenSession("main-b"), true);
+  assert.equal(manager.hasOpenSession("child-a"), false);
+  assert.equal(manager.hasOpenSession("child-b"), false);
+
+  renderers.get(2).emit("destroyed");
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(transport.count, 2, "a repeated child-window destroy must not drop surviving leases");
+  assert.equal(conn.ended, 0);
+
+  renderers.get(1).destroy();
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(mainA.stream.closed, 1);
+  assert.equal(mainB.stream.closed, 1);
+  assert.equal(transport.count, 0);
+  assert.equal(transport.state, "idle");
+  assert.equal(conn.ended, 0, "the parked transport is not ended while it can still be reused");
+});
+
+test("backend-assigned session ID is closed if its renderer disappeared before the response", async t => {
+  const f = createRendererLifetimeFixture(t);
+  const start = f.manager.request("netcatty:local:start", {}, { webContentsId: 7 });
+  const request = f.child.messages.findLast(m => m.kind === "request");
+  f.renderers.get(7).destroy();
+  f.renderers.delete(7);
+  f.child.emit("message", { kind: "response", requestId: request.requestId, result: { sessionId: "assigned" } });
+  await assert.rejects(start, /closed before its output route opened/);
+  assert.deepEqual(f.closes().map(m => m.payload), [{ sessionId: "assigned" }]);
 });
