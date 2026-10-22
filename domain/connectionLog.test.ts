@@ -8,6 +8,7 @@ import {
   mergeConnectionLogsFromStorage,
   mergeTerminalDataIntoLogs,
   mergeTerminalDataMapsForStorage,
+  pruneInMemoryUnsavedTerminalData,
   pruneTerminalDataMapForStorage,
 } from "./connectionLogTerminalData.ts";
 
@@ -147,6 +148,44 @@ test("pruneTerminalDataMapForStorage caps unsaved replay buffers", () => {
   assert.equal(Object.keys(pruned).length, MAX_PERSISTED_UNSAVED_TERMINAL_DATA_ENTRIES);
   assert.equal(pruned["log-59"], "data-log-59");
   assert.equal(pruned["log-0"], undefined);
+});
+
+test("pruneInMemoryUnsavedTerminalData drops oldest unsaved replay buffers beyond the persist cap", () => {
+  const logs: ConnectionLog[] = Array.from({ length: 60 }, (_, index) => ({
+    ...baseLog,
+    id: `log-${index}`,
+    startTime: index,
+    saved: false,
+    terminalData: `data-${index}`,
+  }));
+  // One bookmarked entry must keep its replay buffer even when unsaved count is high.
+  logs.push({
+    ...baseLog,
+    id: "saved-keep",
+    startTime: 0,
+    saved: true,
+    terminalData: "saved-data",
+  });
+
+  const pruned = pruneInMemoryUnsavedTerminalData(logs);
+  const unsavedWithData = pruned.filter((log) => !log.saved && log.terminalData !== undefined);
+  assert.equal(unsavedWithData.length, MAX_PERSISTED_UNSAVED_TERMINAL_DATA_ENTRIES);
+  assert.equal(pruned.find((log) => log.id === "log-59")?.terminalData, "data-59");
+  assert.equal(pruned.find((log) => log.id === "log-0")?.terminalData, undefined);
+  assert.equal(pruned.find((log) => log.id === "log-0")?.id, "log-0"); // metadata kept
+  assert.equal(pruned.find((log) => log.id === "saved-keep")?.terminalData, "saved-data");
+  assert.equal(pruned.length, logs.length);
+});
+
+test("pruneInMemoryUnsavedTerminalData is a no-op at or under the cap", () => {
+  const logs: ConnectionLog[] = Array.from({ length: 10 }, (_, index) => ({
+    ...baseLog,
+    id: `log-${index}`,
+    startTime: index,
+    terminalData: `data-${index}`,
+  }));
+  const pruned = pruneInMemoryUnsavedTerminalData(logs);
+  assert.equal(pruned, logs);
 });
 
 test("mergeTerminalDataMapsForStorage keeps replay data from other windows", () => {

@@ -88,6 +88,32 @@ export const pruneTerminalDataMapForStorage = (
   return next;
 };
 
+
+/**
+ * Drop in-memory `terminalData` from the oldest unsaved logs beyond the
+ * persisted-entry cap. List metadata stays; only replay buffers are removed.
+ * Matches what survives a restart (`pruneTerminalDataMapForStorage`).
+ */
+export const pruneInMemoryUnsavedTerminalData = (
+  logs: ConnectionLog[],
+  maxEntries: number = MAX_PERSISTED_UNSAVED_TERMINAL_DATA_ENTRIES,
+): ConnectionLog[] => {
+  const unsavedWithData = logs
+    .filter((log) => !log.saved && log.terminalData !== undefined)
+    .sort((a, b) => b.startTime - a.startTime);
+  if (unsavedWithData.length <= maxEntries) return logs;
+
+  const keep = new Set(unsavedWithData.slice(0, maxEntries).map((log) => log.id));
+  let changed = false;
+  const next = logs.map((log) => {
+    if (log.saved || log.terminalData === undefined || keep.has(log.id)) return log;
+    changed = true;
+    const { terminalData: _omitted, ...rest } = log;
+    return rest;
+  });
+  return changed ? next : logs;
+};
+
 /** Fold side-store maps together, then cap to the allowed unsaved/saved set. */
 export const mergeTerminalDataMapsForStorage = (
   logs: ConnectionLog[],

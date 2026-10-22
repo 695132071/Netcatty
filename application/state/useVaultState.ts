@@ -64,6 +64,7 @@ import {
   mergeConnectionLogsFromStorage,
   mergeTerminalDataIntoLogs,
   mergeTerminalDataMapsForStorage,
+  pruneInMemoryUnsavedTerminalData,
   type ConnectionLogTerminalDataMap,
 } from "../../domain/connectionLogTerminalData";
 import { getNextVaultOrder, normalizeVaultOrder } from "../../domain/vaultOrder";
@@ -450,14 +451,10 @@ export const useVaultState = () => {
       buildPersistedLogIds(logs, usePersistedLogIdsFromDisk),
     );
     const persisted = writeConnectionLogTerminalDataMap(existing, merged);
-    if (persisted) {
-      connectionLogTerminalDataRef.current = merged;
-    } else {
-      connectionLogTerminalDataRef.current = {
-        ...connectionLogTerminalDataRef.current,
-        ...buildTerminalDataMapFromLogs(logs),
-      };
-    }
+    // On a failed write (e.g. QuotaExceeded once the side store nears ~50 MB)
+    // keep the same capped map instead of accumulating every log's replay
+    // buffer in memory; anything outside it would be pruned on the next write.
+    connectionLogTerminalDataRef.current = merged;
     return { map: connectionLogTerminalDataRef.current, persisted };
   }, []);
 
@@ -1305,8 +1302,10 @@ export const useVaultState = () => {
         const savedLogs = prev.filter((l) => l.saved);
         const unsavedLogs = prev.filter((l) => !l.saved);
         const updated = [newLog, ...unsavedLogs].slice(0, 500);
-        const final = [...updated, ...savedLogs].sort(
-          (a, b) => b.startTime - a.startTime
+        const final = pruneInMemoryUnsavedTerminalData(
+          [...updated, ...savedLogs].sort(
+            (a, b) => b.startTime - a.startTime
+          ),
         );
         persistConnectionLogState(final, { pruneMainBlob: true });
         return final;
@@ -1319,8 +1318,8 @@ export const useVaultState = () => {
   const updateConnectionLog = useCallback(
     (id: string, updates: Partial<ConnectionLog>) => {
       setConnectionLogs((prev) => {
-        const updated = prev.map((log) =>
-          log.id === id ? { ...log, ...updates } : log
+        const updated = pruneInMemoryUnsavedTerminalData(
+          prev.map((log) => (log.id === id ? { ...log, ...updates } : log)),
         );
         persistConnectionLogState(updated, { pruneMainBlob: true });
         return updated;
@@ -1331,8 +1330,10 @@ export const useVaultState = () => {
 
   const toggleConnectionLogSaved = useCallback((id: string) => {
     setConnectionLogs((prev) => {
-      const updated = prev.map((log) =>
-        log.id === id ? { ...log, saved: !log.saved } : log
+      const updated = pruneInMemoryUnsavedTerminalData(
+        prev.map((log) =>
+          log.id === id ? { ...log, saved: !log.saved } : log
+        ),
       );
       persistConnectionLogState(updated, { pruneMainBlob: false });
       return updated;
