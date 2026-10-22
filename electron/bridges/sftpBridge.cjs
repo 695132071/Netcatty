@@ -1656,21 +1656,27 @@ async function runRemoteUploadTransaction(client, localPath, remotePath, options
           signal,
         ));
       assertCanPromote();
-      // Apply the old mode to the stage before promotion. A failed chmod must not
-      // replace an executable final with a non-executable file and report success.
-      await restoreRemoteMode(client, encodedStagedPath, plan.existingMode, {
-        bestEffort: false,
-      });
-      assertCanPromote();
-      await runCancelablePreflight(() => assertStagedPromotionTargetSafe(
-          client,
-          encodedPath,
-          remotePath,
-          plan.destinationExisted,
-          plan.destinationSnapshot,
-          signal,
-        ));
-      assertCanPromote();
+      // Mode restore is a remote chmod on the stage. Recheck the destination
+      // only after that round trip. A non-finite existingMode (new files, and
+      // targets whose mode could not be captured) makes restore a no-op, so a
+      // second lstat would be a serial RTT on every such upload.
+      if (Number.isFinite(plan.existingMode)) {
+        // Apply the old mode to the stage before promotion. A failed chmod must not
+        // replace an executable final with a non-executable file and report success.
+        await restoreRemoteMode(client, encodedStagedPath, plan.existingMode, {
+          bestEffort: false,
+        });
+        assertCanPromote();
+        await runCancelablePreflight(() => assertStagedPromotionTargetSafe(
+            client,
+            encodedPath,
+            remotePath,
+            plan.destinationExisted,
+            plan.destinationSnapshot,
+            signal,
+          ));
+        assertCanPromote();
+      }
       commitPromotion();
       await renameRemotePath(client, encodedStagedPath, encodedPath, encodedBackupPath, {
         stagePath: stagedLogical,
