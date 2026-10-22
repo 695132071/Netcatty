@@ -1596,7 +1596,10 @@ let sftpClients = null;
 // Retry is same-process — a relaunch with no fingerprint already restarts at 0.
 // Entries stay only while that task can still resume from the checkpoint.
 const localUploadAcknowledgedPrefix = new Map();
-const UPLOAD_PREFIX_SESSION_LOSS = /SFTP (channel closed|session lost)|ECONNRESET|EPIPE|Not connected|No response from server|Keepalive timeout|connection (lost|closed|reset)/i;
+// Keep identical to SESSION_LOSS_ERROR in application/state/sftp/retryFromCheckpoint.ts.
+// Both must accept every code or message isSftpChannelLossError treats as channel
+// loss, or a same-id Retry drops this digest and restarts at byte 0.
+const UPLOAD_PREFIX_SESSION_LOSS = /SFTP (channel closed|session lost)|ERR_SFTP_CHANNEL_CLOSED|ECONNRESET|ECONNABORTED|EPIPE|Not connected|No response from server|Keepalive timeout|socket hang up|client-socket|connection (lost|closed|reset)/i;
 
 function forgetLocalUploadAcknowledgedPrefix(transferId) {
   if (transferId) localUploadAcknowledgedPrefix.delete(String(transferId));
@@ -1641,9 +1644,20 @@ function localUploadAcknowledgedOffset(transferId) {
   return entry.digestOffset;
 }
 
-function localUploadPrefixFailureKeepsCheckpoint(transferId, message) {
-  return localUploadAcknowledgedOffset(transferId) > 0
-    && UPLOAD_PREFIX_SESSION_LOSS.test(String(message || ""));
+function isTransferChannelLossError(error) {
+  if (!error || typeof error !== "object") return false;
+  if (isSftpChannelLossError(error)) return true;
+  const cause = error.cause;
+  return Boolean(cause && typeof cause === "object" && isSftpChannelLossError(cause));
+}
+
+function localUploadPrefixFailureKeepsCheckpoint(transferId, error) {
+  if (!(localUploadAcknowledgedOffset(transferId) > 0)) return false;
+  // Prefer the bridge classifier (code, level, cause). The shared regex still
+  // covers string-only failures such as "Not connected" and "SFTP channel closed".
+  if (isTransferChannelLossError(error)) return true;
+  const message = typeof error === "string" ? error : (error?.message || String(error || ""));
+  return UPLOAD_PREFIX_SESSION_LOSS.test(message);
 }
 
 async function localUploadAcknowledgedPrefixMatches(transferId, sourcePath, checkpoint, sourceSize, options) {
@@ -6412,7 +6426,7 @@ async function startTransferNow(event, payload, onProgress) {
     }
     cleanupTransfer();
     const cancelled = /cancel/i.test(message);
-    if (cancelled || !localUploadPrefixFailureKeepsCheckpoint(transferId, message)) {
+    if (cancelled || !localUploadPrefixFailureKeepsCheckpoint(transferId, error)) {
       forgetLocalUploadAcknowledgedPrefix(transferId);
     }
     if (cancelled) {

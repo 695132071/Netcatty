@@ -4,7 +4,11 @@ import type { TransferTask } from "../../../domain/models";
 // .part is intact up to the checkpoint, so Retry can continue from it instead
 // of restarting at byte 0 (which also strands the old stage on the server,
 // because the new attempt stages under a fresh transfer id).
-const SESSION_LOSS_ERROR = /SFTP (channel closed|session lost)|ECONNRESET|EPIPE|Not connected|No response from server|Keepalive timeout|connection (lost|closed|reset)/i;
+// Keep this identical to UPLOAD_PREFIX_SESSION_LOSS in transferBridge.cjs, and
+// cover every code or message isSftpChannelLossError already treats as channel
+// loss (including ECONNABORTED, socket hang up, ERR_SFTP_CHANNEL_CLOSED, and
+// client-socket). A miss here restarts at byte 0 and strands the .part.
+const SESSION_LOSS_ERROR = /SFTP (channel closed|session lost)|ERR_SFTP_CHANNEL_CLOSED|ECONNRESET|ECONNABORTED|EPIPE|Not connected|No response from server|Keepalive timeout|socket hang up|client-socket|connection (lost|closed|reset)/i;
 
 /**
  * True when Retry should resume the same task from its checkpoint.

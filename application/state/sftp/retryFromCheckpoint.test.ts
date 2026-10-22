@@ -10,6 +10,18 @@ const failed = (over: Partial<TransferTask> = {}): TransferTask => ({
   speed: 0, startTime: 1, isDirectory: false, error: "SFTP channel closed", ...over,
 });
 
+test("canRetryFromCheckpoint resumes the channel-loss forms the bridge already classifies", () => {
+  for (const error of [
+    "read ECONNABORTED",
+    "socket hang up",
+    "ERR_SFTP_CHANNEL_CLOSED",
+    "SFTP pipelined upload failed: socket hang up",
+    "client-socket",
+  ]) {
+    assert.equal(canRetryFromCheckpoint(failed({ error })), true, error);
+  }
+});
+
 test("canRetryFromCheckpoint only for a top-level file that lost its connection with progress", () => {
   assert.equal(canRetryFromCheckpoint(failed()), true);
   assert.equal(canRetryFromCheckpoint(failed({ error: "read ECONNRESET" })), true);

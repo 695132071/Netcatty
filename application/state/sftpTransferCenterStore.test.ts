@@ -100,6 +100,10 @@ test("background-agent retry after restart uses fresh dedicated recovery instead
 for (const [label, error, expectResume] of [
   ["dead channel", "SFTP channel closed", true],
   ["lost session", "SFTP session lost. Please reconnect.", true],
+  ["aborted socket", "read ECONNABORTED", true],
+  ["hung up socket", "socket hang up", true],
+  ["closed channel code", "ERR_SFTP_CHANNEL_CLOSED", true],
+  ["client socket", "client-socket", true],
   ["content failure", "Permission denied", false],
 ] as const) {
   test(`panel Retry after ${label} ${expectResume ? "resumes the same task from its checkpoint" : "keeps the restart-from-0 retry"}`, async () => {
