@@ -286,7 +286,7 @@ function TerminalPopupPageInner({
     groupConfigs,
     updateKnownHosts,
     deleteSelectedSnippets,
-  } = useVaultState();
+  } = useVaultState({ syncConnectionLogTerminalData: false });
   const [config, setConfig] = useState<TerminalPopupPayload | null>(null);
   const [terminalReady, setTerminalReady] = useState(false);
   const [startupError, setStartupError] = useState<string | null>(null);

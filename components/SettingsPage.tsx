@@ -270,7 +270,7 @@ const SettingsSyncTabWithVault: React.FC<{ onSettingsApplied?: () => void }> = (
         groupConfigs,
         importDataFromString,
         clearVaultData,
-    } = useVaultState();
+    } = useVaultState({ syncConnectionLogTerminalData: false });
 
     const { rules: portForwardingRules, importRules: importPortForwardingRules } = usePortForwardingState();
 

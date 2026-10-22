@@ -305,7 +305,18 @@ const writeConnectionLogTerminalDataMap = (
   return localStorageAdapter.write(STORAGE_KEY_CONNECTION_LOG_TERMINAL_DATA, pruned);
 };
 
-export const useVaultState = () => {
+export type UseVaultStateOptions = {
+  /**
+   * When false, skip loading and cross-window sync of the bulky
+   * connection-log terminal-data side store (~30–50 MB in localStorage).
+   * Pass false from windows that never show connection-log replay
+   * (Settings, tray panel, terminal popup). Default true.
+   */
+  syncConnectionLogTerminalData?: boolean;
+};
+
+export const useVaultState = (options?: UseVaultStateOptions) => {
+  const syncConnectionLogTerminalData = options?.syncConnectionLogTerminalData !== false;
   const [isInitialized, setIsInitialized] = useState(false);
   const [hosts, setHosts] = useState<Host[]>([]);
   const [keys, setKeys] = useState<SSHKey[]>([]);
@@ -1637,7 +1648,11 @@ export const useVaultState = () => {
         const savedConnectionLogs = localStorageAdapter.read<ConnectionLog[]>(
           STORAGE_KEY_CONNECTION_LOGS,
         );
-        const terminalDataMap = readConnectionLogTerminalDataMap();
+        // Windows that never render connection-log replay skip the ~30–50 MB
+        // side-store parse on boot (Settings / tray / popup).
+        const terminalDataMap = syncConnectionLogTerminalData
+          ? readConnectionLogTerminalDataMap()
+          : {};
         connectionLogTerminalDataRef.current = terminalDataMap;
         if (savedConnectionLogs) {
           setConnectionLogs(mergeTerminalDataIntoLogs(savedConnectionLogs, terminalDataMap));
@@ -1682,7 +1697,7 @@ export const useVaultState = () => {
     return () => {
       cancelled = true;
     };
-  }, [commitEncryptedHostsUnderVaultLock, updateHosts, updateSnippets]);
+  }, [commitEncryptedHostsUnderVaultLock, syncConnectionLogTerminalData, updateHosts, updateSnippets]);
 
   useEffect(() => {
     if (!isInitialized) return;
@@ -1891,6 +1906,9 @@ export const useVaultState = () => {
       }
 
       if (key === STORAGE_KEY_CONNECTION_LOG_TERMINAL_DATA) {
+        // Other windows still receive the storage event; skip the multi-MB
+        // JSON.parse when this mount does not show connection-log replay.
+        if (!syncConnectionLogTerminalData) return;
         const next = safeParse<ConnectionLogTerminalDataMap>(event.newValue) ?? {};
         connectionLogTerminalDataRef.current = next;
         setConnectionLogs((prev) => mergeConnectionLogsFromStorage(prev, prev, next));
@@ -1931,6 +1949,7 @@ export const useVaultState = () => {
         return;
       }
       if (key === STORAGE_KEY_CONNECTION_LOG_TERMINAL_DATA) {
+        if (!syncConnectionLogTerminalData) return;
         const next = readConnectionLogTerminalDataMap();
         connectionLogTerminalDataRef.current = next;
         setConnectionLogs((prev) => mergeConnectionLogsFromStorage(prev, prev, next));
@@ -1943,7 +1962,7 @@ export const useVaultState = () => {
       window.removeEventListener("storage", handleStorage);
       window.removeEventListener(LOCAL_STORAGE_ADAPTER_CHANGED_EVENT, handleLocalStorageAdapterChanged);
     };
-  }, [applyConnectionLogsFromStorage]);
+  }, [applyConnectionLogsFromStorage, syncConnectionLogTerminalData]);
 
   const updateHostLastConnected = useCallback((hostId: string) => {
     setHosts((prev) => {

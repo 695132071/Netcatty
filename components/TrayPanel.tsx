@@ -148,7 +148,7 @@ const TrayPanelContent: React.FC = () => {
     onTrayPanelMenuData,
   } = useTrayPanelBackend();
 
-  const { hosts, knownHosts, updateKnownHosts } = useVaultState();
+  const { hosts, knownHosts, updateKnownHosts } = useVaultState({ syncConnectionLogTerminalData: false });
   // TrayPanel runs in its own BrowserWindow, so this hook's session state is
   // independent from (and typically empty compared to) the main App's — it's
   // used here only for its storage-sync side effects, never for closeSession.
