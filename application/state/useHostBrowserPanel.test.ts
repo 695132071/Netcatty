@@ -125,6 +125,55 @@ test('overlapping nonmodal menus yield with a picture; modal dialogs yield even 
   await f.tick(); assert.equal(f.layouts.at(-1)?.occluded, true);
 });
 
+function panel(f: Awaited<ReturnType<typeof fixture>>, x: number, y: number, width: number, height: number) {
+  const node = f.overlay('<div data-section="app-host-editor-layer"><div data-native-view-occluder></div></div>').firstElementChild!;
+  node.getBoundingClientRect = () => new f.env.window.DOMRect(x, y, width, height);
+  return node;
+}
+
+test('an overlay host editor panel narrows the live page beside it, then restores the pane', async (t) => {
+  const f = await fixture(t);
+  panel(f, 900, 0, 400, 900); await f.tick();
+  assert.deepEqual(f.layouts.at(-1)?.bounds, { x: 200, y: 100, width: 500, height: 600 }, 'a panel beside the pane changes nothing');
+  const editor = panel(f, 450, 0, 600, 900); await f.tick();
+  assert.equal(f.layouts.at(-1)?.visible, true);
+  assert.equal(f.layouts.at(-1)?.occluded, false, 'the page stays live instead of becoming a picture');
+  assert.deepEqual(f.layouts.at(-1)?.bounds, { x: 200, y: 100, width: 250, height: 600 });
+  assert.deepEqual(f.panel().snapshot, []);
+  editor.getBoundingClientRect = () => new f.env.window.DOMRect(400, 0, 650, 900);
+  f.resize(); await f.tick();
+  assert.deepEqual(f.layouts.at(-1)?.bounds, { x: 200, y: 100, width: 200, height: 600 }, 'resizing the panel follows it');
+  editor.parentElement!.remove(); await f.tick();
+  assert.deepEqual(f.layouts.at(-1)?.bounds, { x: 200, y: 100, width: 500, height: 600 });
+  assert.equal(f.layouts.at(-1)?.occluded, false);
+});
+
+test('a popper inside the panel leaves the narrowed page live; one over the page keeps aligned pictures', async (t) => {
+  const f = await fixture(t);
+  panel(f, 0, 0, 300, 900); await f.tick();
+  assert.deepEqual(f.layouts.at(-1)?.bounds, { x: 300, y: 100, width: 400, height: 600 });
+  const select = f.overlay(tooltip, 140, 110); await f.tick();
+  assert.equal(f.layouts.at(-1)?.occluded, false, 'a select inside the left panel does not reach the page');
+  select.remove();
+  f.overlay(tooltip, 320, 110); await f.tick();
+  assert.equal(f.layouts.at(-1)?.occluded, true);
+  assert.deepEqual(f.layouts.at(-1)?.bounds, { x: 300, y: 100, width: 400, height: 600 });
+  assert.deepEqual(f.panel().snapshot.map((layer) => layer.bounds), [{ x: 100, y: 0, width: 500, height: 600 }],
+    'pictures are placed where the narrowed page sits inside the pane');
+});
+
+test('a panel over the middle of the pane or leaving too little room falls back to a picture', async (t) => {
+  const f = await fixture(t);
+  const middle = panel(f, 300, 0, 100, 900); await f.tick();
+  assert.equal(f.layouts.at(-1)?.occluded, true);
+  assert.deepEqual(f.layouts.at(-1)?.bounds, { x: 200, y: 100, width: 500, height: 600 });
+  assert.deepEqual(f.panel().snapshot, layers);
+  middle.parentElement!.remove(); await f.tick();
+  assert.equal(f.layouts.at(-1)?.occluded, false);
+  panel(f, 250, 0, 600, 900); await f.tick();
+  assert.equal(f.layouts.at(-1)?.occluded, true, 'a 50px strip is not worth a live page');
+});
+
 test('closing a menu while capture is pending cannot restore stale pictures', async (t) => {
   const f = await fixture(t);
   let complete: (result: Result) => void = () => assert.fail('capture was not started');

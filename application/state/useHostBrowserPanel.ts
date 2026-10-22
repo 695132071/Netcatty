@@ -1,16 +1,17 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { currentBrowserThemeTokens, mountHostBrowser } from '../hostBrowser';
+import { resolveHostBrowserPaneBesidePanels, type HostBrowserPaneRect } from '../../domain/hostBrowser';
 import type { Host, Identity, KnownHost, SSHKey, TerminalSettings } from '../../domain/models';
 import { netcattyBridge } from '../../infrastructure/services/netcattyBridge';
 import type { HostBrowserPanelSnapshotLayer } from '../../types/global/netcatty-bridge-sync';
 
-function overlapsBrowser(rect: DOMRect, element: Element): boolean {
+function overlapsBrowser(rect: HostBrowserPaneRect, element: Element): boolean {
   const style = getComputedStyle(element);
   if (style.display === 'none' || style.visibility === 'hidden' || element.closest('[hidden], [inert], [data-state="closed"]')) return false;
   const overlay = element.getBoundingClientRect();
   return overlay.width > 0 && overlay.height > 0
-    && overlay.x < rect.right && overlay.right > rect.x
-    && overlay.y < rect.bottom && overlay.bottom > rect.y;
+    && overlay.x < rect.x + rect.width && overlay.right > rect.x
+    && overlay.y < rect.y + rect.height && overlay.bottom > rect.y;
 }
 
 interface BrowserPanelOptions {
@@ -70,12 +71,21 @@ export function useHostBrowserPanel(options: BrowserPanelOptions) {
       const rect = element?.getBoundingClientRect();
       // Native views sit above renderer portals. Only overlapping poppers need
       // to yield; dialogs are modal even when their content is beside the pane.
+      // Overlay panels stay open while the user works, so the live page moves
+      // beside them when it can and only falls back to a picture otherwise.
       const locked = !!document.querySelector('[data-app-lock-overlay]');
       const modal = !!document.querySelector('[role="dialog"][aria-modal="true"], [role="alertdialog"]');
       const overlays = Array.from(document.querySelectorAll(
-        '[role="dialog"], [role="alertdialog"], [role="menu"][data-state="open"], [data-radix-popper-content-wrapper] > *',
+        '[role="dialog"], [role="alertdialog"], [role="menu"][data-state="open"], [data-radix-popper-content-wrapper] > *, '
+        + '[data-native-view-occluder]',
       ));
-      const covered = modal || (!!rect && overlays.some((overlay) => overlapsBrowser(rect, overlay)));
+      const isPanel = (overlay: Element) => overlay.matches('[data-native-view-occluder]');
+      const panels = rect ? overlays.filter((overlay) => isPanel(overlay) && overlapsBrowser(rect, overlay)) : [];
+      const live = rect && resolveHostBrowserPaneBesidePanels(rect, panels.map((panel) => panel.getBoundingClientRect()));
+      // Poppers over the part of the pane hidden behind a panel (e.g. a select
+      // inside the host editor) no longer touch the live page.
+      const covered = modal || (!!rect && !live)
+        || (!!live && overlays.some((overlay) => !isPanel(overlay) && overlapsBrowser(live, overlay)));
       const targets = new Set<Element>(overlays);
       for (let target: Element | null = element; target; target = target.parentElement) targets.add(target);
       for (const target of observed) {
@@ -90,7 +100,11 @@ export function useHostBrowserPanel(options: BrowserPanelOptions) {
       const visible = isVisible && !!element?.isConnected && !!rect
         && rect.width > 0 && rect.height > 0 && !element?.closest('[inert]') && !locked;
       if (!visible) setSnapshot(null);
-      const bounds = rect ? { x: rect.x, y: rect.y, width: rect.width, height: rect.height } : undefined;
+      const pane = live || rect;
+      const bounds = pane ? { x: pane.x, y: pane.y, width: pane.width, height: pane.height } : undefined;
+      // Pictures are relative to the native page, which may sit beside a panel.
+      const offsetX = rect && bounds ? bounds.x - rect.x : 0;
+      const offsetY = rect && bounds ? bounds.y - rect.y : 0;
       const theme = element && getComputedStyle(element).colorScheme === 'light' ? 'light' : 'dark';
       const themeTokens = currentBrowserThemeTokens(element ?? undefined);
       const layout: Parameters<NonNullable<NetcattyBridge['setHostBrowserPanelLayout']>>[0] = {
@@ -102,7 +116,9 @@ export function useHostBrowserPanel(options: BrowserPanelOptions) {
         const revision = ++layoutRevision;
         void bridge?.setHostBrowserPanelLayout?.(layout).then((result) => {
           if (disposed || layoutRevision !== revision) return;
-          setSnapshot(visible && covered && typeof result === 'object' ? { browserId, layers: result.layers } : null);
+          setSnapshot(visible && covered && typeof result === 'object' ? { browserId, layers: result.layers.map((layer) => ({
+            ...layer, bounds: { ...layer.bounds, x: layer.bounds.x + offsetX, y: layer.bounds.y + offsetY },
+          })) } : null);
         }).catch(() => {});
       }
     };
@@ -119,14 +135,15 @@ export function useHostBrowserPanel(options: BrowserPanelOptions) {
     if (doc) mutationObserver?.observe(doc.documentElement, {
       subtree: true, childList: true, attributes: true,
       attributeFilter: ['style', 'class', 'hidden', 'inert', 'role', 'aria-modal', 'data-state',
-        'data-app-lock-overlay', 'data-radix-popper-content-wrapper', 'href', 'media', 'disabled'],
+        'data-app-lock-overlay', 'data-radix-popper-content-wrapper', 'data-native-view-occluder',
+        'href', 'media', 'disabled'],
     });
     const onMotion = (event: Event) => {
       const target = event.target;
       if (!element || !view || !(target instanceof view.Element)) return;
       if (!target.contains(element) && !target.matches(
         '[role="dialog"], [role="alertdialog"], [role="menu"], [data-app-lock-overlay], '
-        + '[data-radix-popper-content-wrapper], [data-radix-popper-content-wrapper] > *',
+        + '[data-radix-popper-content-wrapper], [data-radix-popper-content-wrapper] > *, [data-native-view-occluder]',
       )) return;
       trackAnimations(target);
       schedule();

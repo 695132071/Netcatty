@@ -330,7 +330,8 @@ export const AsidePanelStack: React.FC<AsidePanelStackProps> = ({
                 className
             )}
             style={inlineStyle}
-            data-section={dataSection}>
+            data-section={dataSection}
+            data-native-view-occluder={layout === 'overlay' ? '' : undefined}>
                 <AsidePanelHeader
                     title={currentItem.title}
                     subtitle={currentItem.subtitle}
@@ -429,7 +430,10 @@ export const AsidePanel: React.FC<AsidePanelProps> = ({
             className,
         )}
         style={panelStyle}
-        data-section={dataSection}>
+        data-section={dataSection}
+        // Overlay panels float above content; native views (host browser)
+        // must yield where they overlap instead of drawing over the panel.
+        data-native-view-occluder={layout === 'overlay' ? '' : undefined}>
             {resizable ? (
                 <div
                     role="separator"

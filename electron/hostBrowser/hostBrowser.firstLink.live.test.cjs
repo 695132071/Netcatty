@@ -66,7 +66,9 @@ async function main() {
     getComputedStyle: () => style, netcattyBridge: { get: () => bridge }, isValidHslToken: () => false,
   };
   const { mountHostBrowser, currentBrowserThemeTokens } = loadModule("application/hostBrowser.ts", globals);
-  const { useHostBrowserPanel } = loadModule("application/state/useHostBrowserPanel.ts", { ...globals, mountHostBrowser, currentBrowserThemeTokens });
+  const { resolveHostBrowserPaneBesidePanels } = loadModule("domain/hostBrowser.ts", globals);
+  const { useHostBrowserPanel } = loadModule("application/state/useHostBrowserPanel.ts",
+    { ...globals, mountHostBrowser, currentBrowserThemeTokens, resolveHostBrowserPaneBesidePanels });
   const browserId = "local:first-link";
   const element = { isConnected: true, closest: () => null,
     getBoundingClientRect: () => ({ x: 200, y: 50, width: 420, height: 600 }) };

@@ -163,6 +163,21 @@ async function main() {
   await until(()=>owner.contentView.children.includes(root),false,'app lock hides native content');
   await run('document.getElementById("lock-layout-fixture").remove()');
   await until(()=>owner.contentView.children.includes(root),true,'unlock restores native content');
+  // A long-lived overlay panel (the terminal host editor) keeps the website
+  // live beside it; poppers inside that panel no longer reach the website.
+  const pane=await run('(() => {const r=document.querySelector("[data-section=host-browser-panel]").getBoundingClientRect();return {x:Math.round(r.x),y:Math.round(r.y),width:Math.round(r.width)};})()');
+  const fullWidth=await page.executeJavaScript('innerWidth');
+  await run(`document.body.insertAdjacentHTML('beforeend','<div id="panel-layout-fixture" data-native-view-occluder style="position:fixed;top:0;bottom:0;left:${pane.x+240}px;right:0;background:#f4d7a1"></div>')`);
+  await until(()=>root.getBounds().width,240,'the website narrows beside the overlay panel');
+  assert.equal(owner.contentView.children.includes(root),true,'the website stays live beside the panel');
+  assert.equal(await run('document.querySelectorAll("[data-section=host-browser-panel] img").length'),0,'the panel does not freeze the website into a picture');
+  await until(()=>page.executeJavaScript('innerWidth'),240,'the website lays out at its visible width');
+  await run(`document.body.insertAdjacentHTML('beforeend','<div id="panel-popper-fixture" data-radix-popper-content-wrapper><div style="position:fixed;top:${pane.y+20}px;left:${pane.x+280}px;width:120px;height:40px"></div></div>')`);
+  await wait(100);
+  assert.equal(owner.contentView.children.includes(root),true,'a select inside the panel leaves the website live');
+  await run('document.getElementById("panel-popper-fixture").remove();document.getElementById("panel-layout-fixture").remove()');
+  await until(()=>root.getBounds().width,pane.width,'closing the panel restores the full website width');
+  await until(()=>page.executeJavaScript('innerWidth'),fullWidth,'the website lays out at full width again');
   assert.equal(await page.executeJavaScript("document.getElementById('draft').value"),'Unsaved browser input');
 
   for (let index = 0; index < 2; index++) {
@@ -369,7 +384,7 @@ async function main() {
   const screenshot = path.join(userData, 'unified-browser.png');
   fs.writeFileSync(screenshot, (await owner.webContents.capturePage()).toPNG());
   assert.deepEqual(errors, [], 'no renderer errors');
-  console.log(JSON.stringify({ ok: true, rendererChrome: true, idleLayout: true, animatedLayout: true, dragLayout: true, themeLayout: true, modalAndLockLayout: true, hoverKeepsPageLive: true, splitMenusClickable: true, tabs: true, addressAndHistory: true, shortcuts: true, bookmarks: true, iconUpload: true, imageResize: true, imageReplaceAndRemove: true, editPersistence: true, downloads: true, automaticDownloads: true, duplicateNames: true, saveAs: true, downloadProgressAndCancel: true, inlinePdfProgressAndCancel: true, hiddenRestore: true, narrowLayout: true, locales: 5, screenshot, editorScreenshot, editorTextScreenshot, downloadScreenshot, pdfProgressScreenshot }));
+  console.log(JSON.stringify({ ok: true, rendererChrome: true, idleLayout: true, animatedLayout: true, dragLayout: true, themeLayout: true, modalAndLockLayout: true, overlayPanelLayout: true, hoverKeepsPageLive: true, splitMenusClickable: true, tabs: true, addressAndHistory: true, shortcuts: true, bookmarks: true, iconUpload: true, imageResize: true, imageReplaceAndRemove: true, editPersistence: true, downloads: true, automaticDownloads: true, duplicateNames: true, saveAs: true, downloadProgressAndCancel: true, inlinePdfProgressAndCancel: true, hiddenRestore: true, narrowLayout: true, locales: 5, screenshot, editorScreenshot, editorTextScreenshot, downloadScreenshot, pdfProgressScreenshot }));
 }
 app.whenReady().then(main).catch(async (error) => { console.error(error); if (owner && !owner.isDestroyed()) { const screenshot=path.join(userData,'failure.png'); fs.writeFileSync(screenshot,(await owner.webContents.capturePage()).toPNG()); console.error(screenshot); } process.exitCode = 1; }).finally(async () => {
   clearTimeout(watchdog);
