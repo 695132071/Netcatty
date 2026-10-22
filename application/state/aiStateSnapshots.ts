@@ -363,12 +363,30 @@ export function serializeSessionsForStorage(
   sessions: AISession[],
   budgetBytes: number = MAX_SESSIONS_JSON_BYTES,
 ): { json: string; sessions: AISession[] } {
-  const serialized = pruneSessionsForStorage(sessions).map(rawSession => {
+  const prepared = pruneSessionsForStorage(sessions).map(rawSession => {
     // These messages are replaced by the durable summary before every later
     // request, so their replay ciphertext can never be used again. Remove it
     // before deciding whether the newest session deserves full protection;
     // otherwise dead metadata can evict other visible conversations.
     const session = stripCompactedEncryptedReasoningFromSession(rawSession);
+    return { session, json: JSON.stringify(session) };
+  });
+
+  // Check whether retained history fits before preparing degradation. Use
+  // the existing JSON string-length budget including array delimiters, and
+  // avoid preparing unused stripped messages and serializing payloads again.
+  const fullLength = 2 + prepared.reduce((total, entry) => total + entry.json.length, 0)
+    + Math.max(0, prepared.length - 1);
+  if (fullLength <= budgetBytes) {
+    return {
+      json: `[${prepared.map(entry => entry.json).join(',')}]`,
+      sessions: prepared.map(entry => entry.session),
+    };
+  }
+
+  // Reuse the full representation when the unchanged degradation ladder is
+  // needed, including on quota retries with a smaller budget.
+  const serialized = prepared.map(({ session, json }) => {
     const degradableMessages = session.messages.flatMap((message, index) => {
       const degradedMessage = stripEncryptedReasoningFromMessage(message);
       if (degradedMessage === message) return [];
@@ -379,7 +397,6 @@ export function serializeSessionsForStorage(
       }];
     });
     const strippedSession = stripEncryptedReasoningFromSession(session);
-    const json = JSON.stringify(session);
     return {
       session,
       json,

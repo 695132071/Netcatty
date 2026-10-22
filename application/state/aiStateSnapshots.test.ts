@@ -717,3 +717,103 @@ test('writeSessionsForStorage makes a final attempt with only the newest session
     });
   }
 });
+
+function freezeHistory<T>(value: T): T {
+  if (value && typeof value === 'object') {
+    Object.values(value).forEach(freezeHistory);
+    Object.freeze(value);
+  }
+  return value;
+}
+
+function makePersistenceHistory(count: number, activeMessages = 6): AISession[] {
+  return Array.from({ length: count }, (_, index) => makeSession(
+    `session-${index}`,
+    count - index,
+    Array.from({ length: index === 0 ? activeMessages : 6 }, (_, messageIndex) => ({
+      id: `message-${index}-${messageIndex}`,
+      role: messageIndex % 2 ? 'assistant' : 'user',
+      content: 'ordinary text '.repeat(8),
+      timestamp: messageIndex,
+      ...(messageIndex % 2 ? {
+        toolResults: [{ toolCallId: `tool-${messageIndex}`, content: 'sample output '.repeat(700) }],
+        providerContinuation: {
+          reasoningParts: [{
+            text: 'reasoning',
+            providerOptions: { openai: { reasoningEncryptedContent: 'x'.repeat(256) } },
+          }],
+        },
+      } : {}),
+    })),
+  ));
+}
+
+for (const [count, activeMessages] of [[20, 6], [200, 6], [20, 200]]) {
+  test(`fitting history serializes only retained full sessions (${count} chats, ${activeMessages} active messages)`, async (t) => {
+    const { serializeSessionsForStorage } = await import('./aiStateSnapshots');
+    const sessions = freezeHistory(makePersistenceHistory(count, activeMessages));
+    const expected = sessions.slice(0, 50);
+    const expectedJson = JSON.stringify(expected);
+    const stringify = t.mock.method(JSON, 'stringify');
+
+    const result = serializeSessionsForStorage(sessions);
+
+    assert.equal(stringify.mock.callCount(), expected.length);
+    assert.equal(result.json, expectedJson);
+    assert.deepEqual(result.sessions, expected);
+    assert.equal(result.sessions[0], sessions[0]);
+  });
+}
+
+test('fit-first budget keeps string-length units and exact-fit replay data without mutating input', async () => {
+  const { serializeSessionsForStorage } = await import('./aiStateSnapshots');
+  const sessions = makePersistenceHistory(1);
+  sessions[0].messages[0].content = '\u4e2d\u6587\ud83d\ude00'.repeat(100);
+  freezeHistory(sessions);
+  const fullJson = JSON.stringify(sessions);
+  assert.ok(Buffer.byteLength(fullJson) > fullJson.length);
+  for (const budget of [fullJson.length, fullJson.length + 1]) {
+    assert.equal(serializeSessionsForStorage(sessions, budget).json, fullJson);
+  }
+  const overflow = serializeSessionsForStorage(sessions, fullJson.length - 1);
+  assert.ok(overflow.json.length < fullJson.length);
+  assert.equal(JSON.stringify(sessions), fullJson);
+});
+
+test('fit-first empty history preserves output even below the minimum array budget', async () => {
+  const { serializeSessionsForStorage } = await import('./aiStateSnapshots');
+  for (const budget of [0, 1, 2, 3]) {
+    assert.deepEqual(serializeSessionsForStorage([], budget), { json: '[]', sessions: [] });
+  }
+});
+
+test('synced storage bypasses fit-first pruning and non-quota failures still propagate', async (t) => {
+  const { writeSessionsForStorage } = await import('./aiStateSnapshots');
+  const sessions = freezeHistory(makePersistenceHistory(51, 201));
+  const read = t.mock.method(localStorageAdapter, 'read', () => ({ enabled: true }));
+  const write = t.mock.method(localStorageAdapter, 'write', () => false);
+  const writeString = t.mock.method(localStorageAdapter, 'writeString', () => true);
+  assert.equal(writeSessionsForStorage(sessions), false);
+  assert.equal(write.mock.callCount(), 1);
+  assert.equal(write.mock.calls[0].arguments[1], sessions);
+  assert.equal(writeString.mock.callCount(), 0);
+
+  read.mock.mockImplementation(() => ({ enabled: false }));
+  const error = new Error('non-quota storage failure');
+  writeString.mock.mockImplementation(() => { throw error; });
+  assert.throws(() => writeSessionsForStorage(sessions), candidate => candidate === error);
+  assert.equal(writeString.mock.callCount(), 1);
+});
+
+for (const [budget, expectedCalls] of [[128 * 1024, 160], [0, 161]]) {
+  test(`overflow reuses prepared full JSON at budget ${budget}`, async (t) => {
+    const { serializeSessionsForStorage } = await import('./aiStateSnapshots');
+    const sessions = freezeHistory(makePersistenceHistory(20));
+    const stringify = t.mock.method(JSON, 'stringify');
+    const result = serializeSessionsForStorage(sessions, budget);
+    // Same work as the original ladder: no second full-session serialization
+    // after the fit check, even when a last-resort degraded chat is needed.
+    assert.equal(stringify.mock.callCount(), expectedCalls);
+    assert.equal(result.sessions.length, budget === 0 ? 1 : 4);
+  });
+}
