@@ -276,19 +276,31 @@ const buildPersistedLogIds = (
   return ids;
 };
 
-const writeConnectionLogTerminalDataMap = (
-  logs: ConnectionLog[],
-  localMaps: ConnectionLogTerminalDataMap[],
-  usePersistedLogIdsFromDisk: boolean,
+/**
+ * Same result as comparing `JSON.stringify` of both maps (own keys in the
+ * same order, equal values) without serializing the multi-MB replay data.
+ */
+const isSameTerminalDataMap = (
+  a: ConnectionLogTerminalDataMap,
+  b: ConnectionLogTerminalDataMap,
 ): boolean => {
-  const existing = readConnectionLogTerminalDataMap();
-  const pruned = mergeTerminalDataMapsForStorage(
-    logs,
-    existing,
-    localMaps,
-    buildPersistedLogIds(logs, usePersistedLogIdsFromDisk),
-  );
-  if (JSON.stringify(existing) === JSON.stringify(pruned)) return true;
+  if (typeof a !== "object" || a === null || Array.isArray(a)) {
+    return JSON.stringify(a) === JSON.stringify(b);
+  }
+  const aKeys = Object.keys(a);
+  const bKeys = Object.keys(b);
+  if (aKeys.length !== bKeys.length) return false;
+  for (let i = 0; i < aKeys.length; i += 1) {
+    if (aKeys[i] !== bKeys[i] || a[aKeys[i]] !== b[bKeys[i]]) return false;
+  }
+  return true;
+};
+
+const writeConnectionLogTerminalDataMap = (
+  existing: ConnectionLogTerminalDataMap,
+  pruned: ConnectionLogTerminalDataMap,
+): boolean => {
+  if (isSameTerminalDataMap(existing, pruned)) return true;
   return localStorageAdapter.write(STORAGE_KEY_CONNECTION_LOG_TERMINAL_DATA, pruned);
 };
 
@@ -437,11 +449,7 @@ export const useVaultState = () => {
       localMaps,
       buildPersistedLogIds(logs, usePersistedLogIdsFromDisk),
     );
-    const persisted = writeConnectionLogTerminalDataMap(
-      logs,
-      localMaps,
-      usePersistedLogIdsFromDisk,
-    );
+    const persisted = writeConnectionLogTerminalDataMap(existing, merged);
     if (persisted) {
       connectionLogTerminalDataRef.current = merged;
     } else {
