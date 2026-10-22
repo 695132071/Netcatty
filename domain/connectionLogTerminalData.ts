@@ -114,6 +114,64 @@ export const pruneInMemoryUnsavedTerminalData = (
   return changed ? next : logs;
 };
 
+/**
+ * Write the side store; if the write is rejected (localStorage quota), retry
+ * without the oldest unsaved replay buffers so the newest sessions are kept.
+ * Drops 1, 2, 4, … oldest entries per retry, so attempts stay O(log n).
+ * Saved logs and ids not in `logs` are never dropped.
+ *
+ * `quotaFailedChars` is owned by the caller. It is the summed entry length of
+ * the smallest payload that last hit the quota, so the next write can start
+ * from the newest set that fits. A successful write of the full map returns
+ * null. The helper does not keep that hint itself.
+ */
+export const writeTerminalDataMapWithQuotaRetry = (
+  logs: ConnectionLog[],
+  map: ConnectionLogTerminalDataMap,
+  write: (next: ConnectionLogTerminalDataMap) => boolean,
+  quotaFailedChars: number | null,
+): { persisted: boolean; written: ConnectionLogTerminalDataMap; attempts: number; quotaFailedChars: number | null } => {
+  const droppable = logs
+    .filter((log) => !log.saved && map[log.id] !== undefined)
+    .sort((a, b) => a.startTime - b.startTime)
+    .map((log) => log.id);
+  let chars = 0;
+  for (const data of Object.values(map)) chars += data.length;
+
+  let hint = quotaFailedChars;
+  let dropCount = 0;
+  if (hint !== null) {
+    while (dropCount < droppable.length && chars >= hint) {
+      chars -= map[droppable[dropCount]].length;
+      dropCount += 1;
+    }
+  }
+
+  let attempts = 0;
+  for (;;) {
+    let next = map;
+    if (dropCount > 0) {
+      const dropped = new Set(droppable.slice(0, dropCount));
+      next = {};
+      for (const [id, data] of Object.entries(map)) {
+        if (!dropped.has(id)) next[id] = data;
+      }
+    }
+    attempts += 1;
+    if (write(next)) {
+      if (dropCount === 0) hint = null;
+      return { persisted: true, written: next, attempts, quotaFailedChars: hint };
+    }
+    hint = hint === null ? chars : Math.min(hint, chars);
+    if (dropCount >= droppable.length) {
+      return { persisted: false, written: map, attempts, quotaFailedChars: hint };
+    }
+    const target = Math.min(Math.max(dropCount * 2, 1), droppable.length);
+    for (let i = dropCount; i < target; i += 1) chars -= map[droppable[i]].length;
+    dropCount = target;
+  }
+};
+
 /** Fold side-store maps together, then cap to the allowed unsaved/saved set. */
 export const mergeTerminalDataMapsForStorage = (
   logs: ConnectionLog[],
