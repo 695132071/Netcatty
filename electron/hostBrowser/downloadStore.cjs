@@ -4,6 +4,7 @@ const fs = require("node:fs");
 const path = require("node:path");
 
 const MAX_DOWNLOADS = 500;
+const PROGRESS_PERSIST_INTERVAL_MS = 1000;
 const STATUSES = new Set(["waiting", "progressing", "completed", "cancelled", "interrupted"]);
 
 function normalizeDownload(raw) {
@@ -40,11 +41,29 @@ function createDownloadStore(app) {
   } catch (error) {
     if (error?.code !== "ENOENT") console.warn("[HostBrowser] Could not read downloads:", error?.message);
   }
+  let dirty = false;
+  let progressTimer = null;
   const persist = () => {
+    if (progressTimer !== null) clearTimeout(progressTimer);
+    progressTimer = null;
+    if (!dirty) return;
     fs.mkdirSync(path.dirname(file), { recursive: true });
     const temporary = `${file}.${process.pid}.tmp`;
     fs.writeFileSync(temporary, JSON.stringify(items), { mode: 0o600 });
     fs.renameSync(temporary, file);
+    dirty = false;
+  };
+  const scheduleProgressPersist = () => {
+    if (progressTimer !== null) return;
+    progressTimer = setTimeout(() => {
+      progressTimer = null;
+      try { persist(); }
+      catch (error) {
+        // Keep dirty state for the next update or shutdown, without a retry loop.
+        console.warn("[HostBrowser] Could not save download progress:", error?.message);
+      }
+    }, PROGRESS_PERSIST_INTERVAL_MS);
+    progressTimer.unref?.();
   };
   const isMissing = (item) => item.status === "completed" && (!item.savePath || !fs.existsSync(item.savePath));
   return {
@@ -54,26 +73,36 @@ function createDownloadStore(app) {
         .map((item) => ({ ...item, missing: isMissing(item) }));
     },
     get(hostId, id) { return items.find((item) => item.hostId === hostId && item.id === id) || null; },
-    upsert(raw) {
+    flush: persist,
+    upsert(raw, { deferProgress = false } = {}) {
       const next = normalizeDownload(raw);
       const index = items.findIndex((item) => item.id === next.id);
       if (index >= 0 && items[index].hostId !== next.hostId) throw new Error("Download belongs to another host");
+      const previous = items[index];
+      // Only byte progress is replaceable. New records, state transitions and
+      // recovery metadata remain durable before returning to the caller.
+      const replaceableProgress = deferProgress && previous?.status === "progressing"
+        && next.status === "progressing"
+        && ["filename", "url", "savePath", "total", "startedAt", "endedAt"].every((key) => previous[key] === next[key]);
       if (index >= 0) items[index] = next;
       else items.unshift(next);
       items = items.sort((a, b) => b.startedAt - a.startedAt).slice(0, MAX_DOWNLOADS);
-      persist();
+      dirty = true;
+      if (replaceableProgress) scheduleProgressPersist();
+      else persist();
       return next;
     },
     remove(hostId, id) {
       const next = items.filter((item) => item.hostId !== hostId || item.id !== id || ["waiting", "progressing"].includes(item.status));
       if (next.length === items.length) return false;
       items = next;
+      dirty = true;
       persist();
       return true;
     },
     clearFinished(hostId) {
       const next = items.filter((item) => item.hostId !== hostId || ["waiting", "progressing"].includes(item.status));
-      if (next.length !== items.length) { items = next; persist(); }
+      if (next.length !== items.length) { items = next; dirty = true; persist(); }
     },
   };
 }

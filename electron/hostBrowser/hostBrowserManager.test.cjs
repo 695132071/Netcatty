@@ -68,3 +68,52 @@ test("late download notifications ignore closed browser chrome in a live termina
   });
   assert.doesNotThrow(() => notify(record));
 });
+
+test("manager shutdown flushes download history after closing windows", () => {
+  const source = readFileSync(require.resolve("./hostBrowserManager.cjs"), "utf8");
+  const start = source.indexOf("closeAll: () => {");
+  const end = source.indexOf("} };", start);
+  assert.ok(start > 0 && end > start);
+  const calls = [];
+  const closeAll = vm.runInNewContext(`(() => {${source.slice(start + "closeAll: () => {".length, end)}})`, {
+    unsubscribeTunnelStatus: () => calls.push("unsubscribe"),
+    windows: new Map([[1, { embedded: true }]]),
+    closeRecord: () => calls.push("close"),
+    downloadStore: { flush: () => calls.push("flush") },
+  });
+  closeAll();
+  assert.deepEqual(calls, ["unsubscribe", "close", "flush"]);
+});
+
+test("download handler defers only live progress, not pause or completion", () => {
+  const { EventEmitter } = require("node:events");
+  const path = require("node:path");
+  const source = readFileSync(require.resolve("./hostBrowserManager.cjs"), "utf8");
+  const start = source.indexOf("record.downloadHandler =");
+  const end = source.indexOf('pageSession.on("will-download"', start);
+  const calls = [];
+  let previous;
+  let now = 1000;
+  const record = { route: "connected", embedded: true, downloads: new Map(), tabs: new Map([[1, { view: { webContents: "owned" } }]]) };
+  vm.runInNewContext(source.slice(start, end), {
+    record, path, randomUUID: () => "id", hostId: "host", app: { getPath: () => "/downloads" },
+    reserveDownloadFile: () => ({ savePath: "/downloads/file", cleanupEmpty() {} }),
+    downloadStore: { get: () => previous, upsert(row, options) { previous = row; calls.push({ row, options }); } },
+    notifyDownloads() {}, Date: { now: () => now },
+  });
+  const item = Object.assign(new EventEmitter(), {
+    paused: false, isPaused() { return this.paused; }, getFilename: () => "file", getURL: () => "https://example.test/file",
+    getTotalBytes: () => 100, getReceivedBytes: () => 10, getSavePath: () => "/downloads/file", setSavePath() {},
+  });
+  record.downloadHandler({ preventDefault() { assert.fail("rejected owned download"); } }, item, "owned");
+  assert.equal(calls[0].options, undefined);
+  item.emit("updated", {}, "progressing");
+  assert.equal(calls[1].options.deferProgress, true);
+  now += 1;
+  item.paused = true;
+  item.emit("updated", {}, "progressing");
+  assert.equal(calls[2].options.deferProgress, false, "pause bypasses the byte-progress throttle");
+  item.emit("done", {}, "completed");
+  assert.equal(calls[3].options, undefined);
+  assert.equal(calls[3].row.status, "completed");
+});

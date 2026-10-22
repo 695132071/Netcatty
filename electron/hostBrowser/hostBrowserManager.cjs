@@ -635,13 +635,14 @@ function createHostBrowserManager({ electron, app, portForwardingBridge }) {
       let lastProgressAt = 0;
       item.on("updated", (_updateEvent, status) => {
         const now = Date.now();
-        if (status === "progressing" && now - lastProgressAt < 200) return;
+        const paused = item.isPaused?.() === true;
+        if (status === "progressing" && !paused && now - lastProgressAt < 200) return;
         lastProgressAt = now;
         const previous = downloadStore.get(hostId, id);
         if (!previous) return;
         const savePath = item.getSavePath() || previous.savePath;
         downloadStore.upsert({ ...previous, filename: savePath ? path.basename(savePath) : filename,
-          savePath, status, received: item.getReceivedBytes(), total: item.getTotalBytes() });
+          savePath, status, received: item.getReceivedBytes(), total: item.getTotalBytes() }, { deferProgress: !paused });
         notifyDownloads(record);
       });
       item.once("done", (_doneEvent, status) => {
@@ -936,6 +937,7 @@ function createHostBrowserManager({ electron, app, portForwardingBridge }) {
   return { focus, open, updatePanelLayout, closePanel, openPanelUrl, getPanelState, runCommand, closeAll: () => {
     unsubscribeTunnelStatus();
     for (const record of [...windows.values()]) { closeRecord(record); if (!record.embedded && !record.win.isDestroyed()) record.win.destroy(); }
+    downloadStore.flush();
   } };
 }
 
