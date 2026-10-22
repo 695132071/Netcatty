@@ -97,6 +97,28 @@ test("collectSshDeepLinkQueueItems preserves tolerated PuTTY-style -newtab names
   );
 });
 
+test("collectSshDeepLinkQueueItems names PuTTY jump launches after the final server", () => {
+  assert.deepEqual(
+    collectSshDeepLinkQueueItems([
+      "Netcatty.exe",
+      "-ssh",
+      "alice@192.0.2.10@198.51.100.20",
+      "-P",
+      "2200",
+      "-pw",
+      "example",
+    ], { includeSchemeUrls: false }),
+    {
+      ssh: [{
+        rawUrl: "ssh://alice%40192.0.2.10:example@198.51.100.20:2200",
+        viaCommandLine: true,
+        tabName: "192.0.2.10",
+      }],
+      telnet: [],
+    },
+  );
+});
+
 test("collectSshDeepLinkQueueItems preserves SecureCRT /N names", () => {
   assert.deepEqual(
     collectSshDeepLinkQueueItems([

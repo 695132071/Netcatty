@@ -321,6 +321,160 @@ test("parsePuttyCommandLine accepts destinations with executable-like suffixes",
   assert.equal(fromElectron?.url, "ssh://alice:secret@host.example");
 });
 
+test("parsePuttyCommandLine names the tab after the final server in a jump login", () => {
+  const parsed = parsePuttyCommandLine([
+    "Netcatty.exe",
+    "-ssh",
+    "alice@192.0.2.10@198.51.100.20",
+    "-P",
+    "2200",
+    "-pw",
+    "example",
+  ]);
+  assert.equal(parsed?.hostname, "198.51.100.20");
+  assert.equal(parsed?.username, "alice@192.0.2.10");
+  assert.equal(parsed?.port, 2200);
+  assert.equal(parsed?.url, "ssh://alice%40192.0.2.10:example@198.51.100.20:2200");
+  assert.equal(parsed?.tabName, "192.0.2.10");
+});
+
+test("parsePuttyCommandLine names the tab from a hash-encoded bastion login", () => {
+  const parsed = parsePuttyCommandLine([
+    "Netcatty.exe",
+    "-ssh",
+    "zhangsan#192.0.2.10#ssh#22#root@198.51.100.20",
+    "-P",
+    "2200",
+    "-pw",
+    "example",
+  ]);
+  assert.equal(parsed?.hostname, "198.51.100.20");
+  assert.equal(parsed?.username, "zhangsan#192.0.2.10#ssh#22#root");
+  assert.equal(parsed?.url, "ssh://zhangsan%23192.0.2.10%23ssh%2322%23root:example@198.51.100.20:2200");
+  assert.equal(parsed?.tabName, "192.0.2.10");
+});
+
+test("parsePuttyCommandLine keeps an explicit -newtab name over an embedded target", () => {
+  const parsed = parsePuttyCommandLine([
+    "Netcatty.exe",
+    "-newtab",
+    "Production",
+    "-ssh",
+    "alice@192.0.2.10@198.51.100.20",
+    "-pw",
+    "example",
+  ]);
+  assert.equal(parsed?.hostname, "198.51.100.20");
+  assert.equal(parsed?.tabName, "Production");
+});
+
+test("parsePuttyCommandLine does not invent a tab name for a direct login", () => {
+  const parsed = parsePuttyCommandLine([
+    "Netcatty.exe",
+    "-ssh",
+    "alice@10.0.0.8",
+    "-P",
+    "2222",
+    "-pw",
+    "s3cret",
+  ]);
+  assert.equal(parsed?.hostname, "10.0.0.8");
+  assert.equal(parsed?.username, "alice");
+  assert.equal(parsed?.tabName, undefined);
+  assert.equal(parsed?.url, "ssh://alice:s3cret@10.0.0.8:2222");
+});
+
+test("parsePuttyCommandLine ignores an embedded address that is the connection host", () => {
+  const parsed = parsePuttyCommandLine([
+    "Netcatty.exe",
+    "-ssh",
+    "alice@10.0.0.8@10.0.0.8",
+    "-pw",
+    "s3cret",
+  ]);
+  assert.equal(parsed?.hostname, "10.0.0.8");
+  assert.equal(parsed?.username, "alice@10.0.0.8");
+  assert.equal(parsed?.tabName, undefined);
+});
+
+test("parsePuttyCommandLine uses one leftover target address as the tab name", () => {
+  const parsed = parsePuttyCommandLine([
+    "Netcatty.exe",
+    "-ssh",
+    "alice@198.51.100.20",
+    "-P",
+    "2200",
+    "-pw",
+    "example",
+    "192.0.2.10",
+  ]);
+  assert.equal(parsed?.hostname, "198.51.100.20");
+  assert.equal(parsed?.username, "alice");
+  assert.equal(parsed?.url, "ssh://alice:example@198.51.100.20:2200");
+  assert.equal(parsed?.tabName, "192.0.2.10");
+});
+
+test("parsePuttyCommandLine does not guess a tab name from several leftover addresses", () => {
+  const parsed = parsePuttyCommandLine([
+    "Netcatty.exe",
+    "-ssh",
+    "alice@198.51.100.20",
+    "-pw",
+    "example",
+    "192.0.2.10",
+    "192.0.2.11",
+  ]);
+  assert.equal(parsed?.hostname, "198.51.100.20");
+  assert.equal(parsed?.tabName, undefined);
+});
+
+test("parsePuttyCommandLine names IPv4-mapped and zone-scoped IPv6 jump targets", () => {
+  const mapped = parsePuttyCommandLine([
+    "Netcatty.exe",
+    "-ssh",
+    "alice@[::ffff:192.0.2.10]@198.51.100.20",
+    "-pw",
+    "example",
+  ]);
+  assert.equal(mapped?.hostname, "198.51.100.20");
+  assert.equal(mapped?.tabName, "::ffff:192.0.2.10");
+
+  const zoned = parsePuttyCommandLine([
+    "Netcatty.exe",
+    "-ssh",
+    "alice@[fe80::1%eth0]@198.51.100.20",
+    "-pw",
+    "example",
+  ]);
+  assert.equal(zoned?.hostname, "198.51.100.20");
+  assert.equal(zoned?.tabName, "fe80::1%eth0");
+});
+
+test("parsePuttyCommandLine does not title a jump tab with a malformed colon string", () => {
+  const parsed = parsePuttyCommandLine([
+    "Netcatty.exe",
+    "-ssh",
+    "alice@a:b:c@198.51.100.20",
+    "-pw",
+    "example",
+  ]);
+  assert.equal(parsed?.hostname, "198.51.100.20");
+  assert.equal(parsed?.tabName, undefined);
+});
+
+test("parsePuttyCommandLine uses a bracketed IPv6 target inside a jump login", () => {
+  const parsed = parsePuttyCommandLine([
+    "Netcatty.exe",
+    "-ssh",
+    "alice@[2001:db8::10]@198.51.100.20",
+    "-pw",
+    "example",
+  ]);
+  assert.equal(parsed?.hostname, "198.51.100.20");
+  assert.equal(parsed?.tabName, "2001:db8::10");
+  assert.equal(parsed?.url, "ssh://alice%40%5B2001%3Adb8%3A%3A10%5D:example@198.51.100.20");
+});
+
 test("redactPuttyCommandLinePasswords masks -pw values in argv", () => {
   const argv = ["Netcatty.exe", "-ssh", "alice@host", "-pw", "s3cret!!"];
   redactPuttyCommandLinePasswords(argv);

@@ -1,3 +1,5 @@
+const net = require("net");
+
 const SSH_PROTOCOL = "ssh";
 const TELNET_PROTOCOL = "telnet";
 
@@ -135,6 +137,48 @@ function hostCandidateScore(spec) {
   return score;
 }
 
+function isDisplayIpv4(value) {
+  if (!looksLikeIpv4(value)) return false;
+  return value.split(".").every((part) => {
+    if (!/^\d{1,3}$/.test(part)) return false;
+    const octet = Number(part);
+    return octet <= 255;
+  });
+}
+
+function isDisplayIpv6(value) {
+  return net.isIP(value) === 6;
+}
+
+// A leftover IP positional is the PuTTY analogue of SecureCRT /N: the TCP
+// destination stays the higher-scored bastion login, and the other address
+// is only the tab label. Multiple leftovers are ambiguous, so leave the
+// default user@host label alone.
+function positionalTargetDisplayHost(positionals, chosen) {
+  if (!chosen?.username) return undefined;
+  const leftovers = positionals.filter((spec) =>
+    spec !== chosen && spec.hostname !== chosen.hostname
+    && (isDisplayIpv4(spec.hostname) || isDisplayIpv6(spec.hostname)));
+  return leftovers.length === 1 ? leftovers[0].hostname : undefined;
+}
+
+// 4A / jump launchers keep the TCP destination on the bastion and stash the
+// final server in the login name (user@203.0.113.10@198.51.100.20, or
+// user#203.0.113.10#ssh#22#root@bastion). SecureCRT already surfaces that
+// server through /N as tabName. Reuse the same field so the PuTTY tab shows
+// the target address instead of the opaque login string plus the bastion.
+function embeddedTargetDisplayHost(username, connectionHostname) {
+  if (typeof username !== "string" || !/[@#/|]/.test(username)) return undefined;
+  let displayHost;
+  for (const segment of username.split(/[@#/|]/)) {
+    const host = parseHostSpec(segment.trim())?.hostname;
+    if (!host || host === connectionHostname) continue;
+    if (!isDisplayIpv4(host) && !isDisplayIpv6(host)) continue;
+    displayHost = host;
+  }
+  return displayHost;
+}
+
 function encodeUserInfo(username, password) {
   if (username) {
     const user = encodeURIComponent(username);
@@ -241,6 +285,9 @@ function parsePuttyCommandLine(argv) {
   const resolvedPort = port ?? hostSpec.port;
   const hostname = hostSpec.hostname;
   if (!hostname) return null;
+  const resolvedTabName = tabName
+    || positionalTargetDisplayHost(positionals, hostSpec)
+    || embeddedTargetDisplayHost(resolvedUsername, hostname);
 
   const url = toDeepLinkUrl({
     protocol,
@@ -257,7 +304,7 @@ function parsePuttyCommandLine(argv) {
     ...(resolvedUsername ? { username: resolvedUsername } : {}),
     ...(password !== undefined ? { password } : {}),
     ...(resolvedPort ? { port: resolvedPort } : {}),
-    ...(tabName ? { tabName } : {}),
+    ...(resolvedTabName ? { tabName: resolvedTabName } : {}),
   };
 }
 
