@@ -238,3 +238,91 @@ test("worker crashes notify subscribed renderers and permit a replacement worker
   );
   assert.equal(starts, 2);
 });
+
+
+for (const removal of ["stop", "stopAll", "stopByRuleId", "remove", "inactive", "error"]) {
+  test(`worker ${removal} preserves runtime owner cleanup after the final tunnel`, async () => {
+    const ipcMain = createIpcMain();
+    const requests = [];
+    let onRendererEvent;
+    const terminalWorkerManager = {
+      request(channel, payload, options) {
+        requests.push({ channel, options });
+        return Promise.resolve({ tunnelId: payload?.tunnelId, success: true, failed: 0 });
+      },
+      onWorkerRendererEvent(listener) { onRendererEvent = listener; },
+    };
+    registerHandlers(ipcMain, { terminalWorkerManager });
+    const sender = createSender(40);
+    const invoke = (method, payload = {}) => ipcMain.handlers.get(`netcatty:portforward:${method}`)({ sender }, payload);
+    await invoke("subscribeRuntime");
+    await invoke("start", { tunnelId: "last", ruleId: "rule-last" });
+    if (["stop", "stopAll", "stopByRuleId"].includes(removal)) {
+      await invoke(removal, { tunnelId: "last", ruleId: "rule-last" });
+    } else {
+      onRendererEvent({
+        channel: removal === "remove" ? "netcatty:portforward:runtime" : "netcatty:portforward:status",
+        payload: { tunnelId: "last", kind: removal, status: removal },
+      });
+    }
+    assert.equal(sender.listenerCount("destroyed"), 1);
+    sender.emit("destroyed");
+    await Promise.resolve();
+    assert.equal(requests.filter(({ channel }) => channel === "netcatty:portforward:unsubscribeSender").length, 1);
+    assert.equal(sender.listenerCount("destroyed"), 0);
+  });
+}
+
+test("worker last-tunnel removal releases lifecycle after explicit runtime unsubscribe", async () => {
+  const ipcMain = createIpcMain();
+  registerHandlers(ipcMain, { terminalWorkerManager: {
+    request(_channel, payload) { return Promise.resolve({ tunnelId: payload?.tunnelId, success: true }); },
+  } });
+  const sender = createSender(41);
+  const invoke = (method, payload = {}) => ipcMain.handlers.get(`netcatty:portforward:${method}`)({ sender }, payload);
+  await invoke("subscribeRuntime");
+  await invoke("start", { tunnelId: "last" });
+  await invoke("stop", { tunnelId: "last" });
+  assert.equal(sender.listenerCount("destroyed"), 1);
+  await invoke("unsubscribeRuntime");
+  assert.equal(sender.listenerCount("destroyed"), 0);
+});
+
+test("worker final-tunnel stop then renderer destruction prevents stale runtime event fanout", async (t) => {
+  const bridge = require("./portForwardingBridge.cjs");
+  const { createTerminalWorkerRuntime } = require("../terminalWorker/runtime.cjs");
+  bridge._resetPortForwardRuntimeMetaForTests();
+  bridge._clearPortForwardTunnelsForTests();
+  t.after(() => {
+    bridge._resetPortForwardRuntimeMetaForTests();
+    bridge._clearPortForwardTunnelsForTests();
+  });
+  const events = [];
+  let onRendererEvent;
+  const runtime = createTerminalWorkerRuntime({ parentPort: {
+    postMessage(message) { events.push(message); onRendererEvent?.(message); },
+    on() {},
+  } });
+  const workerIpc = createIpcMain();
+  bridge.registerHandlers(workerIpc);
+  const mainIpc = createIpcMain();
+  bridge.registerHandlers(mainIpc, { terminalWorkerManager: {
+    request(channel, payload, options) {
+      return workerIpc.handlers.get(channel)({ sender: runtime.createSender(options.webContentsId) }, payload);
+    },
+    onWorkerRendererEvent(listener) { onRendererEvent = listener; },
+  } });
+  const sender = createSender(42);
+  const invoke = (method, payload = {}) => mainIpc.handlers.get(`netcatty:portforward:${method}`)({ sender }, payload);
+  await invoke("subscribeRuntime");
+  bridge._seedPortForwardTunnelForTests("fixture", { ruleId: "fixture", status: "active", type: "local" });
+  await invoke("subscribe", { tunnelId: "fixture" });
+  const stopped = await invoke("stop", { tunnelId: "fixture" });
+  assert.equal(stopped.success, true);
+  sender.emit("destroyed");
+  await Promise.resolve();
+  events.length = 0;
+  bridge.publishTunnelStatus("another", { ruleId: "another", status: "active" }, "active");
+  assert.deepEqual(events, []);
+  assert.equal((await bridge.unsubscribePortForwardSender(null, { webContentsId: sender.id })).removed, 0);
+});
