@@ -917,8 +917,14 @@ export function useTerminalEffects(ctx: TerminalEffectsContext) {
       bootAbort.abort();
       isBootActiveRef.current = false;
       if (hibernatedRef?.current) {
-        forceCloseHibernatedSession?.();
-        disposeOwnedRuntime();
+        const pendingClose = forceCloseHibernatedSession?.() as void | Promise<void>;
+        if (pendingClose && typeof pendingClose.then === "function") {
+          void pendingClose.finally(() => {
+            disposeOwnedRuntime();
+          });
+        } else {
+          disposeOwnedRuntime();
+        }
         return;
       }
 
@@ -946,13 +952,20 @@ export function useTerminalEffects(ctx: TerminalEffectsContext) {
         return;
       }
 
-      const persistCloseCapture = (data: string, source: string, dataLength: number) => {
+      const persistCloseCapture = async (data: string, source: string, dataLength: number) => {
         logger.info("[Terminal] Capturing data on unmount", {
           sessionId,
           source,
           dataLength,
         });
-        handleTerminalDataCaptureOnce(sessionId, data, { finalized: true });
+        const pendingCapture: unknown = handleTerminalDataCaptureOnce(sessionId, data, { finalized: true });
+        if (
+          pendingCapture !== undefined
+          && pendingCapture !== null
+          && typeof (pendingCapture as Promise<void>).then === "function"
+        ) {
+          await (pendingCapture as Promise<void>);
+        }
       };
 
       const term = termRef.current;
@@ -991,7 +1004,7 @@ export function useTerminalEffects(ctx: TerminalEffectsContext) {
           ? resolveConnectionLogCapturePayload(finalizeTerminalLogData)
           : null;
         if (connectionLogPayload) {
-          persistCloseCapture(
+          await persistCloseCapture(
             connectionLogPayload.data,
             connectionLogPayload.source,
             connectionLogPayload.data.length,
@@ -1018,7 +1031,7 @@ export function useTerminalEffects(ctx: TerminalEffectsContext) {
               return;
             }
             if (payload) {
-              persistCloseCapture(payload.data, payload.source, payload.data.length);
+              await persistCloseCapture(payload.data, payload.source, payload.data.length);
             }
             ownedRuntime = null;
             scheduleTerminalCloseTeardown(teardown);

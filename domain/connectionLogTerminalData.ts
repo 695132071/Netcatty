@@ -26,8 +26,8 @@ export const mergeTerminalDataIntoLogs = (
 };
 
 /**
- * When another window or a pruned localStorage write reloads connection logs,
- * keep in-memory / side-store terminal replay data instead of wiping it.
+ * When another window reloads connection logs, keep in-memory / side-store
+ * terminal replay data instead of wiping it.
  */
 export const mergeConnectionLogsFromStorage = (
   prev: ConnectionLog[],
@@ -47,6 +47,81 @@ export const mergeConnectionLogsFromStorage = (
     return { ...log, terminalData };
   });
   return changed ? merged : next;
+};
+
+/**
+ * Apply a queued connection-log snapshot when it runs, not when it was captured.
+ * Disk may have gained another window's logs during the wait. Keep those logs.
+ * Metadata from this snapshot replaces a disk row only for ids the recipe added
+ * or updated (`changedIds`) that are still in memory. An id deleted locally
+ * after this snapshot was queued is not written back. Deletes from this
+ * snapshot apply only while memory still agrees.
+ */
+export const rebaseQueuedConnectionLogs = (
+  queued: readonly ConnectionLog[],
+  removedIds: ReadonlySet<string>,
+  changedIds: ReadonlySet<string>,
+  memory: readonly ConnectionLog[],
+  disk: readonly ConnectionLog[] | null,
+): ConnectionLog[] => {
+  const memoryById = new Map(memory.map((log) => [log.id, log]));
+  const queuedById = new Map(queued.map((log) => [log.id, log]));
+  const diskKept = (disk ?? []).filter(
+    (log) => !(removedIds.has(log.id) && !memoryById.has(log.id)),
+  );
+  const present = new Set<string>();
+  const withLocalEdits: ConnectionLog[] = [];
+  for (const log of diskKept) {
+    const queuedLog = queuedById.get(log.id);
+    const memoryLog = memoryById.get(log.id);
+    if (changedIds.has(log.id)) {
+      if (!memoryLog) continue;
+      present.add(log.id);
+      withLocalEdits.push(memoryLog);
+      continue;
+    }
+    present.add(log.id);
+    const replay = queuedLog?.terminalData ?? memoryLog?.terminalData ?? log.terminalData;
+    if (!replay || log.terminalData === replay) {
+      withLocalEdits.push(log);
+      continue;
+    }
+    withLocalEdits.push({ ...log, terminalData: replay });
+  }
+  const extras: ConnectionLog[] = [];
+  for (const log of queued) {
+    if (present.has(log.id) || !changedIds.has(log.id)) continue;
+    const memoryLog = memoryById.get(log.id);
+    if (!memoryLog) continue;
+    extras.push(memoryLog);
+  }
+  if (extras.length === 0) return withLocalEdits;
+  return pruneInMemoryUnsavedTerminalData(
+    [...extras, ...withLocalEdits].sort((a, b) => b.startTime - a.startTime),
+  );
+};
+
+/**
+ * Drop `terminalData` from unsaved logs outside the newest `keep` entries.
+ * Saved logs and the newest unsaved replays stay intact.
+ */
+export const retainNewestUnsavedReplays = (
+  logs: readonly ConnectionLog[],
+  keep: number,
+): ConnectionLog[] => {
+  const ranked = logs
+    .filter((log) => !log.saved && log.terminalData)
+    .sort((a, b) => b.startTime - a.startTime);
+  if (ranked.length <= keep) return [...logs];
+  const keepIds = new Set(ranked.slice(0, Math.max(0, keep)).map((log) => log.id));
+  let changed = false;
+  const next = logs.map((log) => {
+    if (log.saved || log.terminalData === undefined || keepIds.has(log.id)) return log;
+    changed = true;
+    const { terminalData: _omitted, ...rest } = log;
+    return rest;
+  });
+  return changed ? next : [...logs];
 };
 
 export const buildTerminalDataMapFromLogs = (
@@ -114,62 +189,25 @@ export const pruneInMemoryUnsavedTerminalData = (
   return changed ? next : logs;
 };
 
-/**
- * Write the side store; if the write is rejected (localStorage quota), retry
- * without the oldest unsaved replay buffers so the newest sessions are kept.
- * Drops 1, 2, 4, … oldest entries per retry, so attempts stay O(log n).
- * Saved logs and ids not in `logs` are never dropped.
- *
- * `quotaFailedChars` is owned by the caller. It is the summed entry length of
- * the smallest payload that last hit the quota, so the next write can start
- * from the newest set that fits. A successful write of the full map returns
- * null. The helper does not keep that hint itself.
- */
-export const writeTerminalDataMapWithQuotaRetry = (
-  logs: ConnectionLog[],
-  map: ConnectionLogTerminalDataMap,
-  write: (next: ConnectionLogTerminalDataMap) => boolean,
-  quotaFailedChars: number | null,
-): { persisted: boolean; written: ConnectionLogTerminalDataMap; attempts: number; quotaFailedChars: number | null } => {
-  const droppable = logs
-    .filter((log) => !log.saved && map[log.id] !== undefined)
-    .sort((a, b) => a.startTime - b.startTime)
-    .map((log) => log.id);
-  let chars = 0;
-  for (const data of Object.values(map)) chars += data.length;
+export type ConnectionLogTerminalDataDiff = {
+  puts: ConnectionLogTerminalDataMap;
+  deleteIds: string[];
+};
 
-  let hint = quotaFailedChars;
-  let dropCount = 0;
-  if (hint !== null) {
-    while (dropCount < droppable.length && chars >= hint) {
-      chars -= map[droppable[dropCount]].length;
-      dropCount += 1;
-    }
+/** Changed replay blobs to write, and ids no longer in the persisted map. */
+export const diffTerminalDataMaps = (
+  previous: ConnectionLogTerminalDataMap,
+  next: ConnectionLogTerminalDataMap,
+): ConnectionLogTerminalDataDiff => {
+  const puts: ConnectionLogTerminalDataMap = {};
+  const deleteIds: string[] = [];
+  for (const id of Object.keys(next)) {
+    if (previous[id] !== next[id]) puts[id] = next[id];
   }
-
-  let attempts = 0;
-  for (;;) {
-    let next = map;
-    if (dropCount > 0) {
-      const dropped = new Set(droppable.slice(0, dropCount));
-      next = {};
-      for (const [id, data] of Object.entries(map)) {
-        if (!dropped.has(id)) next[id] = data;
-      }
-    }
-    attempts += 1;
-    if (write(next)) {
-      if (dropCount === 0) hint = null;
-      return { persisted: true, written: next, attempts, quotaFailedChars: hint };
-    }
-    hint = hint === null ? chars : Math.min(hint, chars);
-    if (dropCount >= droppable.length) {
-      return { persisted: false, written: map, attempts, quotaFailedChars: hint };
-    }
-    const target = Math.min(Math.max(dropCount * 2, 1), droppable.length);
-    for (let i = dropCount; i < target; i += 1) chars -= map[droppable[i]].length;
-    dropCount = target;
+  for (const id of Object.keys(previous)) {
+    if (!Object.prototype.hasOwnProperty.call(next, id)) deleteIds.push(id);
   }
+  return { puts, deleteIds };
 };
 
 /** Fold side-store maps together, then cap to the allowed unsaved/saved set. */

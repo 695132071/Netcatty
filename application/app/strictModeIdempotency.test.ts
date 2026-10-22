@@ -165,8 +165,12 @@ test('vault init cancels the superseded StrictMode effect before publishing read
   );
   const initAt = vaultSource.indexOf('let cancelled = false;');
   assert.notEqual(initAt, -1, 'vault init must track cancellation');
-  const initSlice = vaultSource.slice(initAt, initAt + 12000);
-  assert.match(initSlice, /return \(\) => \{\s*\n\s*cancelled = true;\s*\n\s*\};/);
+  const initSlice = vaultSource.slice(initAt, initAt + 20000);
+  assert.match(
+    initSlice,
+    /return \(\) => \{\s*\n\s*cancelled = true;\s*\n\s*resolveTerminalDataReady\(\);\s*\n\s*\};/,
+    'StrictMode cleanup cancels init and unblocks the terminal-data ready promise',
+  );
   assert.match(
     initSlice,
     /if \(!cancelled\) \{\s*\n\s*setIsInitialized\(true\);\s*\n\s*setVaultInitialized\(true\);\s*\n\s*\}/,

@@ -198,7 +198,7 @@ export interface TerminalProps {
   onTerminalFontSizeChange?: (fontSize: number) => void;
   onStatusChange?: (sessionId: string, status: TerminalSession["status"], sftpHost?: Host) => void;
   onSessionExit?: (sessionId: string, evt: TerminalSessionExitEvent) => void;
-  onTerminalDataCapture?: (sessionId: string, data: string) => void;
+  onTerminalDataCapture?: (sessionId: string, data: string) => void | Promise<void>;
   onOsDetected?: (hostId: string, distro: string) => void;
   onCloseSession?: (sessionId: string) => void;
   onUpdateHost?: (host: Host) => void;

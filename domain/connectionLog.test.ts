@@ -5,12 +5,14 @@ import type { ConnectionLog } from "./models.ts";
 import { selectConnectionLogForTerminalDataCapture } from "./connectionLog.ts";
 import {
   MAX_PERSISTED_UNSAVED_TERMINAL_DATA_ENTRIES,
+  diffTerminalDataMaps,
   mergeConnectionLogsFromStorage,
   mergeTerminalDataIntoLogs,
   mergeTerminalDataMapsForStorage,
   pruneInMemoryUnsavedTerminalData,
   pruneTerminalDataMapForStorage,
-  writeTerminalDataMapWithQuotaRetry,
+  rebaseQueuedConnectionLogs,
+  retainNewestUnsavedReplays,
 } from "./connectionLogTerminalData.ts";
 
 const baseLog: ConnectionLog = {
@@ -234,131 +236,167 @@ test("mergeTerminalDataMapsForStorage drops deleted log replay buffers", () => {
   assert.equal(merged.deleted, undefined);
 });
 
-const quotaLogs = (count: number): ConnectionLog[] =>
-  Array.from({ length: count }, (_, index) => ({
+test("rebaseQueuedConnectionLogs keeps logs another window wrote while this snapshot waited", () => {
+  const queued = [{ ...baseLog, id: "local", startTime: 2000, terminalData: "local-replay" }];
+  const memory = queued;
+  const disk = [
+    { ...baseLog, id: "remote", startTime: 3000 },
+    { ...baseLog, id: "local", startTime: 2000 },
+  ];
+
+  const rebased = rebaseQueuedConnectionLogs(queued, new Set(), new Set(["local"]), memory, disk);
+
+  assert.deepEqual(rebased.map((log) => log.id), ["remote", "local"]);
+  assert.equal(rebased.find((log) => log.id === "local")?.terminalData, "local-replay");
+});
+
+test("rebaseQueuedConnectionLogs does not restore an id deleted from memory after it was queued", () => {
+  const queued = [{ ...baseLog, id: "local", startTime: 2000, terminalData: "local-replay" }];
+  const disk = [
+    { ...baseLog, id: "remote", startTime: 3000 },
+    { ...baseLog, id: "local", startTime: 2000, terminalData: "stale-intermediate" },
+  ];
+
+  const rebased = rebaseQueuedConnectionLogs(
+    queued,
+    new Set(),
+    new Set(["local"]),
+    [{ ...baseLog, id: "remote", startTime: 3000 }],
+    disk,
+  );
+
+  assert.deepEqual(rebased.map((log) => log.id), ["remote"]);
+  assert.equal(rebased.find((log) => log.id === "local"), undefined);
+
+  const notYetOnDisk = rebaseQueuedConnectionLogs(
+    queued,
+    new Set(),
+    new Set(["local"]),
+    [{ ...baseLog, id: "remote", startTime: 3000 }],
+    [{ ...baseLog, id: "remote", startTime: 3000 }],
+  );
+  assert.deepEqual(notYetOnDisk.map((log) => log.id), ["remote"]);
+});
+
+test("rebaseQueuedConnectionLogs does not restore an unchanged log another window deleted", () => {
+  const unchanged = { ...baseLog, id: "unchanged", startTime: 1000, terminalData: "old" };
+  const added = { ...baseLog, id: "local", startTime: 4000, terminalData: "local-replay" };
+  const queued = [added, unchanged];
+  const remote = [{ ...baseLog, id: "remote", startTime: 3000 }];
+
+  const rebased = rebaseQueuedConnectionLogs(
+    queued,
+    new Set(),
+    new Set(["local"]),
+    [added, ...remote],
+    remote,
+  );
+
+  assert.deepEqual(rebased.map((log) => log.id), ["local", "remote"]);
+  assert.equal(rebased.find((log) => log.id === "unchanged"), undefined);
+  assert.equal(rebased.find((log) => log.id === "local")?.terminalData, "local-replay");
+});
+
+test("rebaseQueuedConnectionLogs applies a local metadata edit onto the latest disk row", () => {
+  const queued = [{ ...baseLog, id: "local", startTime: 2000, saved: true, terminalData: "replay" }];
+  const disk = [
+    { ...baseLog, id: "remote", startTime: 3000 },
+    { ...baseLog, id: "local", startTime: 2000, saved: false },
+  ];
+
+  const rebased = rebaseQueuedConnectionLogs(
+    queued,
+    new Set(),
+    new Set(["local"]),
+    queued,
+    disk,
+  );
+
+  assert.equal(rebased.find((log) => log.id === "local")?.saved, true);
+  assert.equal(rebased.find((log) => log.id === "local")?.terminalData, "replay");
+  assert.ok(rebased.some((log) => log.id === "remote"));
+});
+
+test("retainNewestUnsavedReplays drops older unsaved buffers and keeps the newest", () => {
+  const logs: ConnectionLog[] = [
+    { ...baseLog, id: "old", startTime: 1000, terminalData: "old" },
+    { ...baseLog, id: "mid", startTime: 2000, terminalData: "mid" },
+    { ...baseLog, id: "new", startTime: 3000, terminalData: "new" },
+    { ...baseLog, id: "saved", startTime: 500, saved: true, terminalData: "saved" },
+  ];
+
+  const kept = retainNewestUnsavedReplays(logs, 1);
+
+  assert.equal(kept.find((log) => log.id === "new")?.terminalData, "new");
+  assert.equal(kept.find((log) => log.id === "saved")?.terminalData, "saved");
+  assert.equal(kept.find((log) => log.id === "old")?.terminalData, undefined);
+  assert.equal(kept.find((log) => log.id === "mid")?.terminalData, undefined);
+});
+
+test("rebaseQueuedConnectionLogs drops a queued delete and keeps a queued add still in memory", () => {
+  const queued = [{ ...baseLog, id: "added", startTime: 4000, terminalData: "new" }];
+  const memory = queued;
+  const disk = [
+    { ...baseLog, id: "deleted", startTime: 1000 },
+    { ...baseLog, id: "kept", startTime: 2000 },
+  ];
+
+  const rebased = rebaseQueuedConnectionLogs(
+    queued,
+    new Set(["deleted"]),
+    new Set(["added"]),
+    memory,
+    disk,
+  );
+
+  assert.deepEqual(rebased.map((log) => log.id), ["added", "kept"]);
+  assert.equal(rebased.find((log) => log.id === "added")?.terminalData, "new");
+});
+
+test("diffTerminalDataMaps puts only changed ids and deletes removed ids", () => {
+  const diff = diffTerminalDataMaps(
+    { same: "keep", edited: "old", removed: "gone" },
+    { same: "keep", edited: "new", added: "fresh" },
+  );
+
+  assert.deepEqual(diff.puts, { edited: "new", added: "fresh" });
+  assert.deepEqual(diff.deleteIds, ["removed"]);
+});
+
+test("diffTerminalDataMaps treats key order as unchanged", () => {
+  const diff = diffTerminalDataMaps(
+    { b: "2", a: "1" },
+    { a: "1", b: "2" },
+  );
+
+  assert.deepEqual(diff.puts, {});
+  assert.deepEqual(diff.deleteIds, []);
+});
+
+test("prune cap diffs to deleting only replay buffers outside the newest 50", () => {
+  const logs: ConnectionLog[] = Array.from({ length: 60 }, (_, index) => ({
     ...baseLog,
     id: `log-${index}`,
     startTime: index,
     saved: false,
   }));
+  logs.push({
+    ...baseLog,
+    id: "saved-keep",
+    startTime: 1,
+    saved: true,
+  });
+  const map = Object.fromEntries(logs.map((log) => [log.id, `data-${log.id}`]));
+  const pruned = pruneTerminalDataMapForStorage(logs, map);
+  const diff = diffTerminalDataMaps(map, pruned);
 
-const quotaWriter = (limitChars: number) => {
-  const calls: number[] = [];
-  const write = (next: Record<string, string>) => {
-    const size = Object.values(next).reduce((sum, value) => sum + value.length, 0);
-    calls.push(Object.keys(next).length);
-    return size <= limitChars;
-  };
-  return { calls, write };
-};
-
-test("writeTerminalDataMapWithQuotaRetry writes once when it fits", () => {
-  const logs = quotaLogs(5);
-  const map = Object.fromEntries(logs.map((log) => [log.id, "x".repeat(10)]));
-  const { calls, write } = quotaWriter(1000);
-  const result = writeTerminalDataMapWithQuotaRetry(logs, map, write, null);
-  assert.equal(result.persisted, true);
-  assert.equal(result.written, map);
-  assert.deepEqual(calls, [5]);
-});
-
-test("writeTerminalDataMapWithQuotaRetry drops the oldest unsaved entries until it fits", () => {
-  const logs = quotaLogs(50);
-  // Newest first, matching pruneTerminalDataMapForStorage order.
-  const map = Object.fromEntries(
-    [...logs].reverse().map((log) => [log.id, "x".repeat(10)]),
-  );
-  const { calls, write } = quotaWriter(10 * 47);
-  const result = writeTerminalDataMapWithQuotaRetry(logs, map, write, null);
-  assert.equal(result.persisted, true);
-  // 50 fails, drop 1 → 49 fails, drop 2 → 48 fails, drop 4 → 46 fits.
-  assert.deepEqual(calls, [50, 49, 48, 46]);
-  assert.equal(result.written["log-49"], map["log-49"]);
-  assert.equal(result.written["log-4"], map["log-4"]);
-  for (const id of ["log-0", "log-1", "log-2", "log-3"]) {
-    assert.equal(result.written[id], undefined);
-  }
-  // Key order (newest first) is preserved.
-  assert.deepEqual(Object.keys(result.written), Object.keys(map).filter((id) => id in result.written));
-});
-
-test("writeTerminalDataMapWithQuotaRetry never drops saved or unknown entries and stops after all unsaved are gone", () => {
-  const logs: ConnectionLog[] = [
-    ...quotaLogs(20),
-    { ...baseLog, id: "saved", startTime: -1, saved: true },
-  ];
-  const map: Record<string, string> = Object.fromEntries(
-    logs.map((log) => [log.id, "x".repeat(10)]),
-  );
-  map["other-window"] = "y".repeat(10);
-  const { calls, write } = quotaWriter(5); // nothing fits
-  const result = writeTerminalDataMapWithQuotaRetry(logs, map, write, null);
-  assert.equal(result.persisted, false);
-  assert.equal(result.written, map);
-  // 22, then drop 1, 2, 4, 8, 16, then all 20 unsaved: bounded attempts.
-  assert.deepEqual(calls, [22, 21, 20, 18, 14, 6, 2]);
-  assert.ok(result.attempts <= 2 + Math.ceil(Math.log2(20)));
-});
-
-const newestFirstMap = (logs: ConnectionLog[], chars: number) =>
-  Object.fromEntries([...logs].reverse().map((log) => [log.id, "x".repeat(chars)]));
-
-test("writeTerminalDataMapWithQuotaRetry starts the next write from the newest set that last fit", () => {
-  const logs = quotaLogs(50);
-  const quota = quotaWriter(10 * 47);
-  const first = writeTerminalDataMapWithQuotaRetry(logs, newestFirstMap(logs, 10), quota.write, null);
-  // Next close: oldest drops out of the 50, a newer session arrives.
-  const nextLogs = [...logs.slice(1), { ...baseLog, id: "log-50", startTime: 50 }];
-  const second = quotaWriter(10 * 47);
-  const result = writeTerminalDataMapWithQuotaRetry(
-    nextLogs,
-    newestFirstMap(nextLogs, 10),
-    second.write,
-    first.quotaFailedChars,
-  );
-  assert.equal(result.persisted, true);
-  assert.deepEqual(second.calls, [47]);
-  assert.equal(result.written["log-50"] !== undefined, true);
-  assert.equal(result.written["log-3"], undefined);
-});
-
-test("writeTerminalDataMapWithQuotaRetry grows back when entries get smaller", () => {
-  const logs = quotaLogs(50);
-  const first = writeTerminalDataMapWithQuotaRetry(
-    logs,
-    newestFirstMap(logs, 10),
-    quotaWriter(10 * 47).write,
-    null,
-  );
-  const small = quotaWriter(10 * 47);
-  const result = writeTerminalDataMapWithQuotaRetry(
-    logs,
-    newestFirstMap(logs, 5),
-    small.write,
-    first.quotaFailedChars,
-  );
-  assert.deepEqual(small.calls, [50]);
-  assert.equal(Object.keys(result.written).length, 50);
-});
-
-test("writeTerminalDataMapWithQuotaRetry falls back to dropping when the hint is too optimistic", () => {
-  const logs = quotaLogs(50);
-  const first = writeTerminalDataMapWithQuotaRetry(
-    logs,
-    newestFirstMap(logs, 10),
-    quotaWriter(10 * 47).write,
-    null,
-  );
-  const tighter = quotaWriter(10 * 30); // quota shrank (other keys grew)
-  const result = writeTerminalDataMapWithQuotaRetry(
-    logs,
-    newestFirstMap(logs, 10),
-    tighter.write,
-    first.quotaFailedChars,
-  );
-  assert.equal(result.persisted, true);
-  assert.equal(tighter.calls[0], 47);
-  assert.ok(Object.keys(result.written).length <= 30);
-  assert.equal(result.written["log-49"] !== undefined, true);
-  assert.ok(result.attempts <= 2 + Math.ceil(Math.log2(50)));
+  assert.equal(Object.keys(pruned).length, MAX_PERSISTED_UNSAVED_TERMINAL_DATA_ENTRIES + 1);
+  assert.equal(Object.keys(diff.puts).length, 0);
+  assert.equal(diff.deleteIds.length, 10);
+  assert.equal(diff.deleteIds.includes("log-0"), true);
+  assert.equal(diff.deleteIds.includes("log-9"), true);
+  assert.equal(diff.deleteIds.includes("log-10"), false);
+  assert.equal(diff.deleteIds.includes("log-59"), false);
+  assert.equal(diff.deleteIds.includes("saved-keep"), false);
+  assert.equal(pruned["saved-keep"], "data-saved-keep");
 });

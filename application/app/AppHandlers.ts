@@ -1184,7 +1184,7 @@ export function handleConnectToHostImpl(getCtx: AppContextGetter, host: Host, hi
   }
 }
 
-export function handleTerminalDataCaptureImpl(getCtx: AppContextGetter, sessionId: string, data: string) {
+export async function handleTerminalDataCaptureImpl(getCtx: AppContextGetter, sessionId: string, data: string) {
   const { IS_DEV, connectionLogs, selectConnectionLogForTerminalDataCapture, sessions, updateConnectionLog } = getCtx();
 {
     if (IS_DEV) console.log('[handleTerminalDataCapture] Called', { sessionId, dataLength: data.length });
@@ -1200,7 +1200,10 @@ export function handleTerminalDataCaptureImpl(getCtx: AppContextGetter, sessionI
     if (IS_DEV) console.log('[handleTerminalDataCapture] Matching log', matchingLog);
 
     if (matchingLog) {
-      updateConnectionLog(matchingLog.id, {
+      // The IndexedDB replay write commits asynchronously. Waiting here keeps
+      // a crash during session teardown from dropping the newest capture any
+      // more often than the old synchronous localStorage write.
+      await updateConnectionLog(matchingLog.id, {
         endTime: Date.now(),
         terminalData: data,
       });

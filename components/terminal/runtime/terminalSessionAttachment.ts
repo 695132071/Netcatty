@@ -1000,7 +1000,14 @@ export const attachSessionToTerminal = (
       try {
         await ctx.prepareKeywordHighlightSerialization?.();
         const terminalData = ctx.serializeAddonRef.current.serialize();
-        ctx.onTerminalDataCapture(ctx.sessionId, terminalData);
+        const pendingCapture: unknown = ctx.onTerminalDataCapture(ctx.sessionId, terminalData);
+        if (
+          pendingCapture !== undefined
+          && pendingCapture !== null
+          && typeof (pendingCapture as Promise<void>).then === "function"
+        ) {
+          await (pendingCapture as Promise<void>);
+        }
       } catch (err) {
         logger.warn("Failed to serialize terminal data:", err);
       }

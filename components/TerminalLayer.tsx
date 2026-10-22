@@ -700,7 +700,7 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
   }, [onAddKnownHost]);
 
   const handleTerminalDataCapture = useCallback((sessionId: string, data: string) => {
-    onTerminalDataCapture?.(sessionId, data);
+    return onTerminalDataCapture?.(sessionId, data);
   }, [onTerminalDataCapture]);
 
   // Terminal backend for broadcast writes

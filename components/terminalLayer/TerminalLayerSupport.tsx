@@ -696,7 +696,7 @@ export interface TerminalLayerProps {
   onCommandExecuted?: (command: string, hostId: string, hostLabel: string, sessionId: string) => void;
   onDeleteShellHistoryEntry?: (entryId: string) => void;
   onClearCommandHistory?: () => void;
-  onTerminalDataCapture?: (sessionId: string, data: string) => void;
+  onTerminalDataCapture?: (sessionId: string, data: string) => void | Promise<void>;
   onCreateWorkspaceFromSessions: (baseSessionId: string, joiningSessionId: string, hint: Exclude<SplitHint, null>) => void;
   onAddSessionToWorkspace: (workspaceId: string, sessionId: string, hint: Exclude<SplitHint, null>) => void;
   onRequestAddToWorkspace?: (workspaceId: string) => void;
@@ -815,7 +815,7 @@ interface TerminalPaneProps {
   onCloseSession: (sessionId: string) => void;
   onStatusChange: (sessionId: string, status: TerminalSession['status'], sftpHost?: Host) => void;
   onSessionExit: (sessionId: string, evt: TerminalSessionExitEvent) => void;
-  onTerminalDataCapture?: (sessionId: string, data: string) => void;
+  onTerminalDataCapture?: (sessionId: string, data: string) => void | Promise<void>;
   onOsDetected: (hostId: string, distro: string) => void;
   onUpdateHost: (host: Host) => void;
   onAddKnownHost?: (knownHost: KnownHost) => void;
@@ -1717,7 +1717,7 @@ interface TerminalPanesHostProps {
   onCloseSession: (sessionId: string) => void;
   onStatusChange: (sessionId: string, status: TerminalSession['status'], sftpHost?: Host) => void;
   onSessionExit: (sessionId: string, evt: TerminalSessionExitEvent) => void;
-  onTerminalDataCapture?: (sessionId: string, data: string) => void;
+  onTerminalDataCapture?: (sessionId: string, data: string) => void | Promise<void>;
   onOsDetected: (hostId: string, distro: string) => void;
   onUpdateHost: (host: Host) => void;
   onAddKnownHost?: (knownHost: KnownHost) => void;

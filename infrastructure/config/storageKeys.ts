@@ -45,8 +45,16 @@ export const STORAGE_KEY_COMMAND_HISTORY = 'netcatty:commandHistory';
 /** Set once the user clears all command history; histfile seeding honors it. */
 export const STORAGE_KEY_COMMAND_HISTORY_CLEARED = 'netcatty:commandHistoryCleared';
 export const STORAGE_KEY_CONNECTION_LOGS = 'netcatty_connection_logs_v1';
-/** Side store for unsaved connection-log terminal replay buffers (main blob omits them for perf). */
+/**
+ * Legacy side store for unsaved connection-log terminal replay buffers.
+ * Read once to migrate into IndexedDB, then removed. Do not write it.
+ */
 export const STORAGE_KEY_CONNECTION_LOG_TERMINAL_DATA = 'netcatty_connection_log_terminal_data_v1';
+/**
+ * Tiny cross-window signal for the IndexedDB replay side store.
+ * Value shape: `{ rev: number, ids?: string[], nonce?: string }`.
+ */
+export const STORAGE_KEY_CONNECTION_LOG_TERMINAL_DATA_REV = 'netcatty_connection_log_terminal_data_rev_v1';
 export const STORAGE_KEY_SESSION_RESTORE = 'netcatty_session_restore_v1';
 export const STORAGE_KEY_RESTORE_PREVIOUS_SESSION = 'netcatty_restore_previous_session_v1';
 export const STORAGE_KEY_RESTORE_TERMINAL_CWD = 'netcatty_restore_terminal_cwd_v1';
