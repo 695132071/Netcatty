@@ -1794,6 +1794,14 @@ const TerminalComponent: React.FC<TerminalProps> = ({
 
     if (!closingSessionId) {
       disposeSessionListeners();
+      // Close preparation already cleared sessionRef after the display handoff.
+      // Unmount teardown calls cleanup again. An attach popup must not
+      // closeSession on that second pass: worker mode emits netcatty:exit to
+      // the home renderer before the boot-epoch check, which drops home input
+      // (sessionRef = null) while a mismatched epoch leaves the PTY alive.
+      if (attachExistingSession) {
+        return;
+      }
       // Still notify main so in-flight SSH passphrase prompts for this UI
       // sessionId are aborted even before a backend session was attached.
       try {
