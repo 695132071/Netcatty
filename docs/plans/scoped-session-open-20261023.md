@@ -1,5 +1,7 @@
 # Scoped host opening and shell readiness
 
+The broader objective and staged acceptance criteria are maintained in [workspace-session-continuity.md](workspace-session-continuity.md): sustained, authorized agent work across sessions within a workspace. This PR is its first implementation increment.
+
 ## Goal and baseline
 
 Initial base: upstream main 695fd2768, fetched 2026-10-23. Final integration base: e9818a619 (latest upstream at the pre-submission synchronization). Future PRs must fetch upstream first and use its latest main as the base. The old experimental branch and patch are retained outside the maintained repository. Existing changes in the maintained repository remain untouched.
