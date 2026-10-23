@@ -70,6 +70,7 @@ import {
 import { getCredentialProtectionAvailability } from '../../infrastructure/services/credentialProtection';
 import { netcattyBridge } from '../../infrastructure/services/netcattyBridge';
 import { localStorageAdapter } from '../../infrastructure/persistence/localStorageAdapter';
+import { terminalHostTreeStore } from '../state/terminalHostTreeStore';
 import {
   markExternalMcpStartupReady,
   readExternalMcpFocusOnHostOpen,
@@ -1126,6 +1127,7 @@ export function AppSideEffects() {
       toggleBroadcast,
       toggleGlobalBroadcast,
       canUseGlobalBroadcast: canUseGlobalBroadcastRef.current,
+      toggleHostTree: () => terminalHostTreeStore.toggle(),
       toggleScriptsSidePanelRef,
       toggleSidePanelRef,
       toggleWindowOpacity,

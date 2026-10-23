@@ -621,6 +621,7 @@ export const zhTWTerminalMessages: Messages = {
   'settings.shortcuts.binding.broadcast': '切換廣播模式',
   'settings.shortcuts.binding.toggle-opacity': '切換視窗透明度',
   'settings.shortcuts.binding.toggle-side-panel': '切換側邊欄',
+  'settings.shortcuts.binding.toggle-host-tree': '切換主機列表',
   'settings.shortcuts.binding.sftp-copy': '複製檔案',
   'settings.shortcuts.binding.sftp-cut': '剪下檔案',
   'settings.shortcuts.binding.sftp-paste': '貼上檔案',

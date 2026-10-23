@@ -964,6 +964,7 @@ Highlight the focused split pane:
   'settings.shortcuts.category.terminal': 'Terminal',
   'settings.shortcuts.category.navigation': 'Navigation',
   'settings.shortcuts.category.app': 'App',
+  'settings.shortcuts.binding.toggle-host-tree': 'Toggle Host List',
   'settings.shortcuts.category.sftp': 'SFTP',
 
   // Context menus / common actions

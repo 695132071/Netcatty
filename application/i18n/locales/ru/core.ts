@@ -938,6 +938,7 @@ export const ruCoreMessages: Messages = {
   'settings.shortcuts.binding.broadcast': 'Переключить режим трансляции',
   'settings.shortcuts.binding.toggle-opacity': 'Переключить прозрачность окна',
   'settings.shortcuts.binding.toggle-side-panel': 'Переключить боковую панель',
+  'settings.shortcuts.binding.toggle-host-tree': 'Переключить список хостов',
   'settings.shortcuts.binding.sftp-copy': 'Копировать файл',
   'settings.shortcuts.binding.sftp-cut': 'Вырезать файл',
   'settings.shortcuts.binding.sftp-paste': 'Вставить файл',

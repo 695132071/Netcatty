@@ -621,6 +621,7 @@ export const zhCNTerminalMessages: Messages = {
   'settings.shortcuts.binding.broadcast': '切换广播模式',
   'settings.shortcuts.binding.toggle-opacity': '切换窗口透明度',
   'settings.shortcuts.binding.toggle-side-panel': '切换侧边栏',
+  'settings.shortcuts.binding.toggle-host-tree': '切换主机列表',
   'settings.shortcuts.binding.sftp-copy': '复制文件',
   'settings.shortcuts.binding.sftp-cut': '剪切文件',
   'settings.shortcuts.binding.sftp-paste': '粘贴文件',
