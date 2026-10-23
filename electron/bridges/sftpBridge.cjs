@@ -1979,6 +1979,12 @@ async function openSftpForSession(_event, payload) {
     session.singleChannelSsh
     || remoteSoftwareRequiresSingleChannel(session.remoteSshVersion || sshClient?._remoteVer)
   ) {
+    if (typeof session._openDedicatedSftp === "function") {
+      const opened = await session._openDedicatedSftp(payload);
+      const client = sftpClients?.get(opened.sftpId);
+      if (client) client.__netcattySourceSessionId = sourceSessionId;
+      return opened;
+    }
     const err = new Error(
       "This host is configured for single-channel SSH. Opening SFTP on the terminal connection would disconnect it.",
     );

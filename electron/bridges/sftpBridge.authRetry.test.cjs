@@ -81,6 +81,10 @@ function loadSftpBridgeWithAuthRetryMocks(t, options = {}) {
       setImmediate(() => {
         this.client.emit("connect");
         this.client.emit("handshake");
+        if (options.onConnect) {
+          options.onConnect(this.client);
+          return;
+        }
         if (options.alwaysSucceed) {
           this.client.emit("ready");
           return;
@@ -482,4 +486,26 @@ test("single-channel SFTP does not join an in-flight terminal dial", async (t) =
   assert.equal(failTransportDial(coordination, new Error("terminal cancelled")), true);
   assert.notEqual(MockSftpClient.instances[0].client.ended, true);
   assert.equal(sftpClients.has("sftp-during-terminal"), true);
+});
+
+test("cancelling a dedicated SFTP login closes its client and rejects before authentication", async (t) => {
+  const controller = new AbortController();
+  const { bridge, MockSftpClient } = loadSftpBridgeWithAuthRetryMocks(t, {
+    onConnect(client) {
+      controller.abort();
+      // A racing ready notification must not publish a closed SFTP client.
+      client.emit("ready");
+    },
+  });
+  const clients = new Map();
+  bridge.init({ sftpClients: clients, sessions: new Map(), electronModule: {} });
+  await assert.rejects(bridge.openSftp({ sender: makeSender() }, {
+    sessionId: "cancelled-login", hostname: "bastion.example", username: "root",
+    authMethod: "password", password: "saved-login-password", useSshAgent: false,
+    verifyHostKeys: false, fileProtocol: "sftp", singleChannelSsh: true,
+    reuseTransport: false, abortSignal: controller.signal,
+  }), { name: "AbortError" });
+  assert.equal(MockSftpClient.instances[0].client.ended, true);
+  assert.equal(MockSftpClient.instances[0].client.destroyed, true);
+  assert.equal(clients.size, 0);
 });

@@ -439,6 +439,13 @@ function createStartSessionApi(ctx) {
         try { if (!isReused) conn?.end?.(); } catch { /* ignore */ }
         throw supersededError;
       }
+      if (session.singleChannelSsh) {
+        require("./sessionSftpDial.cjs").attachSessionSftpDial(session, options, {
+          sessions, sessionId, sender: event.sender,
+          openSftp: (...args) => require("../sftpBridge.cjs").openSftp(...args),
+          closeSftp: (...args) => require("../sftpBridge.cjs").closeSftp(...args),
+        });
+      }
       openTerminalOutputSession?.(sessionId, event.sender);
 
       // Attach the shared connection descriptor to this session. The caller owns

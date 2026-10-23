@@ -172,17 +172,36 @@ function createOpenConnectionApi(ctx) {
       const connections = [];
       let currentSocket = null;
       let activeConn = null;
-      const defaultAgentSocket = await getAvailableAgentSocket();
+      const signal = options.abortSignal;
+      let rejectPending = null;
     
       const cleanupSocket = (socket) => {
         if (!socket) return;
         try { socket.end?.(); } catch { /* ignore */ }
         try { socket.destroy?.(); } catch { /* ignore */ }
       };
+      const onAbort = () => {
+        cleanupSocket(currentSocket);
+        for (const conn of new Set([...connections, activeConn])) {
+          if (!conn) continue;
+          try { conn.end?.(); } catch { /* ignore */ }
+          try { conn.destroy?.(); } catch { /* ignore */ }
+        }
+        rejectPending?.(new DOMException("SFTP jump connection cancelled", "AbortError"));
+      };
+      const checkCancelled = () => {
+        if (!signal?.aborted) return;
+        onAbort();
+        throw new DOMException("SFTP jump connection cancelled", "AbortError");
+      };
+      signal?.addEventListener("abort", onAbort, { once: true });
     
       try {
+        checkCancelled();
+        const defaultAgentSocket = await getAvailableAgentSocket();
         // Connect through each jump host
         for (let i = 0; i < jumpHosts.length; i++) {
+          checkCancelled();
           const jump = jumpHosts[i];
           const isFirst = i === 0;
           const isLast = i === jumpHosts.length - 1;
@@ -279,6 +298,7 @@ function createOpenConnectionApi(ctx) {
               identityFilePaths: jump.identityFilePaths,
               hostname: hopLabel,
               initialPassphrase: jump.passphrase,
+              sessionId: connId, passphraseSignal: options.abortSignal,
               logPrefix: `[SFTP Chain] Hop ${i + 1}:`,
               onLoaded: (loaded) => {
                 console.log(`[SFTP Chain] Hop ${i + 1}: loaded identity file ${loaded.keyPath}`);
@@ -298,6 +318,7 @@ function createOpenConnectionApi(ctx) {
               keyName: jump.keyId || jump.label || jump.username,
               hostname: hopLabel,
               initialPassphrase: jump.passphrase,
+              sessionId: connId, passphraseSignal: options.abortSignal,
               logPrefix: `[SFTP Chain] Hop ${i + 1}:`,
             })
             : null;
@@ -333,7 +354,8 @@ function createOpenConnectionApi(ctx) {
                 sender,
                 `SSH key for ${keyLabel}`,
                 keyLabel,
-                hopLabel
+                hopLabel,
+                false, { sessionId: connId, signal: options.abortSignal }
               );
               if (result?.passphrase) {
                 connOpts.passphrase = result.passphrase;
@@ -383,6 +405,7 @@ function createOpenConnectionApi(ctx) {
           if (effectiveHopProxy) {
             currentSocket = await createProxySocket(effectiveHopProxy, jump.hostname, jump.port || 22, {
               timeoutMs: hopConnectionTimeouts.tcpConnectTimeoutMs,
+              onSocket: (socket) => { currentSocket = socket; if (signal?.aborted) cleanupSocket(socket); },
             });
             connOpts.sock = currentSocket;
             delete connOpts.host;
@@ -395,7 +418,9 @@ function createOpenConnectionApi(ctx) {
           }
     
           // Connect this hop
+          checkCancelled();
           await new Promise((resolve, reject) => {
+            rejectPending = reject;
             let settled = false;
             let authReadyTimer = null;
             const clearAuthReadyTimer = () => {
@@ -505,7 +530,9 @@ function createOpenConnectionApi(ctx) {
     
           // Create forward stream to next hop
           console.log(`[SFTP Chain] Hop ${i + 1}/${jumpHosts.length}: Forwarding to ${nextHost}:${nextPort}...`);
+          checkCancelled();
           currentSocket = await new Promise((resolve, reject) => {
+            rejectPending = reject;
             let settled = false;
             const timeout = setTimeout(() => {
               if (settled) return;
@@ -514,7 +541,8 @@ function createOpenConnectionApi(ctx) {
             }, nextConnectionTimeouts.tcpConnectTimeoutMs);
             timeout.unref?.();
             openBoundedForwardOutCallback(conn, '127.0.0.1', 0, nextHost, nextPort, (err, stream) => {
-              if (settled) {
+              if (settled || signal?.aborted) {
+                clearTimeout(timeout);
                 try { stream?.end?.(); } catch { /* ignore */ }
                 return;
               }
@@ -531,6 +559,7 @@ function createOpenConnectionApi(ctx) {
           });
         }
     
+        checkCancelled();
         // Return the final forwarded stream and all connections for cleanup
         return {
           socket: currentSocket,
@@ -546,6 +575,8 @@ function createOpenConnectionApi(ctx) {
           try { conn.end(); } catch (cleanupErr) { console.warn('[SFTP Chain] Cleanup error:', cleanupErr.message); }
         }
         throw err;
+      } finally {
+        signal?.removeEventListener("abort", onAbort);
       }
     }
     
@@ -1085,11 +1116,26 @@ function createOpenConnectionApi(ctx) {
         }
       }
 
+      const signal = options.abortSignal;
+      let cancelFresh = () => {};
+      let rejectCancelled;
+      const cancelled = new Promise((_resolve, reject) => { rejectCancelled = reject; });
+      const throwIfCancelled = () => {
+        if (signal?.aborted) throw new DOMException("SFTP open cancelled", "AbortError");
+      };
+      const onAbort = () => {
+        cancelFresh();
+        rejectCancelled(new DOMException("SFTP open cancelled", "AbortError"));
+      };
+      signal?.addEventListener("abort", onAbort, { once: true });
       try {
-        return await openFreshSftp();
+        throwIfCancelled();
+        return await Promise.race([openFreshSftp(), cancelled]);
       } catch (err) {
         if (pendingDialCoordination) failTransportDial(pendingDialCoordination, err);
         throw err;
+      } finally {
+        signal?.removeEventListener("abort", onAbort);
       }
 
       async function openFreshSftp() {
@@ -1111,9 +1157,6 @@ function createOpenConnectionApi(ctx) {
         try { client.client?.destroy?.(); } catch { /* ignore */ }
       };
     
-      // Get default keys early to use for both chain and target
-      const defaultKeys = await findAllDefaultPrivateKeysFromHelper();
-    
       // Check if we need to connect through jump hosts
       const jumpHosts = options.jumpHosts || [];
       const hasJumpHosts = jumpHosts.length > 0;
@@ -1131,10 +1174,27 @@ function createOpenConnectionApi(ctx) {
           try { connectionSocket.destroy?.(); } catch { /* ignore */ }
         }
       };
+      cancelFresh = () => {
+        cleanupPendingConnection();
+        closeFreshClient();
+        require("../keyboardInteractiveHandler.cjs").cancelRequestsForSession(connId);
+        require("../passphraseHandler.cjs").cancelPassphraseRequestsForSession(connId);
+        require("../hostKeyVerifier.cjs").cancelRequestsForSession(connId);
+      };
+      // Abort can race an awaited proxy, jump chain or authentication prompt.
+      // A late socket must be disposed before it can start another login.
+      const checkCancelled = () => {
+        if (!signal?.aborted) return;
+        cancelFresh();
+        throwIfCancelled();
+      };
+      const defaultKeys = await findAllDefaultPrivateKeysFromHelper();
+      checkCancelled();
     
       // Pre-fetch agent socket (async check for Windows SSH Agent service)
       // This is used by both jump host chain auth and final host auth
       const agentSocket = await getAvailableAgentSocket(options.identityAgent);
+      checkCancelled();
     
       // Handle chain/proxy connections
       if (hasJumpHosts) {
@@ -1159,10 +1219,16 @@ function createOpenConnectionApi(ctx) {
           options.proxy,
           options.hostname,
           options.port || 22,
-          { timeoutMs: targetConnectionTimeouts.tcpConnectTimeoutMs },
+          {
+            timeoutMs: targetConnectionTimeouts.tcpConnectTimeoutMs,
+            onSocket: (socket) => {
+              connectionSocket = socket;
+              if (signal?.aborted) cleanupPendingConnection();
+            },
+          },
         );
       }
-    
+      checkCancelled();
       const keepalivePolicy = resolveConnectionKeepalivePolicy(options);
       const connectOpts = {
         host: options.hostname,
@@ -1233,6 +1299,7 @@ function createOpenConnectionApi(ctx) {
             identityFilePaths: options.identityFilePaths,
             hostname: options.hostname,
             initialPassphrase: options.passphrase,
+              sessionId: connId, passphraseSignal: options.abortSignal,
             logPrefix: "[SFTP]",
             onLoaded: (loaded) => {
               console.log(`[SFTP] Loaded identity file ${loaded.keyPath}`);
@@ -1252,6 +1319,7 @@ function createOpenConnectionApi(ctx) {
             keyName: options.keyId || options.username,
             hostname: options.hostname,
             initialPassphrase: options.passphrase,
+              sessionId: connId, passphraseSignal: options.abortSignal,
             logPrefix: "[SFTP]",
           })
           : null;
@@ -1289,7 +1357,8 @@ function createOpenConnectionApi(ctx) {
             event.sender,
             `SSH key for ${options.hostname}`,
             options.hostname,
-            options.hostname
+            options.hostname,
+            false, { sessionId: connId, signal: options.abortSignal }
           );
           if (result?.passphrase) {
             connectOpts.passphrase = result.passphrase;
@@ -1459,6 +1528,11 @@ function createOpenConnectionApi(ctx) {
             cleanup();
             // See jump-hop note above: SFTP is RPC-bound, so disable Nagle.
             enableSshNoDelay(sshClient);
+            if (signal?.aborted) {
+              cancelFresh();
+              reject(new DOMException("SFTP open cancelled", "AbortError"));
+              return;
+            }
             if (remoteSoftwareRequiresSingleChannel(sshClient._remoteVer)) {
               peerSingleChannelSsh = true;
             }
@@ -1543,11 +1617,13 @@ function createOpenConnectionApi(ctx) {
     
           sendSftpProgress(event.sender, connId, options.hostname, 'connecting');
           try {
+            checkCancelled();
             sshClient.connect(connectOpts);
           } catch (e) {
             settle(reject, e);
           }
         });
+        checkCancelled();
         // Increase max listeners AFTER connect, when the internal ssh2 Client exists
         // This prevents Node.js MaxListenersExceededWarning when performing many operations
         // ssh2-sftp-client adds temporary listeners for each operation, so we need a high limit
