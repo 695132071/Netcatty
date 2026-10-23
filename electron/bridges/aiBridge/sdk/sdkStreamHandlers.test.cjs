@@ -1867,11 +1867,11 @@ test("list-models persists a successful live catalog and serves it as last-known
     assert.match(entries[0].fetchedAt, /^\d{4}-\d{2}-\d{2}T/);
 
     // 2. Forced live failure after that success → the persisted catalog is
-    // served with its warning (a non-force load now hydrates from LKG
-    // directly, see the LKG-first tests below).
-    ctx.sdkModelCache.clear();
+    // served with its warning even while the in-memory cache is warm.
+    assert.equal(ctx.sdkModelCache.size > 0, true);
     driver.listModels.mock.mockImplementation(async () => []);
     const failed = await listModels({ sender: {} }, { sdkBackend: "claude", agentCommand: "/test/lkg-success", force: true });
+    assert.equal(driver.listModels.mock.callCount(), 2, "force must attempt live despite the warm cache");
     assert.equal(failed.ok, true);
     assert.deepEqual(failed.models, liveCatalog);
     assert.equal(failed.currentModelId, null);
@@ -1920,7 +1920,7 @@ test("list-models serves the persisted catalog without a live fetch on a non-for
   }
 });
 
-test("list-models force refresh bypasses last-known-good, goes live, and overwrites the store", async (t) => {
+test("list-models force refresh bypasses warm memory and last-known-good and updates both caches", async (t) => {
   const { getDriver } = require("./index.cjs");
   const { handlers, ctx, catalogFile, cleanup } = makeLastKnownCtx();
   try {
@@ -1928,13 +1928,14 @@ test("list-models force refresh bypasses last-known-good, goes live, and overwri
     t.mock.method(driver, "listModels", async () => [{ id: "claude-opus-5-5", name: "Opus 5.5" }]);
     const listModels = handlers.get("netcatty:ai:sdk-agent:list-models");
 
-    // Seed a prior success, then make the driver advertise a new model.
+    // Keep the prior success warm: force must bypass both cache layers.
     await listModels({ sender: {} }, { sdkBackend: "claude", agentCommand: "/test/lkg-force" });
-    ctx.sdkModelCache.clear();
+    assert.equal(ctx.sdkModelCache.size > 0, true);
     const nextCatalog = [{ id: "claude-opus-5-5", name: "Opus 5.5" }, { id: "claude-opus-6-1", name: "Opus 6.1" }];
     driver.listModels.mock.mockImplementation(async () => nextCatalog);
 
     const forced = await listModels({ sender: {} }, { sdkBackend: "claude", agentCommand: "/test/lkg-force", force: true });
+    assert.equal(driver.listModels.mock.callCount(), 2);
     assert.deepEqual(forced, {
       ok: true,
       currentModelId: null,
@@ -1949,8 +1950,50 @@ test("list-models force refresh bypasses last-known-good, goes live, and overwri
     const entries = Object.values(readLastKnownCatalogStore(catalogFile));
     assert.equal(entries.length, 1);
     assert.deepEqual(entries[0].models, nextCatalog);
+    const cached = await listModels({ sender: {} }, { sdkBackend: "claude", agentCommand: "/test/lkg-force" });
+    assert.deepEqual(cached, forced);
+    assert.equal(driver.listModels.mock.callCount(), 2, "ordinary loads still reuse the refreshed memory cache");
   } finally {
     cleanup();
+  }
+});
+
+test("list-models coalesces force refreshes with an existing live fetch", async (t) => {
+  for (const warmCache of [false, true]) {
+    await t.test(warmCache ? "warm memory cache" : "cold cache", async (t) => {
+      const { getDriver } = require("./index.cjs");
+      const { handlers, cleanup } = makeLastKnownCtx();
+      try {
+        const driver = getDriver("claude");
+        t.mock.method(driver, "listModels", async () => [{ id: "old-model" }]);
+        const listModels = handlers.get("netcatty:ai:sdk-agent:list-models");
+        const request = { sdkBackend: "claude", agentCommand: `/test/force-coalesce-${warmCache}` };
+        if (warmCache) await listModels({ sender: {} }, request);
+
+        let complete;
+        let started;
+        const entered = new Promise((resolve) => { started = resolve; });
+        driver.listModels.mock.mockImplementation(() => {
+          started();
+          return new Promise((resolve) => { complete = resolve; });
+        });
+        const first = listModels({ sender: {} }, { ...request, force: warmCache });
+        await entered;
+        const second = listModels({ sender: {} }, { ...request, force: true });
+        await Promise.resolve();
+        assert.equal(driver.listModels.mock.callCount(), warmCache ? 2 : 1);
+
+        const nextCatalog = [{ id: "new-model" }];
+        complete(nextCatalog);
+        const [firstResult, secondResult] = await Promise.all([first, second]);
+        assert.deepEqual(firstResult.models, nextCatalog);
+        assert.deepEqual(secondResult, firstResult);
+        assert.equal(firstResult.source, "live");
+        assert.equal(driver.listModels.mock.callCount(), warmCache ? 2 : 1);
+      } finally {
+        cleanup();
+      }
+    });
   }
 });
 

@@ -1169,7 +1169,7 @@ function registerSdkStreamHandlers(ctx) {
           `${codexRuntime}:${cursorAuthMode}`,
         );
         const shouldCacheModels = shouldCacheSdkRuntimeModels(backendKey);
-        const cached = shouldCacheModels ? getSdkModelCacheEntry(sdkModelCache, cacheKey) : null;
+        const cached = !force && shouldCacheModels ? getSdkModelCacheEntry(sdkModelCache, cacheKey) : null;
         if (cached) {
           // A cache hit replays the live fetch that populated the entry, so it
           // keeps the live provenance (and the original fetchedAt).
@@ -1181,6 +1181,8 @@ function registerSdkStreamHandlers(ctx) {
           };
         }
 
+        // In-flight entries are live fetches, so forced refreshes can share
+        // them without replaying either memory or persisted cache results.
         const existing = sdkModelInFlight.get(cacheKey);
         if (existing) return await existing;
 
