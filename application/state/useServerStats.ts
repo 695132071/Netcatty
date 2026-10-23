@@ -54,6 +54,8 @@ export interface ServerStats {
   swapTotal: number | null;     // Total swap in MB
   swapUsed: number | null;      // Used swap in MB
   topProcesses: ProcessInfo[];  // Top 10 processes by memory
+  diskReadSpeed?: number | null; // Aggregate Linux hardware-backed block I/O, bytes/sec
+  diskWriteSpeed?: number | null;
   diskPercent: number | null;   // Disk usage percentage for root partition
   diskUsed: number | null;      // Disk used in GB
   diskTotal: number | null;     // Total disk in GB
@@ -240,6 +242,8 @@ function normalizeServerStats(stats: Partial<ServerStats>): ServerStats {
     diskPercent: stats.diskPercent ?? null,
     diskUsed: stats.diskUsed ?? null,
     diskTotal: stats.diskTotal ?? null,
+    diskReadSpeed: stats.diskReadSpeed ?? null,
+    diskWriteSpeed: stats.diskWriteSpeed ?? null,
     disks: stats.disks || [],
     netRxSpeed: stats.netRxSpeed || 0,
     netTxSpeed: stats.netTxSpeed || 0,

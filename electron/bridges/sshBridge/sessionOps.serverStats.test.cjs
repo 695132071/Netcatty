@@ -1530,3 +1530,33 @@ test("monitor CPU samples return while an optional GPU driver is still blocked",
     await pending;
   }
 });
+
+test("shared server stats parse Linux disk I/O across samples and leave macOS unavailable", async (t) => {
+  let now = 100000;
+  t.mock.method(Date, "now", () => now);
+  let payload = `${LINUX_STATS}|DISKIO:10.5;sda:100:200,`;
+  const conn = { exec(command, cb) { cb(null, fakeStream(selectServerStatsFixtureOutput(command, payload))); } };
+  const session = { conn, type: "ssh", _monitorStats: true, _monitorIntervalMs: 1000 };
+  const api = makeSessionOps(new Map([["diskio", session]]));
+  const get = () => api.getServerStats({ sender: {} }, { sessionId: "diskio" });
+  let result = await get();
+  assert.equal(result.success, true);
+  assert.equal(result.stats.diskReadSpeed, null);
+  assert.equal(result.stats.diskWriteSpeed, null);
+  now += 1000;
+  payload = `${LINUX_STATS}|DISKIO:11.5;sda:120:240,`;
+  result = await get();
+  assert.equal(result.stats.diskReadSpeed, 10240);
+  assert.equal(result.stats.diskWriteSpeed, 20480);
+  now += 1000;
+  payload = `${LINUX_STATS}|DISKIO:12.5;sda:120:240,`;
+  result = await get();
+  assert.equal(result.stats.diskReadSpeed, 0);
+  assert.equal(result.stats.diskWriteSpeed, 0);
+  now += 1000;
+  payload = MACOS_STATS;
+  result = await get();
+  assert.equal(result.success, true);
+  assert.equal(result.stats.diskReadSpeed, null);
+  assert.equal(result.stats.diskWriteSpeed, null);
+});

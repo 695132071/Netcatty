@@ -93,3 +93,35 @@ test('a snapshot read before sampling still joins the existing endpoint history'
   assert.equal(readSharedStats(monitor).points, readSharedStats(terminal).points);
   assert.equal(readSharedStats(monitor).result.stats.cpu, 42);
 });
+
+test('one-second requests never overlap and keep disk baselines on the physical transport', async () => {
+  resetSharedStatsForTests();
+  const conn = {};
+  let release;
+  let calls = 0;
+  const contexts = [];
+  const collect = context => {
+    calls++;
+    contexts.push(context);
+    const previous = context.prevDiskIo;
+    context.prevDiskIo = { timestamp: calls };
+    return new Promise(resolve => { release = () => resolve({ success: true, stats: { diskReadSpeed: previous ? 512 : null, diskWriteSpeed: previous ? 1024 : null } }); });
+  };
+  const session = { conn, _monitorStats: true, _monitorIntervalMs: 1000 };
+  const first = sampleSharedStats(session, collect, 1000);
+  const overlapping = sampleSharedStats(session, collect, 2000);
+  assert.equal(calls, 1);
+  release();
+  const [a, b] = await Promise.all([first, overlapping]);
+  assert.equal(a, b);
+  assert.equal(a.stats.diskReadSpeed, null);
+  const next = sampleSharedStats(session, collect, Date.now() + 1001);
+  assert.equal(calls, 2);
+  release();
+  assert.equal((await next).stats.diskReadSpeed, 512);
+  const reconnect = sampleSharedStats({ ...session, conn: {} }, collect, Date.now() + 2002);
+  assert.equal(calls, 3);
+  assert.notEqual(contexts[0], contexts[2]);
+  release();
+  assert.equal((await reconnect).stats.diskReadSpeed, null);
+});

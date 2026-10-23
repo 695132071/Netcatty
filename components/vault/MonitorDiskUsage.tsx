@@ -1,4 +1,5 @@
 import React from "react";
+import { DiskIoSummary } from "../systemManager/DiskIoSummary";
 import type { MonitorStats } from "../../domain/monitorRuntime";
 import { ResourceBar } from "../systemManager/ResourceBar";
 import { useI18n } from "../../application/i18n/I18nProvider";
@@ -15,7 +16,7 @@ export function MonitorDiskUsage({
   stats,
   limit,
 }: {
-  stats?: (Pick<MonitorStats, "disks" | "diskPercent"> & Partial<Pick<MonitorStats, "diskUsed" | "diskTotal">>) | null;
+  stats?: (Pick<MonitorStats, "disks" | "diskPercent"> & Partial<Pick<MonitorStats, "diskUsed" | "diskTotal" | "diskReadSpeed" | "diskWriteSpeed">>) | null;
   limit?: number;
 }) {
   const { t } = useI18n();
@@ -30,6 +31,7 @@ export function MonitorDiskUsage({
   return (
     <TooltipProvider delayDuration={150}>
       <div className={limit === 2 ? "min-h-[38px] space-y-1.5" : "space-y-1.5"}>
+        <DiskIoSummary stats={stats} />
         {disks.map((disk, index) => (
           <Tooltip key={`${disk.mountPoint}-${index}`}>
             <TooltipTrigger asChild>

@@ -59,6 +59,7 @@ async function main() {
     () => run('document.querySelectorAll("[data-monitor-host]").length > 0'),
     "monitoring renders",
   );
+  assert.match(await run('document.querySelector("[data-disk-io]").textContent'), /2.0 MiB\/s/);
   const screenshot = async (name) => {
     owner.webContents.sendInputEvent({ type: "mouseMove", x: 1, y: 1 });
     await wait(200);

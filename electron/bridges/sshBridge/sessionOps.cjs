@@ -1,4 +1,5 @@
 /* eslint-disable no-undef */
+const { DISK_IO_ASSIGNMENT, parseDiskIo, diskIoRates } = require("./monitorDiskIo.cjs");
 const { sampleSharedStats } = require("./sharedStats.cjs");
 const { GPU_ASSIGNMENT, parseGpuStats, withCachedMonitorGpu, cacheFullGpuStats, startMonitorGpuProbe } = require("./monitorGpuStats.cjs");
 const { executeBoundedSshCommand } = require("../boundedSshExec.cjs");
@@ -1327,8 +1328,9 @@ function createSessionOpsApi(ctx) {
         // polling. Hosts without timeout also omit this optional metric.
         // macOS is skipped: powermetrics needs root, which stats must not.
         GPU_ASSIGNMENT,
+        DISK_IO_ASSIGNMENT,
         // Output all stats (using CPURAW and PERCORERAW instead of CPU and PERCORE)
-        `echo "CPURAW:$cpuraw|CORES:$cores|PERCORERAW:$percoreraw|MEMINFO:$meminfo|PROCS:$procs|NET:$net|GPU:$gpustat|HOST:$hostname_value|OS:$osname|KERNEL:$kernel|UPTIME:$uptime|LOAD:$loadavg"`
+        `echo "CPURAW:$cpuraw|CORES:$cores|PERCORERAW:$percoreraw|MEMINFO:$meminfo|PROCS:$procs|NET:$net|GPU:$gpustat|DISKIO:$diskio|HOST:$hostname_value|OS:$osname|KERNEL:$kernel|UPTIME:$uptime|LOAD:$loadavg"`
       ].filter(command => !session._monitorStats || (!command.startsWith('procs=') && !command.startsWith('gpustat='))).join('; ');
 
       // Client-side run bound shared by the stats and disk probes; the remote
@@ -1457,6 +1459,7 @@ function createSessionOpsApi(ctx) {
             let swapUsed = null;
             let topProcesses = [];  // Array of { pid, memPercent, command }
             let disks = [];  // Array of { mountPoint, used, total, percent }
+            let diskIo = null;
             let networkInterfaces = [];  // Array of { name, rxBytes, txBytes }
             let hostname = "";
             let osName = "";
@@ -1473,6 +1476,8 @@ function createSessionOpsApi(ctx) {
                 // macOS: command reports normalized CPU% directly (no delta needed)
                 const val = parseFloat(part.substring(4).trim());
                 if (!isNaN(val)) cpuDirect = Math.min(100, Math.max(0, Math.round(val)));
+              } else if (part.startsWith('DISKIO:')) {
+                diskIo = parseDiskIo(part.substring(7));
               } else if (part.startsWith('CPURAW:')) {
                 const rawParts = part.substring(7).trim().split(/\s+/);
                 if (rawParts.length >= 2) {
@@ -1619,6 +1624,9 @@ function createSessionOpsApi(ctx) {
               }
             }
     
+            const diskRates = diskIoRates(diskIo, session.prevDiskIo);
+            session.prevDiskIo = diskIo;
+
             // Calculate network speed based on previous reading
             const now = Date.now();
             const prevNet = session.prevNetStats || { interfaces: [], timestamp: 0 };
@@ -1761,6 +1769,7 @@ function createSessionOpsApi(ctx) {
                 diskUsed,      // Disk used in GB for root partition (backward compat)
                 diskTotal,     // Total disk in GB for root partition (backward compat)
                 disks,         // Array of all mounted disks
+                ...diskRates,  // Aggregate physical-device I/O; null until two valid Linux samples
                 networkReady: prevNet.timestamp > 0 && prevNet.interfaces.length > 0,
                 netRxSpeed,    // Total network receive speed (bytes/sec)
                 netTxSpeed,    // Total network transmit speed (bytes/sec)

@@ -1,4 +1,9 @@
 export const ruMonitorMessages = {
+  "monitor.diskIo": "Дисковый ввод-вывод",
+  "monitor.diskRead": "Чтение",
+  "monitor.diskWrite": "Запись",
+  "monitor.diskIoHint": "Суммарный ввод-вывод физических блочных устройств Linux, без разделов и виртуальных слоёв. Доступен после двух корректных замеров; macOS не поддерживается.",
+
   "monitor.actions": "Действия панели",
   "monitor.unavailable": "Мониторинг недоступен. Запустите его снова после восстановления связи.",
   "monitor.username": "Пользователь",

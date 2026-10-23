@@ -321,6 +321,8 @@ declare global {
           memPercent: number;
           command: string;
         }>;
+        diskReadSpeed?: number | null;  // Linux hardware-backed block devices, bytes/sec; null while unavailable/warming up
+        diskWriteSpeed?: number | null; // Aggregate without partitions or stacked virtual devices
         diskPercent: number | null;   // Disk usage percentage for root partition
         diskUsed: number | null;      // Disk used in GB
         diskTotal: number | null;     // Total disk in GB

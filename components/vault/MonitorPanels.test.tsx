@@ -186,3 +186,19 @@ for (const view of ["list", "charts"] as const) {
     }
   });
 }
+
+test("disk I/O distinguishes warming up or unsupported from idle and reports both rates", () => {
+  for (const [rates, expected] of [
+    [{}, ["Read --", "Write --"]],
+    [{ diskReadSpeed: null, diskWriteSpeed: null }, ["Read --", "Write --"]],
+    [{ diskReadSpeed: 0, diskWriteSpeed: 0 }, ["Read 0 B/s", "Write 0 B/s"]],
+    [{ diskReadSpeed: 1024, diskWriteSpeed: 2097152 }, ["Read 1.0 KiB/s", "Write 2.0 MiB/s"]],
+  ] as const) {
+    const document = new JSDOM(renderToStaticMarkup(
+      <I18nProvider locale="en"><MonitorDiskUsage stats={{ disks: [], diskPercent: null, ...rates }} /></I18nProvider>,
+    )).window.document;
+    const io = document.querySelector("[data-disk-io]")!;
+    for (const text of expected) assert.ok(io.textContent?.includes(text));
+    assert.match(io.getAttribute("title")!, /Linux.*not supported on macOS/);
+  }
+});

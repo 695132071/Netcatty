@@ -83,6 +83,7 @@ async function sampleSharedStats(session, collect, now = Date.now()) {
     const companion = session.moshStatsConn || session.etStatsConn;
     if (companion && result.success) {
       const state = stateFor(companion);
+      state.context.prevDiskIo = session.prevDiskIo;
       state.context.prevNetStats = session.prevNetStats;
       state.context.prevCpuStats = session.prevCpuStats;
       state.history.latest = result;

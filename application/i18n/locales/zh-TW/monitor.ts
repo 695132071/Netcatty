@@ -1,4 +1,9 @@
 export const zhTWMonitorMessages = {
+  "monitor.diskIo": "磁碟 I/O",
+  "monitor.diskRead": "讀取",
+  "monitor.diskWrite": "寫入",
+  "monitor.diskIoHint": "Linux 底層區塊裝置的彙總 I/O，不重複統計分割區與疊加的虛擬裝置。取得兩次有效取樣前無法使用；暫不支援 macOS。",
+
   "monitor.actions": "面板操作",
   "monitor.unavailable": "監控暫時無法使用，連線恢復後請重新開始。",
   "monitor.username": "使用者名稱",

@@ -1,4 +1,9 @@
 export const esMonitorMessages = {
+  "monitor.diskIo": "E/S de disco",
+  "monitor.diskRead": "Lectura",
+  "monitor.diskWrite": "Escritura",
+  "monitor.diskIoHint": "E/S agregada de dispositivos de bloques físicos de Linux, sin contar particiones ni capas virtuales. No disponible hasta tener dos muestras válidas; no compatible con macOS.",
+
   "monitor.actions": "Acciones del panel",
   "monitor.unavailable": "La monitorización no está disponible. Iníciala de nuevo cuando se restablezca la conexión.",
   "monitor.username": "Usuario",

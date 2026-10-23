@@ -1,4 +1,9 @@
 export const enMonitorMessages = {
+  "monitor.diskIo": "Disk I/O",
+  "monitor.diskRead": "Read",
+  "monitor.diskWrite": "Write",
+  "monitor.diskIoHint": "Aggregate Linux hardware-backed block-device I/O, excluding partitions and stacked virtual devices. Unavailable until two valid samples; not supported on macOS.",
+
   "monitor.actions": "Panel actions",
   "monitor.unavailable": "Monitoring is unavailable. Try starting again when the connection is restored.",
   "monitor.username": "Username",

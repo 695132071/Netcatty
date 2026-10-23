@@ -12,6 +12,7 @@ import { aggregateMountedDiskUsage } from '../../domain/systemDiskUsage';
 import { cn } from '../../lib/utils';
 import { useServerStats } from '../../application/state/useServerStats';
 import { ResourceBar } from './ResourceBar';
+import { DiskIoSummary } from './DiskIoSummary';
 import {
   SystemPanelEmpty,
   SystemPanelError,
@@ -334,6 +335,8 @@ export const SystemOverviewTab = memo(function SystemOverviewTab({
               tone="text-cyan-500"
             />
           </div>
+
+          <div className="mt-3"><DiskIoSummary stats={stats} /></div>
 
           <div className="mt-3 grid grid-cols-2 gap-2">
             <InfoPill label={t('systemManager.overview.load')} value={formatLoad(stats.loadAverage)} />

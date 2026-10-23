@@ -181,7 +181,9 @@ Organize and navigate your hosts using the view that best fits the moment: grid 
 
 ## Monitoring View
 
-Inspect CPU, memory, disk, network, and latency readings, with GPU details where available. Choose visible columns, resize them, adjust refresh controls, and open a terminal directly from a monitored host.
+Inspect CPU, memory, disk, network, and latency readings, with GPU details where available. Choose visible columns, resize them, select refresh intervals down to 1 second, and open a terminal directly from a monitored host.
+
+Disk I/O shows aggregate read/write throughput for Linux hardware-backed block devices, without counting partitions or stacked virtual devices twice. Rates use two consecutive samples; `--` means unavailable or warming up, not zero activity. Disk I/O is currently unavailable on macOS; existing macOS monitoring is unchanged. The terminal system overview uses the same shared measurements.
 
 <img width="3364" height="1982" alt="image" src="docs/assets/readme/monitoring.webp" />
 

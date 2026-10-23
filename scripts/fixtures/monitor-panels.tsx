@@ -119,6 +119,8 @@ function seed(
             diskPercent: 35,
             diskUsed: 35,
             diskTotal: 100,
+            diskReadSpeed: i === 1 ? null : i === 2 ? 0 : 2 * 1024 ** 2,
+            diskWriteSpeed: i === 1 ? null : i === 2 ? 0 : 512 * 1024,
             disks: Array.from({ length: i === 2 ? 10 : 2 }, (_, j) => ({
               mountPoint: j ? `/data-${j}` : "/",
               used: 35,

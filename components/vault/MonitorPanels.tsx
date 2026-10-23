@@ -624,7 +624,7 @@ export function MonitorPanels({
                     <SelectValue>{t("monitor.seconds", { count: panel.interval })}</SelectValue>
                   </SelectTrigger>
                   <SelectContent>
-                    {MONITOR_INTERVALS.filter((v) => v >= 3).map((v) => (
+                    {MONITOR_INTERVALS.map((v) => (
                       <SelectItem key={v} value={String(v)}>
                         {t("monitor.seconds", { count: v })}
                       </SelectItem>
