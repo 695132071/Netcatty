@@ -45,6 +45,12 @@ test("buildCatalogCliParams maps vault host get flags", () => {
   assert.deepEqual(params, { hostId: "host-1" });
 });
 
+test("host open CLI carries typed fresh-tab and workspace placement options", () => {
+  assert.deepEqual(buildCatalogCliParams("vault.host.open", {
+    hostId: "host-1", newTab: "true", workspaceId: "current",
+  }, fakeCreateError), { hostId: "host-1", newTab: "true", workspaceId: "current" });
+});
+
 test("buildCatalogCliParams maps attachment filename", () => {
   const params = buildCatalogCliParams(
     "attachment.read",

@@ -332,6 +332,8 @@ function createWorkerAiExecHandler({
         },
         chatSessionId,
         expectedPrompt: getFreshIdlePrompt(session),
+        getReadyPrompt: typeof session._promptTrackTail === "string"
+          ? () => getFreshIdlePrompt(session) : undefined,
         typedInput: true,
         echoCommand: (rawCommand) => {
           event?.sender?.send?.("netcatty:data", {
@@ -555,6 +557,8 @@ function createWorkerAiJobStartHandler({
         },
         chatSessionId,
         expectedPrompt: getFreshIdlePrompt(session),
+        getReadyPrompt: typeof session._promptTrackTail === "string"
+          ? () => getFreshIdlePrompt(session) : undefined,
         typedInput: true,
         echoCommand: (rawCommand) => {
           event?.sender?.send?.("netcatty:data", {

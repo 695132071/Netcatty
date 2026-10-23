@@ -1674,17 +1674,17 @@ const dispatchCapabilityRpc = createCapabilityRpcDispatcher({
     // The renderer creates the tab before replying to host_open. If the user
     // explicitly closes it while that reply is still in flight, the eventual
     // result must not revive ownership or scope metadata for the closed tab.
-    if ((closedTerminalSessionRevisions.get(sessionId) || 0) > generation?.closeRevision) return;
+    if ((closedTerminalSessionRevisions.get(sessionId) || 0) > generation?.closeRevision) return false;
     // Reuse adds visibility only: never grant ownership or change the original
     // owner's idle lifecycle merely because another chat referenced the tab.
     if (result?.reused === true) {
       if (generation?.ownershipGeneration?.revoked) {
         // A late renderer merge must not recreate a deleted chat's scope.
         scopedMetadata.delete(chatSessionId);
-        return;
+        return false;
       }
       ensureOpenedSessionMetadata(chatSessionId, sessionId, result);
-      return;
+      return true;
     }
     if (!openedSessionOwnership.register(
       chatSessionId,
@@ -1704,7 +1704,7 @@ const dispatchCapabilityRpc = createCapabilityRpcDispatcher({
       // again. Remove only scope/live metadata here so a deleted chat cannot be
       // recreated by the renderer's late merge.
       forgetUnownedTerminalSessionMetadata(sessionId);
-      return;
+      return false;
     }
     closedTerminalSessionRevisions.delete(sessionId);
     // A full empty scope replace can land after the renderer's best-effort
@@ -1712,6 +1712,7 @@ const dispatchCapabilityRpc = createCapabilityRpcDispatcher({
     // succeeds, restore the returned session atomically with its ownership.
     ensureOpenedSessionMetadata(chatSessionId, sessionId, result);
     sessionIdleManager.track(chatSessionId, sessionId);
+    return true;
   },
 });
 

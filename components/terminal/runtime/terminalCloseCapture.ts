@@ -28,6 +28,18 @@ export function isTerminalCloseGenerationCurrent(
   return closeGeneration === currentGeneration;
 }
 
+export function scheduleTerminalCloseForGeneration(
+  closeGeneration: number,
+  getCurrentGeneration: () => number,
+  teardown: () => void,
+): void {
+  scheduleTerminalCloseTeardown(() => {
+    if (isTerminalCloseGenerationCurrent(closeGeneration, getCurrentGeneration())) {
+      teardown();
+    }
+  });
+}
+
 export function resolveConnectionLogCapturePayload(
   finalizeTerminalLogData: () => string,
 ): TerminalCloseCapturePayload | null {

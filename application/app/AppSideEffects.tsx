@@ -56,6 +56,7 @@ import {
 } from '../../domain/terminalAppearance';
 import { selectConnectionLogForTerminalDataCapture } from '../../domain/connectionLog';
 import { collectSessionIds } from '../../domain/workspace';
+import { resolveAgentHostWorkspace } from '../../domain/agentHostWorkspace';
 import { useHostOpenSessionReuse } from '../state/useHostOpenSessionReuse';
 import type { PaneMagnificationController } from '../../domain/paneMagnification';
 import { resolveCloseIntent } from '../state/resolveCloseIntent';
@@ -255,6 +256,7 @@ export function AppSideEffects() {
     createLocalTerminal,
     createSerialSession,
     connectToHost,
+    appendHostToWorkspace,
     closeSession,
     closeSessions,
     closeWorkspace,
@@ -1497,12 +1499,16 @@ export function AppSideEffects() {
     return sessionId;
   }, [handleConnectToHost, renameSessionInline]);
 
-  const openHostForVaultAgent = useCallback((host: Host, isExternalMcpCall: boolean) => {
+  const openHostForVaultAgent = useCallback((host: Host, isExternalMcpCall: boolean, options?: { workspaceId?: string }) => {
+    const target = resolveAgentHostWorkspace(options?.workspaceId, activeTabStore.getActiveTabId(), workspaces.map(workspace => workspace.id));
+    if (target.error) return { ok: false as const, error: target.error };
     // Silent sessions only apply to actual external MCP clients (chatSessionId
     // equals the reserved external-MCP scope). The in-app Catty AI chat's
     // host_open always opens a visible tab, as documented.
     const hidden = isExternalMcpCall && readExternalMcpSilentSessions();
-    const sessionId = handleConnectToHost(host, true, hidden);
+    const sessionId = target.workspaceId
+      ? appendHostToWorkspace(target.workspaceId, host)
+      : handleConnectToHost(host, true, hidden);
     if (!sessionId) {
       return { ok: false as const, error: `Failed to open host "${host.id}".` };
     }
@@ -1511,8 +1517,8 @@ export function AppSideEffects() {
     if (readExternalMcpFocusOnHostOpen()) {
       void netcattyBridge.get()?.openMainWindow?.();
     }
-    return { ok: true as const, sessionId, host };
-  }, [handleConnectToHost]);
+    return { ok: true as const, sessionId, host, workspaceId: target.workspaceId };
+  }, [appendHostToWorkspace, handleConnectToHost, workspaces]);
 
   const findExistingSessionForHostForVaultAgent = useHostOpenSessionReuse({
     sessions, hosts, keys, identities, resolveEffectiveHost,

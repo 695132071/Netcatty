@@ -659,7 +659,9 @@ test("explicit close before host_open returns cannot revive the closed session",
     protocol: "ssh",
   });
 
-  assert.equal((await opening).ok, true);
+  const rejected = await opening;
+  assert.equal(rejected.ok, false);
+  assert.equal(rejected.code, "SESSION_SCOPE_BIND_FAILED");
   bridge.updateSessionMetadata([{ sessionId: "sess-original", connected: true }], "chat-close-race");
   assert.deepEqual(bridge.getScopedSessionIds("chat-close-race"), ["sess-original"]);
   assert.equal(bridge.getSessionMeta("sess-opened", "chat-close-race"), null);
@@ -773,7 +775,9 @@ test("chat cleanup during host_open closes the late-created unowned session", as
     protocol: "ssh",
   });
 
-  assert.equal((await opening).ok, true);
+  const rejected = await opening;
+  assert.equal(rejected.ok, false);
+  assert.equal(rejected.code, "SESSION_SCOPE_BIND_FAILED");
   assert.deepEqual(calls.map(({ op }) => op), ["host.open", "session.close"]);
   assert.deepEqual(bridge.getScopedSessionIds("chat-deleted"), []);
   assert.equal(bridge.getSessionMeta("sess-opened", "chat-deleted"), null);
@@ -809,7 +813,9 @@ test("failed compensating close keeps the late-created session tracked for retry
   }], "chat-deleted");
   finishOpen({ ok: true, sessionId: "sess-opened", hostId: "host-b", status: "connecting" });
 
-  assert.equal((await opening).ok, true);
+  const rejected = await opening;
+  assert.equal(rejected.ok, false);
+  assert.equal(rejected.code, "SESSION_SCOPE_BIND_FAILED");
   assert.deepEqual(bridge.getScopedSessionIds("chat-deleted"), []);
   assert.equal(bridge.getSessionMeta("sess-opened", "chat-deleted"), null);
   assert.equal(

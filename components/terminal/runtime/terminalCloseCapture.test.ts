@@ -7,7 +7,25 @@ import {
   resolveConnectionLogCapturePayload,
   resolveHibernateSnapshotCapturePayload,
   scheduleTerminalCloseTeardown,
+  scheduleTerminalCloseForGeneration,
 } from "./terminalCloseCapture.ts";
+
+test("pending boot cleanup does not close a remounted terminal generation", async () => {
+  let generation = 1;
+  let closes = 0;
+  scheduleTerminalCloseForGeneration(1, () => generation, () => { closes += 1; });
+  generation = 2;
+  await new Promise<void>((resolve) => setTimeout(resolve, 0));
+  assert.equal(closes, 0);
+});
+
+test("pending boot cleanup still closes a terminal that stays unmounted", async () => {
+  let closes = 0;
+  scheduleTerminalCloseForGeneration(1, () => 1, () => { closes += 1; });
+  assert.equal(closes, 0);
+  await new Promise<void>((resolve) => setTimeout(resolve, 0));
+  assert.equal(closes, 1);
+});
 
 test("resolveConnectionLogCapturePayload returns null when finalize produces empty data", () => {
   assert.equal(

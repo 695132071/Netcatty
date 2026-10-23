@@ -96,6 +96,8 @@ function parseArgs(argv) {
     mode: null,
     encoding: null,
     hostId: null,
+    workspaceId: null,
+    newTab: null,
     filename: null,
     snippetId: null,
     scriptId: null,
@@ -204,6 +206,18 @@ function parseArgs(argv) {
     if (arg === "--host-id") {
       opts.hostId = readFlagValue(args, i + 1);
       i += 1;
+      continue;
+    }
+    if (arg === "--workspace-id") {
+      opts.workspaceId = readFlagValue(args, i + 1);
+      if (!opts.workspaceId || opts.workspaceId.startsWith("--")) {
+        throw createError("INVALID_ARGUMENT", "--workspace-id requires an id or current.");
+      }
+      i += 1;
+      continue;
+    }
+    if (arg === "--new-tab") {
+      opts.newTab = "true";
       continue;
     }
     if (arg === "--filename") {

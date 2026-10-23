@@ -14,6 +14,14 @@ function fakeCreateError(code, message) {
   return err;
 }
 
+test("host open parses workspace placement and preserves the upstream string boolean", () => {
+  const { opts } = parseArgs(["node", "netcatty-tool-cli", "vault", "host", "open", "--host-id", "host-1", "--new-tab", "--workspace-id", "current"]);
+  assert.deepEqual(buildCatalogCliParams("vault.host.open", opts, fakeCreateError), {
+    hostId: "host-1", newTab: "true", workspaceId: "current",
+  });
+  assert.throws(() => parseArgs(["node", "netcatty-tool-cli", "vault", "host", "open", "--workspace-id"]), /requires/);
+});
+
 test("parseArgs consumes attachment filename flag", () => {
   const { positionals, opts } = parseArgs([
     "node",

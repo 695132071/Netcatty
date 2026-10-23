@@ -63,6 +63,7 @@ import {
   isTerminalCloseGenerationCurrent,
   resolveConnectionLogCapturePayload,
   scheduleTerminalCloseTeardown,
+  scheduleTerminalCloseForGeneration,
   serializeTerminalCloseFallback,
 } from './runtime/terminalCloseCapture';
 import {
@@ -930,23 +931,28 @@ export function useTerminalEffects(ctx: TerminalEffectsContext) {
 
       // A boot that never reached "connected" has nothing worth capturing, and
       // the teardown below awaits terminal drain plus serialization before it
-      // closes anything. Tell the main process now so it can abort the pending
-      // boot (passphrase prompt, TCP dial) for this epoch instead of letting it
+      // closes anything. Cancel the pending backend boot after giving an immediate
+      // remount a chance to replace this generation, instead of letting it
       // finish against a pane that is already gone. Attached popups never own
       // the backend session (skip closeSession) but still sync-dispose xterm.
       if (!hasConnectedRef.current) {
         if (!attachExistingSession) {
-          try {
-            const closeResult = terminalBackend.closeSession(
-              sessionRef.current ?? sessionId,
-              { bootEpoch: bootEpochRef ? bootEpochRef.current : undefined },
-            );
-            void Promise.resolve(closeResult).catch((err: unknown) => {
+          const closingBootEpoch = bootEpochRef ? bootEpochRef.current : undefined;
+          // StrictMode can remount this pane before a backend boot starts.
+          // Abort/dispose immediately, but do not report that remount as a tab close.
+          scheduleTerminalCloseForGeneration(closeGeneration, () => terminalBootCloseGenerationRef.current, () => {
+            try {
+              const closeResult = terminalBackend.closeSession(
+                sessionRef.current ?? sessionId,
+                { bootEpoch: closingBootEpoch },
+              );
+              void Promise.resolve(closeResult).catch((err: unknown) => {
+                logger.warn("Failed to cancel pending terminal boot on unmount", err);
+              });
+            } catch (err) {
               logger.warn("Failed to cancel pending terminal boot on unmount", err);
-            });
-          } catch (err) {
-            logger.warn("Failed to cancel pending terminal boot on unmount", err);
-          }
+            }
+          });
         }
         disposeOwnedRuntime();
         return;

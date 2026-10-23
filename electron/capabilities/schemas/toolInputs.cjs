@@ -83,6 +83,7 @@ const TOOL_INPUT_FIELDS = Object.freeze({
   "vault.host.list": {},
   "vault.host.open": {
     hostId: { type: "string", description: "Vault host ID to open. Use vault_hosts_list / host_get to resolve id from label or hostname." },
+    workspaceId: { type: "string", optional: true, description: "Target workspace ID or current (active workspace). Applies to newly opened sessions; reused sessions retain their placement. Omit for a standalone tab." },
     newTab: { type: "string", optional: true, description: "true or false. Force a brand-new tab even when a session for this host already exists. Default false — reuse the existing session." },
   },
   "vault.hosts.create": {

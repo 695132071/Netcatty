@@ -65,10 +65,12 @@ function startPtyJob(ptyStream, command, options) {
     onInterrupt,
     chatSessionId,
     abortSignal,
-    expectedPrompt,
+    expectedPrompt: initialExpectedPrompt,
     jobId = null,
     sessionId = null,
     diagnosticsSession = null,
+    getReadyPrompt,
+    promptWaitTimeoutMs = 30000,
     typedInput = false,
     echoCommand,
     onEchoSuppressionPrime,
@@ -77,11 +79,15 @@ function startPtyJob(ptyStream, command, options) {
     enforceWallTimeout = false,
   } = options || {};
 
+  let expectedPrompt = initialExpectedPrompt;
+  let waitingForPrompt = typeof getReadyPrompt === "function";
+  let readinessFailureCode = null;
+
   const marker = `__NCMCP_${Date.now().toString(36)}_${crypto.randomBytes(16).toString('hex')}__`;
   let resolvedShellKind = resolveEffectiveShellKind(shellKind, expectedPrompt, {
     loginShellHint,
   });
-  const waitForReturnedPrompt = loginShellHint === "cmd"
+  let waitForReturnedPrompt = loginShellHint === "cmd"
     && resolvedShellKind === "powershell"
     && Boolean(expectedPrompt);
   if (promptRecoveryPendingPtys.has(ptyStream)) {
@@ -101,7 +107,7 @@ function startPtyJob(ptyStream, command, options) {
   const CANCEL_RETRY_MS = 5000;
   const CANCEL_WALL_TIMEOUT_MS = 30000;
 
-  const usesLiveShellProbe = probeLiveShell && ["posix", "fish"].includes(resolvedShellKind);
+  let usesLiveShellProbe = probeLiveShell && ["posix", "fish"].includes(resolvedShellKind);
   let probingShell = usesLiveShellProbe;
   let deliveringInput = false;
   let probeOutput = "";
@@ -172,6 +178,7 @@ function startPtyJob(ptyStream, command, options) {
   }
 
   function armOutputTimeout() {
+    if (waitingForPrompt) return;
     clearTimeout(timeoutId);
     timeoutId = setTimeout(() => {
       sendInterrupt("inactivity-timeout");
@@ -193,6 +200,11 @@ function startPtyJob(ptyStream, command, options) {
     if (!enforceWallTimeout || maxBufferedChars > 0) return;
     wallTimeoutId = setTimeout(() => {
       if (finished) return;
+      if (waitingForPrompt) {
+        readinessFailureCode = "SHELL_NOT_READY";
+        finish("", -1, "Shell prompt is not ready; no command was sent");
+        return;
+      }
       if (pendingEnd) {
         finishWithoutReturnedPrompt();
         return;
@@ -300,6 +312,11 @@ function startPtyJob(ptyStream, command, options) {
 
   function requestCancel() {
     if (finished || cancelRequested) return;
+    if (waitingForPrompt) {
+      cancelRequested = true;
+      finish("", 130, "Cancelled");
+      return;
+    }
     if (pendingEnd) {
       // The command already completed. Do not send Ctrl+C into the restoring
       // prompt or release the lock before the next shell can be identified.
@@ -565,6 +582,7 @@ function startPtyJob(ptyStream, command, options) {
         stderr: "",
         exitCode: finalExitCode ?? -1,
         error: finalError,
+        ...(readinessFailureCode ? { code: readinessFailureCode } : {}),
         outputBaseOffset,
         totalOutputChars,
         outputTruncated: outputBaseOffset > 0,
@@ -809,7 +827,8 @@ function startPtyJob(ptyStream, command, options) {
     cleanupFns.push(() => abortSignal.removeEventListener("abort", onAbort));
   }
 
-  if (typedInput && typeof echoCommand === "function") {
+  function echoPendingCommand() {
+    if (!(typedInput && typeof echoCommand === "function")) return;
     try {
       echoCommand(command);
     } catch {
@@ -910,18 +929,57 @@ function startPtyJob(ptyStream, command, options) {
   // _I printf runs. Delivering the _I line over the data channel up front
   // suppresses the whole echo; the _S output releases it, and finish() sends
   // the _R reset (onProbeAborted) when the command never starts.
-  if (typeof onEchoSuppressionPrime === "function") {
-    try {
-      onEchoSuppressionPrime(marker);
-    } catch {
-      // Display suppression must never prevent the command from starting.
+  function beginInputDelivery() {
+    if (finished || cancelRequested) return;
+    echoPendingCommand();
+    if (typeof onEchoSuppressionPrime === "function") {
+      try {
+        onEchoSuppressionPrime(marker);
+      } catch {
+        // Display suppression must never prevent the command from starting.
+      }
+    }
+    if (probingShell) {
+      jobDiag.emit("probe-write", { bytes: Buffer.byteLength(buildLiveShellProbe(marker), "utf8") });
+      writeInput(`${(skipPendingInputClear ? "" : buildPendingInputClearPrefix(resolvedShellKind))}${buildLiveShellProbe(marker)}`);
+    } else {
+      writeWrappedCommand();
     }
   }
-  if (probingShell) {
-    jobDiag.emit("probe-write", { bytes: Buffer.byteLength(buildLiveShellProbe(marker), "utf8") });
-    writeInput(`${(skipPendingInputClear ? "" : buildPendingInputClearPrefix(resolvedShellKind))}${buildLiveShellProbe(marker)}`);
+  if (waitingForPrompt) {
+    const waitBudget = Math.max(1, Math.min(Number(promptWaitTimeoutMs) || 30000, 30000));
+    const deadline = Date.now() + waitBudget;
+    let readinessTimer;
+    cleanupFns.push(() => clearTimeout(readinessTimer));
+    const checkReady = () => {
+      if (finished || cancelRequested) return;
+      let prompt;
+      try { prompt = getReadyPrompt(); } catch {
+        readinessFailureCode = "SHELL_NOT_READY";
+        finish("", -1, "Could not inspect shell prompt; no command was sent");
+        return;
+      }
+      if (prompt) {
+        waitingForPrompt = false;
+        expectedPrompt = prompt;
+        resolvedShellKind = resolveEffectiveShellKind(shellKind, expectedPrompt, { loginShellHint });
+        usesLiveShellProbe = probeLiveShell && ["posix", "fish"].includes(resolvedShellKind);
+        probingShell = usesLiveShellProbe;
+        waitForReturnedPrompt = loginShellHint === "cmd" && resolvedShellKind === "powershell";
+        beginInputDelivery();
+        return;
+      }
+      if (Date.now() >= deadline) {
+        readinessFailureCode = "SHELL_NOT_READY";
+        finish("", -1, "Shell prompt is not ready (startup, busy program, pending input, or unrecognized prompt); no command was sent");
+        return;
+      }
+      readinessTimer = setTimeout(checkReady, Math.min(50, deadline - Date.now()));
+    };
+    checkReady();
+
   } else {
-    writeWrappedCommand();
+    beginInputDelivery();
   }
 
   return {
@@ -956,6 +1014,8 @@ function startPtyJob(ptyStream, command, options) {
  * @param {string} [options.chatSessionId] - Chat session ID for scoped cancellation
  * @param {AbortSignal} [options.abortSignal] - AbortSignal to cancel execution
  * @param {string} [options.expectedPrompt] - Last observed idle prompt for exact fallback matching
+ * @param {() => string} [options.getReadyPrompt] - Read current prompt; wait without writing until non-empty
+ * @param {number} [options.promptWaitTimeoutMs=30000] - Bounded pre-input wait (maximum 30 seconds)
  * @param {boolean} [options.typedInput=false] - Emit synthetic command echo before execution
  * @param {(command: string) => void} [options.echoCommand] - Callback used to display synthetic command echo
  * @param {string} [options.jobId] - Background job ID for #3443 startup diagnostics keying

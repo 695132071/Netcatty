@@ -381,6 +381,19 @@ describe('handleVaultAgentOp vault notes', () => {
 });
 
 describe('handleVaultAgentOp vault hosts', () => {
+  it('host.open preserves workspace placement and rejects malformed targets before opening', async () => {
+    const host: Host = { id: 'workspace-host', label: 'test', tags: [], os: 'linux', hostname: 'example.com', port: 22, username: 'ops' };
+    const calls: unknown[] = [];
+    const deps = createDeps({ hosts: [host], openHost: (openedHost, _external, options) => {
+      calls.push(options);
+      return { ok: true, sessionId: 'workspace-session', host: openedHost, workspaceId: 'ws-1' };
+    } });
+    const result = await handleVaultAgentOp('host.open', { hostId: host.id, workspaceId: 'current', newTab: true }, deps);
+    assert.equal(result.workspaceId, 'ws-1');
+    assert.deepEqual(calls, [{ workspaceId: 'current' }]);
+    assert.equal((await handleVaultAgentOp('host.open', { hostId: host.id, workspaceId: '' }, deps)).ok, false);
+    assert.equal(calls.length, 1);
+  });
   const csvText = [
     'Label,Hostname,Port,Username,Groups',
     'web-1,10.0.0.10,22,deploy,prod/web',

@@ -11,6 +11,23 @@ const {
   registerWorkerAiExecHandlers,
 } = require("./aiExec.cjs");
 const { PROBE_OUTPUT_MARKER } = require("../bridges/ai/sessionShellKind.cjs");
+const { trackSessionIdlePrompt } = require("../bridges/ai/shellUtils.cjs");
+
+test("worker SSH exec waits for a slow interactive shell prompt before any PTY write", async () => {
+  const pty = new FakePty();
+  const session = { protocol: 'ssh', stream: pty, shellKind: 'posix', _promptTrackTail: '', lastIdlePrompt: '' };
+  const ipcMain = createFakeIpcMain();
+  registerWorkerAiExecHandlers(ipcMain, { sessions: new Map([['slow-ssh', session]]) });
+  const pending = ipcMain.handlers.get('netcatty:ai:exec')(createFakeEvent(), {
+    sessionId: 'slow-ssh', chatSessionId: 'slow-ssh-chat', command: 'echo ready', commandTimeoutMs: 2000,
+  });
+  await new Promise(resolve => setTimeout(resolve, 25));
+  assert.deepEqual(pty.writes, []);
+  trackSessionIdlePrompt(session, 'user@host:~$ ');
+  const marker = await extractMarker(pty.writes);
+  pty.emit('data', `${marker}_S\nready\n${marker}_E:0\n`);
+  assert.equal((await pending).stdout, 'ready');
+});
 
 class FakePty extends EventEmitter {
   constructor() {
