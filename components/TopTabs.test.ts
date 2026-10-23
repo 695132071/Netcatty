@@ -281,6 +281,40 @@ test("duplicate double-click behavior falls back to copying when unavailable", (
   assert.deepEqual(copiedSessionIds, ["session-1"]);
 });
 
+test("draggable top-tab close buttons cancel the drag gesture on mousedown", () => {
+  const closeButtonLabels = [
+    "tabs.closePluginViewAria",
+    "Close editor tab",
+    "tabs.closeSessionAria",
+    "tabs.closeLogViewAria",
+  ];
+
+  for (const label of closeButtonLabels) {
+    const labelIndex = topTabItemsSource.indexOf(label);
+    assert.notEqual(labelIndex, -1, `missing close label ${label}`);
+    const buttonStart = topTabItemsSource.lastIndexOf("<button", labelIndex);
+    const buttonEnd = topTabItemsSource.indexOf(">", labelIndex);
+    const openingTag = topTabItemsSource.slice(buttonStart, buttonEnd);
+    assert.match(
+      openingTag,
+      /onMouseDown=\{handleTabCloseButtonMouseDown\}/,
+      `${label} close button must guard mousedown`,
+    );
+  }
+
+  assert.equal(
+    topTabItemsSource.match(/onMouseDown=\{handleTabCloseButtonMouseDown\}/g)?.length,
+    4,
+  );
+
+  const workspaceSource = topTabItemsSource.slice(
+    topTabItemsSource.indexOf("export const WorkspaceTopTab"),
+    topTabItemsSource.indexOf("WorkspaceTopTab.displayName"),
+  );
+  assert.equal(workspaceSource.includes("handleTabCloseButtonMouseDown"), false);
+  assert.equal(workspaceSource.includes("<button"), false);
+});
+
 test("session close button double click stays on the close button", () => {
   let stopPropagationCount = 0;
 

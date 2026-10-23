@@ -19,6 +19,20 @@ export const handleTabMiddleMouseDown = (e: React.MouseEvent): void => {
 };
 
 /**
+ * Keep a primary-button press on a tab close control from starting an HTML5
+ * drag on the ancestor `draggable` tab. Chromium promotes a few pixels of
+ * movement between mousedown and mouseup into `dragstart`, which swallows the
+ * click (#3886). `preventDefault` stops that drag; `stopPropagation` keeps the
+ * tab's own mousedown handler from seeing the press. Middle and right buttons
+ * are left alone so aux-click close and context menus stay unchanged.
+ */
+export const handleTabCloseButtonMouseDown = (e: React.MouseEvent): void => {
+  if (e.button !== 0) return;
+  e.stopPropagation();
+  e.preventDefault();
+};
+
+/**
  * Close a tab when it is middle-clicked. Wire to `onAuxClick`, which fires for
  * a completed non-primary click. Left clicks (tab activation) and right clicks
  * (context menu) are ignored so existing behavior is untouched.

@@ -26,7 +26,7 @@ import { cn } from '../../lib/utils';
 import { Host, TerminalSession, Workspace } from '../../types';
 import { DISTRO_LOGOS, DISTRO_COLORS } from '../DistroAvatar';
 import { getShellIconPath, isMonochromeShellIcon } from '../../lib/useDiscoveredShells';
-import { handleTabMiddleClickClose, handleTabMiddleMouseDown } from '../../lib/tabInteractions';
+import { handleTabCloseButtonMouseDown, handleTabMiddleClickClose, handleTabMiddleMouseDown } from '../../lib/tabInteractions';
 import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuSeparator, ContextMenuTrigger } from '../ui/context-menu';
 import { Tooltip, TooltipContent, TooltipTrigger } from '../ui/tooltip';
 import { SessionTabContextMenuContent } from './SessionTabContextMenuContent';
@@ -555,7 +555,7 @@ export const PluginViewTopTab: React.FC<PluginViewTopTabProps> = memo(({
               : <PluginContributionIcon pluginId={tab.pluginId} icon={tab.icon} className="shrink-0" />}
             <span className="truncate leading-5">{tab.title}</span>
           </div>
-          <button onClick={close} className="flex h-5 w-5 shrink-0 items-center justify-center rounded hover:bg-muted" aria-label={t('tabs.closePluginViewAria', { title: tab.title })}><X size={12} /></button>
+          <button onMouseDown={handleTabCloseButtonMouseDown} onClick={close} className="flex h-5 w-5 shrink-0 items-center justify-center rounded hover:bg-muted" aria-label={t('tabs.closePluginViewAria', { title: tab.title })}><X size={12} /></button>
         </div>
   );
   return (
@@ -704,6 +704,7 @@ export const EditorTopTab: React.FC<EditorTopTabProps> = memo(({
             {isDetached && <SquareArrowOutUpRight size={11} className="shrink-0 opacity-70" />}
           </div>
           <button
+            onMouseDown={handleTabCloseButtonMouseDown}
             onClick={handleClose}
             className="p-1 rounded-full hover:bg-destructive/10 hover:text-destructive transition-colors"
             aria-label="Close editor tab"
@@ -879,6 +880,7 @@ export const SessionTopTab: React.FC<SessionTopTabProps> = memo(({
         <div className="flex-shrink-0">{sessionStatusDot(session.status, hasActivity)}</div>
       </div>
       <button
+        onMouseDown={handleTabCloseButtonMouseDown}
         onClick={(e) => onCloseSession(session.id, e)}
         onDoubleClick={stopCloseButtonDoubleClickPropagation}
         className="p-1 rounded-full hover:bg-destructive/10 hover:text-destructive transition-colors"
@@ -1228,6 +1230,7 @@ export const LogViewTopTab: React.FC<LogViewTopTabProps> = memo(({
         </span>
       </div>
       <button
+        onMouseDown={handleTabCloseButtonMouseDown}
         onClick={handleClose}
         className="p-1 rounded-full hover:bg-destructive/10 hover:text-destructive transition-colors"
         aria-label={t('tabs.closeLogViewAria')}

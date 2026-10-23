@@ -4,6 +4,7 @@ import type React from "react";
 
 import {
   MIDDLE_MOUSE_BUTTON,
+  handleTabCloseButtonMouseDown,
   handleTabMiddleClickClose,
   handleTabMiddleMouseDown,
 } from "./tabInteractions.ts";
@@ -63,4 +64,18 @@ test("handleTabMiddleMouseDown suppresses autoscroll only for the middle button"
   const left = makeEvent(0);
   handleTabMiddleMouseDown(left.event);
   assert.equal(left.calls.preventDefault, 0);
+});
+
+test("handleTabCloseButtonMouseDown blocks ancestor drag only for the primary button", () => {
+  const left = makeEvent(0);
+  handleTabCloseButtonMouseDown(left.event);
+  assert.equal(left.calls.preventDefault, 1);
+  assert.equal(left.calls.stopPropagation, 1);
+
+  for (const button of [MIDDLE_MOUSE_BUTTON, 2]) {
+    const other = makeEvent(button);
+    handleTabCloseButtonMouseDown(other.event);
+    assert.equal(other.calls.preventDefault, 0, `button ${button} must not preventDefault`);
+    assert.equal(other.calls.stopPropagation, 0, `button ${button} must not stopPropagation`);
+  }
 });
