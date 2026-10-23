@@ -247,6 +247,10 @@ export function createSdkRuntimeModelCache(options: SdkRuntimeModelCacheOptions 
       pruneEntries();
       const cached = entries.get(key);
       if (!refreshOptions.force && cached && now() - cached.updatedAt < ttlMs) {
+        // The LKG-first policy lives in main: once a persisted catalog exists
+        // there, a TTL-expired non-force refresh is answered from disk with a
+        // clean last-known-good serve (no live attempt, no warning), so the
+        // next automatic load here clears a stale banner.
         touchEntry(key, cached);
         return Promise.resolve(cloneCatalog(cached));
       }

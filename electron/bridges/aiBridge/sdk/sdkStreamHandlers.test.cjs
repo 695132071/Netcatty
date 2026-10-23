@@ -1784,7 +1784,7 @@ test("list-models serves a visible current id from last-known-good when the pers
 
     ctx.sdkModelCache.clear();
     driver.listModels.mock.mockImplementation(async () => []);
-    const failed = await listModels({ sender: {} }, { sdkBackend: "opencode", agentCommand: "/test/lkg-dangling" });
+    const failed = await listModels({ sender: {} }, { sdkBackend: "opencode", agentCommand: "/test/lkg-dangling", force: true });
     assert.equal(failed.source, "last-known-good");
     assert.equal(failed.currentModelId, "a/m-1", "the served current id must be one the picker shows");
     assert.equal(failed.models.some((model) => model.id === failed.currentModelId), true);
@@ -1808,7 +1808,7 @@ test("list-models keeps an effort-decorated current id from last-known-good when
 
     ctx.sdkModelCache.clear();
     driver.listModels.mock.mockImplementation(async () => []);
-    const failed = await listModels({ sender: {} }, { sdkBackend: "grok", agentCommand: "/test/lkg-grok-effort" });
+    const failed = await listModels({ sender: {} }, { sdkBackend: "grok", agentCommand: "/test/lkg-grok-effort", force: true });
     assert.equal(failed.source, "last-known-good");
     assert.equal(failed.currentModelId, "grok-4.6/high", "the effort must survive when the base row is listed");
   } finally {
@@ -1832,7 +1832,7 @@ test("list-models does not keep a nested current id that is not an advertised th
 
     ctx.sdkModelCache.clear();
     driver.listModels.mock.mockImplementation(async () => []);
-    const failed = await listModels({ sender: {} }, { sdkBackend: "opencode", agentCommand: "/test/lkg-nested" });
+    const failed = await listModels({ sender: {} }, { sdkBackend: "opencode", agentCommand: "/test/lkg-nested", force: true });
     assert.equal(failed.source, "last-known-good");
     assert.equal(failed.currentModelId, "a/m-1");
   } finally {
@@ -1866,10 +1866,12 @@ test("list-models persists a successful live catalog and serves it as last-known
     assert.deepEqual(entries[0].models, liveCatalog);
     assert.match(entries[0].fetchedAt, /^\d{4}-\d{2}-\d{2}T/);
 
-    // 2. Live failure after that success → the persisted catalog is served.
+    // 2. Forced live failure after that success → the persisted catalog is
+    // served with its warning (a non-force load now hydrates from LKG
+    // directly, see the LKG-first tests below).
     ctx.sdkModelCache.clear();
     driver.listModels.mock.mockImplementation(async () => []);
-    const failed = await listModels({ sender: {} }, { sdkBackend: "claude", agentCommand: "/test/lkg-success" });
+    const failed = await listModels({ sender: {} }, { sdkBackend: "claude", agentCommand: "/test/lkg-success", force: true });
     assert.equal(failed.ok, true);
     assert.deepEqual(failed.models, liveCatalog);
     assert.equal(failed.currentModelId, null);
@@ -1877,6 +1879,76 @@ test("list-models persists a successful live catalog and serves it as last-known
     assert.equal(failed.fetchedAt, entries[0].fetchedAt);
     assert.match(failed.warning, /returned no models/);
     assert.match(failed.warning, /last-known-good/);
+  } finally {
+    cleanup();
+  }
+});
+
+test("list-models serves the persisted catalog without a live fetch on a non-force load (LKG-first)", async (t) => {
+  const { getDriver } = require("./index.cjs");
+  const { handlers, ctx, cleanup } = makeLastKnownCtx();
+  try {
+    const driver = getDriver("claude");
+    const liveCatalog = [{ id: "claude-opus-5-5", name: "Opus 5.5" }];
+    t.mock.method(driver, "listModels", async () => liveCatalog);
+    const listModels = handlers.get("netcatty:ai:sdk-agent:list-models");
+
+    // Seed a prior success so the store holds an entry for this cache key.
+    const seeded = await listModels({ sender: {} }, { sdkBackend: "claude", agentCommand: "/test/lkg-first" });
+    assert.equal(seeded.source, "live");
+
+    // A later non-force load must hydrate from the store and never reach the
+    // driver: no live-fetch budget spent, and no warning — plain panel-open
+    // stays silent even when the CLI would fail or stall today.
+    ctx.sdkModelCache.clear();
+    driver.listModels.mock.mockImplementation(async () => {
+      throw new Error("the live driver must not run for a non-force load once an LKG entry exists");
+    });
+    const hydrated = await listModels({ sender: {} }, { sdkBackend: "claude", agentCommand: "/test/lkg-first" });
+    assert.equal(driver.listModels.mock.callCount(), 1, "only the seeding call may reach the driver");
+    assert.deepEqual(hydrated, {
+      ok: true,
+      currentModelId: null,
+      models: liveCatalog,
+      source: "last-known-good",
+      fetchedAt: hydrated.fetchedAt,
+    });
+    assert.equal(hydrated.warning, undefined);
+    assert.match(hydrated.fetchedAt, /^\d{4}-\d{2}-\d{2}T/);
+  } finally {
+    cleanup();
+  }
+});
+
+test("list-models force refresh bypasses last-known-good, goes live, and overwrites the store", async (t) => {
+  const { getDriver } = require("./index.cjs");
+  const { handlers, ctx, catalogFile, cleanup } = makeLastKnownCtx();
+  try {
+    const driver = getDriver("claude");
+    t.mock.method(driver, "listModels", async () => [{ id: "claude-opus-5-5", name: "Opus 5.5" }]);
+    const listModels = handlers.get("netcatty:ai:sdk-agent:list-models");
+
+    // Seed a prior success, then make the driver advertise a new model.
+    await listModels({ sender: {} }, { sdkBackend: "claude", agentCommand: "/test/lkg-force" });
+    ctx.sdkModelCache.clear();
+    const nextCatalog = [{ id: "claude-opus-5-5", name: "Opus 5.5" }, { id: "claude-opus-6-1", name: "Opus 6.1" }];
+    driver.listModels.mock.mockImplementation(async () => nextCatalog);
+
+    const forced = await listModels({ sender: {} }, { sdkBackend: "claude", agentCommand: "/test/lkg-force", force: true });
+    assert.deepEqual(forced, {
+      ok: true,
+      currentModelId: null,
+      models: nextCatalog,
+      source: "live",
+      fetchedAt: forced.fetchedAt,
+    });
+    assert.equal(forced.warning, undefined);
+
+    // The forced success replaces the persisted entry, so future non-force
+    // loads and failure fallbacks serve the refreshed list.
+    const entries = Object.values(readLastKnownCatalogStore(catalogFile));
+    assert.equal(entries.length, 1);
+    assert.deepEqual(entries[0].models, nextCatalog);
   } finally {
     cleanup();
   }
@@ -1919,13 +1991,15 @@ test("list-models admits a current-only catalog by refreshing the persisted curr
     await listModels({ sender: {} }, { sdkBackend: "claude", agentCommand: "/test/lkg-current-only" });
 
     // 2. A current-only success (zero visible models, valid selection) must
-    // refresh the persisted current id without losing the models list.
+    // refresh the persisted current id without losing the models list. A
+    // non-force load now hydrates from the persisted entry (LKG-first), so
+    // only the forced refresh reaches the live current-only result.
     ctx.sdkModelCache.clear();
     driver.listModels.mock.mockImplementation(async () => ({
       currentModelId: "claude-opus-5-5",
       models: [],
     }));
-    const currentOnly = await listModels({ sender: {} }, { sdkBackend: "claude", agentCommand: "/test/lkg-current-only" });
+    const currentOnly = await listModels({ sender: {} }, { sdkBackend: "claude", agentCommand: "/test/lkg-current-only", force: true });
     assert.deepEqual(currentOnly, {
       ok: true,
       currentModelId: "claude-opus-5-5",

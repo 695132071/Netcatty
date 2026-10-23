@@ -620,6 +620,34 @@ test('SDK runtime model cache preserves degraded warnings until a successful ret
   assert.equal(cache.read('copilot')?.warning, undefined);
 });
 
+test('SDK runtime model cache re-queries main past the TTL so a clean LKG serve clears a stale banner', async () => {
+  let now = 1_000;
+  const cache = createSdkRuntimeModelCache({ ttlMs: 100, now: () => now });
+
+  // A degraded serve (warning) is cached and replayed within the TTL.
+  await cache.refresh('claude:/opt/bin/claude', async () => ({
+    currentModelId: 'claude-opus-5-5',
+    models: [{ id: 'claude-opus-5-5', name: 'Opus 5.5' }],
+    warning: 'live fetch failed',
+  }));
+  assert.equal(cache.read('claude:/opt/bin/claude')?.warning, 'live fetch failed');
+
+  // Past the TTL the entry is evicted and the next automatic load re-queries
+  // main; with the LKG-first policy that round-trip returns a clean
+  // last-known-good serve, so the stale banner clears.
+  now = 1_150;
+  const cleared = await cache.refresh('claude:/opt/bin/claude', async () => ({
+    currentModelId: 'claude-opus-5-5',
+    models: [{ id: 'claude-opus-5-5', name: 'Opus 5.5' }],
+    source: 'last-known-good',
+    fetchedAt: '2026-10-23T08:00:00.000Z',
+  }));
+  assert.equal(cleared.source, 'last-known-good');
+  assert.equal(cleared.warning, undefined);
+  assert.equal(cache.read('claude:/opt/bin/claude')?.warning, undefined);
+  assert.equal(cache.read('claude:/opt/bin/claude')?.fetchedAt, '2026-10-23T08:00:00.000Z');
+});
+
 // #3584 alignment: OpenCode must render build-time presets while its live
 // catalog load is pending, exactly like every other backend. The old host
 // code suppressed presets for opencode while `runtimeModelLoading` was set,
