@@ -115,6 +115,27 @@ test('immediate tab recovery marks webgl recovery to skip the delayed duplicate 
   );
   assert.match(
     source,
-    /lastWebglRecoveryLayoutKeyRef\.current === paneLayoutKey\s*&& hiddenMs < CSS_ONLY_TAB_REVEAL_MAX_HIDDEN_MS/,
+    /if \(lastWebglRecoveryLayoutKeyRef\.current === paneLayoutKey\) \{/,
   );
+});
+
+test('reveal does not claim recovery before the terminal runtime exists', () => {
+  const start = source.indexOf('const recoverTerminalAfterBecomeVisible = () => {');
+  const end = source.indexOf('// Refit synchronously', start);
+  const recovery = source.slice(start, end);
+  const runtimeGuard = recovery.indexOf('if (!termRef.current || !xtermRuntimeRef.current) return;');
+  const commit = recovery.indexOf('lastWebglRecoveryLayoutKeyRef.current = paneLayoutKey');
+  assert.ok(runtimeGuard >= 0 && runtimeGuard < commit);
+});
+
+test('settling tab-layout probes do not force a fit when bounds are unchanged', () => {
+  const start = source.indexOf('const refitSettledLayout = () => {');
+  const end = source.indexOf('}, [inWorkspace, isVisible]);', start);
+  const settling = source.slice(start, end);
+  assert.ok(start >= 0 && end > start);
+  assert.match(settling, /if \(!isVisibleRef\.current \|\| currentContainerSizeAlreadyFit\(\)\) return;/);
+  assert.match(settling, /safeFit\(\{ requireVisible: true \}\);/);
+  assert.doesNotMatch(settling, /force: true/);
+  assert.match(settling, /setTimeout\(refitSettledLayout, 100\)/);
+  assert.match(settling, /setTimeout\(refitSettledLayout, 350\)/);
 });

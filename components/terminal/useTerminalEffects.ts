@@ -1330,7 +1330,12 @@ export function useTerminalEffects(ctx: TerminalEffectsContext) {
       applyUserCursorBlinkPreference(term, terminalSettingsRef.current);
       if (hasOpenAppDialog()) return;
       term.focus();
-      scheduleLayoutRecoveryRefit([0, 100]);
+      // Tab focus retries do not imply a lost renderer or a changed layout.
+      // Leave explicit app-resume/fullscreen recovery timers untouched when
+      // these bounds are already fitted, or recovery is still settling.
+      if (!currentContainerSizeAlreadyFit() && layoutRecoveryTimersRef.current.length === 0) {
+        scheduleLayoutRecoveryRefit([0, 100]);
+      }
     };
 
     window.addEventListener(TERMINAL_SESSION_RESTORE_FOCUS_EVENT, handleRestoreFocus);
@@ -1400,6 +1405,9 @@ export function useTerminalEffects(ctx: TerminalEffectsContext) {
 
   const recoverTerminalAfterBecomeVisible = () => {
     flushTerminalWritesAfterBecomeVisible();
+    // A hidden pane can become visible before its asynchronous boot completes.
+    // Do not claim recovery until there is a runtime for the delayed pass to use.
+    if (!termRef.current || !xtermRuntimeRef.current) return;
 
     if (
       getHiddenDurationMs() < CSS_ONLY_TAB_REVEAL_MAX_HIDDEN_MS
@@ -1476,20 +1484,17 @@ export function useTerminalEffects(ctx: TerminalEffectsContext) {
   useEffect(() => {
     if (!isVisible) return;
 
-    const hiddenMs = hiddenAtRef.current
-      ? Date.now() - hiddenAtRef.current
-      : Number.POSITIVE_INFINITY;
     hiddenAtRef.current = null;
 
-    if (
-      lastWebglRecoveryLayoutKeyRef.current === paneLayoutKey
-      && hiddenMs < CSS_ONLY_TAB_REVEAL_MAX_HIDDEN_MS
-    ) {
+    // The layout effect already recovers long hides as well as short ones.
+    // Repeating it here discards the freshly populated, potentially shared atlas.
+    if (lastWebglRecoveryLayoutKeyRef.current === paneLayoutKey) {
       flushPendingOutputScroll();
       return;
     }
 
     const timer = setTimeout(() => {
+      if (!isVisibleRef.current || !termRef.current || !xtermRuntimeRef.current) return;
       lastWebglRecoveryLayoutKeyRef.current = paneLayoutKey;
       // A pane that mounted hidden deferred its WebGL renderer; create it now
       // that it's visible (no-op if already active or WebGL is disabled).
@@ -1700,14 +1705,16 @@ export function useTerminalEffects(ctx: TerminalEffectsContext) {
     // Fit twice: once after initial layout (100ms) and again after layout settles
     // (350ms) to handle race conditions during split operations where the container
     // dimensions may not be final on the first pass.
-    const timer1 = setTimeout(() => {
+    const refitSettledLayout = () => {
+      // Keep checking for late split/layout changes, but an unchanged tab does
+      // not need another forced fit (which clears its glyph atlas even when
+      // the row/column count is unchanged).
+      if (!isVisibleRef.current || currentContainerSizeAlreadyFit()) return;
       safeFit({ requireVisible: true });
       finishLayoutRecoveryAfterFit();
-    }, 100);
-    const timer2 = setTimeout(() => {
-      safeFit({ force: true, requireVisible: true });
-      finishLayoutRecoveryAfterFit();
-    }, 350);
+    };
+    const timer1 = setTimeout(refitSettledLayout, 100);
+    const timer2 = setTimeout(refitSettledLayout, 350);
     return () => { clearTimeout(timer1); clearTimeout(timer2); };
   }, [inWorkspace, isVisible]);
 
