@@ -2115,8 +2115,8 @@ function createPreloadApi(ctx) {
       clientUserMessageId,
     });
   },
-  aiSdkAgentListModels: async (sdkBackend, cwd, providerId, chatSessionId, agentEnv, agentCommand, codexRuntime) => {
-    return ipcRenderer.invoke("netcatty:ai:sdk-agent:list-models", { sdkBackend, cwd, providerId, chatSessionId, agentEnv, agentCommand, codexRuntime });
+  aiSdkAgentListModels: async (sdkBackend, cwd, providerId, chatSessionId, agentEnv, agentCommand, codexRuntime, force) => {
+    return ipcRenderer.invoke("netcatty:ai:sdk-agent:list-models", { sdkBackend, cwd, providerId, chatSessionId, agentEnv, agentCommand, codexRuntime, force });
   },
   codexAppServerGetStatus: async (agentCommand, agentEnv) => {
     return ipcRenderer.invoke("netcatty:ai:codex-app-server:status", { agentCommand, agentEnv });

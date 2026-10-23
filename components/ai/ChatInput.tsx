@@ -212,6 +212,10 @@ interface ChatInputProps {
   modelCatalogSource?: 'live' | 'last-known-good' | 'presets';
   /** ISO timestamp of the successful fetch backing `modelCatalogSource`. */
   modelCatalogFetchedAt?: string;
+  /** The catalog warning text behind the host's retry banner, when present. */
+  modelCatalogWarning?: string;
+  /** Manual refresh action for the picker's refresh button (force path). */
+  onRefreshModelCatalog?: () => void;
   /**
    * Offer the picker's "use custom model" action. Disable when the current
    * agent locks the model (e.g. managed Codex `model` config overrides the
@@ -286,6 +290,8 @@ const ChatInput: React.FC<ChatInputProps> = ({
   modelCatalogLoading = false,
   modelCatalogSource,
   modelCatalogFetchedAt,
+  modelCatalogWarning,
+  onRefreshModelCatalog,
   allowCustomModelEntry = true,
   selectedModelId,
   onModelSelect,
@@ -1608,6 +1614,8 @@ const ChatInput: React.FC<ChatInputProps> = ({
                     loading={!hasProviderSwitcher ? modelCatalogLoading : undefined}
                     catalogSource={!hasProviderSwitcher ? modelCatalogSource : undefined}
                     catalogFetchedAt={!hasProviderSwitcher ? modelCatalogFetchedAt : undefined}
+                    catalogWarning={!hasProviderSwitcher ? modelCatalogWarning : undefined}
+                    onRefreshCatalog={!hasProviderSwitcher ? onRefreshModelCatalog : undefined}
                     allowCustomEntry={allowCustomModelEntry}
                     prefs={modelPrefs}
                     onSelectProviderModel={(providerId, modelId, contextWindow) => {
@@ -1824,6 +1832,8 @@ function chatInputPropsAreEqual(prev: ChatInputProps, next: ChatInputProps): boo
     && prev.modelCatalogLoading === next.modelCatalogLoading
     && prev.modelCatalogSource === next.modelCatalogSource
     && prev.modelCatalogFetchedAt === next.modelCatalogFetchedAt
+    && prev.modelCatalogWarning === next.modelCatalogWarning
+    && prev.onRefreshModelCatalog === next.onRefreshModelCatalog
     && prev.allowCustomModelEntry === next.allowCustomModelEntry
     && prev.selectedModelId === next.selectedModelId
     && prev.onModelSelect === next.onModelSelect
