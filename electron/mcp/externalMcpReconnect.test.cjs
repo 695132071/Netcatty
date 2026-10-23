@@ -128,6 +128,7 @@ async function connectClient(entry, env) {
   return {
     client,
     stderr,
+    pid: transport.pid,
     async close() {
       await client.close();
     },
@@ -147,6 +148,21 @@ function childEnv(overrides) {
 
 async function callEnvironment(client) {
   return client.callTool({ name: "get_environment", arguments: {} });
+}
+
+async function waitForStoppedChild(pid) {
+  const statusPath = `/proc/${pid}/status`;
+  const deadline = Date.now() + 1000;
+  while (Date.now() < deadline) {
+    try {
+      if (/^State:\s+T/m.test(fs.readFileSync(statusPath, "utf8"))) return;
+    } catch {
+      await new Promise((resolve) => setTimeout(resolve, 30));
+      return;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  }
+  throw new Error(`child ${pid} did not stop`);
 }
 
 test("external stdio bridge reconnects with refreshed discovery after the app endpoint changes", async (t) => {
@@ -334,6 +350,61 @@ test("managed stdio children fail fast without rereading discovery", async (t) =
 
   const started = Date.now();
   const failed = await callEnvironment(child.client);
+  assert.ok(Date.now() - started < 1000, "managed disconnect must not wait on discovery refresh");
+  assert.equal(failed.isError, true);
+  assert.match(errorText(failed), /Not connected to Netcatty/);
+  assert.equal(second.connections, 0);
+
+  const stillAlive = await callEnvironment(child.client);
+  assert.equal(stillAlive.isError, true);
+  assert.match(errorText(stillAlive), /Not connected to Netcatty/);
+  assert.equal(second.connections, 0);
+});
+
+test("managed stdio calls that race bridge shutdown stay not-connected", {
+  skip: process.platform === "win32" ? "SIGSTOP is POSIX-only" : false,
+  timeout: 10000,
+}, async (t) => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "netcatty-mcp-reconnect-"));
+  const discoveryPath = path.join(tmp, "discovery.json");
+  const first = startBridge({ token: "managed-token" });
+  const firstPort = await first.ready;
+  const child = await connectClient(MANAGED_SERVER, childEnv({
+    NETCATTY_MCP_PORT: String(firstPort),
+    NETCATTY_MCP_TOKEN: "managed-token",
+  }));
+  let second = null;
+  const resumeChild = () => {
+    if (!child.pid) return;
+    try { process.kill(child.pid, "SIGCONT"); } catch { /* already gone */ }
+  };
+  t.after(async () => {
+    resumeChild();
+    await child.close().catch(() => {});
+    await first.close().catch(() => {});
+    if (second) await second.close().catch(() => {});
+    fs.rmSync(tmp, { recursive: true, force: true });
+  });
+
+  const live = await callEnvironment(child.client);
+  assert.notEqual(live.isError, true, errorText(live));
+  assert.ok(child.pid);
+  // Stop the child before the bridge socket is destroyed so the next tool
+  // call is queued against a connection the process has not observed yet.
+  // Loaded CI hit this ordering and reported "TCP connection lost".
+  process.kill(child.pid, "SIGSTOP");
+  await waitForStoppedChild(child.pid);
+  await first.close();
+
+  second = startBridge({ token: "token-restarted" });
+  const secondPort = await second.ready;
+  writeDiscovery(discoveryPath, { port: secondPort, token: "token-restarted" });
+
+  const pending = callEnvironment(child.client);
+  await new Promise((resolve) => setTimeout(resolve, 100));
+  const started = Date.now();
+  resumeChild();
+  const failed = await pending;
   assert.ok(Date.now() - started < 1000, "managed disconnect must not wait on discovery refresh");
   assert.equal(failed.isError, true);
   assert.match(errorText(failed), /Not connected to Netcatty/);

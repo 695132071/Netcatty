@@ -126,6 +126,17 @@ let pendingRequests = new Map(); // id -> { resolve, reject }
 let nextRpcId = 1;
 let tcpBuffer = "";
 
+function rejectPendingOnSocket(sock, externalMessage) {
+  if (tcpSocket && tcpSocket !== sock) return;
+  const managed = !externalDiscoveryPath;
+  if (managed && tcpSocket === sock) tcpSocket = null;
+  const message = managed ? "Not connected to Netcatty" : externalMessage;
+  for (const { reject: rej } of pendingRequests.values()) {
+    rej(new Error(message));
+  }
+  pendingRequests.clear();
+}
+
 function connectTcp() {
   return new Promise((resolve, reject) => {
     const sock = net.createConnection({ host: "127.0.0.1", port: NETCATTY_MCP_PORT }, () => {
@@ -172,20 +183,14 @@ function connectTcp() {
     sock.on("error", (err) => {
       debugLog("TCP socket error", { message: err?.message || String(err) });
       reject(err);
-      if (tcpSocket && tcpSocket !== sock) return;
-      // Reject in-flight calls only. They are not replayed after reconnect.
-      for (const { reject: rej } of pendingRequests.values()) {
-        rej(new Error("TCP connection lost"));
-      }
-      pendingRequests.clear();
+      // External in-flight calls stay rejected and are not replayed.
+      // Managed children do not reread discovery, so a call that races the
+      // dead socket fails as not-connected rather than "TCP connection lost".
+      rejectPendingOnSocket(sock, "TCP connection lost");
     });
     sock.on("close", () => {
       debugLog("TCP socket closed");
-      if (tcpSocket && tcpSocket !== sock) return;
-      for (const { reject: rej } of pendingRequests.values()) {
-        rej(new Error("TCP connection closed"));
-      }
-      pendingRequests.clear();
+      rejectPendingOnSocket(sock, "TCP connection closed");
       if (tcpSocket === sock) tcpSocket = null;
     });
   });
