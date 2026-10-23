@@ -4254,7 +4254,6 @@ async function verifyFastDownloadSamples(sftp, remoteHandle, localHandle, fileSi
       if (channelError) throw channelError;
     }
   } finally {
-    if (verificationHandle) closeSftpHandle(sftp, verificationHandle).catch(() => {});
     verifyDone = true;
     if (forceSettleTimer) {
       clearTimeout(forceSettleTimer);
@@ -4265,6 +4264,14 @@ async function verifyFastDownloadSamples(sftp, remoteHandle, localHandle, fileSi
       transfer.abort = previousAbort;
     }
     try { sftp.removeListener?.("error", onVerifyChannelError); } catch { /* ignore */ }
+    if (verificationHandle) {
+      const closeResult = await closeSftpHandleBestEffort(sftp, verificationHandle);
+      if (closeResult.unclean) {
+        const error = new Error("SFTP verification handle could not be closed");
+        error.noTransferFallback = true;
+        throw error;
+      }
+    }
   }
 }
 

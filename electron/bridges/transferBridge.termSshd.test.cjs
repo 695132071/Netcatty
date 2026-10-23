@@ -9,7 +9,7 @@ const { EventEmitter } = require("node:events");
 const transferBridge = require("./transferBridge.cjs");
 const tempDirBridge = require("./tempDirBridge.cjs");
 
-async function downloadFromSequentialPeer(t, corruptVerification = false) {
+async function downloadFromSequentialPeer(t, corruptVerification = false, failVerificationClose = false) {
   const payload = crypto.randomBytes(3 * 32768 + 17);
   const rewritten = Buffer.from(payload);
   rewritten[40000] ^= 0xff;
@@ -49,7 +49,10 @@ async function downloadFromSequentialPeer(t, corruptVerification = false) {
       maxActive = Math.max(maxActive, ++active);
       setImmediate(() => { active--; callback(null, count); });
     },
-    close(handle, callback) { cursors.delete(handle); callback(null); },
+    close(handle, callback) {
+      if (failVerificationClose && opens >= 2) return callback(new Error("General failure"));
+      cursors.delete(handle); callback(null);
+    },
     end() {},
   });
   const client = {
@@ -78,6 +81,12 @@ test("TERM-SSHD download reopens and verifies the complete file without seeking"
 test("TERM-SSHD full verification rejects changed bytes and never publishes the destination", async (t) => {
   const actual = await downloadFromSequentialPeer(t, true);
   assert.match(actual.result.error || "", /source.*changed/i);
+  await assert.rejects(fs.stat(actual.target), { code: "ENOENT" });
+});
+
+test("TERM-SSHD verification CLOSE failure does not publish the destination", async (t) => {
+  const actual = await downloadFromSequentialPeer(t, false, true);
+  assert.match(actual.result.error || "", /verification handle could not be closed/);
   await assert.rejects(fs.stat(actual.target), { code: "ENOENT" });
 });
 
