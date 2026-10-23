@@ -17,6 +17,15 @@ The normal MCP operation cleanup closes the dedicated file connection after
 the operation. Sessions created before this support was loaded retain the
 protective error and must be reconnected.
 
+The GUI's explicit-session and vault reconnect paths validate the endpoint
+before selecting this dial. Endpoint identity matching must not treat the
+single-channel restriction as a route mismatch: that restriction prohibits
+borrowing a channel, not opening an independent connection from a matching
+profile. Only sessions that own a dedicated dial capability use this identity
+lookup; host/profile, authentication, jump/proxy route and forwarding checks
+remain enforced. Vault reconnects without a live pane id can select this
+capability too. Actual transport reuse rules remain unchanged.
+
 ## TERM-SSHD file semantics
 
 The tested TERM-SSHD gateway acknowledges pipelined writes but produces a

@@ -765,15 +765,24 @@ function findRemoteSftpSourceByEndpoint(sourceSessionId, expectedEndpoint, requi
   const requested = sessions?.get(sourceSessionId);
   const matchesExpectedEndpoint = (session) => {
     const actualEndpoint = session?._reuseEndpoint || session?.connRef?.endpoint;
+    // Selecting the original dial profile is not borrowing a channel. A
+    // single-channel peer may match the route while requiring a new transport.
+    // Keep the normal reuse guard for sessions that cannot dial independently.
+    const dedicatedDial = typeof session?._openDedicatedSftp === "function";
+    const matchesIdentity = (requested, existing) => endpointAllowsReuse(
+      dedicatedDial ? { ...requested, singleChannelSsh: false } : requested,
+      dedicatedDial ? { ...existing, singleChannelSsh: false } : existing,
+      "channel",
+    );
     return Boolean(
       actualEndpoint
-      && (endpointAllowsReuse(expectedEndpoint, actualEndpoint, "channel")
+      && (matchesIdentity(expectedEndpoint, actualEndpoint)
         || (session._sftpReuseEndpoint
-          && endpointAllowsReuse({
+          && matchesIdentity({
             ...session._sftpReuseEndpoint,
             authFingerprint: actualEndpoint.authFingerprint,
-          }, actualEndpoint, "channel")
-          && endpointAllowsReuse(expectedEndpoint, session._sftpReuseEndpoint, "channel"))),
+          }, actualEndpoint)
+          && matchesIdentity(expectedEndpoint, session._sftpReuseEndpoint))),
     );
   };
   const hasLiveSftpConnection = (session) => {
@@ -2446,7 +2455,8 @@ async function openSftp(event, options) {
   if (options.reuseTransport !== false) {
     const endpoint = buildConnectionReuseEndpoint(options);
     const source = findRemoteSftpSourceByEndpoint(options.sourceSessionId, endpoint);
-    if (source?.session._sftpReuseEndpoint) {
+    if (source && (source.session._sftpReuseEndpoint
+      || typeof source.session._openDedicatedSftp === "function")) {
       try {
         return await openSftpForSession(event, {
           ...options,
