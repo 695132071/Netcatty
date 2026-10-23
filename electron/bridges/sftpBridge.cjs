@@ -2456,8 +2456,9 @@ async function openSftp(event, options) {
   if (options.reuseTransport !== false) {
     const endpoint = buildConnectionReuseEndpoint(options);
     const source = findRemoteSftpSourceByEndpoint(options.sourceSessionId, endpoint);
+    const dedicatedDial = typeof source?.session._openDedicatedSftp === "function";
     if (source && (source.session._sftpReuseEndpoint
-      || typeof source.session._openDedicatedSftp === "function")) {
+      || dedicatedDial)) {
       try {
         return await openSftpForSession(event, {
           ...options,
@@ -2465,8 +2466,11 @@ async function openSftp(event, options) {
           expectedEndpoint: options,
           requireExactSourceSession: true,
         });
-      } catch {
-        // Preserve the normal fresh-connection fallback if the channel fails.
+      } catch (error) {
+        // A dedicated dial owns its trust/lifecycle boundary. Never turn its
+        // rejection into a new login with different trust or cancellation state.
+        if (dedicatedDial) throw error;
+        // Preserve the normal fresh-connection fallback for reusable channels.
       }
     }
   }

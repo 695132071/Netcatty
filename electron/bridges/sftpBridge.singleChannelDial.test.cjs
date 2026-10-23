@@ -30,6 +30,51 @@ test("GUI vault reconnect finds the dedicated terminal dial without a source-ses
   assert.equal(opened, 1);
 });
 
+for (const code of ["ERR_HOST_KEY_UNVERIFIED", "ERR_SFTP_SOURCE_SESSION_CLOSED", "ABORT_ERR"]) {
+  test(`GUI dedicated dial propagates ${code} without fresh-login fallback`, async (t) => {
+    let freshDials = 0;
+    t.mock.method(require("node:net").Socket.prototype, "connect", () => {
+      freshDials++;
+      throw new Error("Unexpected fresh connection after dedicated-dial rejection");
+    });
+    const options = { hostname: "gateway.example", username: "root", password: "test-only", authMethod: "password", fileProtocol: "sftp" };
+    const failure = Object.assign(new Error("dedicated trust or lifecycle rejection"), { code });
+    const session = {
+      singleChannelSsh: true,
+      _reuseEndpoint: normalizeEndpoint({ ...buildConnectionReuseEndpoint(options), singleChannelSsh: true }),
+      conn: { sftp() { throw new Error("must not borrow terminal"); } },
+      async _openDedicatedSftp() {
+        // Lifecycle cleanup may remove the capability while an open is pending.
+        delete session._openDedicatedSftp;
+        throw failure;
+      },
+    };
+    bridge.init({ sessions: new Map([["terminal", session]]), sftpClients: new Map(), electronModule: {} });
+    await assert.rejects(bridge.openSftp({ sender: { isDestroyed: () => false } }, options), error => error === failure);
+    assert.equal(freshDials, 0);
+  });
+}
+
+test("ordinary reusable-channel failures retain fresh-login fallback", async (t) => {
+  let freshDials = 0;
+  let borrowedChannels = 0;
+  t.mock.method(require("node:net").Socket.prototype, "connect", () => {
+    freshDials++;
+    throw new Error("fresh-login fallback reached");
+  });
+  const options = { hostname: "ordinary.example", username: "root", password: "test-only", authMethod: "password", fileProtocol: "sftp", useSshAgent: false };
+  const endpoint = normalizeEndpoint(buildConnectionReuseEndpoint(options));
+  const conn = Object.assign(new (require("node:events").EventEmitter)(), {
+    sftp(callback) { borrowedChannels++; callback(new Error("channel failed")); },
+  });
+  bridge.init({ sessions: new Map([["ordinary", {
+    _reuseEndpoint: endpoint, _sftpReuseEndpoint: endpoint, conn,
+  }]]), sftpClients: new Map(), electronModule: {} });
+  await assert.rejects(bridge.openSftp({ sender: { isDestroyed: () => false } }, options), /fresh-login fallback reached/);
+  assert.ok(borrowedChannels > 0);
+  assert.equal(freshDials, 1);
+});
+
 for (const mismatch of [null, "hostId", "hostname", "username", "password", "jumpHosts", "proxy", "agentForwarding"]) {
   test(`single-channel endpoint validation selects a dedicated dial only for matching identity (${mismatch})`, async () => {
     const options = {
