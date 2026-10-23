@@ -8,7 +8,22 @@ const {
   SMALL_UPLOAD_SHARED_MAX_BYTES,
   UPLOAD_TRANSFER_CONCURRENCY,
   TRANSFER_CHUNK_SIZE,
+  getSftpTransferConcurrency,
 } = require("./transferLimits.cjs");
+
+test("TERM-SSHD SFTP requests use one in-flight range to preserve file contents", () => {
+  for (const software of ["TERM-SSHD", "term-sshd", "TERM-SSHD_1.0"]) {
+    assert.equal(getSftpTransferConcurrency({ _client: { _remoteVer: software } }, 64), 1);
+  }
+});
+
+test("the TERM-SSHD request policy does not slow other SSH peers or change chunk sizes", () => {
+  for (const software of ["OpenSSH_9.6", "JumpServer", "BHostSSH_7.0", "my-term-sshd-proxy"]) {
+    assert.equal(getSftpTransferConcurrency({ _client: { _remoteVer: software } }, 64), 64);
+  }
+  assert.equal(getSftpTransferConcurrency({}, 8), 8);
+  assert.equal(TRANSFER_CHUNK_SIZE, 32 * 1024);
+});
 
 test("SFTP transfer limits preserve upload safety and the pre-regression download window", () => {
   assert.equal(UPLOAD_TRANSFER_CONCURRENCY, 64);

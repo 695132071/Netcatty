@@ -33,6 +33,7 @@ const {
   SFTP_REQUEST_TIMEOUT_MS,
   TRANSFER_CHUNK_SIZE,
   UPLOAD_TRANSFER_CONCURRENCY,
+  getSftpTransferConcurrency,
 } = require("./transferLimits.cjs");
 
 /**
@@ -2714,6 +2715,19 @@ async function uploadFile(
       });
     }
     await assertRemoteUploadSize(client, remotePath, fileSize);
+    if (fileSize > 0 && getSftpTransferConcurrency(sftp, UPLOAD_TRANSFER_CONCURRENCY) === 1) {
+      // A successful WRITE acknowledgement and matching size are insufficient
+      // on TERM-SSHD. Prove the staged bytes before any destination promotion.
+      const [localHash, remoteHash] = await Promise.all([
+        hashLocalPrefix(originalLocalPath, fileSize, { signal: transfer.signal }),
+        hashRemotePrefixWithSftpRanges(client, remotePath, fileSize, { signal: transfer.signal }),
+      ]);
+      if (!localHash || !remoteHash || localHash !== remoteHash) {
+        const error = new Error("SFTP upload content verification failed");
+        error.noTransferFallback = true;
+        throw error;
+      }
+    }
     // In-place replace writes the final path (fastPut / pipelined WRITE). Restore
     // captured mode here; staged `.part` uploads restore after rename instead.
     if (!generatedStagePath && Number.isFinite(existingRemoteMode)) {
@@ -3869,7 +3883,7 @@ async function hashRemotePrefixWithSftpRanges(client, remotePath, bytes, options
 
   const chunkSize = TRANSFER_CHUNK_SIZE;
   const rangeCount = Math.ceil(bytes / chunkSize);
-  const concurrency = Math.min(DOWNLOAD_TRANSFER_CONCURRENCY, rangeCount);
+  const concurrency = Math.min(getSftpTransferConcurrency(sftp, DOWNLOAD_TRANSFER_CONCURRENCY), rangeCount);
   let completedBytes = 0;
   const openTimeoutMs = Number(options.sftpOpenTimeoutMs) > 0
     ? Number(options.sftpOpenTimeoutMs)
@@ -4156,10 +4170,14 @@ function writeSftpRange(sftp, handle, buffer, position, length) {
   });
 }
 
-async function verifyFastDownloadSamples(sftp, remoteHandle, localHandle, fileSize, transfer) {
+async function verifyFastDownloadSamples(sftp, remoteHandle, localHandle, fileSize, transfer, remotePath) {
   if (fileSize <= 0) return;
   const sampleSize = Math.min(TRANSFER_CHUNK_SIZE, fileSize);
-  const offsets = [...new Set([
+  const sequentialPeer = getSftpTransferConcurrency(sftp, DOWNLOAD_TRANSFER_CONCURRENCY) === 1;
+  let verificationHandle = null;
+  const offsets = sequentialPeer ? (function* () {
+    for (let position = 0; position < fileSize; position += sampleSize) yield position;
+  })() : [...new Set([
     0,
     Math.max(0, Math.floor((fileSize - sampleSize) / 2)),
     Math.max(0, fileSize - sampleSize),
@@ -4197,6 +4215,12 @@ async function verifyFastDownloadSamples(sftp, remoteHandle, localHandle, fileSi
   try {
     if (transfer.cancelled) throw cancelError();
     if (channelError) throw channelError;
+    // TERM-SSHD ignores repositioned READs on a consumed handle. Reopen at
+    // offset zero and compare every byte sequentially instead of weakening
+    // verification or seeking back through the completed body handle.
+    if (sequentialPeer) {
+      verificationHandle = await openSftpReadHandle(sftp, remotePath, transfer.signal, SFTP_OPEN_TIMEOUT_MS);
+    }
     for (const position of offsets) {
       if (transfer.cancelled) throw cancelError();
       if (channelError) throw channelError;
@@ -4205,7 +4229,7 @@ async function verifyFastDownloadSamples(sftp, remoteHandle, localHandle, fileSi
       const localBuffer = Buffer.allocUnsafe(length);
       await Promise.race([
         (async () => {
-          await readSftpRange(sftp, remoteHandle, remoteBuffer, position, length);
+          await readSftpRange(sftp, verificationHandle || remoteHandle, remoteBuffer, position, length);
           await readLocalRange(localHandle, localBuffer, position, length);
           if (!remoteBuffer.equals(localBuffer)) {
             const error = new Error("Transfer source content changed during transfer");
@@ -4230,6 +4254,7 @@ async function verifyFastDownloadSamples(sftp, remoteHandle, localHandle, fileSi
       if (channelError) throw channelError;
     }
   } finally {
+    if (verificationHandle) closeSftpHandle(sftp, verificationHandle).catch(() => {});
     verifyDone = true;
     if (forceSettleTimer) {
       clearTimeout(forceSettleTimer);
@@ -4798,6 +4823,7 @@ async function runPausableConcurrentRanges({
   sftp = null,
   forceSettleOnError = false,
 }) {
+  concurrency = getSftpTransferConcurrency(sftp, concurrency);
   let nextOffset = checkpoint;
   // Progress may complete out of order, but the resume checkpoint must never
   // advance past a range that has not durably finished yet.
@@ -5043,6 +5069,10 @@ async function uploadFileConcurrent(
   // Mutable: may shrink after path-gate wait if a stale truncating OPEN wiped
   // the stage while we were waiting (Codex P2 on 294b7a4b).
   let checkpoint = Math.max(0, Math.min(transfer.checkpointBytes || 0, fileSize));
+  if (getSftpTransferConcurrency(sftp, UPLOAD_TRANSFER_CONCURRENCY) === 1) {
+    checkpoint = 0;
+    transfer.checkpointBytes = 0;
+  }
   // A fallback strategy may have moved the resume offset. The prefix digest
   // only matches its own offset; anything else restarts at 0 before OPEN
   // chooses r+ vs w. Fingerprinted resumes do not consult this digest.
@@ -5298,7 +5328,9 @@ async function downloadFileResumableFast(
   options = {},
 ) {
   const disposeChannel = options.disposeChannel !== false;
-  const checkpoint = Math.max(0, Math.min(transfer.checkpointBytes || 0, fileSize));
+  const sequentialPeer = getSftpTransferConcurrency(sftp, DOWNLOAD_TRANSFER_CONCURRENCY) === 1;
+  const checkpoint = sequentialPeer ? 0 : Math.max(0, Math.min(transfer.checkpointBytes || 0, fileSize));
+  if (sequentialPeer) transfer.checkpointBytes = 0;
   let channelError = null;
   const onChannelError = (error) => {
     channelError = channelError || error;
@@ -5355,7 +5387,12 @@ async function downloadFileResumableFast(
         forceSettleOnError: true,
       });
       if (channelError) throw channelError;
-      await verifyFastDownloadSamples(sftp, remoteHandle, localHandle, fileSize, transfer);
+      if (getSftpTransferConcurrency(sftp, DOWNLOAD_TRANSFER_CONCURRENCY) === 1) {
+        const closeResult = await closeSftpHandleBestEffort(sftp, remoteHandle);
+        if (closeResult.unclean) throw new Error("SFTP body handle could not be closed before verification");
+        remoteHandle = null;
+      }
+      await verifyFastDownloadSamples(sftp, remoteHandle, localHandle, fileSize, transfer, remotePath);
     } catch (error) {
       failed = true;
       throw error;

@@ -17,7 +17,28 @@ The normal MCP operation cleanup closes the dedicated file connection after
 the operation. Sessions created before this support was loaded retain the
 protective error and must be reconnected.
 
-This changes connection selection, not file contents or transfer algorithms.
-For integrity-sensitive transfers, compare the source, remote and downloaded
-file sizes and SHA-256 digests. A successful tool response alone is not an
-integrity check.
+## TERM-SSHD file semantics
+
+The tested TERM-SSHD gateway acknowledges pipelined writes but produces a
+same-sized corrupt file. Repositioning a READ on a consumed handle returns
+EOF; opening another handle before closing the first returns General failure.
+These observations are consistent with a sequential, cursor-based backend
+that does not implement SFTP positioned I/O correctly.
+
+For exactly the TERM-SSHD software identification, range transfers use one
+in-flight request and restart checkpoints at zero. Downloads close the body
+handle, reopen the file at zero, and compare every byte sequentially with the
+local output. Uploads hash the local file and sequentially reread the complete
+remote stage before promotion. A size-only acknowledgement is insufficient.
+Other SSH software retains its existing concurrency and chunk sizes.
+
+This compatibility policy trades throughput and resume efficiency for correct
+contents. Allow sufficient MCP command time for both the transfer and the
+second full read. It is not a general promise that every TERM-SSHD version has
+the same defect. An explicit SFTP host preference may be necessary when a
+gateway advertises but cannot execute SCP. The saved preference is never
+silently changed by this patch.
+
+For live acceptance, compare source, remote and downloaded sizes and SHA-256
+digests, and confirm the interactive terminal remains usable. A successful
+tool response alone is not a substitute for this three-way check.
