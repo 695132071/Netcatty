@@ -49,6 +49,11 @@ export interface TerminalBroadcastInputOptions {
    */
   sensitive?: boolean;
   /**
+   * Compose-bar send-to-all for orphan sessions while the toolbar broadcast
+   * switch stays off. Keystroke fan-out never sets this.
+   */
+  composePeerFanOut?: boolean;
+  /**
    * Observer for the sessions that actually received the payload (#3491):
    * the solo compose bar uses it to detect a fan-out delivered into a peer's
    * sensitive prompt (its password/MFA input) and keep that send
@@ -236,6 +241,9 @@ export interface TerminalProps {
   onOpenTheme?: () => void;
   onOpenSystem?: () => void;
   isBroadcastEnabled?: boolean;
+  /** Compose-bar send target for solo sessions. Workspace compose lives on the layer. */
+  composeSendToAll?: boolean;
+  onToggleComposeSendTarget?: () => void;
   onToggleBroadcast?: () => void;
   onToggleComposeBar?: () => void;
   isWorkspaceComposeBarOpen?: boolean;

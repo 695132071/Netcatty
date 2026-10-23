@@ -77,6 +77,8 @@ export const esTerminalMessages: Messages = {
   'terminal.composeBar.send': 'Enviar',
   'terminal.composeBar.close': 'Cerrar barra de redacción',
   'terminal.composeBar.broadcasting': 'Difundiendo a todas las sesiones',
+  'terminal.composeBar.sendToAll': 'Enviar a todas las sesiones',
+  'terminal.composeBar.sendToActive': 'Enviar solo a la sesión activa',
   'terminal.composeBar.broadcastAllowPassword': 'Difundir sin protección de contraseña',
   'terminal.composeBar.resize': 'Cambiar la altura de la barra de redacción',
   'terminal.composeBar.manageSnippets': 'Administrar snippets rápidos',

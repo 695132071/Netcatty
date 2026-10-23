@@ -23,6 +23,7 @@ function setup(
   sensitive = new Set<string>(),
   broadcastPasswordBypass = false,
   restoredDisconnected = new Set<string>(),
+  composeSendToAll?: boolean,
 ) {
   const writes: string[] = [];
   const context = {
@@ -34,6 +35,7 @@ function setup(
       restoreState: restoredDisconnected.has(String(index)) ? 'restored-disconnected' : undefined,
     })) },
     isBroadcastEnabled: () => broadcast,
+    isComposeSendToAll: composeSendToAll === undefined ? undefined : () => composeSendToAll,
     isTerminalSensitiveInputActive: (id: string) => sensitive.has(id),
     broadcastPasswordBypassRef: { current: broadcastPasswordBypass },
     snippetExecutorsRef: { current: executors },
@@ -59,6 +61,53 @@ for (const broadcast of [false, true]) {
     });
   }
 }
+
+test('compose active-only sends to the focused session while toolbar broadcast stays on', async () => {
+  const { send, writes } = setup(
+    ['connected', 'connected'], true, new Map(), new Set(), false, new Set(), false,
+  );
+  assert.equal(await send('command'), true);
+  assert.deepEqual(writes, ['0']);
+});
+
+test('compose active-only does not run peer executors while toolbar broadcast stays on', async () => {
+  const calls: Array<{ id: string; broadcast: boolean | undefined }> = [];
+  const executors = new Map<string, Executor>([
+    ['0', async (_text, _immediate, options) => {
+      calls.push({ id: '0', broadcast: options?.broadcast });
+      return true;
+    }],
+    ['1', async () => { calls.push({ id: '1', broadcast: undefined }); return true; }],
+  ]);
+  assert.equal(
+    await setup(
+      ['connected', 'connected'], true, executors, new Set(), false, new Set(), false,
+    ).send('command'),
+    true,
+  );
+  assert.deepEqual(calls, [{ id: '0', broadcast: false }]);
+});
+
+test('compose send-to-all fans out while toolbar broadcast stays off', async () => {
+  const { send, writes } = setup(
+    ['connected', 'connected'], false, new Map(), new Set(), false, new Set(), true,
+  );
+  assert.equal(await send('command'), true);
+  assert.deepEqual(writes, ['0', '1']);
+});
+
+test('compose send-to-all keeps a bypassed sensitive peer out of history', async () => {
+  const executors = new Map<string, Executor>([
+    ['0', async () => true],
+    ['1', async () => true],
+  ]);
+  assert.equal(
+    await setup(
+      ['connected', 'connected'], false, executors, new Set(['1']), true, new Set(), true,
+    ).send('secret'),
+    false,
+  );
+});
 
 test('a disconnected broadcast peer cannot undo another successful fallback', async () => {
   assert.equal(await setup(['connected', 'disconnected'], true).send('command'), true);
@@ -169,11 +218,34 @@ for (const result of [true, false, Promise.resolve(true), Promise.resolve(false)
       sessionId: 'a', sessionRef: { current: 'a' },
       executeSnippetCommand: () => result,
       isTerminalSensitiveInputActive: () => false,
+      composeSendToAll: undefined as boolean | undefined,
+      isBroadcastEnabled: false,
     };
     runInNewContext(soloCode, context);
     assert.equal(await context.send('command'), await result);
   });
 }
+
+test('solo compose send uses the compose-bar target while toolbar broadcast stays on', async () => {
+  const calls: Array<boolean | undefined> = [];
+  const context = {
+    send: undefined as unknown as (text: string) => Promise<boolean>,
+    sessionId: 'a', sessionRef: { current: 'a' },
+    executeSnippetCommand: (_text: string, _noAutoRun?: boolean, options?: { broadcast?: boolean }) => {
+      calls.push(options?.broadcast);
+      return true;
+    },
+    isTerminalSensitiveInputActive: () => false,
+    composeSendToAll: false,
+    isBroadcastEnabled: true,
+  };
+  runInNewContext(soloCode, context);
+  assert.equal(await context.send('command'), true);
+  context.composeSendToAll = true;
+  context.isBroadcastEnabled = false;
+  assert.equal(await context.send('command'), true);
+  assert.deepEqual(calls, [false, true]);
+});
 
 test('solo missing sessions and sensitive input are excluded; rejection propagates to the compose handler', async () => {
   const context = {
@@ -181,6 +253,8 @@ test('solo missing sessions and sensitive input are excluded; rejection propagat
     sessionId: 'a', sessionRef: { current: null as string | null },
     executeSnippetCommand: async () => true,
     isTerminalSensitiveInputActive: () => false,
+    composeSendToAll: undefined as boolean | undefined,
+    isBroadcastEnabled: false,
   };
   runInNewContext(soloCode, context);
   assert.equal(await context.send('command'), false);

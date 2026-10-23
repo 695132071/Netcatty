@@ -3,6 +3,7 @@ import test from 'node:test';
 import React from 'react';
 import { JSDOM } from 'jsdom';
 import { act, create, type ReactTestRenderer } from 'react-test-renderer';
+import { I18nProvider } from '../../application/i18n/I18nProvider';
 import { TerminalComposeBar } from './TerminalComposeBar';
 import { TooltipProvider } from '../ui/tooltip';
 import { getComposeBarHistory, pruneComposeBarHistory, recordComposeBarHistory } from '../../application/state/composeBarHistoryStore';
@@ -193,5 +194,67 @@ test('empty compose draft Enter reconnects; a typed draft still sends', async (t
   assert.deepEqual(reconnects, [sessionId]);
   assert.deepEqual(sent, ['echo hi']);
 
+  await act(async () => { root.unmount(); });
+});
+
+test('compose send target toggle shows all vs active without looking like broadcast when active', async (t) => {
+  const dom = new JSDOM('<!doctype html><html><body></body></html>', { url: 'http://localhost' });
+  const originals = new Map<string, PropertyDescriptor | undefined>();
+  for (const name of ['window', 'document', 'localStorage']) {
+    originals.set(name, Object.getOwnPropertyDescriptor(globalThis, name));
+    Object.defineProperty(globalThis, name, { configurable: true, value: dom.window[name as keyof Window] });
+  }
+  t.after(() => {
+    dom.window.close();
+    for (const [name, descriptor] of originals) {
+      if (descriptor) Object.defineProperty(globalThis, name, descriptor);
+      else Reflect.deleteProperty(globalThis, name);
+    }
+  });
+  Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
+  const toggles: string[] = [];
+  const render = (composeSendToAll: boolean) => (
+    <I18nProvider locale="en">
+      <TooltipProvider>
+        <TerminalComposeBar
+          sessionId="compose-target"
+          onSend={() => true}
+          onClose={() => {}}
+          isBroadcastEnabled
+          composeSendToAll={composeSendToAll}
+          onToggleComposeSendTarget={() => { toggles.push('toggle'); }}
+        />
+      </TooltipProvider>
+    </I18nProvider>
+  );
+  let root!: ReactTestRenderer;
+  await act(async () => {
+    root = create(render(true), { createNodeMock: (el) => (el.type === 'textarea' ? { focus() {} } : null) });
+  });
+  const button = root.root.findAll(
+    (node) => node.props?.['data-compose-send-target'] === 'all' || node.props?.['data-compose-send-target'] === 'active',
+  )[0];
+  assert.ok(button);
+  assert.equal(button.props['data-compose-send-target'], 'all');
+  assert.equal(button.props['aria-pressed'], true);
+  assert.match(String(button.props['aria-label']), /all sessions/i);
+  const pulsing = root.root.findAll((node) => typeof node.props?.className === 'string' && node.props.className.includes('animate-pulse'));
+  assert.ok(pulsing.length > 0);
+  await act(async () => {
+    button.props.onClick({
+      preventDefault() {},
+      stopPropagation() {},
+      defaultPrevented: false,
+      nativeEvent: { defaultPrevented: false },
+    });
+  });
+  assert.deepEqual(toggles, ['toggle']);
+  await act(async () => { root.update(render(false)); });
+  const active = root.root.findAll((node) => node.props?.['data-compose-send-target'] === 'active')[0];
+  assert.ok(active);
+  assert.equal(active.props['aria-pressed'], false);
+  assert.match(String(active.props['aria-label']), /active session/i);
+  const stillPulsing = root.root.findAll((node) => typeof node.props?.className === 'string' && node.props.className.includes('animate-pulse'));
+  assert.equal(stillPulsing.length, 0);
   await act(async () => { root.unmount(); });
 });

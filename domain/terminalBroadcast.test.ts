@@ -2,6 +2,8 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import {
+  composeSendTargetAfterToolbarToggle,
+  flipComposeSendTarget,
   resolveTerminalBroadcastTargetIds,
   shouldBroadcastDuringSensitivePrompt,
 } from './terminalBroadcast.ts';
@@ -88,6 +90,49 @@ test('missing or hidden global sources do not fan out', () => {
       sessions,
       sourceSessionId: 'hidden-source',
       globalBroadcastEnabled: true,
+    }),
+    [],
+  );
+});
+
+test('compose send target follows toolbar broadcast, then flips on its own', () => {
+  assert.equal(composeSendTargetAfterToolbarToggle(true), 'all');
+  assert.equal(composeSendTargetAfterToolbarToggle(false), 'active');
+  assert.equal(flipComposeSendTarget('all'), 'active');
+  assert.equal(flipComposeSendTarget('active'), 'all');
+  // An independent flip does not rewrite the toolbar-derived default.
+  assert.equal(composeSendTargetAfterToolbarToggle(true), 'all');
+});
+
+test('compose peer fan-out can reach orphan peers while toolbar broadcast is off', () => {
+  const sessions = [
+    session('source'),
+    session('peer'),
+    session('hidden-orphan', { hiddenFromTabs: true }),
+  ];
+  assert.deepEqual(
+    resolveTerminalBroadcastTargetIds({
+      sessions,
+      sourceSessionId: 'source',
+      globalBroadcastEnabled: false,
+      includeGlobalPeersWithoutToolbar: true,
+    }),
+    ['peer'],
+  );
+  assert.deepEqual(
+    resolveTerminalBroadcastTargetIds({
+      sessions,
+      sourceSessionId: 'source',
+      globalBroadcastEnabled: false,
+    }),
+    [],
+  );
+  assert.deepEqual(
+    resolveTerminalBroadcastTargetIds({
+      sessions: [session('hidden-source', { hiddenFromTabs: true }), session('peer')],
+      sourceSessionId: 'hidden-source',
+      globalBroadcastEnabled: false,
+      includeGlobalPeersWithoutToolbar: true,
     }),
     [],
   );

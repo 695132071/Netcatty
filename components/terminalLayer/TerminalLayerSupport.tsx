@@ -719,10 +719,14 @@ export interface TerminalLayerProps {
   onCreateLocalTerminal?: () => void;
   // Broadcast mode
   isBroadcastEnabled?: (workspaceId: string) => boolean;
+  isComposeSendToAll?: (workspaceId: string) => boolean;
+  onToggleComposeSendTarget?: (workspaceId: string) => void;
   isGlobalBroadcastEnabled?: boolean;
+  isGlobalComposeSendToAll?: boolean;
   canUseGlobalBroadcast?: boolean;
   onToggleBroadcast?: (workspaceId: string) => void;
   onToggleGlobalBroadcast?: () => void;
+  onToggleGlobalComposeSendTarget?: () => void;
   // SFTP side panel
   updateHosts: (hosts: Host[]) => void;
   updateSnippets?: (snippets: Snippet[]) => void;
@@ -824,9 +828,12 @@ interface TerminalPaneProps {
   onSetWorkspaceFocusedSession?: (workspaceId: string, sessionId: string) => void;
   onSplitSession?: (sessionId: string, direction: SplitDirection) => void;
   isBroadcastEnabled?: (workspaceId: string) => boolean;
+  isComposeSendToAll?: (workspaceId: string) => boolean;
   isGlobalBroadcastEnabled?: boolean;
+  isGlobalComposeSendToAll?: boolean;
   canUseGlobalBroadcast?: boolean;
   onToggleGlobalBroadcast?: () => void;
+  onToggleGlobalComposeSendTarget?: () => void;
   onBroadcastInput: (
     data: string,
     sourceSessionId: string,
@@ -952,9 +959,12 @@ const terminalPanePropsAreEqual = (
   prev.onSetWorkspaceFocusedSession === next.onSetWorkspaceFocusedSession &&
   prev.onSplitSession === next.onSplitSession &&
   prev.isBroadcastEnabled === next.isBroadcastEnabled &&
+  prev.isComposeSendToAll === next.isComposeSendToAll &&
   prev.isGlobalBroadcastEnabled === next.isGlobalBroadcastEnabled &&
+  prev.isGlobalComposeSendToAll === next.isGlobalComposeSendToAll &&
   prev.canUseGlobalBroadcast === next.canUseGlobalBroadcast &&
   prev.onToggleGlobalBroadcast === next.onToggleGlobalBroadcast &&
+  prev.onToggleGlobalComposeSendTarget === next.onToggleGlobalComposeSendTarget &&
   prev.onBroadcastInput === next.onBroadcastInput &&
   prev.onBroadcastInterruptPriorityChange === next.onBroadcastInterruptPriorityChange &&
   prev.onToggleWorkspaceComposeBar === next.onToggleWorkspaceComposeBar &&
@@ -1253,9 +1263,12 @@ const TerminalPane: React.FC<TerminalPaneProps> = memo(({
   onSetWorkspaceFocusedSession,
   onSplitSession,
   isBroadcastEnabled,
+  isComposeSendToAll,
   isGlobalBroadcastEnabled,
+  isGlobalComposeSendToAll,
   canUseGlobalBroadcast,
   onToggleGlobalBroadcast,
+  onToggleGlobalComposeSendTarget,
   onBroadcastInput,
   onBroadcastInterruptPriorityChange,
   onToggleWorkspaceComposeBar,
@@ -1485,6 +1498,12 @@ const TerminalPane: React.FC<TerminalPaneProps> = memo(({
   const broadcastEnabled = activeWorkspaceId
     ? !!isBroadcastEnabled?.(activeWorkspaceId)
     : (isGlobalBroadcastEnabled ?? false);
+  const composeSendToAll = activeWorkspaceId
+    ? !!isComposeSendToAll?.(activeWorkspaceId)
+    : !!isGlobalComposeSendToAll;
+  const toggleComposeSendTarget = !activeWorkspaceId && canUseGlobalBroadcast
+    ? onToggleGlobalComposeSendTarget
+    : undefined;
   const isHostEphemeral = !isSavedVaultHost(hostMap.get(host.id));
   const sessionAppearance = useMemo(
     () => resolveSessionAppearance({ host, isEphemeral: isHostEphemeral }),
@@ -1630,6 +1649,8 @@ const TerminalPane: React.FC<TerminalPaneProps> = memo(({
         onSplitHorizontal={onSplitSession ? splitHorizontalHandler : undefined}
         onSplitVertical={onSplitSession ? splitVerticalHandler : undefined}
         isBroadcastEnabled={broadcastEnabled}
+        composeSendToAll={inActiveWorkspace ? undefined : composeSendToAll}
+        onToggleComposeSendTarget={toggleComposeSendTarget}
         onToggleBroadcast={
           inActiveWorkspace
             ? workspaceBroadcastHandler
@@ -1637,7 +1658,7 @@ const TerminalPane: React.FC<TerminalPaneProps> = memo(({
         }
         onToggleComposeBar={inActiveWorkspace ? onToggleWorkspaceComposeBar : undefined}
         isWorkspaceComposeBarOpen={inActiveWorkspace ? isComposeBarOpen : undefined}
-        onBroadcastInput={broadcastEnabled ? onBroadcastInput : undefined}
+        onBroadcastInput={onBroadcastInput}
         onBroadcastInterruptPriorityChange={onBroadcastInterruptPriorityChange}
         onSnippetExecutorChange={onSnippetExecutorChange}
         onProgrammaticCommandLogRewriteChange={onProgrammaticCommandLogRewriteChange}
@@ -1726,9 +1747,12 @@ interface TerminalPanesHostProps {
   onSetWorkspaceFocusedSession?: (workspaceId: string, sessionId: string) => void;
   onSplitSession?: (sessionId: string, direction: SplitDirection) => void;
   isBroadcastEnabled?: (workspaceId: string) => boolean;
+  isComposeSendToAll?: (workspaceId: string) => boolean;
   isGlobalBroadcastEnabled?: boolean;
+  isGlobalComposeSendToAll?: boolean;
   canUseGlobalBroadcast?: boolean;
   onToggleGlobalBroadcast?: () => void;
+  onToggleGlobalComposeSendTarget?: () => void;
   onBroadcastInput: (
     data: string,
     sourceSessionId: string,
@@ -1816,9 +1840,12 @@ const terminalPanesHostPropsAreEqual = (
   if (prev.onSetWorkspaceFocusedSession !== next.onSetWorkspaceFocusedSession) return false;
   if (prev.onSplitSession !== next.onSplitSession) return false;
   if (prev.isBroadcastEnabled !== next.isBroadcastEnabled) return false;
+  if (prev.isComposeSendToAll !== next.isComposeSendToAll) return false;
   if (prev.isGlobalBroadcastEnabled !== next.isGlobalBroadcastEnabled) return false;
+  if (prev.isGlobalComposeSendToAll !== next.isGlobalComposeSendToAll) return false;
   if (prev.canUseGlobalBroadcast !== next.canUseGlobalBroadcast) return false;
   if (prev.onToggleGlobalBroadcast !== next.onToggleGlobalBroadcast) return false;
+  if (prev.onToggleGlobalComposeSendTarget !== next.onToggleGlobalComposeSendTarget) return false;
   if (prev.onBroadcastInput !== next.onBroadcastInput) return false;
   if (prev.onBroadcastInterruptPriorityChange !== next.onBroadcastInterruptPriorityChange) return false;
   if (prev.onToggleWorkspaceComposeBar !== next.onToggleWorkspaceComposeBar) return false;

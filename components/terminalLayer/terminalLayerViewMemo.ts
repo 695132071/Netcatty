@@ -414,6 +414,8 @@ const WORKSPACE_CTX_KEYS = [
   'onSetWorkspaceFocusedSession',
   'onSplitSession',
   'isBroadcastEnabled',
+  'isComposeSendToAll',
+  'onToggleComposeSendTarget',
   'handleBroadcastInput',
   'handleBroadcastInterruptPriorityChange',
   'handleToggleWorkspaceComposeBar',
@@ -440,8 +442,10 @@ const WORKSPACE_CTX_KEYS = [
   'onStartSessionDrag',
   'onEndSessionDrag',
   'isGlobalBroadcastEnabled',
+  'isGlobalComposeSendToAll',
   'canUseGlobalBroadcast',
   'onToggleGlobalBroadcast',
+  'onToggleGlobalComposeSendTarget',
 ] as const;
 
 export function terminalLayerSidePanelStableCtxEqual(prev: Ctx, next: Ctx): boolean {
@@ -477,6 +481,10 @@ export function terminalLayerViewCtxEqual(prev: Ctx, next: Ctx): boolean {
   if (prev.refocusTerminalSession !== next.refocusTerminalSession) return false;
   if (prev.setIsComposeBarOpen !== next.setIsComposeBarOpen) return false;
   if (prev.isBroadcastEnabled !== next.isBroadcastEnabled) return false;
+  if (prev.isComposeSendToAll !== next.isComposeSendToAll) return false;
+  if (prev.onToggleComposeSendTarget !== next.onToggleComposeSendTarget) return false;
+  if (prev.isGlobalComposeSendToAll !== next.isGlobalComposeSendToAll) return false;
+  if (prev.onToggleGlobalComposeSendTarget !== next.onToggleGlobalComposeSendTarget) return false;
   if (prev.composeBarThemeColors !== next.composeBarThemeColors) return false;
   if (prev.workspaceOuterRef !== next.workspaceOuterRef) return false;
   // Use stable side-panel equal only: LIVE fields (cwd, theme focus, etc.) flow

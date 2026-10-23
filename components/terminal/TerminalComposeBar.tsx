@@ -280,6 +280,9 @@ export interface TerminalComposeBarProps {
   onSnippetClick?: (snippet: Snippet) => void;
   snippets?: Snippet[];
   isBroadcastEnabled?: boolean;
+  /** Compose-bar send target. Undefined follows toolbar broadcast. */
+  composeSendToAll?: boolean;
+  onToggleComposeSendTarget?: () => void;
   themeColors?: {
     background: string;
     foreground: string;
@@ -293,6 +296,8 @@ export const TerminalComposeBar: React.FC<TerminalComposeBarProps> = ({
   onSnippetClick,
   snippets = [],
   isBroadcastEnabled,
+  composeSendToAll,
+  onToggleComposeSendTarget,
   themeColors,
 }) => {
   const { t } = useI18n();
@@ -350,8 +355,9 @@ export const TerminalComposeBar: React.FC<TerminalComposeBarProps> = ({
     };
   }, [broadcastMenuAnchor]);
 
+  const sendToAll = composeSendToAll ?? Boolean(isBroadcastEnabled);
   const handleBroadcastContextMenu = useCallback((event: React.MouseEvent) => {
-    if (!isBroadcastEnabled) return;
+    if (!isBroadcastEnabled && !sendToAll) return;
     event.preventDefault();
     event.stopPropagation();
     setBroadcastMenuAnchor({
@@ -359,7 +365,7 @@ export const TerminalComposeBar: React.FC<TerminalComposeBarProps> = ({
       y: event.clientY,
       inTextarea: event.target instanceof Element && Boolean(event.target.closest('textarea')),
     });
-  }, [isBroadcastEnabled]);
+  }, [isBroadcastEnabled, sendToAll]);
 
   const handleComposeMenuEdit = useCallback(async (action: 'cut' | 'copy' | 'paste' | 'selectAll') => {
     setBroadcastMenuAnchor(null);
@@ -607,14 +613,33 @@ export const TerminalComposeBar: React.FC<TerminalComposeBarProps> = ({
 
       <div className="flex-1 min-h-0 px-3 pt-1.5 pb-2 flex flex-col">
         <div className="flex flex-1 min-h-0 items-start gap-1.5">
-          {isBroadcastEnabled && (
+          {(onToggleComposeSendTarget || sendToAll) && (
             <Tooltip>
               <TooltipTrigger asChild>
-                <div className="flex items-center cursor-default pt-0.5 flex-shrink-0">
-                  <Radio size={14} className="text-amber-400 animate-pulse" />
-                </div>
+                <button
+                  type="button"
+                  data-compose-send-target={sendToAll ? 'all' : 'active'}
+                  aria-pressed={sendToAll}
+                  aria-label={sendToAll
+                    ? t('terminal.composeBar.sendToAll')
+                    : t('terminal.composeBar.sendToActive')}
+                  className="flex items-center pt-0.5 flex-shrink-0 rounded-sm"
+                  onMouseDown={(event) => event.preventDefault()}
+                  onClick={() => onToggleComposeSendTarget?.()}
+                  onContextMenu={handleBroadcastContextMenu}
+                >
+                  <Radio
+                    size={14}
+                    className={sendToAll ? 'text-amber-400 animate-pulse' : undefined}
+                    style={sendToAll ? undefined : { color: theme.mutedFg }}
+                  />
+                </button>
               </TooltipTrigger>
-              <TooltipContent>{t('terminal.composeBar.broadcasting')}</TooltipContent>
+              <TooltipContent>
+                {sendToAll
+                  ? t('terminal.composeBar.broadcasting')
+                  : t('terminal.composeBar.sendToActive')}
+              </TooltipContent>
             </Tooltip>
           )}
 
