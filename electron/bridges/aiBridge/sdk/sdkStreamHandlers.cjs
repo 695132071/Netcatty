@@ -202,6 +202,28 @@ function normalizeSdkListModelsResult(raw) {
 }
 
 /**
+ * Map a persisted last-known-good current id to one the picker can show
+ * (visible default, else first remaining model). A persisted id can be absent
+ * from the persisted rows: mimo entries written before the auto-channel
+ * normalization carry one on the filtered `mimo` provider, and any backend can
+ * advertise a default whose provider returned no rows. The picker would show
+ * the first row while the send preflight adopted the hidden id, so remap it
+ * for every backend. No persisted current id means "use the backend default":
+ * keep null.
+ */
+function remapLastKnownCurrentModelId(lastKnown) {
+  if (!lastKnown.currentModelId) return null;
+  // An effort-decorated id (grok-4.6/high) is served as is when its base row
+  // advertises that level, matching the renderer's modelPresetsContainId; any
+  // other suffix stays a dangling id.
+  return lastKnown.models.some((model) => model.id === lastKnown.currentModelId
+    || (Array.isArray(model.thinkingLevels)
+      && model.thinkingLevels.some((level) => `${model.id}/${level}` === lastKnown.currentModelId)))
+    ? lastKnown.currentModelId
+    : lastKnown.models[0]?.id ?? null;
+}
+
+/**
  * Fetch a runtime model catalog for one SDK backend. For Codex on the default
  * `sdk` runtime, the codex-sdk exposes no model catalog (its driver always
  * returns []), so fall back to the App Server runtime's live `model/list`
@@ -1074,6 +1096,9 @@ function registerSdkStreamHandlers(ctx) {
     ipcMain.handle("netcatty:ai:sdk-agent:list-models", async (event, payload) => {
       if (!validateSender(event)) return { ok: false, error: "Unauthorized IPC sender" };
       const { sdkBackend, agentEnv: requestedAgentEnv, agentCommand, codexRuntime: requestedCodexRuntime } = payload || {};
+      // Manual refresh (retry banner / picker refresh button) must always go
+      // live; automatic loads follow the LKG-first policy below.
+      const force = payload?.force === true;
       const backendKey = resolveBackendKey(sdkBackend);
       if (!backendKey) return { ok: false, error: `Unknown SDK backend: ${sdkBackend}` };
 
@@ -1144,7 +1169,7 @@ function registerSdkStreamHandlers(ctx) {
           `${codexRuntime}:${cursorAuthMode}`,
         );
         const shouldCacheModels = shouldCacheSdkRuntimeModels(backendKey);
-        const cached = shouldCacheModels ? getSdkModelCacheEntry(sdkModelCache, cacheKey) : null;
+        const cached = !force && shouldCacheModels ? getSdkModelCacheEntry(sdkModelCache, cacheKey) : null;
         if (cached) {
           // A cache hit replays the live fetch that populated the entry, so it
           // keeps the live provenance (and the original fetchedAt).
@@ -1156,10 +1181,33 @@ function registerSdkStreamHandlers(ctx) {
           };
         }
 
+        // In-flight entries are live fetches, so forced refreshes can share
+        // them without replaying either memory or persisted cache results.
         const existing = sdkModelInFlight.get(cacheKey);
         if (existing) return await existing;
 
         const lastKnownPath = resolveLastKnownCatalogPath(electronModule);
+        // LKG-first policy: a non-force load never spends the live-fetch budget
+        // while a persisted catalog exists — the picker hydrates instantly from
+        // disk (source 'last-known-good', persisted fetchedAt for the chip) and
+        // the user refreshes manually. Only a cache miss with no persisted
+        // entry (fresh install, new profile fingerprint) goes live
+        // automatically. force skips this branch and always attempts live.
+        if (!force) {
+          const lastKnown = readLastKnownCatalogEntry(lastKnownPath, cacheKey);
+          if (lastKnown) {
+            console.debug(
+              `[sdk] list-models(${backendKey}) serving last-known-good catalog from ${lastKnown.fetchedAt} without a live fetch`,
+            );
+            return {
+              ok: true,
+              currentModelId: remapLastKnownCurrentModelId(lastKnown),
+              models: lastKnown.models,
+              source: "last-known-good",
+              fetchedAt: lastKnown.fetchedAt,
+            };
+          }
+        }
         const loadPromise = (async () => {
           const abortController = new AbortController();
           try {
@@ -1227,37 +1275,23 @@ function registerSdkStreamHandlers(ctx) {
               fetchedAt,
             };
           } catch (err) {
-            // Degrade to curated presets, but first offer the last-known-good
-            // catalog persisted from a prior successful fetch (preferred over
-            // presets, including copilot's single `auto` entry). The warning
+            // Live attempts happen only when there was nothing to show (no
+            // cache, no persisted entry) or on an explicit force refresh, so
+            // this catch is the failure path for exactly those cases: serve
+            // the last-known-good catalog persisted from a prior success
+            // (preferred over presets, including copilot's single `auto`
+            // entry) with a warning — the user acted, or the auto first fetch
+            // failed and the renderer keeps its curated presets. The warning
             // keeps the renderer's retry banner, and the marker lets the UI
             // say the list is the previous success.
             const lastKnown = readLastKnownCatalogEntry(lastKnownPath, cacheKey);
             if (lastKnown) {
-              // Serve a current id the picker can show (visible default, else
-              // first remaining model). A persisted id can be absent from the
-              // persisted rows: mimo entries written before the auto-channel
-              // normalization carry one on the filtered `mimo` provider, and
-              // any backend can advertise a default whose provider returned
-              // no rows. The picker would show the first row while the send
-              // preflight adopted the hidden id, so remap it for every backend.
-              // No persisted current id means "use the backend default": keep null.
-              const lastKnownCurrentModelId = !lastKnown.currentModelId
-                ? null
-                // An effort-decorated id (grok-4.6/high) is served as is when its
-                // base row advertises that level, matching the renderer's
-                // modelPresetsContainId; any other suffix stays a dangling id.
-                : lastKnown.models.some((model) => model.id === lastKnown.currentModelId
-                  || (Array.isArray(model.thinkingLevels)
-                    && model.thinkingLevels.some((level) => `${model.id}/${level}` === lastKnown.currentModelId)))
-                  ? lastKnown.currentModelId
-                  : lastKnown.models[0]?.id ?? null;
               console.debug(
                 `[sdk] list-models(${backendKey}) unavailable, serving last-known-good catalog from ${lastKnown.fetchedAt}`,
               );
               return {
                 ok: true,
-                currentModelId: lastKnownCurrentModelId,
+                currentModelId: remapLastKnownCurrentModelId(lastKnown),
                 models: lastKnown.models,
                 warning: `${err?.message || String(err)} — serving the last-known-good catalog fetched at ${lastKnown.fetchedAt}`,
                 source: "last-known-good",

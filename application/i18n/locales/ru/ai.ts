@@ -521,6 +521,7 @@ export const ruAiMessages: Messages = {
   'ai.chat.modelCatalogSourceCached': 'Кэш · обновлён {time}',
   'ai.chat.modelCatalogSourceCachedNoTime': 'Кэш',
   'ai.chat.modelCatalogSourcePresets': 'Встроенный список моделей',
+  'ai.chat.refreshModelList': 'Обновить список моделей',
   'ai.chat.noMatchingModels': 'Нет подходящих моделей',
   'ai.chat.recent': 'Недавние',
   'ai.chat.viewAll': 'Показать всё',

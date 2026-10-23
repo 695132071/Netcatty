@@ -161,6 +161,7 @@ export interface PanelBridge extends NetcattyBridge {
     agentEnv?: Record<string, string>,
     agentCommand?: string,
     codexRuntime?: 'sdk' | 'app-server',
+    force?: boolean,
   ) => Promise<{ ok: boolean; models?: Array<{ id: string; name: string; description?: string; thinkingLevels?: string[]; defaultThinkingLevel?: string }>; currentModelId?: string | null; warning?: string; source?: 'live' | 'last-known-good'; fetchedAt?: string; error?: string }>;
   aiCattyCancelExec?(chatSessionId: string): Promise<unknown>;
   aiSetChatSessionCancelled?(chatSessionId: string, cancelled?: boolean): Promise<{ ok: boolean; error?: string }>;

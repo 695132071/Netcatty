@@ -1,4 +1,4 @@
-import { Check, ChevronLeft, ChevronRight, Loader2, Pin, Search, Star } from 'lucide-react';
+import { Check, ChevronLeft, ChevronRight, Loader2, Pin, RotateCw, Search, Star } from 'lucide-react';
 import React, { useEffect, useMemo, useState } from 'react';
 import { useI18n } from '../../application/i18n/I18nProvider';
 import {
@@ -37,6 +37,18 @@ export interface ComposerModelPickerProps {
   catalogSource?: 'live' | 'last-known-good' | 'presets';
   /** ISO timestamp of the successful fetch backing `catalogSource`. */
   catalogFetchedAt?: string;
+  /**
+   * The catalog warning text behind the host's retry banner, when present.
+   * Together with `catalogSource` it decides whether the manual refresh
+   * button renders: any fetched catalog (live or last-known-good) or a
+   * degraded preset fallback offers a refresh; a plain preset list does not.
+   */
+  catalogWarning?: string | null;
+  /**
+   * Manual refresh action (LKG-first policy: the picker hydrates from disk
+   * and the user refreshes explicitly). Triggers the host's force refresh.
+   */
+  onRefreshCatalog?: () => void;
   prefs: ComposerModelPrefs;
   /**
    * Offer the "use custom model" action. Disable when the host locks the
@@ -107,6 +119,8 @@ export const ComposerModelPicker: React.FC<ComposerModelPickerProps> = ({
   loading = false,
   catalogSource,
   catalogFetchedAt,
+  catalogWarning,
+  onRefreshCatalog,
   prefs,
   allowCustomEntry = true,
   onSelectProviderModel,
@@ -174,6 +188,18 @@ export const ComposerModelPicker: React.FC<ComposerModelPickerProps> = ({
       ? t('ai.chat.modelCatalogSourceCached').replace('{time}', time)
       : t('ai.chat.modelCatalogSourceCachedNoTime');
   }, [loading, catalogSource, catalogFetchedAt, t]);
+  // Manual refresh (LKG-first): offered whenever a fetched catalog (any
+  // source) or the degraded-preset warning is present. Hidden while loading —
+  // the spinner row is the in-flight feedback — and in provider mode, where
+  // neither a catalog chip nor a host refresh action exists.
+  const showRefreshButton = useMemo(() => (
+    !loading
+    && Boolean(onRefreshCatalog)
+    && (catalogSource === 'live'
+      || catalogSource === 'last-known-good'
+      || Boolean(catalogWarning))
+  ), [loading, onRefreshCatalog, catalogSource, catalogWarning]);
+  const refreshLabel = t('ai.chat.refreshModelList');
   // Manual model ids are accepted in both modes: provider-bound catalogs and
   // preset lists from external CLI agents whose catalogs lag new models.
   const showCustom = Boolean(
@@ -384,9 +410,22 @@ export const ComposerModelPicker: React.FC<ComposerModelPickerProps> = ({
         )}
       </div>
 
-      {catalogChipText && (
-        <div className="border-t border-border/40 px-2.5 py-1 text-[10px] text-muted-foreground/45" title={catalogChipText}>
-          {catalogChipText}
+      {(catalogChipText || showRefreshButton) && (
+        <div className="flex items-center gap-1 border-t border-border/40 px-2.5 py-1 text-[10px] text-muted-foreground/45">
+          {catalogChipText && (
+            <span className="min-w-0 flex-1 truncate" title={catalogChipText}>{catalogChipText}</span>
+          )}
+          {showRefreshButton && (
+            <button
+              type="button"
+              aria-label={refreshLabel}
+              title={refreshLabel}
+              onClick={onRefreshCatalog}
+              className="shrink-0 rounded p-0.5 text-muted-foreground/55 transition-colors hover:bg-muted/40 hover:text-foreground/75 cursor-pointer"
+            >
+              <RotateCw size={11} />
+            </button>
+          )}
         </div>
       )}
     </div>

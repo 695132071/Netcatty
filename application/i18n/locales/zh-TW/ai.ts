@@ -572,6 +572,7 @@ export const zhTWAiMessages: Messages = {
   'ai.chat.modelCatalogSourceCached': '快取 · 上次成功 {time}',
   'ai.chat.modelCatalogSourceCachedNoTime': '快取',
   'ai.chat.modelCatalogSourcePresets': '內建預設清單',
+  'ai.chat.refreshModelList': '重新整理模型清單',
   'ai.chat.noMatchingModels': '沒有符合的模型',
   'ai.chat.recent': '最近',
   'ai.chat.viewAll': '檢視全部',
