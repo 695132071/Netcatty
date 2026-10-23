@@ -59,3 +59,20 @@ Implementation and validation are complete; upstream review/CI remains pending. 
 - Parallel regression rerun exposed the existing 20 ms SFTP cleanup timing assertion under scheduling load. Isolated baseline passed and final serial 272-test run passed; it is not represented as a product regression or silently deleted.
 - Verified private trial cleanup: zero sessions and restorePreviousSession=false. Closed the trial Electron/Vite processes. Production CLI environment lookup succeeded after isolation cleanup.
 - Existing maintained-repository dirty files are unchanged. No installed app or remote authentication/provider configuration was modified by this development task.
+
+## PR 3885 review follow-up
+
+- Codex review reports that it could not complete; no submitted reviews or inline findings are available through the GitHub API. Its summary flags unresolved findings, but does not publish their details, so the underlying service failure cannot be diagnosed from that comment.
+- CI on c012823 recorded 14,919 passed, one failed, 48 skipped. The failing deleted-chat/reused-tab test still expected host.open success after binding was rejected. This test was missing from the focused regression list.
+- Reproduced the failing assertion locally before editing. Update it to require ok=false, SESSION_SCOPE_BIND_FAILED, and the reused session ID. Retain all checks that the deleted scope stays empty, the original scope retains visibility, no close is requested, and no idle ownership is acquired.
+- Fetch latest upstream before updating the PR; include reconnectingSession coverage in the focused regression run. No product behavior is relaxed to make the test pass.
+
+## Follow-up: session recovery within a workspace (not implemented here)
+
+- Expose explicit agent reconnect for disconnected sessions, retaining their workspace, session identity, and scope. Reusing an already auto-reconnecting session does not provide this capability.
+- Add moving an existing session into the requested workspace and opening an independent recovery connection there when needed, with host identity and ownership checks.
+- Define close/reopen behavior for an unresponsive transport, preserving useful history and rejecting stale generation writes. Closing a connection must not be reported as confirmation that its remote process was terminated.
+- Distinguish startup, shell-ready, executing, waiting for input, disconnected, and unknown states before command delivery. Keep bounded waits, per-session serialization, cancellation, and explicit delivery uncertainty; do not automatically resend a potentially executed command.
+- Test these lifecycle transitions before implementation in a separate, small follow-up PR. This PR covers new-session placement, visibility/ownership, and shell readiness only.
+
+Review follow-up validation on a3b3e7038: the previously failing reconnecting-session test and related scope/PTY/CLI regressions now pass (219 tests, zero failures). The changed test file passes ESLint. A broader intermediate run was interrupted by a new chat turn and is not counted as completed. The test-only fix does not require a new production build; the pushed update will run upstream CI again.

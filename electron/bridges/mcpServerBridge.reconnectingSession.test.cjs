@@ -61,7 +61,10 @@ test('a deleted chat cannot reclaim a reused tab or revive its own scope', async
   await bridge.cleanupScopedMetadata('deleted');
   bridge.mergeSessionMetadata([{ sessionId: 'user-tab', connected: true }], 'deleted');
   finishOpen({ ok: true, reused: true, sessionId: 'user-tab', status: 'connected' });
-  assert.equal((await opening).ok, true);
+  const rejected = await opening;
+  assert.equal(rejected.ok, false);
+  assert.equal(rejected.code, 'SESSION_SCOPE_BIND_FAILED');
+  assert.equal(rejected.sessionId, 'user-tab');
   assert.deepEqual(calls, ['host.open']);
   assert.deepEqual(bridge.getScopedSessionIds('deleted'), []);
   assert.deepEqual(bridge.getScopedSessionIds('original'), ['user-tab']);
