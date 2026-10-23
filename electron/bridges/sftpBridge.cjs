@@ -769,6 +769,9 @@ function findRemoteSftpSourceByEndpoint(sourceSessionId, expectedEndpoint, requi
     // single-channel peer may match the route while requiring a new transport.
     // Keep the normal reuse guard for sessions that cannot dial independently.
     const dedicatedDial = typeof session?._openDedicatedSftp === "function";
+    if (dedicatedDial && typeof session._matchesDedicatedSftpEndpoint === "function") {
+      return session._matchesDedicatedSftpEndpoint(expectedEndpoint);
+    }
     const matchesIdentity = (requested, existing) => endpointAllowsReuse(
       dedicatedDial ? { ...requested, singleChannelSsh: false } : requested,
       dedicatedDial ? { ...existing, singleChannelSsh: false } : existing,

@@ -138,3 +138,20 @@ test("jump-host verification rejection fails closed with a reconnect instruction
   });
   await assert.rejects(session._openDedicatedSftp(), { code: "ERR_HOST_KEY_UNVERIFIED", message: /Reconnect the terminal/ });
 });
+
+test("dedicated route matching keeps credential and route boundaries plus constrained OTP alias", () => {
+  const saved = { hostId: "vault", hostname: "gateway.example", username: "root", authMethod: "password", password: "", jumpHosts: [{ hostname: "jump.example", password: "jump" }] };
+  const options = { ...saved, password: "captured-otp", sftpReuseOptions: saved };
+  const session = {};
+  attachSessionSftpDial(session, options, { sessions: new Map(), sessionId: "terminal" });
+  assert.equal(session._matchesDedicatedSftpEndpoint(saved), true);
+  assert.equal(session._matchesDedicatedSftpEndpoint(options), true);
+  for (const mismatch of [
+    { password: "changed" }, { hostname: "other.example" }, { hostId: "other" },
+    { verifyHostKeys: false }, { proxy: { type: "http", host: "proxy.example", port: 8080 } },
+    { jumpHosts: [{ ...saved.jumpHosts[0], password: "changed" }] }, { agentForwarding: true },
+  ]) assert.equal(session._matchesDedicatedSftpEndpoint({ ...saved, ...mismatch }), false);
+  const unsafeAlias = {};
+  attachSessionSftpDial(unsafeAlias, { ...options, sftpReuseOptions: { ...saved, hostname: "other.example" } }, { sessions: new Map(), sessionId: "terminal" });
+  assert.equal(unsafeAlias._matchesDedicatedSftpEndpoint({ ...saved, hostname: "other.example" }), false);
+});

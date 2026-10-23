@@ -179,3 +179,40 @@ test("dedicated opens restore auto-detected filename encoding across MCP operati
     bridge.clearSftpEncodingState(key);
   }
 });
+
+for (const keepaliveInterval of [0, 60]) for (const initialTrust of [[], [{ hostname: "gateway.example", port: 22, keyType: "ssh-rsa", fingerprint: "SHA256:old" }]]) {
+  test(`GUI dedicated dial follows newly saved accepted key (previous records=${initialTrust.length}, keepalive=${keepaliveInterval})`, async (t) => {
+    t.mock.method(require("node:net").Socket.prototype, "connect", () => { throw new Error("unexpected fresh login"); });
+    const accepted = { hostname: "gateway.example", port: 22, keyType: "ssh-rsa", fingerprint: "SHA256:accepted" };
+    const options = { hostname: accepted.hostname, username: "root", password: "captured", authMethod: "password", knownHosts: initialTrust, keepaliveInterval };
+    const session = { singleChannelSsh: true, conn: { sftp() { throw new Error("must not borrow"); } }, _reuseEndpoint: normalizeEndpoint(buildConnectionReuseEndpoint(options)) };
+    const sessions = new Map([["terminal", session]]);
+    let dials = 0;
+    require("./sshBridge/sessionSftpDial.cjs").attachSessionSftpDial(session, options, {
+      sessions, sessionId: "terminal", sender: { isDestroyed: () => false }, acceptedHostKeys: [accepted],
+      openSftp: async () => { dials++; return { sftpId: "saved-trust" }; },
+    });
+    bridge.init({ sessions, sftpClients: new Map(), electronModule: {} });
+    assert.equal((await bridge.openSftp(null, { ...options, knownHosts: [accepted] })).sftpId, "saved-trust");
+    assert.equal(dials, 1);
+    for (const knownHosts of [[], [{ ...accepted, fingerprint: "SHA256:other" }], [{ ...accepted, port: 2222 }]]) {
+      await assert.rejects(bridge.openSftp(null, { ...options, knownHosts }), { code: "ERR_HOST_KEY_UNVERIFIED" });
+    }
+    assert.equal(dials, 1);
+  });
+}
+
+test("dedicated GUI trust checks verified jump even when target verification is disabled", async () => {
+  const accepted = { hostname: "jump.example", port: 22, keyType: "ssh-rsa", fingerprint: "SHA256:jump" };
+  const options = { hostname: "target.example", verifyHostKeys: false, jumpHosts: [{ hostname: "jump.example", verifyHostKeys: true }] };
+  const session = {};
+  let dials = 0;
+  require("./sshBridge/sessionSftpDial.cjs").attachSessionSftpDial(session, options, {
+    sessions: new Map([["terminal", session]]), sessionId: "terminal", acceptedHostKeys: [accepted],
+    openSftp: async () => { dials++; return { sftpId: "jump-trust" }; },
+  });
+  assert.equal(session._matchesDedicatedSftpEndpoint({ ...options, knownHosts: [accepted] }), true);
+  await session._openDedicatedSftp({ expectedEndpoint: { ...options, knownHosts: [accepted] } });
+  await assert.rejects(session._openDedicatedSftp({ expectedEndpoint: { ...options, knownHosts: [] } }), { code: "ERR_HOST_KEY_UNVERIFIED" });
+  assert.equal(dials, 1);
+});

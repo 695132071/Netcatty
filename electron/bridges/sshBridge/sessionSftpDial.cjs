@@ -1,6 +1,8 @@
 "use strict";
 
 const { randomUUID } = require("node:crypto");
+const { buildConnectionReuseEndpoint, normalizeEndpoint, endpointAllowsReuse } = require("../sshConnectionPool.cjs");
+const { classifyHostKey } = require("../hostKeyVerifier.cjs");
 
 // Keep the authenticated dial profile in a closure, never in discovery metadata
 // or persisted host data. The terminal still owns this profile's lifetime.
@@ -12,6 +14,51 @@ function attachSessionSftpDial(session, options, { sessions, sessionId, sender, 
     ...options,
     knownHosts: acceptedHostKeys.map((key) => ({ ...key })),
     hostKeyUnattended: true,
+  };
+  const routeEndpoint = (profile) => normalizeEndpoint({
+    ...buildConnectionReuseEndpoint(profile),
+    ...(profile.keepaliveIntervalMs != null ? {
+      keepaliveIntervalMs: profile.keepaliveIntervalMs,
+      keepaliveCountMax: profile.keepaliveCountMax,
+    } : {}),
+    ignoreKnownHostTrustForReuse: true,
+    singleChannelSsh: false,
+  });
+  const originalRoute = routeEndpoint({
+    ...options,
+    agentForwarding: session._reuseEndpoint?.agentForwarding ?? options.agentForwarding,
+  });
+  const passwordlessRoute = options.sftpReuseOptions && !options.sftpReuseOptions.password
+    ? routeEndpoint(options.sftpReuseOptions)
+    : null;
+  Object.defineProperty(session, "_matchesDedicatedSftpEndpoint", {
+    value: (request) => {
+      const requested = routeEndpoint(request);
+      return endpointAllowsReuse(requested, originalRoute, "channel")
+        || Boolean(passwordlessRoute
+          && endpointAllowsReuse({ ...passwordlessRoute, authFingerprint: originalRoute?.authFingerprint }, originalRoute, "channel")
+          && endpointAllowsReuse(requested, passwordlessRoute, "channel"));
+    },
+  });
+  const assertCurrentTrust = (request) => {
+    if (!request) return; // Explicit session operations use its accepted lifetime pin.
+    const hops = [request, ...(Array.isArray(request.jumpHosts) ? request.jumpHosts : [])];
+    const trusted = hops.every((hop) => {
+      if ((hop.verifyHostKeys ?? request.verifyHostKeys) === false) return true;
+      return dialOptions.knownHosts.some((key) =>
+        String(key.hostname || "").trim().toLowerCase() === String(hop.hostname || "").trim().toLowerCase()
+        && (Number(key.port) || 22) === (Number(hop.port) || 22)
+        && classifyHostKey({
+          knownHosts: Array.isArray(request.knownHosts) ? request.knownHosts : [],
+          hostname: key.hostname, port: key.port || 22,
+          keyType: key.keyType, fingerprint: key.fingerprint,
+        }).status === "trusted");
+    });
+    if (!trusted) {
+      const error = new Error("The terminal host key is no longer trusted. Reconnect the terminal to verify the host key before transferring files.");
+      error.code = "ERR_HOST_KEY_UNVERIFIED";
+      throw error;
+    }
   };
   for (const key of ["sessionId", "sourceSessionId", "bootEpoch", "_connRef", "_sourceReuseState", "sftpReuseOptions", "sock"]) {
     delete dialOptions[key];
@@ -25,6 +72,7 @@ function attachSessionSftpDial(session, options, { sessions, sessionId, sender, 
   Object.defineProperty(session, "_openDedicatedSftp", {
     value: async (payload = {}) => {
       assertActive(payload.abortSignal);
+      assertCurrentTrust(payload.expectedEndpoint);
       const controller = new AbortController();
       const abort = () => controller.abort();
       payload.abortSignal?.addEventListener("abort", abort, { once: true });
