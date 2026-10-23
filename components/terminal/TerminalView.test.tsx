@@ -741,3 +741,11 @@ test("terminal theme updates force xterm renderer to repaint immediately", () =>
   assert.match(schedulerSource, /term\.options\.theme = \{/);
   assert.match(schedulerSource, /forceSyncRenderAfterResize\(term\)/);
 });
+
+test("SFTP context action reuses the pane toolbar handler and its availability", () => {
+  const source = readFileSync(new URL("./TerminalView.tsx", import.meta.url), "utf8");
+  const terminalSource = readFileSync(new URL("../Terminal.tsx", import.meta.url), "utf8");
+  assert.match(source, /onOpenSftp=\{status === "connected" && !isSerialConnection && !host\?\.id\?\.startsWith\("serial-"\) && !isPluginHostProtocol\(host\?\.protocol\) \? ctx\.handleOpenSFTP : undefined\}/);
+  assert.match(terminalSource, /onOpenSFTP=\{handleOpenSFTP\}/);
+  assert.match(terminalSource, /<TerminalView ctx=\{\{[^\n]*handleOpenSFTP,/);
+});

@@ -591,6 +591,7 @@ function TerminalViewInner({ ctx, isPaneMagnified = false }: { ctx: TerminalView
       onSaveScreen={terminalContextActions.onSaveScreen}
       onCopy={terminalContextActions.onCopy}
       onOpenBrowser={(!host?.protocol || ['ssh', 'mosh', 'local'].includes(host.protocol)) ? () => { void ctx.handleOpenHostBrowser(); } : undefined}
+      onOpenSftp={status === "connected" && !isSerialConnection && !host?.id?.startsWith("serial-") && !isPluginHostProtocol(host?.protocol) ? ctx.handleOpenSFTP : undefined}
       onPaste={terminalContextActions.onPaste}
       onUploadClipboardImage={status === "connected" ? terminalContextActions.onUploadClipboardImage : undefined}
       onPasteSelection={terminalContextActions.onPasteSelection}

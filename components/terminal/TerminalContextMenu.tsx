@@ -7,6 +7,7 @@ import {
   Copy,
   Download,
   Globe2,
+  FolderInput,
   Pencil,
   RefreshCcw,
   Sparkles,
@@ -67,6 +68,7 @@ export interface TerminalContextMenuProps {
   onReconnect?: () => void;
   onClose?: () => void;
   onOpenBrowser?: () => void;
+  onOpenSftp?: () => void;
   onSelectWord?: () => void;
   onAddSelectionToAI?: () => void;
   onRename?: () => void;
@@ -227,6 +229,7 @@ export const TerminalContextMenu: React.FC<TerminalContextMenuProps> = ({
   onReconnect,
   onClose,
   onOpenBrowser,
+  onOpenSftp,
   onSelectWord,
   onAddSelectionToAI,
   onRename,
@@ -413,6 +416,14 @@ export const TerminalContextMenu: React.FC<TerminalContextMenuProps> = ({
             {t('terminal.menu.selectAll')}
             <ContextMenuShortcut>{selectAllShortcut}</ContextMenuShortcut>
           </ContextMenuItem>
+          {onOpenSftp && (
+            <>
+              <ContextMenuSeparator />
+              <ContextMenuItem onClick={onOpenSftp}>
+                <FolderInput size={14} className="mr-2" /> {t('terminal.toolbar.openSftp')}
+              </ContextMenuItem>
+            </>
+          )}
           {onOpenBrowser && (
             <>
               <ContextMenuSeparator />
