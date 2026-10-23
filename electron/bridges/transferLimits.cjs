@@ -15,6 +15,17 @@ const UPLOAD_TRANSFER_CONCURRENCY = 64;
 // ssh2's fastGet default and, with the safe 32KB request size, restores the 2MB
 // in-flight window Netcatty used before the shared chunk-size fix in #2030.
 const DOWNLOAD_TRANSFER_CONCURRENCY = 64;
+
+// TERM-SSHD gateways can acknowledge concurrent WRITEs with misplaced data
+// and return premature EOF for concurrent READs. Keep the normal window for
+// other peers; this is a per-file request limit, not a global transfer limit.
+function getSftpTransferConcurrency(sftp, requested) {
+  const software = sftp?._client?._remoteVer;
+  return typeof software === "string"
+    && /^(?:SSH-2\.0-)?TERM-SSHD(?:[_-][0-9].*)?$/i.test(software)
+    ? 1
+    : requested;
+}
 // Prefix verification must fail closed when a server stops answering, but allow
 // slow links to make progress without imposing a whole-transfer deadline.
 const SFTP_OPEN_TIMEOUT_MS = 15_000;
@@ -51,4 +62,5 @@ module.exports = {
   SFTP_REQUEST_TIMEOUT_MS,
   TRANSFER_CHUNK_SIZE,
   UPLOAD_TRANSFER_CONCURRENCY,
+  getSftpTransferConcurrency,
 };

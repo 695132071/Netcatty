@@ -765,15 +765,27 @@ function findRemoteSftpSourceByEndpoint(sourceSessionId, expectedEndpoint, requi
   const requested = sessions?.get(sourceSessionId);
   const matchesExpectedEndpoint = (session) => {
     const actualEndpoint = session?._reuseEndpoint || session?.connRef?.endpoint;
+    // Selecting the original dial profile is not borrowing a channel. A
+    // single-channel peer may match the route while requiring a new transport.
+    // Keep the normal reuse guard for sessions that cannot dial independently.
+    const dedicatedDial = typeof session?._openDedicatedSftp === "function";
+    if (dedicatedDial && typeof session._matchesDedicatedSftpEndpoint === "function") {
+      return session._matchesDedicatedSftpEndpoint(expectedEndpoint);
+    }
+    const matchesIdentity = (requested, existing) => endpointAllowsReuse(
+      dedicatedDial ? { ...requested, singleChannelSsh: false } : requested,
+      dedicatedDial ? { ...existing, singleChannelSsh: false } : existing,
+      "channel",
+    );
     return Boolean(
       actualEndpoint
-      && (endpointAllowsReuse(expectedEndpoint, actualEndpoint, "channel")
+      && (matchesIdentity(expectedEndpoint, actualEndpoint)
         || (session._sftpReuseEndpoint
-          && endpointAllowsReuse({
+          && matchesIdentity({
             ...session._sftpReuseEndpoint,
             authFingerprint: actualEndpoint.authFingerprint,
-          }, actualEndpoint, "channel")
-          && endpointAllowsReuse(expectedEndpoint, session._sftpReuseEndpoint, "channel"))),
+          }, actualEndpoint)
+          && matchesIdentity(expectedEndpoint, session._sftpReuseEndpoint))),
     );
   };
   const hasLiveSftpConnection = (session) => {
@@ -1979,6 +1991,13 @@ async function openSftpForSession(_event, payload) {
     session.singleChannelSsh
     || remoteSoftwareRequiresSingleChannel(session.remoteSshVersion || sshClient?._remoteVer)
   ) {
+    if (typeof session._openDedicatedSftp === "function") {
+      const opened = await session._openDedicatedSftp(payload);
+      const client = sftpClients?.get(opened.sftpId);
+      if (client) client.__netcattySourceSessionId = sourceSessionId;
+      copySftpEncodingState(payload?.encodingStateKey, opened.sftpId);
+      return opened;
+    }
     const err = new Error(
       "This host is configured for single-channel SSH. Opening SFTP on the terminal connection would disconnect it.",
     );
@@ -2440,7 +2459,9 @@ async function openSftp(event, options) {
   if (options.reuseTransport !== false) {
     const endpoint = buildConnectionReuseEndpoint(options);
     const source = findRemoteSftpSourceByEndpoint(options.sourceSessionId, endpoint);
-    if (source?.session._sftpReuseEndpoint) {
+    const dedicatedDial = typeof source?.session._openDedicatedSftp === "function";
+    if (source && (source.session._sftpReuseEndpoint
+      || dedicatedDial)) {
       try {
         return await openSftpForSession(event, {
           ...options,
@@ -2448,8 +2469,11 @@ async function openSftp(event, options) {
           expectedEndpoint: options,
           requireExactSourceSession: true,
         });
-      } catch {
-        // Preserve the normal fresh-connection fallback if the channel fails.
+      } catch (error) {
+        // A dedicated dial owns its trust/lifecycle boundary. Never turn its
+        // rejection into a new login with different trust or cancellation state.
+        if (dedicatedDial) throw error;
+        // Preserve the normal fresh-connection fallback for reusable channels.
       }
     }
   }

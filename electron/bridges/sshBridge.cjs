@@ -522,7 +522,7 @@ function closeTerminalOutputSession(sessionId) {
 /**
  * Connect through a chain of jump hosts
  */
-async function connectThroughChain(event, options, jumpHosts, targetHost, targetPort, sessionId) {
+async function connectThroughChain(event, options, jumpHosts, targetHost, targetPort, sessionId, onHostKeyAccepted) {
   const targetConnectionTimeouts = resolveSshConnectionTimeouts(options);
   const sender = event.sender;
   const connections = options?._connectionsRef || [];
@@ -610,6 +610,7 @@ async function connectThroughChain(event, options, jumpHosts, targetHost, target
         knownHosts: options.knownHosts,
         verifyHostKeys: jump.verifyHostKeys ?? options.verifyHostKeys,
         bootEpoch: options.bootEpoch,
+        onAccepted: onHostKeyAccepted,
       });
       attachSshDebugLogger(connOpts, sshDiagnosticLogger);
       logSshAlgorithms("Jump host", connOpts.algorithms, {
