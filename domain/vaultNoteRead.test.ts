@@ -57,6 +57,16 @@ test('invalid ranges, queries and changed notes fail explicitly', () => {
   for (const params of [
     { offset: -1 }, { offset: 0.5 }, { offset: 9 }, { offset: 2 }, { offset: '1' },
     { maxChars: 0 }, { maxChars: NaN }, { maxChars: Infinity },
-    { query: '' }, { query: 'a'.repeat(201) }, { query: 1 }, { expectedUpdatedAt: 1 },
+    { query: 'a'.repeat(201) }, { query: 1 }, { expectedUpdatedAt: 1 },
   ]) assert.equal(readVaultNote(source, params).ok, false, JSON.stringify(params));
+});
+
+test('empty query is a range read, same as omitting query', () => {
+  const source = { ...note, content: 'hello note' };
+  const omitted = read(source, { offset: 1, maxChars: 4 });
+  const empty = read(source, { query: '', offset: 1, maxChars: 4 });
+  assert.equal(empty.note?.content, omitted.note?.content);
+  assert.equal(empty.offset, omitted.offset);
+  assert.equal(empty.nextOffset, omitted.nextOffset);
+  assert.equal('matchOffset' in empty, false);
 });

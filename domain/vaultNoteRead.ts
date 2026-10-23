@@ -7,7 +7,8 @@ export const MAX_NOTE_READ_CHARS = 6000;
 export function readVaultNote(note: VaultNote, params: Record<string, unknown>) {
   const offset = params.offset ?? 0;
   const maxChars = params.maxChars ?? MAX_NOTE_READ_CHARS;
-  const query = params.query;
+  // Models often send query: "" with a range read. Empty means omit, not an invalid search.
+  const query = params.query === '' ? undefined : params.query;
   if (typeof offset !== 'number' || !Number.isSafeInteger(offset) || offset < 0 || offset > note.content.length) {
     return { ok: false, error: 'offset must be an integer within the note content.' };
   }
