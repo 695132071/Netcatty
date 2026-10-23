@@ -9,7 +9,7 @@ const { EventEmitter } = require("node:events");
 const transferBridge = require("./transferBridge.cjs");
 const tempDirBridge = require("./tempDirBridge.cjs");
 
-async function downloadFromSequentialPeer(t, corruptVerification = false, failVerificationClose = false) {
+async function downloadFromSequentialPeer(t, { corruptVerification = false, closeFailure = null, closeTimeout = false } = {}) {
   const payload = crypto.randomBytes(3 * 32768 + 17);
   const rewritten = Buffer.from(payload);
   rewritten[40000] ^= 0xff;
@@ -25,6 +25,7 @@ async function downloadFromSequentialPeer(t, corruptVerification = false, failVe
   let reads = 0;
   let active = 0;
   let maxActive = 0;
+  let ended = 0;
   const sftp = new EventEmitter();
   Object.assign(sftp, {
     _client: { _remoteVer: "TERM-SSHD" },
@@ -50,10 +51,13 @@ async function downloadFromSequentialPeer(t, corruptVerification = false, failVe
       setImmediate(() => { active--; callback(null, count); });
     },
     close(handle, callback) {
-      if (failVerificationClose && opens >= 2) return callback(new Error("General failure"));
+      if ((closeFailure === "verification" && opens >= 2) || (closeFailure === "body" && opens === 1)) {
+        if (closeTimeout) return;
+        return callback(new Error("General failure"));
+      }
       cursors.delete(handle); callback(null);
     },
-    end() {},
+    end() { ended++; },
   });
   const client = {
     sftp, __netcattySingleChannelSsh: true,
@@ -66,7 +70,7 @@ async function downloadFromSequentialPeer(t, corruptVerification = false, failVe
     sourceType: "sftp", targetType: "local", sourceSftpId: "sequential",
     totalBytes: payload.length, resumable: true,
   });
-  return { result, target, payload, opens, reads, maxActive };
+  return { result, target, payload, opens, reads, maxActive, client, sftp, ended };
 }
 
 test("TERM-SSHD download reopens and verifies the complete file without seeking", async (t) => {
@@ -79,16 +83,23 @@ test("TERM-SSHD download reopens and verifies the complete file without seeking"
 });
 
 test("TERM-SSHD full verification rejects changed bytes and never publishes the destination", async (t) => {
-  const actual = await downloadFromSequentialPeer(t, true);
+  const actual = await downloadFromSequentialPeer(t, { corruptVerification: true });
   assert.match(actual.result.error || "", /source.*changed/i);
   await assert.rejects(fs.stat(actual.target), { code: "ENOENT" });
 });
 
-test("TERM-SSHD verification CLOSE failure does not publish the destination", async (t) => {
-  const actual = await downloadFromSequentialPeer(t, false, true);
-  assert.match(actual.result.error || "", /verification handle could not be closed/);
-  await assert.rejects(fs.stat(actual.target), { code: "ENOENT" });
-});
+for (const closeFailure of ["body", "verification"]) {
+  for (const closeTimeout of [false, true]) {
+    test(`TERM-SSHD ${closeFailure} CLOSE ${closeTimeout ? "timeout" : "failure"} discards the shared channel without publication`, async (t) => {
+      const actual = await downloadFromSequentialPeer(t, { closeFailure, closeTimeout });
+      assert.match(actual.result.error || "", new RegExp(`${closeFailure} handle could not be closed`));
+      await assert.rejects(fs.stat(actual.target), { code: "ENOENT" });
+      assert.equal(actual.client.sftp, null, "the wedged channel must not remain cached");
+      assert.ok(actual.ended > 0, "dispose the uncertain remote handle with its channel");
+      await assert.rejects(require("./sftpBridge.cjs").requireSftpChannel(actual.client), /Please reconnect/);
+    });
+  }
+}
 
 for (const corrupt of [false, true]) {
   test(`TERM-SSHD uploads verify remote content before promotion (corrupt=${corrupt})`, async (t) => {

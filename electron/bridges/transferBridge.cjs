@@ -4269,6 +4269,7 @@ async function verifyFastDownloadSamples(sftp, remoteHandle, localHandle, fileSi
       if (closeResult.unclean) {
         const error = new Error("SFTP verification handle could not be closed");
         error.noTransferFallback = true;
+        error.uncleanSftpChannel = true;
         throw error;
       }
     }
@@ -5396,8 +5397,13 @@ async function downloadFileResumableFast(
       if (channelError) throw channelError;
       if (getSftpTransferConcurrency(sftp, DOWNLOAD_TRANSFER_CONCURRENCY) === 1) {
         const closeResult = await closeSftpHandleBestEffort(sftp, remoteHandle);
-        if (closeResult.unclean) throw new Error("SFTP body handle could not be closed before verification");
         remoteHandle = null;
+        if (closeResult.unclean) {
+          const error = new Error("SFTP body handle could not be closed before verification");
+          error.noTransferFallback = true;
+          error.uncleanSftpChannel = true;
+          throw error;
+        }
       }
       await verifyFastDownloadSamples(sftp, remoteHandle, localHandle, fileSize, transfer, remotePath);
     } catch (error) {
@@ -5777,6 +5783,13 @@ async function downloadFile(
         await finishSuccessfulDownload();
         return;
       } catch (err) {
+        if (err?.uncleanSftpChannel) {
+          // Sequential peers may still own an open handle after CLOSE failed.
+          // Do not hand that cached channel to later browse/transfer work, or
+          // discard a replacement channel that another operation installed.
+          if (client.sftp === sftp) abandonWedgedVerificationSftpChannel(client);
+          throw err;
+        }
         if (transfer.cancelled) throw err;
         // noTransferFallback means "do not keep using this dead channel".
         // A stale shared browse channel can still recover on one fresh
