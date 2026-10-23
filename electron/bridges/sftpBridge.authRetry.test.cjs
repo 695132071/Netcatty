@@ -509,3 +509,66 @@ test("cancelling a dedicated SFTP login closes its client and rejects before aut
   assert.equal(MockSftpClient.instances[0].client.destroyed, true);
   assert.equal(clients.size, 0);
 });
+
+for (const initialTrust of ["unknown", "changed"]) {
+  test(`dedicated SFTP pins the terminal's accepted ${initialTrust} host key without reconnect`, async (t) => {
+    const verifier = require("./hostKeyVerifier.cjs");
+    const { attachSessionSftpDial } = require("./sshBridge/sessionSftpDial.cjs");
+    const makeKey = (byte) => {
+      const type = Buffer.from("ssh-ed25519");
+      const blob = Buffer.alloc(4 + type.length + 4 + 32);
+      blob.writeUInt32BE(type.length); type.copy(blob, 4);
+      blob.writeUInt32BE(32, 4 + type.length); blob.fill(byte, 8 + type.length);
+      return blob;
+    };
+    const acceptedRaw = makeKey(1);
+    const oldRaw = makeKey(2);
+    let remoteKey = acceptedRaw;
+    const sender = makeSender();
+    const acceptedHostKeys = [];
+    const oldInfo = verifier.describeHostKey(oldRaw);
+    const options = {
+      hostname: "gateway.example", port: 22, username: "root",
+      authMethod: "password", password: "test-only", useSshAgent: false,
+      verifyHostKeys: true, fileProtocol: "sftp",
+      knownHosts: initialTrust === "changed" ? [{ hostname: "gateway.example", port: 22, ...oldInfo }] : [],
+    };
+    const terminalVerifier = verifier.createHostVerifier({
+      ...options, sender, sessionId: "terminal-trust",
+      onAccepted: info => acceptedHostKeys.push(info),
+    });
+    const terminalAccepted = new Promise(resolve => terminalVerifier(acceptedRaw, resolve));
+    const request = sender.sent.find(message => message.channel === "netcatty:host-key:verify").payload;
+    assert.equal(request.status, initialTrust);
+    verifier.handleResponse({ sender }, { requestId: request.requestId, accept: true, addToKnownHosts: true });
+    assert.equal(await terminalAccepted, true);
+    const { bridge } = loadSftpBridgeWithAuthRetryMocks(t, { onConnect(client) {
+      client.connectOpts.hostVerifier(remoteKey, accept => {
+        if (accept) client.emit("ready");
+        else client.emit("error", new Error("Host denied (verification failed)"));
+      });
+    } });
+    const session = { singleChannelSsh: true, conn: Object.assign(new EventEmitter(), { sftp() { throw new Error("must not borrow terminal"); } }), stream: new EventEmitter(), sftpFileProtocol: "sftp" };
+    const sessions = new Map([["terminal-trust", session]]);
+    const clients = new Map();
+    bridge.init({ sessions, sftpClients: clients, electronModule: {} });
+    attachSessionSftpDial(session, options, {
+      sessions, sessionId: "terminal-trust", sender, acceptedHostKeys,
+      openSftp: bridge.openSftp, closeSftp: bridge.closeSftp,
+    });
+    // The captured route must not alias mutable caller/collector arrays.
+    acceptedHostKeys.length = 0;
+    const opened = await bridge.openSftpForSession(null, { sessionId: "terminal-trust" });
+    assert.equal(clients.has(opened.sftpId), true);
+    await bridge.closeSftp(null, opened);
+    for (const unexpectedKey of [oldRaw, makeKey(3)]) {
+      remoteKey = unexpectedKey;
+      await assert.rejects(bridge.openSftpForSession(null, { sessionId: "terminal-trust" }), {
+        code: "ERR_HOST_KEY_UNVERIFIED", message: /Reconnect the terminal/,
+      });
+    }
+    assert.equal(sender.sent.filter(message => message.channel === "netcatty:host-key:verify").length, 1);
+    assert.equal(verifier.getRequests().size, 0);
+    assert.equal(clients.size, 0);
+  });
+}

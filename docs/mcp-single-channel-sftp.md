@@ -9,6 +9,10 @@ The profile stays in a non-enumerable session closure. It is not returned by
 host discovery or written to the vault. The dedicated connection uses the
 same hostname, username, proxy/jump route, credentials and host-key policy.
 Normal authentication prompts may be shown again for the new connection.
+Host-key verification pins the keys actually accepted for the live terminal
+and its jump hosts, including a first-time or updated key accepted during
+login. A different key on the dedicated connection fails closed immediately;
+reconnect the terminal to verify it before retrying the file operation.
 The host's Auto/SFTP/SCP preference is preserved.
 
 Closing the source terminal or cancelling an open aborts pending login and

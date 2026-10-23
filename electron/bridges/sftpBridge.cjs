@@ -1992,6 +1992,7 @@ async function openSftpForSession(_event, payload) {
       const opened = await session._openDedicatedSftp(payload);
       const client = sftpClients?.get(opened.sftpId);
       if (client) client.__netcattySourceSessionId = sourceSessionId;
+      copySftpEncodingState(payload?.encodingStateKey, opened.sftpId);
       return opened;
     }
     const err = new Error(

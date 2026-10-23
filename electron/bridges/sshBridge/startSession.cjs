@@ -382,6 +382,7 @@ function createStartSessionApi(ctx) {
       detachX11Forwarding,
       chainConnections,
       isReused,
+      acceptedHostKeys = [],
     }) {
       const sessionOptions = optionsForPeerSingleChannel(options, conn);
       const session = {
@@ -441,7 +442,7 @@ function createStartSessionApi(ctx) {
       }
       if (session.singleChannelSsh) {
         require("./sessionSftpDial.cjs").attachSessionSftpDial(session, options, {
-          sessions, sessionId, sender: event.sender,
+          sessions, sessionId, sender: event.sender, acceptedHostKeys,
           openSftp: (...args) => require("../sftpBridge.cjs").openSftp(...args),
           closeSftp: (...args) => require("../sftpBridge.cjs").closeSftp(...args),
         });
@@ -1319,6 +1320,10 @@ function createStartSessionApi(ctx) {
 
     async function startSSHSession(event, options) {
       const sessionId = options.sessionId || randomUUID();
+      // Per-attempt, main-process-only trust. Never accept a caller-provided
+      // list of supposedly verified keys for a dedicated transport.
+      const acceptedHostKeys = [];
+      const recordAcceptedHostKey = (info) => acceptedHostKeys.push({ ...info });
       const monitorMode = options._monitorMode === true;
       const testMode = options.testMode === true || monitorMode;
       const sender = event.sender;
@@ -1594,6 +1599,7 @@ function createStartSessionApi(ctx) {
           knownHosts: options.knownHosts,
           verifyHostKeys: options.verifyHostKeys,
           bootEpoch: options.bootEpoch,
+          onAccepted: recordAcceptedHostKey,
         });
 
         // Authentication for final target
@@ -2297,7 +2303,8 @@ function createStartSessionApi(ctx) {
             jumpHosts,
             options.hostname,
             options.port || 22,
-            sessionId
+            sessionId,
+            recordAcceptedHostKey
           );
           connectionSocket = chainResult.socket;
           chainConnections = chainResult.connections;
@@ -2543,6 +2550,7 @@ function createStartSessionApi(ctx) {
                     detachX11Forwarding,
                     chainConnections,
                     isReused: false,
+                    acceptedHostKeys,
                   });
                 } catch (setupErr) {
                   // Callback runs from openBoundedSshShellCallback's Promise

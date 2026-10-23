@@ -16,7 +16,7 @@ test("dedicated session SFTP preserves the authenticated route and isolates its 
   };
   const calls = [];
   attachSessionSftpDial(session, options, {
-    sessions, sessionId: "terminal", sender,
+    sessions, sessionId: "terminal", sender, acceptedHostKeys: options.knownHosts,
     openSftp: async (event, dial) => { calls.push({ event, dial }); return { sftpId: dial.sessionId }; },
   });
   const controller = new AbortController();
@@ -29,6 +29,7 @@ test("dedicated session SFTP preserves the authenticated route and isolates its 
   assert.deepEqual(dial.jumpHosts, options.jumpHosts);
   assert.deepEqual(dial.knownHosts, options.knownHosts);
   assert.equal(dial.verifyHostKeys, true);
+  assert.equal(dial.hostKeyUnattended, true);
   assert.equal(dial.reuseTransport, false);
   assert.equal(dial.singleChannelSsh, true);
   assert.equal(dial.fileProtocol, "sftp");
@@ -100,4 +101,40 @@ test("a dedicated connection completing after cancellation is closed without tou
   });
   await assert.rejects(session._openDedicatedSftp({ abortSignal: controller.signal }), { name: "AbortError" });
   assert.deepEqual(closed, ["late"]);
+});
+
+test("dedicated trust is scoped to accepted host and port, with no stale fallback", async () => {
+  const verifier = require("../hostKeyVerifier.cjs");
+  const raw = Buffer.from("accepted-route-key");
+  const info = verifier.describeHostKey(raw);
+  for (const accepted of [[], [{ hostname: "other.example", port: 22, ...info }], [{ hostname: "target.example", port: 2222, ...info }]]) {
+    const session = {};
+    const sender = { isDestroyed: () => false, send() { throw new Error("no orphan host-key prompt"); } };
+    attachSessionSftpDial(session, {
+      hostname: "target.example", port: 22, verifyHostKeys: true,
+      knownHosts: [{ hostname: "target.example", port: 22, ...info }],
+      _acceptedHostKeys: [{ hostname: "target.example", port: 22, ...info }],
+    }, {
+      sessions: new Map([["terminal", session]]), sessionId: "terminal", sender,
+      acceptedHostKeys: accepted,
+      openSftp: async (_event, dial) => {
+        assert.equal(dial.verifyHostKeys, true);
+        const accepted = await new Promise(resolve => verifier.createHostVerifier({
+          ...dial, sender, unattended: dial.hostKeyUnattended,
+        })(raw, resolve));
+        assert.equal(accepted, false);
+        throw Object.assign(new Error("Host key rejected"), { code: "ERR_HOST_KEY_UNVERIFIED" });
+      },
+    });
+    await assert.rejects(session._openDedicatedSftp(), { code: "ERR_HOST_KEY_UNVERIFIED" });
+  }
+});
+
+test("jump-host verification rejection fails closed with a reconnect instruction", async () => {
+  const session = {};
+  attachSessionSftpDial(session, { verifyHostKeys: true }, {
+    sessions: new Map([["terminal", session]]), sessionId: "terminal", sender: { isDestroyed: () => false },
+    openSftp: async () => { throw new Error("Host denied (verification failed)"); },
+  });
+  await assert.rejects(session._openDedicatedSftp(), { code: "ERR_HOST_KEY_UNVERIFIED", message: /Reconnect the terminal/ });
 });

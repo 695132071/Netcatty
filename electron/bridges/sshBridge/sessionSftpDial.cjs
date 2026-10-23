@@ -4,8 +4,15 @@ const { randomUUID } = require("node:crypto");
 
 // Keep the authenticated dial profile in a closure, never in discovery metadata
 // or persisted host data. The terminal still owns this profile's lifetime.
-function attachSessionSftpDial(session, options, { sessions, sessionId, sender, openSftp, closeSftp }) {
-  const dialOptions = { ...options };
+function attachSessionSftpDial(session, options, { sessions, sessionId, sender, openSftp, closeSftp, acceptedHostKeys = [] }) {
+  // Pin this redial to the keys actually accepted for the live route, not the
+  // renderer snapshot from before a first-trust / changed-key confirmation.
+  // Do not retain an older trusted key alongside its accepted replacement.
+  const dialOptions = {
+    ...options,
+    knownHosts: acceptedHostKeys.map((key) => ({ ...key })),
+    hostKeyUnattended: true,
+  };
   for (const key of ["sessionId", "sourceSessionId", "bootEpoch", "_connRef", "_sourceReuseState", "sftpReuseOptions", "sock"]) {
     delete dialOptions[key];
   }
@@ -41,6 +48,13 @@ function attachSessionSftpDial(session, options, { sessions, sessionId, sender, 
           throw err;
         }
         return { ...opened, sourceSessionId: sessionId };
+      } catch (err) {
+        if (err?.code === "ERR_HOST_KEY_UNVERIFIED"
+          || /Host denied \(verification failed\)|Host key rejected/i.test(String(err?.message || ""))) {
+          err.code = "ERR_HOST_KEY_UNVERIFIED";
+          err.message += ". Reconnect the terminal to verify the host key before transferring files.";
+        }
+        throw err;
       } finally {
         payload.abortSignal?.removeEventListener("abort", abort);
         session.stream?.removeListener?.("close", abort);

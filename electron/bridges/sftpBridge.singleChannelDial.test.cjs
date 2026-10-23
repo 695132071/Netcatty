@@ -97,3 +97,40 @@ test("legacy single-channel sessions retain the protection when no dial profile 
     code: "ERR_SFTP_SINGLE_CHANNEL_BASTION",
   });
 });
+
+test("dedicated opens restore auto-detected filename encoding across MCP operations", async () => {
+  const iconv = require("iconv-lite");
+  const name = "\u4e2d\u6587.txt";
+  const path = `/${name}`;
+  const clients = new Map();
+  const paths = [];
+  let opened = 0;
+  const session = {
+    singleChannelSsh: true,
+    conn: { sftp() { throw new Error("must not borrow terminal"); } },
+    async _openDedicatedSftp() {
+      const sftpId = `encoding-dedicated-${++opened}`;
+      clients.set(sftpId, { end: async () => {}, sftp: {
+        mkdir() {}, unlink() {},
+        readdir(_path, callback) { callback(null, [{ filename: name, filenameRaw: iconv.encode(name, "gb18030"), attrs: { mode: 0o100644, size: 7, mtime: 1 } }]); },
+        stat(encodedPath, callback) { paths.push(encodedPath); callback(null, { mode: 0o100644, size: 7, mtime: 1 }); },
+      } });
+      return { sftpId };
+    },
+  };
+  bridge.init({ sessions: new Map([["encoding-terminal", session]]), sftpClients: clients, electronModule: {} });
+  const key = "dedicated-encoding-regression";
+  try {
+    const first = await bridge.openSftpForSession(null, { sessionId: "encoding-terminal", encodingStateKey: key });
+    const list = await bridge.listSftp(null, { sftpId: first.sftpId, path: "/", encoding: "auto" });
+    assert.equal(list[0].name, name);
+    assert.equal(bridge.getResolvedFilenameEncoding(first.sftpId), "gb18030");
+    await bridge.closeSftp(null, { sftpId: first.sftpId, encodingStateKey: key });
+    const second = await bridge.openSftpForSession(null, { sessionId: "encoding-terminal", encodingStateKey: key });
+    await bridge.statSftp(null, { sftpId: second.sftpId, path, encoding: "auto" });
+    assert.deepEqual(paths, [iconv.encode(path, "gb18030")]);
+    await bridge.closeSftp(null, { sftpId: second.sftpId });
+  } finally {
+    bridge.clearSftpEncodingState(key);
+  }
+});
