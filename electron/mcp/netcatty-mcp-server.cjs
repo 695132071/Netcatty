@@ -38,17 +38,21 @@ function debugLog(...args) {
 
 // ── TCP Bridge to Netcatty main process ──
 
-const NETCATTY_MCP_PORT = parseInt(process.env.NETCATTY_MCP_PORT, 10);
-if (!NETCATTY_MCP_PORT) {
-  process.stderr.write("[netcatty-mcp] NETCATTY_MCP_PORT not set\n");
-  process.exit(1);
-}
-
-// Auth token for TCP bridge authentication
-const NETCATTY_MCP_TOKEN = process.env.NETCATTY_MCP_TOKEN || "";
-if (!NETCATTY_MCP_TOKEN) {
-  process.stderr.write("[netcatty-mcp] NETCATTY_MCP_TOKEN not set\n");
-  process.exit(1);
+// External stdio clients outlive Netcatty. Their port and token stay mutable so
+// a later call can refresh discovery. Managed children receive a fixed env and
+// keep the original fail-fast exit.
+const externalDiscoveryPath = process.env.NETCATTY_EXTERNAL_MCP_DISCOVERY_FILE;
+let NETCATTY_MCP_PORT = parseInt(process.env.NETCATTY_MCP_PORT, 10);
+let NETCATTY_MCP_TOKEN = process.env.NETCATTY_MCP_TOKEN || "";
+if (!externalDiscoveryPath) {
+  if (!NETCATTY_MCP_PORT) {
+    process.stderr.write("[netcatty-mcp] NETCATTY_MCP_PORT not set\n");
+    process.exit(1);
+  }
+  if (!NETCATTY_MCP_TOKEN) {
+    process.stderr.write("[netcatty-mcp] NETCATTY_MCP_TOKEN not set\n");
+    process.exit(1);
+  }
 }
 
 // Scoped session IDs (comma-separated). When set (even if empty), only listed
@@ -132,6 +136,7 @@ function connectTcp() {
     sock.setEncoding("utf-8");
     const MAX_BUFFER_SIZE = 10 * 1024 * 1024; // 10 MB
     sock.on("data", (chunk) => {
+      if (tcpSocket !== sock) return;
       tcpBuffer += chunk;
       if (tcpBuffer.length > MAX_BUFFER_SIZE) {
         process.stderr.write(`[netcatty-mcp] TCP buffer exceeded ${MAX_BUFFER_SIZE} bytes, clearing buffer\n`);
@@ -167,7 +172,8 @@ function connectTcp() {
     sock.on("error", (err) => {
       debugLog("TCP socket error", { message: err?.message || String(err) });
       reject(err);
-      // Reject all pending
+      if (tcpSocket && tcpSocket !== sock) return;
+      // Reject in-flight calls only. They are not replayed after reconnect.
       for (const { reject: rej } of pendingRequests.values()) {
         rej(new Error("TCP connection lost"));
       }
@@ -175,20 +181,21 @@ function connectTcp() {
     });
     sock.on("close", () => {
       debugLog("TCP socket closed");
-      // Reject all pending requests on clean close
+      if (tcpSocket && tcpSocket !== sock) return;
       for (const { reject: rej } of pendingRequests.values()) {
         rej(new Error("TCP connection closed"));
       }
       pendingRequests.clear();
-      tcpSocket = null;
+      if (tcpSocket === sock) tcpSocket = null;
     });
   });
 }
 
-function rpcCall(method, params) {
+function sendRpc(method, params) {
   return new Promise((resolve, reject) => {
     if (!tcpSocket || tcpSocket.destroyed) {
-      return reject(new Error("Not connected to Netcatty"));
+      reject(new Error("Not connected to Netcatty"));
+      return;
     }
     const id = nextRpcId++;
     pendingRequests.set(id, { resolve, reject });
@@ -198,8 +205,73 @@ function rpcCall(method, params) {
   });
 }
 
+function temporaryUnavailable(error) {
+  const message = error?.message || String(error || "connection failed");
+  if (message.startsWith("Netcatty is temporarily unavailable")) {
+    return error instanceof Error ? error : new Error(message);
+  }
+  return new Error(`Netcatty is temporarily unavailable: ${message}`);
+}
+
+function refreshExternalEndpoint() {
+  let parsed;
+  try {
+    parsed = JSON.parse(fs.readFileSync(externalDiscoveryPath, "utf8"));
+  } catch {
+    throw new Error("Netcatty is temporarily unavailable: discovery file is missing or unreadable");
+  }
+  const port = parseInt(parsed?.port, 10);
+  const token = typeof parsed?.token === "string" ? parsed.token.trim() : "";
+  if (!port || !token) {
+    throw new Error("Netcatty is temporarily unavailable: discovery endpoint is incomplete");
+  }
+  NETCATTY_MCP_PORT = port;
+  NETCATTY_MCP_TOKEN = token;
+}
+
+function dropActiveSocket() {
+  const sock = tcpSocket;
+  tcpSocket = null;
+  tcpBuffer = "";
+  if (sock && !sock.destroyed) sock.destroy();
+}
+
+// One reconnect at a time. Auth uses sendRpc so callers waiting on this promise
+// cannot deadlock, and calls already rejected by close/error stay rejected.
+let connecting = null;
+
+async function connectAndAuth() {
+  if (tcpSocket?.destroyed) tcpSocket = null;
+  refreshExternalEndpoint();
+  tcpBuffer = "";
+  try {
+    await connectTcp();
+    const authResult = await sendRpc("auth/verify", { token: NETCATTY_MCP_TOKEN });
+    if (!authResult?.ok) {
+      throw new Error("Netcatty is temporarily unavailable: TCP bridge authentication failed");
+    }
+  } catch (error) {
+    dropActiveSocket();
+    throw temporaryUnavailable(error);
+  }
+  process.stderr.write("[netcatty-mcp] Authenticated with TCP bridge\n");
+}
+
+function ensureConnected() {
+  if (tcpSocket && !tcpSocket.destroyed) return Promise.resolve();
+  if (connecting) return connecting;
+  connecting = connectAndAuth().finally(() => {
+    connecting = null;
+  });
+  return connecting;
+}
+
+function rpcCall(method, params) {
+  if (!externalDiscoveryPath) return sendRpc(method, params);
+  return ensureConnected().then(() => sendRpc(method, params));
+}
+
 // External clients own connection maps here; managed agents use the main-process chat boundary.
-const externalDiscoveryPath = process.env.NETCATTY_EXTERNAL_MCP_DISCOVERY_FILE;
 const exposedRpcCall = externalDiscoveryPath
   ? createPrivacyBoundary(rpcCall, () => {
     const discovery = JSON.parse(fs.readFileSync(externalDiscoveryPath, "utf8"));
@@ -258,16 +330,20 @@ async function main() {
     scopedSessionIds: SCOPED_SESSION_IDS,
     chatSessionId: CHAT_SESSION_ID,
     permissionMode: readPermissionMode(),
+    externalDiscovery: Boolean(externalDiscoveryPath),
   });
-  await connectTcp();
-
-  // Authenticate with the TCP bridge before accepting any tool calls
-  const authResult = await rpcCall("auth/verify", { token: NETCATTY_MCP_TOKEN });
-  debugLog("auth/verify result", authResult);
-  if (!authResult?.ok) {
-    throw new Error("TCP bridge authentication failed");
+  if (externalDiscoveryPath) {
+    await ensureConnected();
+  } else {
+    await connectTcp();
+    // Authenticate with the TCP bridge before accepting any tool calls.
+    const authResult = await rpcCall("auth/verify", { token: NETCATTY_MCP_TOKEN });
+    debugLog("auth/verify result", authResult);
+    if (!authResult?.ok) {
+      throw new Error("TCP bridge authentication failed");
+    }
+    process.stderr.write("[netcatty-mcp] Authenticated with TCP bridge\n");
   }
-  process.stderr.write("[netcatty-mcp] Authenticated with TCP bridge\n");
 
   const transport = new StdioServerTransport();
   // Protocol.connect keeps this callback and runs it before request dispatch.
