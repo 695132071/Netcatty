@@ -24,6 +24,7 @@ import { useWindowControls } from '../application/state/useWindowControls';
 import { useSettingsChromeStore } from '../application/state/settingsChromeStore';
 import { useI18n } from '../application/i18n/I18nProvider';
 import { Host, TerminalSession, Workspace } from '../types';
+import { isTabDragReorderStarted } from '../lib/tabInteractions';
 import { cn } from '../lib/utils';
 import { Button } from './ui/button';
 import { ContextMenuItem, ContextMenuSeparator } from './ui/context-menu';
@@ -520,14 +521,20 @@ const TopTabsInner: React.FC<TopTabsProps> = ({
   ]);
 
   const handleTabDragStart = useCallback((e: React.DragEvent, tabId: string) => {
-    e.dataTransfer.effectAllowed = 'move';
-    e.dataTransfer.setData('tab-reorder-id', tabId);
-    // Also set session-id for backward compatibility with workspace split functionality
-    // Only orphan sessions can be dragged to create workspaces
-    const isOrphanSession = orphanSessionMap.has(tabId);
-    if (isOrphanSession) {
-      e.dataTransfer.setData('session-id', tabId);
+    // Payload must be written on the original dragstart. A slow reorder calls
+    // this again from `drag`, when DataTransfer is already read-only.
+    try {
+      e.dataTransfer.effectAllowed = 'move';
+      e.dataTransfer.setData('tab-reorder-id', tabId);
+      // Also set session-id for backward compatibility with workspace split functionality
+      // Only orphan sessions can be dragged to create workspaces
+      if (orphanSessionMap.has(tabId)) {
+        e.dataTransfer.setData('session-id', tabId);
+      }
+    } catch (error) {
+      if (!(error instanceof DOMException)) throw error;
     }
+    if (!isTabDragReorderStarted()) return;
     draggedTabIdRef.current = tabId;
     // Use setTimeout to allow the drag image to be captured before we change styles
     setTimeout(() => {
