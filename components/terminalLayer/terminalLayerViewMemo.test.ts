@@ -1,7 +1,9 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 
 import type { Workspace } from "../../types";
+import { terminalPaneSessionsEqual } from "../../domain/terminalPaneSessionsEqual.ts";
 import {
   terminalLayerFocusSidebarPropsEqual,
   terminalLayerSidePanelCtxEqual,
@@ -100,6 +102,27 @@ test("terminal layer memo ignores activeWorkspace-only tab flips (live store own
     ),
     true,
   );
+});
+
+test("solo tab id change still invalidates workspace ctx; panes host does not read it", () => {
+  const sessions = [{ id: "session-a" }, { id: "session-b" }];
+  assert.equal(
+    terminalLayerWorkspaceCtxEqual(
+      { activeTabId: "session-a", sessions },
+      { activeTabId: "session-b", sessions },
+    ),
+    false,
+  );
+
+  const hostSource = readFileSync(new URL("./TerminalLayerSupport.tsx", import.meta.url), "utf8");
+  const equalStart = hostSource.indexOf("const terminalPanesHostPropsAreEqual");
+  const equalEnd = hostSource.indexOf("export const TerminalPanesHost");
+  const equalBody = hostSource.slice(equalStart, equalEnd);
+  assert.ok(equalStart !== -1 && equalEnd > equalStart);
+  assert.doesNotMatch(equalBody, /prev\.activeTabId/);
+  assert.doesNotMatch(equalBody, /next\.activeTabId/);
+  assert.match(equalBody, /terminalPaneSessionsEqual\(prev\.sessions, next\.sessions\)/);
+  assert.equal(terminalPaneSessionsEqual(sessions, sessions), true);
 });
 
 test("terminal layer memo re-renders when active resizers change", () => {

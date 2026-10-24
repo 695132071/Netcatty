@@ -343,6 +343,11 @@ const SIDE_PANEL_STABLE_CTX_KEYS = [
 ] as const;
 
 const WORKSPACE_CTX_KEYS = [
+  // Stay. Solo SSH A->B already keeps TerminalPanesHost equal when the sessions
+  // ref is unchanged (this compare does not feed the panes host). The visible
+  // pane still pays reveal flush + repaint, and focus retries at 50ms.
+  // Dropping activeTabId only skips one workspace-section pass; the live-store
+  // host/theme update still renders the section. That is not the settle cost.
   'activeTabId',
   'workspaceInnerRef',
   'workspaceOuterRef',
