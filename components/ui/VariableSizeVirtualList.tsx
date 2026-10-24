@@ -3,6 +3,7 @@ import React, {
   useCallback,
   useEffect,
   useImperativeHandle,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -15,6 +16,8 @@ const DEFAULT_OVERSCAN = 6;
 
 export type VariableSizeVirtualListHandle = {
   scrollToIndex: (index: number, align?: 'auto' | 'center') => void;
+  /** Read clientHeight and restore parked scroll after a display:none ancestor. */
+  remeasure: () => void;
 };
 
 interface VariableSizeVirtualListProps<T> {
@@ -25,6 +28,24 @@ interface VariableSizeVirtualListProps<T> {
   overscan?: number;
   getItemKey: (item: T, index: number) => string;
   renderItem: (item: T, index: number) => React.ReactNode;
+  /**
+   * When false, a 0 clientHeight does not collapse the window or accept a
+   * scroll reset. History parks under display:none; turning this back on
+   * remeasures and re-anchors the parked offset.
+   */
+  measureEnabled?: boolean;
+}
+
+function findOffsetIndex(offsets: number[], scrollTop: number): number {
+  if (offsets.length === 0) return 0;
+  let lo = 0;
+  let hi = offsets.length - 1;
+  while (lo < hi) {
+    const mid = Math.floor((lo + hi + 1) / 2);
+    if ((offsets[mid] ?? 0) <= scrollTop) lo = mid;
+    else hi = mid - 1;
+  }
+  return lo;
 }
 
 function VariableSizeVirtualListInner<T>(
@@ -36,12 +57,20 @@ function VariableSizeVirtualListInner<T>(
     overscan = DEFAULT_OVERSCAN,
     getItemKey,
     renderItem,
+    measureEnabled = true,
   }: VariableSizeVirtualListProps<T>,
   ref: React.ForwardedRef<VariableSizeVirtualListHandle>,
 ) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [scrollTop, setScrollTop] = useState(0);
   const [viewportHeight, setViewportHeight] = useState(0);
+  const scrollTopRef = useRef(0);
+  const measureEnabledRef = useRef(measureEnabled);
+  const itemsRef = useRef(items);
+  const getItemHeightRef = useRef(getItemHeight);
+  measureEnabledRef.current = measureEnabled;
+  itemsRef.current = items;
+  getItemHeightRef.current = getItemHeight;
 
   const layout = useMemo(() => {
     const offsets: number[] = [];
@@ -52,6 +81,8 @@ function VariableSizeVirtualListInner<T>(
     }
     return { offsets, totalHeight: total };
   }, [getItemHeight, items]);
+  const layoutRef = useRef(layout);
+  layoutRef.current = layout;
 
   const effectiveScrollTop = clampScrollTop(
     scrollTop,
@@ -66,6 +97,7 @@ function VariableSizeVirtualListInner<T>(
     if (container.scrollTop !== effectiveScrollTop) {
       container.scrollTop = effectiveScrollTop;
     }
+    scrollTopRef.current = effectiveScrollTop;
     if (scrollTop !== effectiveScrollTop) {
       setScrollTop(effectiveScrollTop);
     }
@@ -76,7 +108,11 @@ function VariableSizeVirtualListInner<T>(
     if (!container) return;
 
     const updateViewportHeight = () => {
-      setViewportHeight(container.clientHeight);
+      const next = container.clientHeight;
+      // display:none reports 0. Dropping the window here unmounts the parked
+      // rows; the next show would rebuild them until the user resizes.
+      if (!measureEnabledRef.current && next === 0) return;
+      setViewportHeight((current) => (current === next ? current : next));
     };
 
     updateViewportHeight();
@@ -85,32 +121,85 @@ function VariableSizeVirtualListInner<T>(
     return () => observer.disconnect();
   }, []);
 
+  const scrollToIndex = useCallback((index: number, align: 'auto' | 'center' = 'auto') => {
+    const container = containerRef.current;
+    const currentItems = itemsRef.current;
+    const offsets = layoutRef.current.offsets;
+    if (!container || index < 0 || index >= currentItems.length) return;
+
+    const itemTop = offsets[index] ?? 0;
+    const itemHeight = getItemHeightRef.current(currentItems[index] as T, index);
+    const itemBottom = itemTop + itemHeight;
+    const viewTop = container.scrollTop;
+    const viewBottom = viewTop + container.clientHeight;
+
+    if (align === 'center') {
+      container.scrollTop = Math.max(
+        0,
+        itemTop - (container.clientHeight - itemHeight) / 2,
+      );
+    } else if (itemTop < viewTop) {
+      container.scrollTop = itemTop;
+    } else if (itemBottom > viewBottom) {
+      container.scrollTop = itemBottom - container.clientHeight;
+    }
+    scrollTopRef.current = container.scrollTop;
+    setScrollTop(container.scrollTop);
+  }, []);
+
+  const remeasure = useCallback(() => {
+    const container = containerRef.current;
+    if (!container) return;
+    const nextHeight = container.clientHeight;
+    if (!measureEnabledRef.current && nextHeight === 0) return;
+    if (nextHeight > 0) {
+      setViewportHeight((current) => (current === nextHeight ? current : nextHeight));
+    }
+    const currentItems = itemsRef.current;
+    const anchor = scrollTopRef.current;
+    if (nextHeight <= 0 || currentItems.length === 0) return;
+    const offsets = layoutRef.current.offsets;
+    const index = findOffsetIndex(offsets, anchor);
+    const itemTop = offsets[index] ?? 0;
+    const itemHeight = getItemHeightRef.current(currentItems[index] as T, index);
+    const itemBottom = itemTop + itemHeight;
+    const intersects = itemTop < anchor + nextHeight && itemBottom > anchor;
+    // A display:none ancestor often zeros scrollTop. Put the parked offset
+    // back before scrollToIndex, or "already visible" is computed against 0
+    // and the list jumps.
+    if (container.scrollTop !== anchor) {
+      container.scrollTop = anchor;
+    }
+    if (!intersects) {
+      scrollToIndex(index, 'auto');
+      return;
+    }
+    scrollTopRef.current = container.scrollTop;
+    setScrollTop((current) => (current === container.scrollTop ? current : container.scrollTop));
+  }, [scrollToIndex]);
+
   useImperativeHandle(ref, () => ({
-    scrollToIndex: (index: number, align = 'auto') => {
-      const container = containerRef.current;
-      if (!container || index < 0 || index >= items.length) return;
+    scrollToIndex,
+    remeasure,
+  }), [remeasure, scrollToIndex]);
 
-      const itemTop = layout.offsets[index] ?? 0;
-      const itemHeight = getItemHeight(items[index], index);
-      const itemBottom = itemTop + itemHeight;
-      const viewTop = container.scrollTop;
-      const viewBottom = viewTop + container.clientHeight;
-
-      if (align === 'center') {
-        container.scrollTop = Math.max(
-          0,
-          itemTop - (container.clientHeight - itemHeight) / 2,
-        );
-      } else if (itemTop < viewTop) {
-        container.scrollTop = itemTop;
-      } else if (itemBottom > viewBottom) {
-        container.scrollTop = itemBottom - container.clientHeight;
-      }
-      setScrollTop(container.scrollTop);
-    },
-  }), [getItemHeight, items, layout.offsets]);
+  useLayoutEffect(() => {
+    if (!measureEnabled) return;
+    remeasure();
+    // Parent layout effects move the side-panel portal out of the hidden
+    // parking host after this effect. Remeasure once that move has landed.
+    let cancelled = false;
+    queueMicrotask(() => {
+      if (!cancelled) remeasure();
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [measureEnabled, remeasure]);
 
   const handleScroll = useCallback((event: React.UIEvent<HTMLDivElement>) => {
+    if (!measureEnabledRef.current) return;
+    scrollTopRef.current = event.currentTarget.scrollTop;
     setScrollTop(event.currentTarget.scrollTop);
   }, []);
 

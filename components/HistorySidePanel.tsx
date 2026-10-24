@@ -270,8 +270,8 @@ const HistorySidePanelInner: React.FC<HistorySidePanelProps> = ({
     && state.entries.length === 0;
   const showNoGlobalHistory = scope === 'global' && globalEntries.length === 0;
 
-  if (!isVisible) return null;
-
+  // Stay mounted when the side panel parks this tree. Returning null here
+  // would remount the virtual list on every Notes <-> History switch.
   return (
     <div
       className="h-full flex flex-col bg-background overflow-hidden"
@@ -394,6 +394,7 @@ const HistorySidePanelInner: React.FC<HistorySidePanelProps> = ({
           <VariableSizeVirtualList
             ref={listRef}
             items={listRows}
+            measureEnabled={isVisible}
             getItemHeight={getRowHeight}
             getItemKey={(row, index) =>
               row.type === 'entry' ? row.entry.id : `detail-${row.entry.id}-${index}`}
