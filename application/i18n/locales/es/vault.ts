@@ -1044,6 +1044,18 @@ export const esVaultMessages: Messages = {
   'hostDetails.addTag': 'Agregar una etiqueta...',
   'hostDetails.createTag': 'Crear etiqueta',
   'hostDetails.createGroup': 'Crear grupo',
+
+  // Host connection test
+  'hostConnectionTest.title': 'Probar conexión',
+  'hostConnectionTest.test': 'Probar',
+  'hostConnectionTest.chainOf': 'Cadena {current} de {total}',
+  'hostConnectionTest.success': 'Conexión correcta',
+  'hostConnectionTest.successHint': 'El host aceptó tus credenciales. Puedes cerrar esta ventana.',
+  'hostConnectionTest.connecting': 'Conectando… tiempo de espera en {seconds}s',
+  'hostConnectionTest.failed': 'No se pudo conectar.',
+  'hostConnectionTest.retry': 'Reintentar',
+  'hostConnectionTest.credentialsUnavailable': 'Las credenciales guardadas no se pueden descifrar en este dispositivo. Vuelve a ingresarlas abajo.',
+
   // Entradas de shell local (CMD) en la bóveda
   'localShell.subtitle': 'Shell local',
   'localShell.panel.title': 'Nueva shell local',
