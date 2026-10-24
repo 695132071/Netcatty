@@ -44,6 +44,13 @@ handle, reopen the file at zero, and compare every byte sequentially with the
 local output. Uploads hash the local file and sequentially reread the complete
 remote stage before promotion. A size-only acknowledgement is insufficient.
 Other SSH software retains its existing concurrency and chunk sizes.
+Transfers sharing one TERM-SSHD channel, including pooled aliases, serialize
+their complete body and verification phases across uploads and downloads.
+Restored transfers serialize remote source fingerprints and checkpoint-prefix
+checks too, acquiring the relevant source or target channel before each check.
+Cancelling a queued transfer does not close the shared channel. Active transfer
+cleanup waits for CLOSE; a failed or timed-out CLOSE discards all aliases of
+the uncertain channel before another transfer can use it.
 
 This compatibility policy trades throughput and resume efficiency for correct
 contents. Allow sufficient MCP command time for both the transfer and the
