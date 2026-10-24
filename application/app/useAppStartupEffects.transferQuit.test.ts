@@ -1,10 +1,27 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import React from "react";
+import type { TransferTask } from "../../domain/models";
 import { act, create, type ReactTestRenderer } from "react-test-renderer";
 import { useAppStartupEffects } from "./useAppStartupEffects.ts";
 import { sftpTransferCenterStore } from "../state/sftpTransferCenterStore.ts";
 import { netcattyBridge } from "../../infrastructure/services/netcattyBridge.ts";
+
+const makeTask = (id: string, status: TransferTask["status"]): TransferTask => ({
+  id,
+  fileName: `${id}.txt`,
+  sourcePath: `/source/${id}.txt`,
+  targetPath: `/target/${id}.txt`,
+  sourceConnectionId: "local",
+  targetConnectionId: "remote",
+  direction: "upload",
+  status,
+  totalBytes: 10,
+  transferredBytes: 2,
+  speed: 1,
+  startTime: 1,
+  isDirectory: false,
+});
 
 for (const accept of [false, true]) {
   test(`app Quit with an unfinished transfer: ${accept ? "confirm quits" : "declining reports \"transfers\" before resuming only transferring and queued tasks"}`, async (t) => {
@@ -13,7 +30,8 @@ for (const accept of [false, true]) {
     const g = globalThis as unknown as { window?: { confirm?: (m: string) => boolean } };
     const hadWindow = "window" in g; const previousConfirm = g.window?.confirm;
     if (!g.window) g.window = {};
-    g.window.confirm = () => accept;
+    let prompts = 0;
+    g.window.confirm = () => { prompts++; return accept; };
     let renderer: ReactTestRenderer | undefined;
     let releaseResume!: () => void;
     const resumeGate = new Promise<void>((resolve) => { releaseResume = resolve; });
@@ -76,12 +94,159 @@ for (const accept of [false, true]) {
     }
     assert.equal(resumeSettled, false, "the dirty-check reply must not wait for resume");
     if (accept) {
-      assert.deepEqual(reports, [[false, undefined]]);
-      assert.deepEqual(calls, [...paused, "report"], "accepted quit leaves every prompted task paused");
+      assert.deepEqual(reports, [[true, "transfers"], [false, undefined]]);
+      assert.deepEqual(calls, ["report", ...paused, "report"], "accepted quit leaves every prompted task paused");
     } else {
-      assert.deepEqual(reports, [[true, "transfers"]], "main must be told the prompt was already answered");
-      assert.deepEqual(calls, [...paused, "report", "resume:running", "resume:queued"],
+      assert.deepEqual(reports, [[true, "transfers"], [true, "transfers"]], "main must be told the prompt was already answered");
+      assert.deepEqual(calls, ["report", ...paused, "report", "resume:running", "resume:queued"],
         "report precedes resume, and only transferring/queued rows the prompt paused are resumed");
+      // Dedicated resume promises can represent the whole transfer lifetime.
+      // A second close must still prompt while those promises remain pending.
+      await query();
+      assert.equal(prompts, 2);
+      assert.equal(resumeSettled, false);
+      assert.equal(reports.length, 4);
     }
   });
 }
+
+for (const outcome of ["pause-rejected", "pause-expired", "prompt-expired"] as const) {
+  test(`transfer quit refuses ${outcome} and resumes only the formerly active task`, async (t) => {
+    const previousWindow = Object.getOwnPropertyDescriptor(globalThis, "window");
+    const previousAct = Object.getOwnPropertyDescriptor(globalThis, "IS_REACT_ACT_ENVIRONMENT");
+    let renderer: ReactTestRenderer | undefined;
+    let now = 0;
+    let prompts = 0;
+    let resumes = 0;
+    const replies: Array<{ dirty: boolean; reason?: string; requestId?: string; pending?: boolean }> = [];
+    let query!: (request: { requestId: string; deadline: number }) => Promise<void>;
+    t.mock.method(Date, "now", () => now);
+    Object.defineProperty(globalThis, "IS_REACT_ACT_ENVIRONMENT", { configurable: true, value: true });
+    Object.defineProperty(globalThis, "window", { configurable: true, value: {
+      confirm() { prompts++; now = 6000; return true; },
+    } });
+    t.after(async () => {
+      await act(async () => renderer?.unmount());
+      if (previousWindow) Object.defineProperty(globalThis, "window", previousWindow); else Reflect.deleteProperty(globalThis, "window");
+      if (previousAct) Object.defineProperty(globalThis, "IS_REACT_ACT_ENVIRONMENT", previousAct); else Reflect.deleteProperty(globalThis, "IS_REACT_ACT_ENVIRONMENT");
+    });
+    t.mock.method(sftpTransferCenterStore, "getSnapshot", () => ({ activeCount: 1, queuedCount: 0, attentionCount: 0, tasks: [makeTask("running", "transferring")] }));
+    t.mock.method(sftpTransferCenterStore, "pause", async () => {
+      if (outcome === "pause-rejected") throw new Error("pause failed");
+      if (outcome === "pause-expired") now = 6000;
+    });
+    t.mock.method(sftpTransferCenterStore, "resume", async () => { resumes++; });
+    t.mock.method(netcattyBridge, "get", () => ({
+      onCheckDirtyEditors: (callback: typeof query) => { query = callback; return () => {}; },
+      reportDirtyEditorsResult: (dirty: boolean, reason?: string, options?: { requestId?: string; pending?: boolean }) => {
+        replies.push({ dirty, reason, ...options });
+      },
+    }));
+    function Probe() {
+      useAppStartupEffects({ enabled: false, updateState: {}, sessions: [], hosts: [], keys: [], identities: [], knownHosts: [], proxyProfiles: [], groupConfigs: [], workspaces: [], portForwardingRules: [], t: (key: string) => key });
+      return null;
+    }
+    await act(async () => { renderer = create(React.createElement(Probe)); });
+    await query({ requestId: outcome, deadline: 5000 });
+    assert.deepEqual(replies, [
+      { dirty: true, reason: "transfers", requestId: outcome, pending: true },
+      { dirty: true, reason: "transfers", requestId: outcome },
+    ]);
+    assert.equal(prompts, outcome === "prompt-expired" ? 1 : 0);
+    assert.equal(resumes, 1);
+  });
+}
+
+test("a cancelled task can close after an expired stuck pause, and its late completion cannot resume it", async (t) => {
+  const previousWindow = Object.getOwnPropertyDescriptor(globalThis, "window");
+  const previousAct = Object.getOwnPropertyDescriptor(globalThis, "IS_REACT_ACT_ENVIRONMENT");
+  let renderer: ReactTestRenderer | undefined;
+  let now = 0;
+  let cancelled = false;
+  let prompts = 0;
+  let resumes = 0;
+  let releasePause!: () => void;
+  const pause = new Promise<void>((resolve) => { releasePause = resolve; });
+  const replies: Array<{ dirty: boolean; requestId?: string; pending?: boolean }> = [];
+  let query!: (request: { requestId: string; deadline: number }) => Promise<void>;
+  t.mock.method(Date, "now", () => now);
+  Object.defineProperty(globalThis, "IS_REACT_ACT_ENVIRONMENT", { configurable: true, value: true });
+  Object.defineProperty(globalThis, "window", { configurable: true, value: { confirm() { prompts++; return false; } } });
+  t.after(async () => {
+    releasePause();
+    await act(async () => renderer?.unmount());
+    if (previousWindow) Object.defineProperty(globalThis, "window", previousWindow); else Reflect.deleteProperty(globalThis, "window");
+    if (previousAct) Object.defineProperty(globalThis, "IS_REACT_ACT_ENVIRONMENT", previousAct); else Reflect.deleteProperty(globalThis, "IS_REACT_ACT_ENVIRONMENT");
+  });
+  t.mock.method(sftpTransferCenterStore, "getSnapshot", () => ({ activeCount: cancelled ? 0 : 1, queuedCount: 0, attentionCount: 0, tasks: [makeTask("stuck", cancelled ? "cancelled" : "transferring")] }));
+  t.mock.method(sftpTransferCenterStore, "pause", () => pause);
+  t.mock.method(sftpTransferCenterStore, "resume", async () => { resumes++; });
+  t.mock.method(netcattyBridge, "get", () => ({
+    onCheckDirtyEditors: (callback: typeof query) => { query = callback; return () => {}; },
+    reportDirtyEditorsResult: (dirty: boolean, _reason?: string, options?: { requestId?: string; pending?: boolean }) => replies.push({ dirty, ...options }),
+  }));
+  function Probe() {
+    useAppStartupEffects({ enabled: false, updateState: {}, sessions: [], hosts: [], keys: [], identities: [], knownHosts: [], proxyProfiles: [], groupConfigs: [], workspaces: [], portForwardingRules: [], t: (key: string) => key });
+    return null;
+  }
+  await act(async () => { renderer = create(React.createElement(Probe)); });
+  const first = query({ requestId: "stuck", deadline: 5000 });
+  await query({ requestId: "overlap", deadline: 5000 });
+  assert.deepEqual(replies.at(-1), { dirty: true, requestId: "overlap" });
+  now = 6000;
+  cancelled = true;
+  await query({ requestId: "after-cancel", deadline: 11000 });
+  assert.deepEqual(replies.at(-1), { dirty: false, requestId: "after-cancel" });
+  const replyCount = replies.length;
+  releasePause();
+  await first;
+  assert.equal(replies.length, replyCount, "superseded attempt must not reply again");
+  assert.equal(prompts, 0);
+  assert.equal(resumes, 0, "late completion must not undo the user's cancellation");
+});
+
+test("retry Cancel preserves the expired attempt auto-resume ownership", async (t) => {
+  const previousWindow = Object.getOwnPropertyDescriptor(globalThis, "window");
+  const previousAct = Object.getOwnPropertyDescriptor(globalThis, "IS_REACT_ACT_ENVIRONMENT");
+  let renderer: ReactTestRenderer | undefined;
+  let now = 0;
+  let status: TransferTask["status"] = "transferring";
+  let prompts = 0;
+  let resumes = 0;
+  let releasePause!: () => void;
+  const pause = new Promise<void>((resolve) => { releasePause = resolve; });
+  const replies: Array<{ dirty: boolean; requestId?: string; pending?: boolean }> = [];
+  let query!: (request: { requestId: string; deadline: number }) => Promise<void>;
+  t.mock.method(Date, "now", () => now);
+  Object.defineProperty(globalThis, "IS_REACT_ACT_ENVIRONMENT", { configurable: true, value: true });
+  Object.defineProperty(globalThis, "window", { configurable: true, value: { confirm() { prompts++; return false; } } });
+  t.after(async () => {
+    releasePause();
+    await act(async () => renderer?.unmount());
+    if (previousWindow) Object.defineProperty(globalThis, "window", previousWindow); else Reflect.deleteProperty(globalThis, "window");
+    if (previousAct) Object.defineProperty(globalThis, "IS_REACT_ACT_ENVIRONMENT", previousAct); else Reflect.deleteProperty(globalThis, "IS_REACT_ACT_ENVIRONMENT");
+  });
+  t.mock.method(sftpTransferCenterStore, "getSnapshot", () => ({ activeCount: status === "transferring" || status === "pausing" ? 1 : 0, queuedCount: 0, attentionCount: 0, tasks: [makeTask("stuck", status)] }));
+  t.mock.method(sftpTransferCenterStore, "pause", () => { status = "pausing"; return pause; });
+  t.mock.method(sftpTransferCenterStore, "resume", async () => { resumes++; });
+  t.mock.method(netcattyBridge, "get", () => ({
+    onCheckDirtyEditors: (callback: typeof query) => { query = callback; return () => {}; },
+    reportDirtyEditorsResult: (dirty: boolean, _reason?: string, options?: { requestId?: string; pending?: boolean }) => replies.push({ dirty, ...options }),
+  }));
+  function Probe() {
+    useAppStartupEffects({ enabled: false, updateState: {}, sessions: [], hosts: [], keys: [], identities: [], knownHosts: [], proxyProfiles: [], groupConfigs: [], workspaces: [], portForwardingRules: [], t: (key: string) => key });
+    return null;
+  }
+  await act(async () => { renderer = create(React.createElement(Probe)); });
+  const first = query({ requestId: "stuck", deadline: 5000 });
+  await query({ requestId: "overlap", deadline: 5000 });
+  assert.deepEqual(replies.at(-1), { dirty: true, requestId: "overlap" });
+  now = 6000;
+  const retry = query({ requestId: "retry", deadline: 11000 });
+  status = "paused";
+  releasePause();
+  await Promise.all([first, retry]);
+  assert.equal(prompts, 1);
+  assert.equal(resumes, 1, "Cancel must restore work running before the first attempt");
+  assert.deepEqual(replies.at(-1), { dirty: true, requestId: "retry" });
+});

@@ -1,3 +1,5 @@
+const { randomUUID } = require("node:crypto");
+
 /**
  * Dirty-editor guard helper.
  *
@@ -17,7 +19,8 @@
  *
  * Sends "app:query-dirty-editors" to the given webContents and resolves with
  * the renderer's reply. Resolves `false` (fail-open) if the renderer never
- * answers within `timeoutMs`, if the webContents can't be messaged, or if the
+ * answers within `timeoutMs` without acknowledging unfinished transfers,
+ * if the webContents can't be messaged, or if the
  * send throws — in every one of those cases there is no usable UI to surface a
  * "save first" warning on, so blocking the quit would only strand the user.
  *
@@ -31,7 +34,7 @@
  * @param {number} timeoutMs - Max time to wait for the renderer reply.
  * @param {{ ipcMain?: import("electron").IpcMain }} [options] - Inject ipcMain
  *   for tests; defaults to electron's ipcMain.
- * @returns {Promise<boolean>} true when the renderer reports unsaved changes.
+ * @returns {Promise<boolean | "transfers">} Truthy when closing must be refused.
  */
 function queryDirtyEditors(webContents, timeoutMs, options = {}) {
   const ipcMain = options.ipcMain || resolveIpcMain();
@@ -43,6 +46,8 @@ function queryDirtyEditors(webContents, timeoutMs, options = {}) {
   }
 
   return new Promise((resolve) => {
+    const request = { requestId: randomUUID(), deadline: Date.now() + timeoutMs };
+    let transfersPending = false;
     let settled = false;
     let timeoutId = null;
 
@@ -62,7 +67,11 @@ function queryDirtyEditors(webContents, timeoutMs, options = {}) {
       // Use `.on` (not `.once`) so a rogue reply from another window doesn't
       // consume the listener slot and let the real reply fall through. A
       // missing/falsy sender is anomalous and treated as a wrong-window reply.
-      if (evt?.sender !== webContents) return;
+      if (evt?.sender !== webContents || payload?.requestId !== request.requestId) return;
+      if (payload.pending === true && payload.hasDirty === true && payload.reason === "transfers") {
+        transfersPending = true;
+        return;
+      }
       // "transfers": the user already declined the renderer's unfinished-
       // transfer quit prompt. Still truthy, so existing callers keep quit
       // cancelled; handleBeforeQuit uses it to skip the editor dialog.
@@ -71,11 +80,13 @@ function queryDirtyEditors(webContents, timeoutMs, options = {}) {
     ipcMain.on("app:dirty-editors-result", onResult);
 
     // Timeout fallback: if the renderer never replies (crash, unhandled
-    // exception in its listener, etc.) we must not hang forever. Fail open.
-    timeoutId = setTimeout(() => settle(false), timeoutMs);
+    // exception in its listener, etc.) we must not hang forever. Once the
+    // renderer identifies unfinished transfers, silence is not permission to
+    // discard them. Keep the ordinary unresponsive-editor fallback unchanged.
+    timeoutId = setTimeout(() => settle(transfersPending ? "transfers" : false), timeoutMs);
 
     try {
-      webContents.send("app:query-dirty-editors");
+      webContents.send("app:query-dirty-editors", request);
     } catch (err) {
       // webContents.send can throw if the renderer was destroyed between the
       // isCrashed?.() check above and this call (a real race when the GPU

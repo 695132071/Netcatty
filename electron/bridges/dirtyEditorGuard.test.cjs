@@ -32,7 +32,8 @@ function makeWebContents() {
   const sent = [];
   return {
     sent,
-    send(channel) {
+    send(channel, request) {
+      this.request = request;
       sent.push(channel);
     },
     isDestroyed() {
@@ -52,7 +53,7 @@ test("resolves true when the renderer reports dirty editors", async () => {
   // The request is sent on the queried webContents.
   assert.deepEqual(wc.sent, ["app:query-dirty-editors"]);
   // Renderer replies from the same webContents.
-  ipcMain.emit("app:dirty-editors-result", { sender: wc }, { hasDirty: true });
+  ipcMain.emit("app:dirty-editors-result", { sender: wc }, { requestId: wc.request.requestId, hasDirty: true });
 
   assert.equal(await promise, true);
   // Listener was torn down.
@@ -64,7 +65,7 @@ test("resolves false when the renderer reports no dirty editors", async () => {
   const wc = makeWebContents();
 
   const promise = queryDirtyEditors(wc, 5000, { ipcMain });
-  ipcMain.emit("app:dirty-editors-result", { sender: wc }, { hasDirty: false });
+  ipcMain.emit("app:dirty-editors-result", { sender: wc }, { requestId: wc.request.requestId, hasDirty: false });
 
   assert.equal(await promise, false);
   assert.equal(ipcMain.listenerCount("app:dirty-editors-result"), 0);
@@ -75,7 +76,7 @@ test("a missing hasDirty payload is treated as not-dirty (fail open)", async () 
   const wc = makeWebContents();
 
   const promise = queryDirtyEditors(wc, 5000, { ipcMain });
-  ipcMain.emit("app:dirty-editors-result", { sender: wc }, undefined);
+  ipcMain.emit("app:dirty-editors-result", { sender: wc }, { requestId: wc.request.requestId });
 
   assert.equal(await promise, false);
 });
@@ -96,7 +97,7 @@ test("ignores replies from a different webContents, then times out to false", as
 
     // A rogue reply from another window claims dirty — it must be ignored, and
     // the listener must remain installed (we use .on, not .once).
-    ipcMain.emit("app:dirty-editors-result", { sender: otherWc }, { hasDirty: true });
+    ipcMain.emit("app:dirty-editors-result", { sender: otherWc }, { requestId: wc.request.requestId, hasDirty: true });
     assert.equal(ipcMain.listenerCount("app:dirty-editors-result"), 1);
 
     // No real reply ever arrives → the timeout fires and resolves false.
@@ -121,7 +122,7 @@ test("a falsy sender on the reply is rejected (treated as wrong window)", async 
   };
   try {
     const promise = queryDirtyEditors(wc, 5000, { ipcMain });
-    ipcMain.emit("app:dirty-editors-result", { sender: null }, { hasDirty: true });
+    ipcMain.emit("app:dirty-editors-result", { sender: null }, { requestId: wc.request.requestId, hasDirty: true });
     // Not settled by the anomalous reply.
     assert.equal(ipcMain.listenerCount("app:dirty-editors-result"), 1);
     timeoutFn();
@@ -144,7 +145,7 @@ test("a late timeout cannot override an already-received reply", async () => {
   try {
     const promise = queryDirtyEditors(wc, 5000, { ipcMain });
     // Real reply: dirty=true.
-    ipcMain.emit("app:dirty-editors-result", { sender: wc }, { hasDirty: true });
+    ipcMain.emit("app:dirty-editors-result", { sender: wc }, { requestId: wc.request.requestId, hasDirty: true });
     // A stale timeout fires afterwards — it must be a no-op (settled guard).
     timeoutFn();
     assert.equal(await promise, true);
@@ -226,10 +227,53 @@ test("carries a declined unfinished-transfer prompt as a truthy \"transfers\" re
   const ipcMain = makeIpcMain();
   const wc = makeWebContents();
   const promise = queryDirtyEditors(wc, 5000, { ipcMain });
-  ipcMain.emit("app:dirty-editors-result", { sender: wc }, { hasDirty: true, reason: "transfers" });
+  ipcMain.emit("app:dirty-editors-result", { sender: wc }, { requestId: wc.request.requestId, hasDirty: true, reason: "transfers" });
   assert.equal(await promise, "transfers");
   // A clean reply that names a reason is still clean.
   const clean = queryDirtyEditors(wc, 5000, { ipcMain });
-  ipcMain.emit("app:dirty-editors-result", { sender: wc }, { hasDirty: false, reason: "transfers" });
+  ipcMain.emit("app:dirty-editors-result", { sender: wc }, { requestId: wc.request.requestId, hasDirty: false, reason: "transfers" });
   assert.equal(await clean, false);
+});
+
+
+test("unfinished-transfer acknowledgement changes only that request's timeout to fail closed", async () => {
+  const ipcMain = makeIpcMain();
+  const wc = makeWebContents();
+  const waiting = queryDirtyEditors(wc, 20, { ipcMain });
+  ipcMain.emit("app:dirty-editors-result", { sender: wc }, {
+    requestId: wc.request.requestId, hasDirty: true, reason: "transfers", pending: true,
+  });
+  assert.equal(await waiting, "transfers");
+  assert.equal(ipcMain.listenerCount("app:dirty-editors-result"), 0);
+  assert.equal(await queryDirtyEditors(wc, 20, { ipcMain }), false);
+});
+
+test("an expired query's late acceptance cannot authorize a later close", async () => {
+  const ipcMain = makeIpcMain();
+  const wc = makeWebContents();
+  const first = queryDirtyEditors(wc, 20, { ipcMain });
+  const oldRequest = wc.request;
+  ipcMain.emit("app:dirty-editors-result", { sender: wc }, {
+    requestId: oldRequest.requestId, hasDirty: true, reason: "transfers", pending: true,
+  });
+  assert.equal(await first, "transfers");
+  const second = queryDirtyEditors(wc, 1000, { ipcMain });
+  assert.notEqual(wc.request.requestId, oldRequest.requestId);
+  ipcMain.emit("app:dirty-editors-result", { sender: wc }, { requestId: oldRequest.requestId, hasDirty: false });
+  assert.equal(ipcMain.listenerCount("app:dirty-editors-result"), 1);
+  ipcMain.emit("app:dirty-editors-result", { sender: wc }, {
+    requestId: wc.request.requestId, hasDirty: true, reason: "transfers",
+  });
+  assert.equal(await second, "transfers");
+  assert.equal(ipcMain.listenerCount("app:dirty-editors-result"), 0);
+});
+
+test("wrong-window pending acknowledgement cannot change the timeout fallback", async () => {
+  const ipcMain = makeIpcMain();
+  const wc = makeWebContents();
+  const waiting = queryDirtyEditors(wc, 20, { ipcMain });
+  ipcMain.emit("app:dirty-editors-result", { sender: makeWebContents() }, {
+    requestId: wc.request.requestId, hasDirty: true, reason: "transfers", pending: true,
+  });
+  assert.equal(await waiting, false);
 });
