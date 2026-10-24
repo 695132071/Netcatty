@@ -423,6 +423,7 @@ export const SftpTransferQueue: React.FC<SftpTransferQueueProps> = ({
                 canToggleChildren={childTasks.length > 0}
                 isExpanded={isExpanded}
                 visibleChildCount={childTasks.length}
+                childWarningCount={childTasks.filter((child) => child.status === 'completed' && !!child.warning).length}
                 childListId={childListId}
                 onToggleChildren={() => toggleExpanded(task.id)}
                 onCancel={() => {

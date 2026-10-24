@@ -80,6 +80,8 @@ export interface TransferTask {
   speed: number; // bytes per second
   error?: string;
   startTime: number;
+  /** Upload completed, but a generated backup needs manual cleanup. */
+  warning?: string;
   endTime?: number;
   isDirectory: boolean;
   progressMode?: 'bytes' | 'files';

@@ -103,6 +103,20 @@ test("mapWorkerTransferChannelToGlobalEvent maps complete/error/cancel", () => {
   );
 });
 
+test("worker completion preserves a per-file cleanup warning without changing status", () => {
+  const warning = "Upload completed; remove backup /remote/.netcatty-backup-file.bin manually.";
+  const event = mapWorkerTransferChannelToGlobalEvent("netcatty:transfer:complete", {
+    transferId: "cleanup-warning", warning, totalBytes: 42, transferred: 42,
+    parentTaskId: "folder", directoryEntryIndex: 4, directoryEntryIdentity: "entry",
+  });
+  assert.equal(event.type, "completed");
+  assert.equal(event.warning, warning);
+  assert.equal(event.error, undefined);
+  assert.equal(event.totalBytes, 42);
+  assert.equal(event.parentTaskId, "folder");
+  assert.equal(event.directoryEntryIndex, 4);
+});
+
 test("mapWorkerTransferChannelToGlobalEvent maps compressed parent lifecycle", () => {
   const progress = mapWorkerTransferChannelToGlobalEvent("netcatty:compress:progress", {
     compressionId: "compressed-1",

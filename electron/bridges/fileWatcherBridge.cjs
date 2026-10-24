@@ -306,6 +306,7 @@ async function syncFileChangeOnce(watchId, watchInfo) {
 
   const transferId = `filewatch-${watchId}-${++watchInfo.syncSequence}`;
   watchInfo.activeTransferId = transferId;
+  let warning;
   console.log(`[FileWatcher] Streaming ${stat.size} bytes to ${remotePath}`);
   try {
     const result = await transferBridge.startInternalTransfer(null, {
@@ -324,18 +325,20 @@ async function syncFileChangeOnce(watchId, watchInfo) {
       throw new Error("Transfer cancelled");
     }
     if (result?.error) throw new Error(result.error);
+    warning = result?.warning;
   } finally {
     if (watchInfo.activeTransferId === transferId) watchInfo.activeTransferId = null;
   }
 
   if (watchInfo.stopped || activeWatchers.get(watchId) !== watchInfo) return;
   console.log(`[FileWatcher] Sync complete: ${remotePath}`);
-  showSystemNotification("Netcatty", `File synced to remote: ${fileName}`);
+  showSystemNotification("Netcatty", warning || `File synced to remote: ${fileName}`);
   notifyWatchOwners(watchInfo, "netcatty:filewatch:synced", {
     watchId,
     localPath,
     remotePath,
     bytesWritten: stat.size,
+    ...(warning ? { warning } : {}),
   });
 }
 

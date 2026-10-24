@@ -163,6 +163,9 @@ export async function restoreSftpTransferHistoryCooperatively(
       const child = parentChildren[childIndex];
       if (
         child.status === "completed"
+        // Match canonical pruning: warning rows carry recovery paths that
+        // cannot be represented by the directory's compact manifest.
+        && !child.warning
         && Number.isSafeInteger(child.directoryEntryIndex)
         && (child.directoryEntryIndex ?? checkpoint.coveredEntries) < checkpoint.coveredEntries
         && /^[a-f0-9]{64}$/.test(child.directoryEntryIdentity ?? "")

@@ -229,7 +229,8 @@ test("session close cancels a watch whose initial stat is still pending", async 
   assert.equal(harness.listenersByPath.has(harness.localPath), false);
 });
 
-test("external edit sync streams through the unified transfer runtime without buffering the whole file", async (t) => {
+for (const warning of [undefined, "Upload completed; remove backup /remote/.netcatty-backup-edit.txt manually."]) {
+test(`external edit sync streams without buffering and ${warning ? "preserves a cleanup warning" : "reports clean success"}`, async (t) => {
   const harness = createHarness(t);
   const transferBridge = require("./transferBridge.cjs");
   const originalStartInternalTransfer = transferBridge.startInternalTransfer;
@@ -241,7 +242,7 @@ test("external edit sync streams through the unified transfer runtime without bu
 
   transferBridge.startInternalTransfer = async (_event, payload) => {
     internalTransfers.push(payload);
-    return { transferId: payload.transferId };
+    return { transferId: payload.transferId, ...(warning ? { warning } : {}) };
   };
   fs.promises.readFile = async (...args) => {
     wholeFileReadCalls += 1;
@@ -294,7 +295,10 @@ test("external edit sync streams through the unified transfer runtime without bu
   assert.equal(internalTransfers[0].targetSftpId, harness.sftpId);
   assert.equal(wholeFileReadCalls, 0);
   assert.equal(directPutCalls, 0);
+  assert.equal(sent.find((event) => event.channel === "netcatty:filewatch:synced")?.payload.warning, warning);
+  assert.equal(sent.some((event) => event.channel === "netcatty:filewatch:error"), false);
 });
+}
 
 test("closing the SFTP session cancels an active external edit stream", async (t) => {
   const harness = createHarness(t);

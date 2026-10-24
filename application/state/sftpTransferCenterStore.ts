@@ -152,6 +152,7 @@ export interface SftpTransferCenterStore {
     startedAt?: number;
     endedAt?: number;
     error?: string;
+    warning?: string;
     transferred?: number;
     totalBytes?: number;
     speed?: number;
@@ -288,6 +289,12 @@ export function mergeOwnerPublishedTask(
     ownerId,
     updatedAt: incoming.updatedAt ?? Date.now(),
   };
+
+  // A panel snapshot may predate cleanup metadata returned by the invoke or
+  // completed IPC. Keep it through this attempt, but not a restart or failure.
+  if (!incomingReset && incoming.status !== "failed" && incoming.status !== "cancelled") {
+    merged.warning = incoming.warning ?? existing.warning;
+  }
 
   if (incomingReset || incomingTerminal) {
     return merged;
@@ -2274,6 +2281,15 @@ export function createSftpTransferCenterStore(persistence?: StorePersistence): S
       if (terminal && event.type !== "cancelled") {
         // Allow a late explicit cancel to stick; ignore everything else.
         if (event.type === "completed" || event.type === "failed") {
+          // An invoke response can complete the renderer row before its IPC
+          // event arrives. Enrich that same success with cleanup metadata,
+          // without replacing any terminal outcome or reviving stopped work.
+          if (existing.status === "completed" && event.type === "completed"
+            && event.warning && event.warning !== existing.warning) {
+            tasks = tasks.map((task) => task.id === existing.id ? { ...task, warning: event.warning } : task);
+            emit(true);
+            return;
+          }
           // Keep existing terminal state (prefer cancelled over late completed).
           publishRepairedHierarchy();
           return;
@@ -2561,6 +2577,7 @@ export function createSftpTransferCenterStore(persistence?: StorePersistence): S
             ? task.checkpointBytes
             : Math.max(task.checkpointBytes ?? 0, Number(event.checkpointBytes) || 0),
           error: event.error,
+          warning: event.type === "completed" ? event.warning ?? task.warning : undefined,
           endTime: event.endedAt ?? Date.now(),
           speed: 0,
           reconnectRequired: event.type === "failed" ? task.reconnectRequired : false,

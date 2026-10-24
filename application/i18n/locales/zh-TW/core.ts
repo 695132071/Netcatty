@@ -1037,6 +1037,7 @@ Vaults 分頁維持扁平，不使用這塊背景。
   'sftp.transfers.openTargetFolder': '開啟目標目錄',
   'sftp.transfers.openTargetFolderError': '無法開啟目標目錄',
   'sftp.transfers.copyTargetPath': '複製目標路徑',
+  'sftp.transfers.cleanupWarnings': '備份清理警告：{count}。展開檔案清單查看詳情。',
   'sftp.transfers.copyTargetPathSuccess': '已複製目標路徑',
   'sftp.transfers.copyTargetPathError': '無法複製目標路徑',
   'sftp.transfers.pathConflict.title': '無法開始傳輸',

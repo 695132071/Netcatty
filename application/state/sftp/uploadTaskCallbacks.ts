@@ -156,6 +156,10 @@ export const createUploadTaskCallbacks = ({
       phase: phase === "compressed" ? "transferring" : phase as TransferTask["phase"],
     });
   },
+  onTaskWarning: (taskId: string, warning: string) => {
+    // Preserve cleanup details before completion can compact a child row.
+    store.patchTask(taskId, { warning });
+  },
   onTaskCompleted: (taskId: string, totalBytes: number) => {
     store.patchTask(taskId, {
       status: "completed" as TransferStatus,

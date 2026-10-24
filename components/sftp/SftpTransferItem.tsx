@@ -33,6 +33,7 @@ import {
 import { Button } from '../ui/button';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '../ui/tooltip';
 import { formatSpeed, formatTransferBytes } from './utils';
+import { SftpTransferWarning } from './SftpTransferWarning';
 
 /** Child rows need room for Pause + Cancel (2×24px icons + gap). */
 const CHILD_ACTIONS_COLUMN_PX = 56;
@@ -54,6 +55,7 @@ interface SftpTransferItemProps {
     canToggleChildren?: boolean;
     isExpanded?: boolean;
     visibleChildCount?: number;
+    childWarningCount?: number;
     onToggleChildren?: () => void;
     onSetNameColumnWidth?: (width: number) => void;
     childNameColumnMinWidth?: number;
@@ -124,6 +126,7 @@ const SftpTransferItemInner: React.FC<SftpTransferItemProps> = ({
     canToggleChildren = false,
     isExpanded = false,
     visibleChildCount: _visibleChildCount = 0,
+    childWarningCount = 0,
     onToggleChildren,
     onSetNameColumnWidth,
     childNameColumnMinWidth = 160,
@@ -288,7 +291,8 @@ const SftpTransferItemInner: React.FC<SftpTransferItemProps> = ({
     // pause button never looks dead when the backend refuses.
     const showPauseUnavailable = !!task.pauseUnavailableReason
         && (task.status === 'transferring' || task.status === 'queued' || task.status === 'pending');
-    const hasFooterContent = showTransferSizeCalculation || showFailedError || showPauseUnavailable;
+    const showWarning = task.status === 'completed' && !!task.warning;
+    const hasFooterContent = showTransferSizeCalculation || showFailedError || showPauseUnavailable || showWarning || childWarningCount > 0;
     const retryActionLabel = t('sftp.transfers.retryAction');
     const cancelActionLabel = t('common.cancel');
     const pauseActionLabel = t('sftp.transferCenter.pause');
@@ -480,7 +484,7 @@ const SftpTransferItemInner: React.FC<SftpTransferItemProps> = ({
                     <TooltipContent side="top">{resizeNameColumnLabel}</TooltipContent>
                 </Tooltip>
                 <div className="min-w-0 overflow-hidden">
-                    {childProgressBar}
+                    {showWarning ? <SftpTransferWarning warning={task.warning} compact /> : childProgressBar}
                 </div>
                 <div className="flex h-full min-w-0 items-center justify-end gap-0.5 pl-1">
                     {actionButtons}
@@ -609,6 +613,10 @@ const SftpTransferItemInner: React.FC<SftpTransferItemProps> = ({
                 {showPauseUnavailable && (
                     <span className="text-amber-600 dark:text-amber-400">{task.pauseUnavailableReason}</span>
                 )}
+                {showWarning && <SftpTransferWarning warning={task.warning} />}
+                {childWarningCount > 0 && (
+                    <span className="text-amber-600 dark:text-amber-400">{t('sftp.transfers.cleanupWarnings', { count: childWarningCount })}</span>
+                )}
                 </div>
             )}
         </div>
@@ -631,6 +639,7 @@ const arePropsEqual = (
 
     if (prev.status !== next.status) return false;
     if (prev.error !== next.error) return false;
+    if (prev.warning !== next.warning) return false;
     if (prev.pauseUnavailableReason !== next.pauseUnavailableReason) return false;
     if (prev.reconnectRequired !== next.reconnectRequired) return false;
     if (prev.resumable !== next.resumable) return false;
@@ -647,6 +656,7 @@ const arePropsEqual = (
     if ((prevProps.canToggleChildren ?? false) !== (nextProps.canToggleChildren ?? false)) return false;
     if ((prevProps.isExpanded ?? false) !== (nextProps.isExpanded ?? false)) return false;
     if ((prevProps.visibleChildCount ?? 0) !== (nextProps.visibleChildCount ?? 0)) return false;
+    if ((prevProps.childWarningCount ?? 0) !== (nextProps.childWarningCount ?? 0)) return false;
     if ((prevProps.childNameColumnMinWidth ?? 160) !== (nextProps.childNameColumnMinWidth ?? 160)) return false;
     if ((prevProps.childNameColumnMaxWidth ?? 480) !== (nextProps.childNameColumnMaxWidth ?? 480)) return false;
     if ((prevProps.childListId ?? '') !== (nextProps.childListId ?? '')) return false;

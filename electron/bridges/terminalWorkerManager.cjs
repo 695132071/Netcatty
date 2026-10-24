@@ -133,6 +133,7 @@ function mapWorkerTransferChannelToGlobalEvent(channel, payload) {
       parentTaskId: payload.parentTaskId,
       directoryEntryIndex: payload.directoryEntryIndex,
       directoryEntryIdentity: payload.directoryEntryIdentity,
+      ...(payload.warning ? { warning: payload.warning } : {}),
     };
   }
   if (channel === "netcatty:transfer:cancelled") {

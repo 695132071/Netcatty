@@ -6,7 +6,7 @@ export class TransferOwnerChangedError extends Error {}
 
 export type TransferOwnerObservation = ReturnType<typeof sftpTransferCenterStore.observeTaskSettlement>;
 
-type StreamResult = { error?: string; cancelled?: boolean; superseded?: boolean } | undefined;
+type StreamResult = { error?: string; cancelled?: boolean; superseded?: boolean; warning?: string } | undefined;
 
 /** A live waiter owns bounded settlement evidence; persisted history stays compact. */
 export async function runTransferAndWaitForOwner(
@@ -37,7 +37,17 @@ export async function runTransferAndWaitForOwner(
     observation = sftpTransferCenterStore.observeTaskSettlement(task, undefined, onOwnerChanged);
     const result = await start();
     if (observation.hasIdentityConflict()) throw new TransferOwnerChangedError("Transfer identity changed while waiting for its owner");
-    if (!result?.superseded) return result;
+    if (!result?.superseded) {
+      // The invoke response may arrive before completed IPC. Preserve cleanup
+      // details before the caller completes (and may compact) this child.
+      if (result?.warning && !result.error && !result.cancelled) {
+        const latest = sftpTransferCenterStore.getTask(task.id);
+        if (latest && latest.status !== "failed" && latest.status !== "cancelled") {
+          sftpTransferCenterStore.patchTask(task.id, { warning: result.warning });
+        }
+      }
+      return result;
+    }
     for (;;) {
       if (shouldAbort()) throw new Error("Transfer cancelled");
       if (observation.hasIdentityConflict()) throw new TransferOwnerChangedError("Transfer identity changed while waiting for its owner");

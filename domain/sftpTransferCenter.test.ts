@@ -294,6 +294,27 @@ test("prune upgrades legacy completed children into the parent checkpoint", () =
   assert.equal(pruned.find((item) => item.id === "dir")?.directoryResumeCheckpoint?.completedEntries, 5);
 });
 
+test("completed cleanup-warning children retain actionable paths across compaction and restart", () => {
+  const now = Date.now();
+  const warning = "Upload completed; remove backup /target/.netcatty-backup-file manually.";
+  const parent: TransferTask = { ...task("warning-folder", "transferring", now), isDirectory: true };
+  const children: TransferTask[] = [0, 1].map((index) => ({
+    ...task(`warning-child-${index}`, "completed", now),
+    parentTaskId: parent.id, endTime: now, directoryEntryIndex: index,
+    directoryEntryIdentity: String(index).padStart(64, "0"),
+    warning: index === 0 ? warning : undefined,
+  }));
+  const pruned = pruneSftpTransferHistory([parent, ...children], now);
+  assert.equal(pruned.some((row) => row.id === "warning-child-1"), false);
+  assert.equal(pruned.find((row) => row.id === parent.id)?.directoryResumeCheckpoint?.completedEntries, 1);
+  const restored = deserializeSftpTransferCenter(serializeSftpTransferCenter(pruned));
+  const retained = restored.tasks.find((row) => row.id === "warning-child-0");
+  assert.equal(retained?.status, "completed");
+  assert.equal(retained?.warning, warning);
+  assert.equal(retained?.error, undefined);
+  assert.equal(pruneSftpTransferHistory(restored.tasks, now).find((row) => row.id === retained?.id)?.warning, warning);
+});
+
 test("prune compacts 50,000 completed directory children into a bounded parent checkpoint", () => {
   const pruneStartedAt = Date.now();
   const now = Date.now();

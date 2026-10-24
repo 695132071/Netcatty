@@ -135,6 +135,34 @@ test("completed dispatch consumes only exact identity and never restarts", async
   assert.equal(store.getTask(task.id)?.status, "completed");
 });
 
+test("successful invoke warnings reach the child before local completion can compact it", async (t) => {
+  const { sftpTransferCenterStore: store } = await import("../sftpTransferCenterStore");
+  const { runTransferAndWaitForOwner } = await import("./waitForTransferOwner");
+  const task = { ...child(), id: "warning-result-child", parentTaskId: "warning-result-root" };
+  const root = { ...task, id: task.parentTaskId, parentTaskId: undefined, isDirectory: true };
+  const warning = "Upload completed; remove backup /target/.netcatty-backup-a manually.";
+  store.upsertTasks([root, task]);
+  t.after(() => store.dismiss(root.id));
+  const result = await runTransferAndWaitForOwner(task, async () => ({ warning }), () => false);
+  assert.equal(result?.warning, warning);
+  assert.equal(store.getTask(task.id)?.warning, warning, "capture metadata before the caller finishes the child");
+  store.patchTask(task.id, { status: "completed", transferredBytes: 1 });
+  assert.equal(store.getTask(task.id)?.status, "completed", "warning-bearing children stay available for inspection");
+  assert.equal(store.getTask(task.id)?.warning, warning);
+});
+
+for (const outcome of [{ error: "write failed" }, { cancelled: true }]) {
+  test(`unsuccessful invoke results do not add cleanup warnings (${JSON.stringify(outcome)})`, async (t) => {
+    const { sftpTransferCenterStore: store } = await import("../sftpTransferCenterStore");
+    const { runTransferAndWaitForOwner } = await import("./waitForTransferOwner");
+    const task = { ...child(), id: `unsuccessful-warning-${"error" in outcome ? "failed" : "cancelled"}`, parentTaskId: undefined };
+    store.upsertTasks([task]);
+    t.after(() => store.dismiss(task.id));
+    await runTransferAndWaitForOwner(task, async () => ({ ...outcome, warning: "not a committed upload" }), () => false);
+    assert.equal(store.getTask(task.id)?.warning, undefined);
+  });
+}
+
 test("a resumed retry does not inherit failed settlement captured while admission was paused", async (t) => {
   const { sftpTransferCenterStore: store } = await import("../sftpTransferCenterStore");
   const { runTransferAndWaitForOwner } = await import("./waitForTransferOwner");

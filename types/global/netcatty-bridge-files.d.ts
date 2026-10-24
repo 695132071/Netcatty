@@ -25,7 +25,7 @@ declare global {
     listFileWatches?(): Promise<Array<{ watchId: string; localPath: string; remotePath: string; sftpId: string }>>;
     registerTempFile?(sftpId: string, localPath: string): Promise<{ success: boolean }>;
     unregisterTempFile?(sftpId: string, localPath: string): Promise<{ success: boolean; retained?: boolean }>;
-    onFileWatchSynced?(cb: (payload: { watchId: string; localPath: string; remotePath: string; bytesWritten: number }) => void): () => void;
+    onFileWatchSynced?(cb: (payload: { watchId: string; localPath: string; remotePath: string; bytesWritten: number; warning?: string }) => void): () => void;
     onFileWatchError?(cb: (payload: { watchId: string; localPath: string; remotePath: string; error: string }) => void): () => void;
     onFileWatchStopped?(cb: (payload: { watchId: string; localPath: string; remotePath: string; sftpId: string }) => void): () => void;
 

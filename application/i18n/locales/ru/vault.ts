@@ -413,6 +413,7 @@ export const ruVaultMessages: Messages = {
   'sftp.transfers.openTargetFolder': 'Открыть целевую папку',
   'sftp.transfers.openTargetFolderError': 'Не удалось открыть целевую папку',
   'sftp.transfers.copyTargetPath': 'Копировать целевой путь',
+  'sftp.transfers.cleanupWarnings': 'Предупреждения об удалении резервных копий: {count}. Откройте список файлов для подробностей.',
   'sftp.transfers.copyTargetPathSuccess': 'Целевой путь скопирован',
   'sftp.transfers.copyTargetPathError': 'Не удалось скопировать целевой путь',
   'sftp.transfers.pathConflict.title': 'Передача заблокирована',

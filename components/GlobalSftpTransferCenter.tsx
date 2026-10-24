@@ -37,6 +37,7 @@ import { cn } from "../lib/utils";
 import { Button } from "./ui/button";
 import { Popover, PopoverContent, PopoverTrigger } from "./ui/popover";
 import { Tooltip, TooltipContent, TooltipTrigger } from "./ui/tooltip";
+import { SftpTransferWarning } from "./sftp/SftpTransferWarning";
 
 /** Stable empty snapshot while the popover is closed — progress ticks must not
  * re-render TopTabs just to update hidden list rows. */
@@ -350,7 +351,9 @@ const TransferChildRow = React.memo(function TransferChildRow({ task: snapshotTa
     return (
       <div className="flex h-6 items-center gap-2 rounded px-1 text-[10px] hover:bg-muted/40" data-transfer-status={task.status}>
         <TruncatedTextWithTooltip text={task.fileName} tooltip={task.targetPath || task.fileName} className="flex-1 text-muted-foreground" />
-        <span className="shrink-0 font-mono text-muted-foreground">{detail}</span>
+        {task.status === "completed" && task.warning
+          ? <div className="min-w-0 flex-1"><SftpTransferWarning warning={task.warning} compact /></div>
+          : <span className="shrink-0 font-mono text-muted-foreground">{detail}</span>}
         {task.status === "transferring" && <Loader2 size={10} className="shrink-0 animate-spin text-primary" />}
       </div>
     );
@@ -657,6 +660,13 @@ function TransferRow({
           {progress.detail}
         </span>
       </div>
+
+      {task.status === "completed" && task.warning && <div className="mt-1"><SftpTransferWarning warning={task.warning} /></div>}
+      {childTasks.some((child) => child.status === "completed" && !!child.warning) && (
+        <p className="mt-1 text-[10px] text-amber-600 dark:text-amber-400">
+          {t("sftp.transfers.cleanupWarnings", { count: childTasks.filter((child) => child.status === "completed" && !!child.warning).length })}
+        </p>
+      )}
 
       {/* Collapsed: show currently transferring child file(s) without expanding the whole tree. */}
       {isDirParent && !expanded && displayChildren.length > 0 && (

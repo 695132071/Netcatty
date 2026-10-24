@@ -6557,8 +6557,7 @@ async function startTransferNow(event, payload, onProgress) {
   };
 
   const sendComplete = () => {
-    sender.send("netcatty:transfer:complete", { transferId });
-    broadcastGlobalTransferEvent({
+    const completedEvent = {
       type: "completed",
       transferId,
       endedAt: Date.now(),
@@ -6567,7 +6566,10 @@ async function startTransferNow(event, payload, onProgress) {
       parentTaskId: transfer.parentTaskId,
       directoryEntryIndex: transfer.directoryEntryIndex,
       directoryEntryIdentity: transfer.directoryEntryIdentity,
-    });
+      ...(transfer.warning ? { warning: transfer.warning } : {}),
+    };
+    sender.send("netcatty:transfer:complete", completedEvent);
+    broadcastGlobalTransferEvent(completedEvent);
     cleanupTransfer();
     forgetLocalUploadAcknowledgedPrefix(transferId);
   };
@@ -6771,7 +6773,7 @@ async function startTransferNow(event, payload, onProgress) {
       const resolvedTargetEncoding = resolveEncodingForRequest(targetSftpId, targetEncoding);
       let existingRemoteMode = null;
       const deterministicStagePath = buildRemoteTransferStagePath(targetPath, transferId);
-      await runRemoteUploadTransaction(client, sourcePath, targetPath, {
+      const uploadResult = await runRemoteUploadTransaction(client, sourcePath, targetPath, {
         encoding: resolvedTargetEncoding,
         expectedSize: fileSize,
         stagedPath: transfer.resumable ? deterministicStagePath : undefined,
@@ -6859,6 +6861,7 @@ async function startTransferNow(event, payload, onProgress) {
           );
         },
       });
+      transfer.warning = uploadResult?.warning;
       transfer.stagedRemote = null;
       await restoreRemoteUploadModeBestEffort(
         client,
@@ -7268,7 +7271,7 @@ async function startTransferNow(event, payload, onProgress) {
         const resolvedTargetEncoding = resolveEncodingForRequest(targetSftpId, targetEncoding);
         let existingRemoteMode = null;
         const deterministicStagePath = buildRemoteTransferStagePath(targetPath, transferId);
-        await runRemoteUploadTransaction(targetClient, tempPath, targetPath, {
+        const uploadResult = await runRemoteUploadTransaction(targetClient, tempPath, targetPath, {
           encoding: resolvedTargetEncoding,
           expectedSize: fileSize,
           stagedPath: transfer.resumable ? deterministicStagePath : undefined,
@@ -7344,6 +7347,7 @@ async function startTransferNow(event, payload, onProgress) {
             );
           },
         });
+        transfer.warning = uploadResult?.warning;
         transfer.stagedRemote = null;
         await restoreRemoteUploadModeBestEffort(
           targetClient,
@@ -7374,7 +7378,7 @@ async function startTransferNow(event, payload, onProgress) {
     });
     sendComplete();
 
-    return { transferId, totalBytes: fileSize };
+    return { transferId, totalBytes: fileSize, ...(transfer.warning ? { warning: transfer.warning } : {}) };
   } catch (err) {
     const failureMessage = err?.message || String(err);
     if (

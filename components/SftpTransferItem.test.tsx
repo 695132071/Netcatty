@@ -52,6 +52,27 @@ test("renders failed transfer actions with custom tooltips and readable labels",
   assert.match(markup, /focus-visible:ring-1/);
 });
 
+for (const isChild of [false, true]) {
+  test(`completed ${isChild ? "child" : "file"} shows the cleanup path without a retry action`, () => {
+    const warning = "Upload completed; remove backup /remote/.netcatty-backup-archive.tar.gz manually.";
+    const markup = renderTransferItem({
+      ...baseTask, status: "completed", error: undefined, warning, transferredBytes: 1024,
+    }, { isChild });
+    assert.match(markup, /data-transfer-status="completed"/);
+    assert.match(markup, /data-section="sftp-transfer-warning"/);
+    assert.ok(markup.includes(warning));
+    assert.doesNotMatch(markup, /aria-label="Retry:/);
+    assert.doesNotMatch(markup, /text-destructive/);
+  });
+}
+
+test("folder rows disclose retained child cleanup warnings", () => {
+  const markup = renderTransferItem({ ...baseTask, status: "completed", error: undefined, isDirectory: true }, {
+    childWarningCount: 2, canToggleChildren: true, onToggleChildren: () => {},
+  });
+  assert.match(markup, /Backup cleanup warnings: 2/);
+});
+
 test("renders active transfer cancel action with an item-specific label", () => {
   const markup = renderTransferItem({
     ...baseTask,

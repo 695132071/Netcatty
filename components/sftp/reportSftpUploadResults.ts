@@ -7,6 +7,7 @@ export type ReportSftpUploadResultsOptions = {
     success: (message: string, title?: string) => void;
     error: (message: string, title?: string) => void;
     info: (message: string, title?: string) => void;
+    warning?: (message: string, title?: string) => void;
   };
   /** Optional single-item success message override (e.g. folder name). */
   successMessage?: string;
@@ -28,6 +29,11 @@ export function reportSftpUploadResults({
   const withTargetPath = (message: string): string => (
     targetPath ? `${message} (${targetPath})` : message
   );
+  for (const result of results) {
+    if (result.success && result.warning) {
+      (toast.warning ?? toast.info)(result.warning, "SFTP");
+    }
+  }
   if (results.some((result) => result.cancelled)) {
     toast.info(t("sftp.upload.cancelled"), "SFTP");
     return;

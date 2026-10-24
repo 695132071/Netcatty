@@ -119,9 +119,10 @@ const SftpViewInner: React.FC<SftpViewProps> = ({
 
   // File watch event handlers (stable refs to avoid re-creating the useSftpState options)
   const fileWatchHandlers = useMemo(() => ({
-    onFileWatchSynced: (payload: { remotePath: string }) => {
+    onFileWatchSynced: (payload: { remotePath: string; warning?: string }) => {
       const fileName = payload.remotePath.split('/').pop() || payload.remotePath;
-      toast.success(t('sftp.autoSync.success', { fileName }));
+      if (payload.warning) toast.warning(payload.warning);
+      else toast.success(t('sftp.autoSync.success', { fileName }));
       logger.info("[SFTP] File auto-synced to remote", payload);
     },
     onFileWatchError: (payload: { error: string }) => {

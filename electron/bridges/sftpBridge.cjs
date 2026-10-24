@@ -1626,6 +1626,7 @@ async function runRemoteUploadTransaction(client, localPath, remotePath, options
     throw err;
   }
 
+  let backupCleanupWarning;
   try {
     assertCanPromote();
     if (Number.isFinite(expectedSize) && expectedSize >= 0) {
@@ -1690,13 +1691,13 @@ async function runRemoteUploadTransaction(client, localPath, remotePath, options
         assertCanPromote();
       }
       commitPromotion();
-      await renameRemotePath(client, encodedStagedPath, encodedPath, encodedBackupPath, {
+      backupCleanupWarning = await renameRemotePath(client, encodedStagedPath, encodedPath, encodedBackupPath, {
         stagePath: stagedLogical,
         backupPath: backupLogical,
         finalPath: remotePath,
-      });
+      }, { allowBackupCleanupWarning: true });
     }
-    return { staged: true };
+    return { staged: true, ...(backupCleanupWarning ? { warning: backupCleanupWarning } : {}) };
   } catch (err) {
     if (!err?.preserveStagedUpload) {
       await cleanupStage();
@@ -1714,7 +1715,7 @@ const posixRenameAsync = (sftp, fromPath, toPath) =>
     sftp.ext_openssh_rename(fromPath, toPath, (err) => (err ? reject(err) : resolve()));
   });
 
-async function renameRemotePath(client, fromPath, toPath, backupPath = null, recoveryPaths = {}) {
+async function renameRemotePath(client, fromPath, toPath, backupPath = null, recoveryPaths = {}, options = {}) {
   const sftp = await requireSftpChannel(client);
   if (typeof sftp?.ext_openssh_rename === "function") {
     try {
@@ -1758,13 +1759,27 @@ async function renameRemotePath(client, fromPath, toPath, backupPath = null, rec
     }
 
     if (movedExistingTarget) {
-      await deleteRemoteBackupWithRetry(
-        () => client.delete(backupPath),
-        {
-          finalPath: recoveryPaths.finalPath || toPath,
-          backupPath: recoveryPaths.backupPath || backupPath,
-        },
-      );
+      try {
+        await deleteRemoteBackupWithRetry(
+          () => client.delete(backupPath),
+          {
+            finalPath: recoveryPaths.finalPath || toPath,
+            backupPath: recoveryPaths.backupPath || backupPath,
+          },
+        );
+      } catch (error) {
+        const code = error?.cause?.code;
+        // Only a confirmed permission refusal after stage -> final succeeded is
+        // a warning. Preflight recovery, failed promotion, and transport errors
+        // must still fail; never borrow an interactive shell to bypass refusal.
+        if (!options.allowBackupCleanupWarning
+          || ![3, "3", "EACCES", "EPERM", "SSH_FX_PERMISSION_DENIED"].includes(code)) {
+          throw error;
+        }
+        return `Upload completed: ${String(recoveryPaths.finalPath || toPath)}. `
+          + `Permission denied removing backup: ${String(recoveryPaths.backupPath || backupPath)}. `
+          + "The backup was retained. Check the uploaded file before removing the backup manually.";
+      }
     }
   }
 }
@@ -2205,7 +2220,7 @@ async function runUnifiedSftpTransfer(payload, direction) {
       throw new Error(result.error);
     }
     return direction === "upload"
-      ? { success: true, transferId, remotePath: payload.remotePath }
+      ? { success: true, transferId, remotePath: payload.remotePath, ...(result.warning ? { warning: result.warning } : {}) }
       : { success: true, transferId, localPath: payload.localPath };
   } finally {
     payload.abortSignal?.removeEventListener?.("abort", cancel);

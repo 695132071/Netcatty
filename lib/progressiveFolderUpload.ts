@@ -540,7 +540,7 @@ export async function uploadLocalFoldersProgressively(
         throw new Error("A local file path is required for streaming SFTP upload");
       }
       controller?.addActiveTransfer(childId);
-      let streamResult: { error?: string; cancelled?: boolean } | undefined;
+      let streamResult: { error?: string; cancelled?: boolean; warning?: string } | undefined;
       try {
         streamResult = await bridge.startStreamTransfer({
           transferId: childId,
@@ -566,7 +566,8 @@ export async function uploadLocalFoldersProgressively(
         throw new Error(streamResult.error);
       }
 
-      results.push({ fileName: entry.relativePath, success: true });
+      if (streamResult?.warning) callbacks?.onTaskWarning?.(childId, streamResult.warning);
+      results.push({ fileName: entry.relativePath, success: true, ...(streamResult?.warning ? { warning: streamResult.warning } : {}) });
       stats.completed += 1;
       callbacks?.onTaskCompleted?.(childId, fileTotalBytes);
       publishParentProgress(parentId, "transferring");

@@ -493,7 +493,7 @@ function createSftpHandlerApi(ctx) {
           return { ok: false, cancelled: true, transferId };
         }
         if (result?.error) throw new Error(result.error);
-        reportTransferEvent({ type: "completed", transferId, endedAt: Date.now() });
+        reportTransferEvent({ type: "completed", transferId, endedAt: Date.now(), ...(result?.warning ? { warning: result.warning } : {}) });
         return { ok: true, transferId, ...result };
       } catch (error) {
         reportTransferEvent({ type: "failed", transferId, endedAt: Date.now(), error: error?.message || String(error) });

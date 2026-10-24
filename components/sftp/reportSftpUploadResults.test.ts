@@ -58,6 +58,21 @@ test("toasts multi-file success count", () => {
   assert.deepEqual(calls, [{ type: "success", message: "sftp.uploadFiles: 2" }]);
 });
 
+test("successful uploads surface cleanup warnings rather than upload failures", () => {
+  const calls: Array<{ type: string; message: string }> = [];
+  const warning = "Upload completed; remove backup /remote/.netcatty-backup-a manually.";
+  reportSftpUploadResults({
+    results: [{ fileName: "a", success: true, warning }], t,
+    toast: {
+      success: (message) => calls.push({ type: "success", message }),
+      error: (message) => calls.push({ type: "error", message }),
+      info: (message) => calls.push({ type: "info", message }),
+      warning: (message) => calls.push({ type: "warning", message }),
+    },
+  });
+  assert.deepEqual(calls, [{ type: "warning", message: warning }, { type: "success", message: "sftp.upload: a" }]);
+});
+
 test("terminal drop success names the exact remote destination", () => {
   const calls: Array<{ type: string; message: string }> = [];
   reportSftpUploadResults({

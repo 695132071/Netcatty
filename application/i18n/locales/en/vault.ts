@@ -370,6 +370,7 @@ export const enVaultMessages: Messages = {
   'sftp.transfers.openTargetFolder': 'Open target folder',
   'sftp.transfers.openTargetFolderError': 'Could not open target folder',
   'sftp.transfers.copyTargetPath': 'Copy target path',
+  'sftp.transfers.cleanupWarnings': 'Backup cleanup warnings: {count}. Show files for details.',
   'sftp.transfers.copyTargetPathSuccess': 'Target path copied',
   'sftp.transfers.copyTargetPathError': 'Could not copy target path',
   'sftp.transfers.pathConflict.title': 'Transfer blocked',

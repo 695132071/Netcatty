@@ -33,6 +33,85 @@ test("store aggregates owner snapshots without duplicating tasks", () => {
   ]);
 });
 
+test("completion cleanup warnings survive owner snapshots and restored history", () => {
+  let persisted: string | null = null;
+  const store = createSftpTransferCenterStore({ read: () => persisted, write: (value) => { persisted = value; } });
+  const source = makeTask("cleanup-warning");
+  const warning = "Upload completed; remove backup /target/.netcatty-backup-file manually.";
+  store.publishOwner("panel", [source]);
+  store.ingestBackgroundEvent({ type: "completed", transferId: source.id, transferred: 10, warning });
+  assert.equal(store.getTask(source.id)?.status, "completed");
+  assert.equal(store.getTask(source.id)?.warning, warning);
+  assert.equal(store.getTask(source.id)?.reconnectRequired, false);
+  store.publishOwner("panel", [{ ...source, status: "completed", transferredBytes: 10, endTime: Date.now() }]);
+  assert.equal(store.getTask(source.id)?.warning, warning, "a stale renderer completion cannot erase cleanup details");
+  const restored = createSftpTransferCenterStore({ read: () => persisted, write: () => {} });
+  assert.equal(restored.getTask(source.id)?.warning, warning);
+  assert.equal(restored.getTask(source.id)?.status, "completed");
+  assert.equal(restored.getTask(source.id)?.error, undefined);
+});
+
+test("invoke cleanup warnings survive stale live and completion snapshots until an explicit restart", () => {
+  const store = createSftpTransferCenterStore();
+  const source = makeTask("invoke-warning-snapshot");
+  const warning = "Upload completed; remove backup /target/.netcatty-backup-file manually.";
+  store.publishOwner("panel", [source]);
+  store.patchTask(source.id, { warning });
+  store.publishOwner("panel", [{ ...source, transferredBytes: 9 }]);
+  assert.equal(store.getTask(source.id)?.warning, warning);
+  store.publishOwner("panel", [{ ...source, status: "completed", transferredBytes: 10, endTime: Date.now() }]);
+  assert.equal(store.getTask(source.id)?.warning, warning);
+  store.publishOwner("panel", [{ ...source, status: "queued", transferredBytes: 0, checkpointBytes: 0 }]);
+  assert.equal(store.getTask(source.id)?.warning, undefined, "new attempts do not inherit cleanup warnings");
+});
+
+test("a clean completed event cannot erase a warning already returned by the invoke", () => {
+  const store = createSftpTransferCenterStore();
+  const source = makeTask("invoke-warning-event");
+  const warning = "Upload completed; remove backup /target/.netcatty-backup-file manually.";
+  store.publishOwner("panel", [source]);
+  store.patchTask(source.id, { warning });
+  store.ingestBackgroundEvent({ type: "completed", transferId: source.id, transferred: 10 });
+  assert.equal(store.getTask(source.id)?.status, "completed");
+  assert.equal(store.getTask(source.id)?.warning, warning);
+});
+
+test("late completion enriches a locally completed task with its cleanup warning", () => {
+  let persisted: string | null = null;
+  const store = createSftpTransferCenterStore({ read: () => persisted, write: (value) => { persisted = value; } });
+  const source = { ...makeTask("result-first-warning"), phase: "transferring" as const };
+  const warning = "Upload completed; remove backup /target/.netcatty-backup-file manually.";
+  const endTime = Date.now();
+  store.publishOwner("panel", [source]);
+  // The invoke response can settle the renderer before the completed IPC arrives.
+  store.patchTask(source.id, { status: "completed", transferredBytes: 10, endTime });
+  let notifications = 0;
+  const unsubscribe = store.subscribe(() => { notifications += 1; });
+  store.ingestBackgroundEvent({ type: "completed", transferId: source.id, transferred: 10, endedAt: endTime + 1, warning });
+  assert.equal(store.getTask(source.id)?.warning, warning);
+  assert.equal(store.getTask(source.id)?.status, "completed");
+  assert.equal(store.getTask(source.id)?.endTime, endTime, "late metadata does not replace the terminal outcome");
+  assert.equal(notifications, 1, "the warning is visible without another transfer triggering a render");
+  store.ingestBackgroundEvent({ type: "completed", transferId: source.id, transferred: 10 });
+  assert.equal(store.getTask(source.id)?.warning, warning, "a duplicate clean event cannot erase the warning");
+  const restored = createSftpTransferCenterStore({ read: () => persisted, write: () => {} });
+  assert.equal(restored.getTask(source.id)?.warning, warning);
+  unsubscribe();
+});
+
+for (const status of ["failed", "cancelled"] as const) {
+  test(`late cleanup warnings cannot replace a ${status} terminal outcome`, () => {
+    const store = createSftpTransferCenterStore();
+    const endTime = Date.now();
+    const task = { ...makeTask(`late-warning-${status}`, status), error: "original outcome", endTime };
+    store.publishOwner("panel", [task]);
+    store.ingestBackgroundEvent({ type: "completed", transferId: task.id, warning: "cleanup warning" });
+    assert.equal(store.getTask(task.id)?.status, status);
+    assert.equal(store.getTask(task.id)?.error, "original outcome");
+    assert.equal(store.getTask(task.id)?.warning, undefined);
+  });
+}
+
 test("store routes cancel/retry/prioritize/dismiss to the task owner; pause/resume are process-global", async () => {
   const calls: string[] = [];
   const store = createSftpTransferCenterStore();
@@ -3575,6 +3654,46 @@ test("legacy 50,000-file history restores cooperatively and converges to one per
   assert.equal(JSON.parse(persisted).tasks.length, 1, "persisted history must converge to one row");
   assert.ok(persisted.length < 10_000, "migrated localStorage payload must stay bounded");
 });
+
+for (const indexed of [false, true]) {
+  test(`cooperative ${indexed ? "indexed" : "legacy"} restore retains completed child cleanup warnings`, async () => {
+    const now = Date.now();
+    const warning = "Upload completed; remove backup /target/.netcatty-backup-file manually.";
+    const parent: TransferTask = { ...makeTask("restore-warning-folder", "paused"), isDirectory: true };
+    const children: TransferTask[] = [0, 1].map((index) => ({
+      ...makeTask(`restore-warning-child-${index}`, "completed"),
+      parentTaskId: parent.id, endTime: now,
+      warning: index === 0 ? warning : undefined,
+      ...(indexed ? { directoryEntryIndex: index, directoryEntryIdentity: String(index).padStart(64, "0") } : {}),
+    }));
+    let persisted = JSON.stringify({ version: 1, padding: "x".repeat(600_000), tasks: [parent, ...children] });
+    const store = createSftpTransferCenterStore({ read: () => persisted, write: (value) => { persisted = value; } });
+    assert.equal(store.getSnapshot().tasks.length, 0, "large history must take cooperative restoration");
+    await new Promise<void>((resolve, reject) => {
+      let unsubscribe = () => {};
+      const timeout = setTimeout(() => {
+        unsubscribe();
+        reject(new Error("timed out waiting for cleanup-warning history migration"));
+      }, 10_000);
+      const check = () => {
+        if (!store.getTask(parent.id)) return;
+        clearTimeout(timeout);
+        unsubscribe();
+        resolve();
+      };
+      unsubscribe = store.subscribe(check);
+      check();
+    });
+    assert.equal(store.getTask("restore-warning-child-0")?.warning, warning);
+    assert.equal(store.getTask("restore-warning-child-0")?.status, "completed");
+    assert.equal(store.getTask("restore-warning-child-1"), undefined, "clean completed children still compact");
+    assert.equal(store.getTask(parent.id)?.directoryResumeCheckpoint?.coveredEntries, 2);
+    assert.equal(store.getTask(parent.id)?.directoryResumeCheckpoint?.completedEntries, 1);
+    const restarted = createSftpTransferCenterStore({ read: () => persisted, write: () => {} });
+    assert.equal(restarted.getTask("restore-warning-child-0")?.warning, warning);
+    assert.equal(restarted.getTask(parent.id)?.directoryResumeCheckpoint?.completedEntries, 1);
+  });
+}
 
 test("live mutations wait for cooperative restore and merge without erasing old rows", async () => {
   const legacyOnly = makeTask("legacy-only", "paused");

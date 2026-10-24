@@ -65,6 +65,7 @@ export interface FileWatchSyncedEvent {
   localPath: string;
   remotePath: string;
   bytesWritten: number;
+  warning?: string;
 }
 
 export interface FileWatchErrorEvent {

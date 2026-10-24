@@ -370,6 +370,7 @@ export const esVaultMessages: Messages = {
   'sftp.transfers.openTargetFolder': 'Abrir carpeta de destino',
   'sftp.transfers.openTargetFolderError': 'No se pudo abrir la carpeta de destino',
   'sftp.transfers.copyTargetPath': 'Copiar ruta de destino',
+  'sftp.transfers.cleanupWarnings': 'Avisos de limpieza de copias de seguridad: {count}. Muestra los archivos para ver los detalles.',
   'sftp.transfers.copyTargetPathSuccess': 'Ruta de destino copiada',
   'sftp.transfers.copyTargetPathError': 'No se pudo copiar la ruta de destino',
   'sftp.transfers.pathConflict.title': 'Transferencia bloqueada',

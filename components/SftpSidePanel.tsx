@@ -265,9 +265,10 @@ const SftpSidePanelInner: React.FC<SftpSidePanelProps> = ({
   }, [activeHost, activeSessionId, resolveTransferSourceSessionId, sessions]);
 
   const fileWatchHandlers = useMemo(() => ({
-    onFileWatchSynced: (payload: { remotePath: string }) => {
+    onFileWatchSynced: (payload: { remotePath: string; warning?: string }) => {
       const fileName = payload.remotePath.split('/').pop() || payload.remotePath;
-      toast.success(t('sftp.autoSync.success', { fileName }));
+      if (payload.warning) toast.warning(payload.warning);
+      else toast.success(t('sftp.autoSync.success', { fileName }));
       logger.info("[SFTP] File auto-synced to remote", payload);
     },
     onFileWatchError: (payload: { error: string }) => {

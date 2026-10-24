@@ -768,7 +768,7 @@ async function uploadEntries(
     entryTargetPath: string,
     standaloneTransferId: string,
     fileTotalBytes: number,
-  ): Promise<{ cancelled?: boolean; error?: string }> => {
+  ): Promise<{ cancelled?: boolean; error?: string; warning?: string }> => {
     if (controller?.isCancelled(standaloneTransferId)) return { cancelled: true };
     let localFilePath = getDropEntryLocalPath(entry);
     let ownedTempPath: string | undefined;
@@ -802,7 +802,7 @@ async function uploadEntries(
         const fileTransferId = standaloneTransferId;
         controller?.addActiveTransfer(fileTransferId);
 
-        let streamResult: { transferId: string; totalBytes?: number; error?: string; cancelled?: boolean } | undefined;
+        let streamResult: { transferId: string; totalBytes?: number; error?: string; cancelled?: boolean; warning?: string } | undefined;
         try {
           streamResult = await bridge.startStreamTransfer({
               transferId: fileTransferId,
@@ -826,6 +826,7 @@ async function uploadEntries(
         if (streamResult?.error) {
           return { error: streamResult.error };
         }
+        return streamResult?.warning ? { warning: streamResult.warning } : {};
       } else {
         if (!entry.file) {
           return { error: "No local file data available" };
@@ -973,7 +974,10 @@ async function uploadEntries(
             throw new Error(uploadResult.error);
           }
 
-          results.push({ fileName: entry.relativePath, success: true });
+          if (uploadResult.warning) {
+            callbacks?.onTaskWarning?.(bundledChildTaskId || standaloneTransferId, uploadResult.warning);
+          }
+          results.push({ fileName: entry.relativePath, success: true, ...(uploadResult.warning ? { warning: uploadResult.warning } : {}) });
 
           // Update progress tracking
           if (bundleTaskId) {

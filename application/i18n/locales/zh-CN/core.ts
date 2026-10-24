@@ -1035,6 +1035,7 @@ Vaults 标签保持扁平，不使用这块背景。
   'sftp.transfers.openTargetFolder': '打开目标目录',
   'sftp.transfers.openTargetFolderError': '无法打开目标目录',
   'sftp.transfers.copyTargetPath': '复制目标路径',
+  'sftp.transfers.cleanupWarnings': '备份清理警告：{count}。展开文件列表查看详情。',
   'sftp.transfers.copyTargetPathSuccess': '已复制目标路径',
   'sftp.transfers.copyTargetPathError': '无法复制目标路径',
   'sftp.transfers.pathConflict.title': '无法开始传输',

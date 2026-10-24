@@ -32,7 +32,7 @@ export interface PersistedSftpTransferCenter {
 const SAFE_TASK_KEYS: ReadonlySet<keyof TransferTask> = new Set([
   "id", "batchId", "fileName", "originalFileName", "sourcePath", "targetPath",
   "sourceConnectionId", "targetConnectionId", "targetHostId", "targetConnectionKey",
-  "direction", "status", "totalBytes", "transferredBytes", "speed", "error",
+  "direction", "status", "totalBytes", "transferredBytes", "speed", "error", "warning",
   "startTime", "endTime", "isDirectory", "progressMode", "childTasks", "parentTaskId",
   "sourceLastModified", "preflightStatSkipped", "skipConflictCheck", "replaceExistingTarget", "retryable",
   "ownerId", "sourceHostId", "sourceHostLabel", "targetHostLabel", "origin", "background",
@@ -58,6 +58,7 @@ export function sanitizeSftpTransferTask(value: unknown): TransferTask | null {
     if (source[key] !== undefined) sanitized[key] = source[key];
   }
   const task = sanitized as unknown as TransferTask;
+  if (typeof task.warning !== "string" || !task.warning.trim()) task.warning = undefined;
   if (task.preflightStatSkipped !== true) task.preflightStatSkipped = undefined;
   if (!Number.isSafeInteger(task.directoryEntryIndex) || (task.directoryEntryIndex ?? -1) < 0) {
     task.directoryEntryIndex = undefined;
@@ -213,6 +214,8 @@ export function pruneSftpTransferHistory(
       if (
         child.parentTaskId === parent.id
         && child.status === "completed"
+        // Keep per-file cleanup paths visible instead of losing them in the hash.
+        && !child.warning
         && Number.isSafeInteger(child.directoryEntryIndex)
         && (child.directoryEntryIndex ?? checkpoint.coveredEntries) < checkpoint.coveredEntries
         && /^[a-f0-9]{64}$/.test(child.directoryEntryIdentity ?? "")

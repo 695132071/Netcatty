@@ -34,6 +34,7 @@ export interface UploadResult {
   fileName: string;
   success: boolean;
   error?: string;
+  warning?: string;
   cancelled?: boolean;
 }
 
@@ -42,6 +43,8 @@ export interface UploadCallbacks {
   onTaskCreated?: (task: UploadTaskInfo) => void;
   /** Called when task progress is updated */
   onTaskProgress?: (taskId: string, progress: UploadProgress) => void;
+  /** Cleanup metadata from a successful upload, before terminal callbacks. Does not change lifecycle ownership. */
+  onTaskWarning?: (taskId: string, warning: string) => void;
   /** Called when a task is completed */
   onTaskCompleted?: (taskId: string, totalBytes: number) => void;
   /** Called when a task fails */
@@ -109,7 +112,7 @@ export interface UploadBridge {
       globalConcurrency?: number;
       skipAdmission?: boolean;
     }
-  ) => Promise<{ transferId: string; totalBytes?: number; error?: string; cancelled?: boolean }>;
+  ) => Promise<{ transferId: string; totalBytes?: number; error?: string; cancelled?: boolean; warning?: string }>;
   cancelTransfer?: (transferId: string) => Promise<void>;
 }
 
