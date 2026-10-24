@@ -360,6 +360,7 @@ function createExecHandlerApi(ctx) {
         handle.resultPromise.then((result) => {
           job.updatedAt = Date.now();
           job.exitCode = result.exitCode ?? null;
+          job.code = result.code;
           storeCompletedJobOutput(job, result.stdout || "", result);
           const isForcedCancel = typeof result.error === "string" && result.error.includes("forced");
           if (result.error === "Cancelled" || isForcedCancel) {

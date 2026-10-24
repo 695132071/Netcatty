@@ -25,7 +25,7 @@ test("close-path connection log updates await the indexedDB persist task", () =>
     source,
     /const updateConnectionLog = useCallback\([\s\S]*?return commitConnectionLogs\(/,
   );
-  assert.match(source, /rebaseQueuedConnectionLogs\(\s*next,\s*removedIds,\s*changedIds,/);
+  assert.match(source, /rebaseQueuedConnectionLogs\(\s*memory,\s*removedIds,\s*changedIds,/);
   assert.match(
     source,
     /if \(!options\?\.pruneMainBlob\) \{[\s\S]*?rebaseQueuedConnectionLogs\(/,

@@ -499,6 +499,24 @@ describe('handleVaultAgentOp vault hosts', () => {
     assert.equal(receivedIsExternalMcpCall, true);
   });
 
+  it('host.open does not bind scope when workspace insertion is refused', async (t) => {
+    const { netcattyBridge } = await import('../services/netcattyBridge');
+    let scopeWrites = 0;
+    t.mock.method(netcattyBridge, 'get', () => ({
+      aiMcpMergeSessions: async () => { scopeWrites += 1; },
+    } as unknown as NetcattyBridge));
+    const host = { id: 'closed-workspace-host', label: 'Local', hostname: 'localhost', protocol: 'local' } as Host;
+    const deps = createDeps({
+      hosts: [host],
+      openHost: () => ({ ok: false, error: 'Workspace closed before insertion.' }),
+    });
+    const result = await handleVaultAgentOp('host.open', {
+      hostId: host.id, workspaceId: 'closed-workspace', chatSessionId: 'chat-1', newTab: true,
+    }, deps);
+    assert.deepEqual(result, { ok: false, error: 'Workspace closed before insertion.' });
+    assert.equal(scopeWrites, 0);
+  });
+
   it('host.open registers saved-host identity immediately but not for a temporary host', async (t) => {
     const { netcattyBridge } = await import('../services/netcattyBridge');
     const merged: Array<{ sessions: Array<{ savedHostId?: string }>; scope: string }> = [];

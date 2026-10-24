@@ -279,6 +279,7 @@ function createBackgroundJobApi(ctx) {
         completed: job.status !== "running" && job.status !== "stopping",
         exitCode: job.exitCode,
         error: job.error,
+        ...(job.code ? { code: job.code } : {}),
         startedAt: job.startedAt,
         updatedAt: job.updatedAt,
         output: collapseCarriageReturns(stdout.slice(relativeOffset)),

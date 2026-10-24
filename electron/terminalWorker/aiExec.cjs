@@ -206,6 +206,7 @@ function serializeWorkerJob(job, offset = 0) {
     completed: job.status !== "running" && job.status !== "stopping",
     exitCode: job.exitCode,
     error: job.error,
+    ...(job.code ? { code: job.code } : {}),
     startedAt: job.startedAt,
     updatedAt: job.updatedAt,
     output: collapseCarriageReturns(stdout.slice(relativeOffset)),
@@ -585,6 +586,7 @@ function createWorkerAiJobStartHandler({
     handle.resultPromise.then((result) => {
       job.updatedAt = Date.now();
       job.exitCode = result.exitCode ?? null;
+      job.code = result.code;
       storeCompletedWorkerJobOutput(job, result.stdout || "", result);
       const isForcedCancel = typeof result.error === "string" && result.error.includes("forced");
       if (result.error === "Cancelled" || isForcedCancel) {

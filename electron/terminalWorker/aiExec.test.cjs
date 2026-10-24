@@ -640,3 +640,29 @@ test("single-channel worker exec does not open an exec channel or send line-kill
   await execution.catch(() => {});
 });
 
+
+
+test("worker background readiness timeout survives job polling without PTY writes", async (t) => {
+  t.mock.timers.enable({ apis: ["Date", "setTimeout"] });
+  const pty = new FakePty();
+  const session = { protocol: "local", pty, shellKind: "posix", _promptTrackTail: "", lastIdlePrompt: "" };
+  const ipcMain = createFakeIpcMain();
+  registerWorkerAiExecHandlers(ipcMain, { sessions: new Map([["not-ready", session]]) });
+  const event = createFakeEvent();
+  const started = await ipcMain.handlers.get("netcatty:ai:jobStart")(event, {
+    sessionId: "not-ready", chatSessionId: "readiness-chat", command: "echo must-not-run",
+  });
+  assert.equal(started.ok, true);
+  t.mock.timers.tick(30001);
+  await nextTick();
+  const polled = ipcMain.handlers.get("netcatty:ai:jobPoll")(event, {
+    jobId: started.jobId, chatSessionId: "readiness-chat",
+  });
+  assert.equal(polled.status, "failed");
+  assert.equal(polled.completed, true);
+  assert.equal(polled.code, "SHELL_NOT_READY");
+  assert.deepEqual(pty.writes, []);
+  trackSessionIdlePrompt(session, "user@host:~$ ");
+  t.mock.timers.tick(1000);
+  assert.deepEqual(pty.writes, [], "late readiness must not deliver the failed job");
+});

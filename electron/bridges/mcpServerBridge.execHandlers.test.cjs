@@ -327,3 +327,30 @@ test("expired local and unknown jobs do not claim a lost worker route", (t) => {
     "job-missing", "job-missing", "job-missing", "job-missing", "scope-mismatch",
   ]);
 });
+
+
+test("MCP background readiness timeout survives job polling without PTY writes", async (t) => {
+  t.mock.timers.enable({ apis: ["Date", "setTimeout"] });
+  const pty = new FakePty();
+  const session = { protocol: "local", pty, shellKind: "posix", _promptTrackTail: "" };
+  const ctx = createExecHandlerTestContext({
+    sessions: new Map([["not-ready", session]]), backgroundJobs: new Map(),
+  });
+  ctx.startPtyJob = require("./ai/ptyExec.cjs").startPtyJob;
+  const api = createExecHandlerApi(ctx);
+  const started = await api.handleJobStart({
+    sessionId: "not-ready", chatSessionId: "readiness-chat", command: "echo must-not-run",
+  });
+  assert.equal(started.ok, true);
+  t.mock.timers.tick(30001);
+  await nextTick();
+  const polled = api.handleJobPoll({ jobId: started.jobId, chatSessionId: "readiness-chat" });
+  assert.equal(polled.status, "failed");
+  assert.equal(polled.completed, true);
+  assert.equal(polled.code, "SHELL_NOT_READY");
+  assert.equal(ctx.activeSessionExecutions.size, 0);
+  assert.deepEqual(pty.writes, []);
+  ctx.getFreshIdlePrompt = () => "user@host:~$ ";
+  t.mock.timers.tick(1000);
+  assert.deepEqual(pty.writes, [], "late readiness must not deliver the failed job");
+});

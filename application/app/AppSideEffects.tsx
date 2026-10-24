@@ -256,7 +256,7 @@ export function AppSideEffects() {
     createLocalTerminal,
     createSerialSession,
     connectToHost,
-    appendHostToWorkspace,
+    appendHostToWorkspaceConfirmed,
     closeSession,
     closeSessions,
     closeWorkspace,
@@ -1507,7 +1507,9 @@ export function AppSideEffects() {
     // host_open always opens a visible tab, as documented.
     const hidden = isExternalMcpCall && readExternalMcpSilentSessions();
     const sessionId = target.workspaceId
-      ? appendHostToWorkspace(target.workspaceId, host)
+      ? appendHostToWorkspaceConfirmed(target.workspaceId, resolveHostDefaultLocalShell(host, {
+        discoveredShells, resolveShellSetting, terminalSettings: temporaryConnectionSettingsRef.current,
+      }))
       : handleConnectToHost(host, true, hidden);
     if (!sessionId) {
       return { ok: false as const, error: `Failed to open host "${host.id}".` };
@@ -1518,7 +1520,7 @@ export function AppSideEffects() {
       void netcattyBridge.get()?.openMainWindow?.();
     }
     return { ok: true as const, sessionId, host, workspaceId: target.workspaceId };
-  }, [appendHostToWorkspace, handleConnectToHost, workspaces]);
+  }, [appendHostToWorkspaceConfirmed, discoveredShells, handleConnectToHost, workspaces]);
 
   const findExistingSessionForHostForVaultAgent = useHostOpenSessionReuse({
     sessions, hosts, keys, identities, resolveEffectiveHost,

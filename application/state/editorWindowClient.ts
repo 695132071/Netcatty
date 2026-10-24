@@ -200,7 +200,7 @@ export function reportEditorWindowCloseTabsResult(
 export function subscribeEditorWindowDirtyCheck(cb: () => boolean): () => void {
   const bridge = netcattyBridge.get();
   if (!bridge?.onCheckDirtyEditors) return () => {};
-  return bridge.onCheckDirtyEditors(() => {
+  return bridge.onCheckDirtyEditors((request) => {
     let hasDirty = false;
     try {
       hasDirty = cb() === true;
@@ -208,7 +208,7 @@ export function subscribeEditorWindowDirtyCheck(cb: () => boolean): () => void {
       hasDirty = false;
     }
     try {
-      bridge.reportDirtyEditorsResult?.(hasDirty);
+      bridge.reportDirtyEditorsResult?.(hasDirty, undefined, { requestId: request?.requestId });
     } catch {
       // ignore
     }

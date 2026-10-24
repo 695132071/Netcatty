@@ -50,6 +50,99 @@ export const mergeConnectionLogsFromStorage = (
 };
 
 /**
+ * A peer snapshot must not discard a local mutation that has not committed.
+ * Overlay only owned ids, including explicit deletion tombstones. Unowned
+ * memory rows stay absent when another window deletes them.
+ */
+export type PendingConnectionLogMutation = {
+  log: ConnectionLog | null;
+  /** Only a new local row may be inserted when disk no longer contains it. */
+  added?: boolean;
+  /** Fields actually changed here; a capture must not undo a peer bookmark. */
+  changes?: Partial<ConnectionLog>;
+};
+
+export type PendingConnectionLogWrite = PendingConnectionLogMutation & {
+  generation: number;
+  fieldGenerations?: Partial<Record<keyof ConnectionLog, number>>;
+};
+
+/** Retire only row/field generations whose storage write actually committed. */
+export const acknowledgePendingConnectionLogWrites = (
+  pending: ReadonlyMap<string, PendingConnectionLogWrite>,
+  committed: ReadonlyMap<string, PendingConnectionLogWrite>,
+  durability: {
+    metadataPersisted: boolean;
+    replayPersisted: boolean;
+    mainReplay?: ConnectionLogTerminalDataMap;
+  } = { metadataPersisted: true, replayPersisted: true },
+): Map<string, PendingConnectionLogWrite> => {
+  const remaining = new Map(pending);
+  for (const [id, written] of committed) {
+    const current = remaining.get(id);
+    if (!current) continue;
+    if (current.generation === written.generation && durability.metadataPersisted
+      && (durability.replayPersisted || written.log === null)) {
+      remaining.delete(id);
+    } else if (current.log !== null && written.log !== null) {
+      const changes = { ...current.changes };
+      const fieldGenerations = { ...current.fieldGenerations };
+      for (const field of Object.keys(written.fieldGenerations ?? {}) as Array<keyof ConnectionLog>) {
+        // Use the bytes actually written, not this pending log's saved flag:
+        // a peer may have unbookmarked it before the snapshot was rebased.
+        const durable = field === "terminalData"
+          ? durability.replayPersisted || (Object.hasOwn(durability.mainReplay ?? {}, id)
+            && durability.mainReplay?.[id] === written.changes?.terminalData)
+          : durability.metadataPersisted;
+        if (durable && fieldGenerations[field] === written.fieldGenerations?.[field]) {
+          delete changes[field];
+          delete fieldGenerations[field];
+        }
+      }
+      const added = durability.metadataPersisted && written.added ? false : current.added;
+      if (Object.keys(changes).length === 0 && !added) remaining.delete(id);
+      else remaining.set(id, {
+        ...current, changes, fieldGenerations, added,
+      });
+    }
+  }
+  return remaining;
+};
+
+export const mergeConnectionLogsWithPendingMutations = (
+  prev: ConnectionLog[],
+  next: ConnectionLog[],
+  terminalDataMap: ConnectionLogTerminalDataMap,
+  pending: ReadonlyMap<string, PendingConnectionLogMutation>,
+): ConnectionLog[] => {
+  // Incoming disk/side-store bytes are authoritative unless this window owns
+  // a newer capture. In particular, bookmarking must not replay stale bytes
+  // over a final capture that a peer just committed.
+  const prevById = new Map(prev.map((log) => [log.id, log]));
+  const hydrated = next.map((log) => {
+    const terminalData = log.terminalData ?? terminalDataMap[log.id] ?? prevById.get(log.id)?.terminalData;
+    return terminalData === undefined || terminalData === log.terminalData
+      ? log
+      : { ...log, terminalData };
+  });
+  if (pending.size === 0) return pruneInMemoryUnsavedTerminalData(hydrated);
+  const byId = new Map(hydrated.map((log) => [log.id, log]));
+  for (const [id, mutation] of pending) {
+    if (mutation.log === null) byId.delete(id);
+    else {
+      const stored = byId.get(id);
+      if (!stored && !mutation.added) continue;
+      byId.set(id, stored && mutation.changes
+        ? { ...stored, ...mutation.changes }
+        : mutation.log);
+    }
+  }
+  return pruneInMemoryUnsavedTerminalData(
+    [...byId.values()].sort((a, b) => b.startTime - a.startTime),
+  );
+};
+
+/**
  * Apply a queued connection-log snapshot when it runs, not when it was captured.
  * Disk may have gained another window's logs during the wait. Keep those logs.
  * Metadata from this snapshot replaces a disk row only for ids the recipe added

@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { netcattyBridge } from "../../infrastructure/services/netcattyBridge.ts";
 import { editorTabStore } from "./editorTabStore.ts";
-import { dockDetachedEditorTab, installEditorWindowSourceListeners, popOutEditorTab, saveDetachedEditorTab } from "./editorWindowClient.ts";
+import { dockDetachedEditorTab, installEditorWindowSourceListeners, popOutEditorTab, saveDetachedEditorTab, subscribeEditorWindowDirtyCheck } from "./editorWindowClient.ts";
 import { registerEditorSftpWriterScoped } from "./editorSftpBridge.ts";
 import { releaseEditorTabSaveCoordinator } from "./editorTabSave.ts";
 import type { EditorWindowSaveRequest, EditorWindowSaveResult } from "./editorWindowTypes.ts";
@@ -144,4 +144,17 @@ test("a closing destination rejects a popout without releasing source content", 
   assert.equal(tab.content, "v2");
   assert.equal(tab.baselineContent, "v1");
   assert.equal(editorTabStore.isDirty(tab.id), true);
+});
+
+
+test("detached editor dirty-check replies echo the main-process request", (t) => {
+  let query!: (request: { requestId: string; deadline: number }) => void;
+  const replies: unknown[] = [];
+  t.mock.method(netcattyBridge, "get", () => ({
+    onCheckDirtyEditors: (callback: typeof query) => { query = callback; return () => {}; },
+    reportDirtyEditorsResult: (...args: unknown[]) => replies.push(args),
+  }));
+  t.after(subscribeEditorWindowDirtyCheck(() => true));
+  query({ requestId: "detached-check", deadline: Date.now() + 5000 });
+  assert.deepEqual(replies, [[true, undefined, { requestId: "detached-check" }]]);
 });

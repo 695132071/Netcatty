@@ -344,12 +344,26 @@ export function useAppStartupEffects(ctx: StartupEffectsContext) {
     };
   }, [enabled, hasRuntimeTunnel, hosts, sessions, portForwardingRules, workspaces]);
 
+  const transferQuitPendingRef = useRef<{ deadline: number; resumeTaskIds: Set<string> } | null>(null);
+
   // Quit guard: block app exit while any editor tab has unsaved changes.
   // Main process sends "app:query-dirty-editors"; we respond with the result.
   useEffect(() => {
     const bridge = netcattyBridge.get();
     if (!bridge?.onCheckDirtyEditors) return;
-    const unsub = bridge.onCheckDirtyEditors(async () => {
+    const unsub = bridge.onCheckDirtyEditors(async (request) => {
+      const response = { requestId: request?.requestId };
+      // Another close request must not start a second pause/prompt while the
+      // first attempt is still pausing or awaiting a decision.
+      const previousAttempt = transferQuitPendingRef.current;
+      if (previousAttempt && Date.now() < previousAttempt.deadline) {
+        bridge.reportDirtyEditorsResult?.(true, "transfers", response);
+        return;
+      }
+      // An expired pause may never settle. Let a retry re-check current tasks
+      // (including a user's cancellation), without granting the old attempt
+      // permission to prompt or resume over that newer decision.
+      let attempt: typeof previousAttempt = null;
       // Always report SOMETHING so the main process doesn't time out for
       // 5 s on an unhandled exception. If we can't determine the state,
       // fail open — losing unsaved work is bad, but stranding the user
@@ -374,24 +388,44 @@ export function useAppStartupEffects(ctx: StartupEffectsContext) {
           if (unfinishedTasks.length > 0) {
             const resumable = unfinishedTasks.filter((task) => (
               task.status === "transferring" || task.status === "queued"
+              || previousAttempt?.resumeTaskIds.has(task.id)
             ));
-            await Promise.allSettled(unfinishedTasks.map((task) => sftpTransferCenterStore.pause(task.id)));
-            hasDirty = !window.confirm(t('sftp.transferCenter.quitConfirm', { count: unfinishedTasks.length }));
-            if (hasDirty) {
-              // The user chose to stay. Main must hear that before any resume:
-              // resume can outlive the 5s dirty-check timeout, and a late reply
-              // lets the app quit anyway. The synchronous dialog is also skipped
-              // because this prompt was already answered.
-              reason = "transfers";
-              tasksToResume = resumable;
+            // A slow pause must never turn the main-process timeout into
+            // permission to quit before the user has made a decision.
+            hasDirty = true;
+            reason = "transfers";
+            tasksToResume = resumable;
+            // A retry inherits the still-unfinished rows the expired attempt
+            // auto-paused. Their current status may already be pausing/paused.
+            attempt = {
+              deadline: request?.deadline ?? Date.now() + 5000,
+              resumeTaskIds: new Set(resumable.map((task) => task.id)),
+            };
+            transferQuitPendingRef.current = attempt;
+            bridge.reportDirtyEditorsResult?.(true, reason, { ...response, pending: true });
+            const paused = await Promise.allSettled(unfinishedTasks.map((task) => sftpTransferCenterStore.pause(task.id)));
+            if (transferQuitPendingRef.current !== attempt) return;
+            const expired = () => request && Date.now() >= request.deadline;
+            if (!expired() && paused.every((result) => result.status === "fulfilled")) {
+              hasDirty = !window.confirm(t('sftp.transferCenter.quitConfirm', { count: unfinishedTasks.length }));
+              // The native prompt can itself outlive the main-process deadline.
+              // An expired acceptance is not permission for a later close attempt.
+              if (expired()) hasDirty = true;
             }
+            if (!hasDirty) {
+              reason = undefined;
+              tasksToResume = [];
+            }
+          } else {
+            // All prior work was finished/cancelled; invalidate its late pause.
+            transferQuitPendingRef.current = null;
           }
         }
       } catch (err) {
         console.error('[App] dirty-editors check failed:', err);
       }
       try {
-        bridge.reportDirtyEditorsResult?.(hasDirty, reason);
+        bridge.reportDirtyEditorsResult?.(hasDirty, reason, response);
       } catch (err) {
         // Reporting itself shouldn't throw, but if the IPC bridge is in a
         // bad state we'd rather log than bubble out of the listener and
@@ -399,8 +433,12 @@ export function useAppStartupEffects(ctx: StartupEffectsContext) {
         console.error('[App] reportDirtyEditorsResult failed:', err);
       }
       if (tasksToResume.length > 0) {
+        // Report refusal before recovery, which may itself take a long time.
+        // A resume promise can span the entire transfer, so do not hold the
+        // close gate until it settles. A later close must be able to pause again.
         void Promise.allSettled(tasksToResume.map((task) => sftpTransferCenterStore.resume(task.id)));
       }
+      if (transferQuitPendingRef.current === attempt) transferQuitPendingRef.current = null;
     });
     return unsub;
   }, [enabled, t]);
