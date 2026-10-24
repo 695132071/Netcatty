@@ -33,6 +33,25 @@ function createTestDispatcher(overrides = {}) {
   });
 }
 
+test("host open does not report success after its scope binding was revoked", async () => {
+  const dispatch = createTestDispatcher({
+    invokeVaultAgent: async () => ({ ok: true, sessionId: "opened-1" }),
+    onHostOpened: async () => false,
+  });
+  const result = await dispatch("vault/hosts/open", { hostId: "host-1", chatSessionId: "chat-1" });
+  assert.equal(result.ok, false);
+  assert.equal(result.code, "SESSION_SCOPE_BIND_FAILED");
+});
+
+test("host open confirms binding only after the ownership callback completes", async () => {
+  const dispatch = createTestDispatcher({
+    invokeVaultAgent: async () => ({ ok: true, sessionId: "opened-1" }),
+    onHostOpened: async () => true,
+  });
+  const result = await dispatch("vault/hosts/open", { hostId: "host-1", chatSessionId: "chat-1" });
+  assert.equal(result.scopeBound, true);
+});
+
 test("dispatchCapabilityRpc returns UNROUTED for netcatty builtin methods", async () => {
   const dispatch = createTestDispatcher();
   const result = await dispatch("netcatty/exec", { chatSessionId: "chat-1" });

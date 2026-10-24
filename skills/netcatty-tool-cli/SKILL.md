@@ -22,6 +22,7 @@ For routine tasks, the host prompt is usually enough. Read only the reference th
    - Treat `exec` as the short-command path only. If the command may exceed about 60 seconds, or streams output for an extended period, use the long-running job commands instead of plain `exec`.
 5. If the host prompt already names a connected default target session, use that session directly for routine requests that do not mention another session or host, but still start with `session --session <id> --json` instead of jumping straight to `exec` or `sftp`.
 6. Only fall back to `env` lookup when the task is ambiguous, the user points to another session, or that direct `session` lookup fails.
+7. For disconnects, stalled sessions, or recovery across multiple sessions, read `references/control-commands.md`. Prefer bounded recovery within the granted workspace scope; a new connection must not silently lose that scope.
 
 ## Core Rules
 
@@ -45,5 +46,5 @@ Examples:
 - SFTP file workflow: `references/sftp.md`
 - Vault notes workflow: `references/notes.md`
 - Session and device-type handling: `references/session-types.md`
-- Cancel, resume, and runtime diagnostics: `references/control-commands.md`
+- Cancel, resume, runtime diagnostics, and bounded session recovery: `references/control-commands.md`
 - Error handling and authoritative failures: `references/errors.md`

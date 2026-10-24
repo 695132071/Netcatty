@@ -196,6 +196,7 @@ function registerCattyExecHandlers(ctx) {
             return { ok: false, error: `Command blocked by safety policy. Pattern: ${safety.matchedPattern}` };
           }
           return execViaPty(ptyStream, command, {
+            beforeInput: beforeExecute,
             onInterrupt: () => clearSessionFlowState(session),
             stripMarkers: true,
             trackForCancellation: mcpServerBridge.activePtyExecs,
@@ -215,6 +216,8 @@ function registerCattyExecHandlers(ctx) {
             },
             chatSessionId,
             expectedPrompt: getFreshIdlePrompt(session),
+            getReadyPrompt: typeof session._promptTrackTail === "string"
+              ? () => getFreshIdlePrompt(session) : undefined,
             typedInput: true,
             echoCommand: (rawCommand) => {
               const contents = electronModule?.webContents?.fromId?.(session.webContentsId);

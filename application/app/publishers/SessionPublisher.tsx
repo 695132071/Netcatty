@@ -59,6 +59,7 @@ export function SessionPublisher({ persistSessionRestore, children }: SessionPub
     createWorkspaceFromSessions,
     addSessionToWorkspace,
     appendHostToWorkspace,
+    appendHostToWorkspaceConfirmed,
     appendLocalTerminalToWorkspace,
     createWorkspaceFromTargets,
     updateSplitSizes,
@@ -143,6 +144,7 @@ export function SessionPublisher({ persistSessionRestore, children }: SessionPub
     createWorkspaceFromSessions,
     addSessionToWorkspace,
     appendHostToWorkspace,
+    appendHostToWorkspaceConfirmed,
     appendLocalTerminalToWorkspace,
     createWorkspaceFromTargets,
     updateSplitSizes,
@@ -171,6 +173,7 @@ export function SessionPublisher({ persistSessionRestore, children }: SessionPub
   }), [
     addSessionToWorkspace,
     appendHostToWorkspace,
+    appendHostToWorkspaceConfirmed,
     appendLocalTerminalToWorkspace,
     clearSessionFontSizeOverride,
     closeLogView,

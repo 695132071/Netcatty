@@ -5,6 +5,15 @@ const assert = require("node:assert/strict");
 
 const { createVaultService } = require("./vaultService.cjs");
 
+test("host opening forwards workspace and fresh-tab selection with caller scope", async () => {
+  let received;
+  const service = createVaultService({ invokeVaultAgent: async (_op, params) => { received = params; return { ok: true }; } });
+  await service.openHost({ hostId: "host-1", chatSessionId: "chat-1", workspaceId: "current", newTab: true });
+  assert.equal(received.workspaceId, "current");
+  assert.equal(received.newTab, true);
+  assert.equal(received.chatSessionId, "chat-1");
+});
+
 test("vault service delegates host notes read to vault agent bridge", async () => {
   let invokedOp = null;
   const service = createVaultService({

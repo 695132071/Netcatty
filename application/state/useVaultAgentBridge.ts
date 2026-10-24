@@ -270,7 +270,7 @@ export function useVaultAgentBridge(input: UseVaultAgentBridgeInput): void {
         stopTunnel: current.stopTunnel,
         stopRuleTunnels: current.stopRuleTunnels,
         openHost: current.openHost
-          ? (host, isExternalMcpCall) => current.openHost!(host, isExternalMcpCall)
+          ? (host, isExternalMcpCall, options) => current.openHost!(host, isExternalMcpCall, options)
           : undefined,
         findExistingSessionForHost: current.findExistingSessionForHost,
         closeSession: current.closeSession

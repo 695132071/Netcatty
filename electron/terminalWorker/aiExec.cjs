@@ -206,6 +206,7 @@ function serializeWorkerJob(job, offset = 0) {
     completed: job.status !== "running" && job.status !== "stopping",
     exitCode: job.exitCode,
     error: job.error,
+    ...(job.code ? { code: job.code } : {}),
     startedAt: job.startedAt,
     updatedAt: job.updatedAt,
     output: collapseCarriageReturns(stdout.slice(relativeOffset)),
@@ -309,6 +310,10 @@ function createWorkerAiExecHandler({
       const blocked = await checkWorkerExecution(event, activePtyExecs, chatSessionId);
       if (blocked) return blocked;
       return execViaPty(ptyStream, command, {
+        beforeInput: async () => {
+          const blocked = await checkWorkerExecution(event, null, chatSessionId);
+          if (blocked) throw new Error(blocked.error);
+        },
         onInterrupt: () => clearSessionFlowState(session),
         stripMarkers: true,
         trackForCancellation: activePtyExecs,
@@ -332,6 +337,8 @@ function createWorkerAiExecHandler({
         },
         chatSessionId,
         expectedPrompt: getFreshIdlePrompt(session),
+        getReadyPrompt: typeof session._promptTrackTail === "string"
+          ? () => getFreshIdlePrompt(session) : undefined,
         typedInput: true,
         echoCommand: (rawCommand) => {
           event?.sender?.send?.("netcatty:data", {
@@ -531,6 +538,10 @@ function createWorkerAiJobStartHandler({
     let handle;
     try {
       handle = startPtyJob(ptyStream, command, {
+        beforeInput: async () => {
+          const blocked = await checkWorkerExecution(event, null, chatSessionId);
+          if (blocked) throw new Error(blocked.error);
+        },
         onInterrupt: () => clearSessionFlowState(session),
         timeoutMs,
         sessionId,
@@ -555,6 +566,8 @@ function createWorkerAiJobStartHandler({
         },
         chatSessionId,
         expectedPrompt: getFreshIdlePrompt(session),
+        getReadyPrompt: typeof session._promptTrackTail === "string"
+          ? () => getFreshIdlePrompt(session) : undefined,
         typedInput: true,
         echoCommand: (rawCommand) => {
           event?.sender?.send?.("netcatty:data", {
@@ -581,6 +594,7 @@ function createWorkerAiJobStartHandler({
     handle.resultPromise.then((result) => {
       job.updatedAt = Date.now();
       job.exitCode = result.exitCode ?? null;
+      job.code = result.code;
       storeCompletedWorkerJobOutput(job, result.stdout || "", result);
       const isForcedCancel = typeof result.error === "string" && result.error.includes("forced");
       if (result.error === "Cancelled" || isForcedCancel) {

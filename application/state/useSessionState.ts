@@ -1,4 +1,5 @@
 import { MouseEvent,useCallback,useEffect,useMemo,useRef,useState } from 'react';
+import { flushSync } from 'react-dom';
 import { ConnectionLog,Host,SerialConfig,Snippet,TerminalSession,Workspace,WorkspaceNode,WorkspaceViewMode } from '../../domain/models';
 import { addLogView, getLogViewTabId, removeLogView, type LogView } from './logViewState';
 import {
@@ -915,6 +916,25 @@ export const useSessionState = ({
     return newSessionId;
   }, [setActiveTabId]);
 
+  // Agent callers bind scope immediately, so they need committed insertion,
+  // not just the ID allocated by the ordinary batched UI append operation.
+  const appendHostToWorkspaceConfirmed = useCallback((
+    workspaceId: string,
+    host: Host,
+    direction: SplitDirection = 'vertical',
+  ): string | null => {
+    let sessionId: string | null = null;
+    flushSync(() => {
+      sessionId = appendHostToWorkspace(workspaceId, host, direction);
+    });
+    if (!sessionId) return null;
+    const committedWorkspace = workspacesRef.current.find(w => w.id === workspaceId);
+    const inserted = committedWorkspace
+      && collectSessionIds(committedWorkspace.root).includes(sessionId)
+      && sessionsRef.current.some(s => s.id === sessionId && s.workspaceId === workspaceId);
+    return inserted ? sessionId : null;
+  }, [appendHostToWorkspace]);
+
   // Atomic "append a local terminal pane" — mirror of appendHostToWorkspace
   // but constructs a local-protocol session instead of an SSH one.
   const appendLocalTerminalToWorkspace = useCallback((
@@ -1453,6 +1473,7 @@ export const useSessionState = ({
     addSessionToWorkspace,
     removeSessionFromWorkspace,
     appendHostToWorkspace,
+    appendHostToWorkspaceConfirmed,
     appendLocalTerminalToWorkspace,
     updateSplitSizes,
     splitSession,

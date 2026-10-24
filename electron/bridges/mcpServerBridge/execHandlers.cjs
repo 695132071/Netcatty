@@ -146,6 +146,7 @@ function createExecHandlerApi(ctx) {
             return { ok: false, error: `Command blocked by safety policy. Pattern: ${safety.matchedPattern}` };
           }
           return execViaPty(ptyStream, command, {
+            beforeInput: executionContext.beforeExecute,
             onInterrupt: () => clearSessionFlowState(session),
             trackForCancellation: activePtyExecs,
             timeoutMs: commandTimeoutMs,
@@ -157,6 +158,8 @@ function createExecHandlerApi(ctx) {
             onProbeAborted: (marker) => echoCommandToSession(session, sessionId, `${marker}_R`, { syntheticEcho: false }),
             onEchoSuppressionPrime: (marker) => echoCommandToSession(session, sessionId, `${marker}_I`, { syntheticEcho: false }),
             expectedPrompt: getFreshIdlePrompt(session),
+            getReadyPrompt: typeof session._promptTrackTail === "string"
+              ? () => getFreshIdlePrompt(session) : undefined,
             typedInput: true,
             echoCommand: (rawCommand) => echoCommandToSession(session, sessionId, rawCommand),
             chatSessionId,
@@ -318,6 +321,7 @@ function createExecHandlerApi(ctx) {
         try {
           executionContext.beforeExecute?.();
           handle = startPtyJob(ptyStream, command, {
+            beforeInput: executionContext.beforeExecute,
             onInterrupt: () => clearSessionFlowState(session),
             // Intentionally do NOT register in activePtyExecs: terminal_start jobs
             // are designed to survive SDK agent "Stop" so the model can stop polling
@@ -336,6 +340,8 @@ function createExecHandlerApi(ctx) {
             onEchoSuppressionPrime: (marker) => echoCommandToSession(session, sessionId, `${marker}_I`, { syntheticEcho: false }),
             chatSessionId,
             expectedPrompt: getFreshIdlePrompt(session),
+            getReadyPrompt: typeof session._promptTrackTail === "string"
+              ? () => getFreshIdlePrompt(session) : undefined,
             typedInput: true,
             echoCommand: (rawCommand) => echoCommandToSession(session, sessionId, rawCommand),
             maxBufferedChars: MAX_BACKGROUND_JOB_OUTPUT_CHARS,
@@ -356,6 +362,7 @@ function createExecHandlerApi(ctx) {
         handle.resultPromise.then((result) => {
           job.updatedAt = Date.now();
           job.exitCode = result.exitCode ?? null;
+          job.code = result.code;
           storeCompletedJobOutput(job, result.stdout || "", result);
           const isForcedCancel = typeof result.error === "string" && result.error.includes("forced");
           if (result.error === "Cancelled" || isForcedCancel) {
