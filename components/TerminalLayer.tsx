@@ -319,6 +319,7 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
     splitPane: splitSidePanelPaneForTab,
     closePane: closeSidePanelPaneForTab,
     resizeSplit: resizeSidePanelSplitForTab,
+    selectSidePanelToolForTab,
   } = useTerminalSidePanelLayoutState();
   useEffect(() => {
     pruneComposeBarHistory(sessions.map((session) => session.id));
@@ -1752,13 +1753,9 @@ const TerminalLayerInner: React.FC<TerminalLayerProps> = ({
     if (!prepareSidePanelTool(tabId, tab)) return;
 
     startTransition(() => {
-      setSidePanelOpenTabs(prev => {
-        const next = new Map(prev);
-        next.set(tabId, tab);
-        return next;
-      });
+      selectSidePanelToolForTab(tabId, tab);
     });
-  }, [prepareSidePanelTool, setSidePanelOpenTabs, sidePanelOpenTabsRef]);
+  }, [prepareSidePanelTool, selectSidePanelToolForTab, sidePanelOpenTabsRef]);
 
   const handleFocusSidePanelPane = useCallback((paneId: string) => {
     const tabId = activeTabIdRef.current;
