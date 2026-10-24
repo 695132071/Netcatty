@@ -969,6 +969,7 @@ export const zhTWTerminalMessages: Messages = {
   'serial.field.flowControl': '流量控制',
   'serial.noPorts': '未偵測到序列埠裝置。請連線裝置後重新整理。',
   'serial.field.customPort': '自訂序列埠路徑',
+  'serial.field.namedPipeHint': 'Windows 虛擬機主控台：輸入 \\\\.\\pipe\\name。虛擬機需作為伺服器端建立管道，鮑率與串口框架設定不生效。',
   'serial.field.customPortPlaceholder': '例如 /dev/ttys001 或 COM1',
   'serial.type.hardware': '硬體',
   'serial.type.pseudo': '虛擬終端',

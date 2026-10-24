@@ -91,6 +91,9 @@ jobs:
       - name: Install deps
         run: npm ci --ignore-scripts
 
+      - name: Exercise serial named pipe transport on Windows
+        run: node --test electron/bridges/serialNamedPipe.test.cjs
+
       - name: Apply production dependency patches
         run: npx patch-package --error-on-fail
 

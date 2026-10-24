@@ -886,6 +886,7 @@ export const ruTerminalMessages: Messages = {
   'serial.field.flowControl': 'Управление потоком',
   'serial.noPorts': 'Последовательные порты не обнаружены. Подключите устройство и обновите список.',
   'serial.field.customPort': 'Путь к пользовательскому порту',
+  'serial.field.namedPipeHint': 'Консоль ВМ Windows: введите \\\\.\\pipe\\name. ВМ должна создать канал как сервер. Скорость и параметры кадра игнорируются.',
   'serial.field.customPortPlaceholder': 'например, /dev/ttys001 или COM1',
   'serial.type.hardware': 'Аппаратный',
   'serial.type.pseudo': 'Псевдотерминал',

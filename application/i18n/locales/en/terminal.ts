@@ -879,6 +879,7 @@ export const enTerminalMessages: Messages = {
   'serial.field.flowControl': 'Flow Control',
   'serial.noPorts': 'No serial ports detected. Connect a device and refresh.',
   'serial.field.customPort': 'Custom Port Path',
+  'serial.field.namedPipeHint': 'Windows VM console: enter \\\\.\\pipe\\name. The VM must create the pipe as a server. Baud rate and framing are ignored.',
   'serial.field.customPortPlaceholder': 'e.g. /dev/ttys001 or COM1',
   'serial.type.hardware': 'Hardware',
   'serial.type.pseudo': 'Pseudo Terminal',

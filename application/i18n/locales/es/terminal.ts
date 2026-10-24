@@ -841,6 +841,7 @@ export const esTerminalMessages: Messages = {
   'serial.field.flowControl': 'Control de flujo',
   'serial.noPorts': 'No se detectaron puertos seriales. Conecta un dispositivo y actualiza.',
   'serial.field.customPort': 'Ruta de puerto personalizada',
+  'serial.field.namedPipeHint': 'Consola de VM en Windows: introduce \\\\.\\pipe\\name. La VM debe crear la canalización como servidor. Se ignoran la velocidad y la trama.',
   'serial.field.customPortPlaceholder': 'p. ej., /dev/ttys001 o COM1',
   'serial.type.hardware': 'Hardware',
   'serial.type.pseudo': 'Pseudoterminal',

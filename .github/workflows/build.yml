@@ -82,6 +82,8 @@ on:
       - "scripts/resolve-et-bin-release.cjs"
       - "scripts/resolve-mosh-bin-release.cjs"
       - "scripts/tray-panel-layout.live.test.cjs"
+      - "scripts/serial-named-pipe.live.test.cjs"
+      - "scripts/fixtures/serial/**"
       - "scripts/verify-linux-*.sh"
       - "scripts/xterm-macos-column-selection.live.test.cjs"
       - "skills/**"
@@ -250,6 +252,10 @@ jobs:
 
       - name: Install deps
         run: npm ci
+
+      - name: Test Windows serial pipe through native Electron
+        if: matrix.name == 'windows'
+        run: npx electron scripts/serial-named-pipe.live.test.cjs
 
       - name: Test macOS Option column selection
         if: matrix.name == 'macos'

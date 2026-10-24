@@ -21,6 +21,7 @@ const trackedFlowPauseSenders = new WeakSet();
 
 const pty = require("node-pty");
 const { SerialPort } = require("serialport");
+const { createSerialTransport } = require("./serialNamedPipe.cjs");
 const {
   configureTerminalSessionDataEmitter,
   emitTerminalSessionData,
@@ -1313,7 +1314,7 @@ async function listSerialPorts() {
 async function startSerialSession(event, options) {
   const sessionId = options.sessionId || randomUUID();
 
-  const portPath = options.path;
+  const portPath = options.path?.trim();
   const baudRate = options.baudRate || 115200;
   const dataBits = options.dataBits || 8;
   const stopBits = options.stopBits || 1;
@@ -1347,7 +1348,7 @@ async function startSerialSession(event, options) {
       resolve(value);
     };
     try {
-      const serialPort = new SerialPort({
+      const serialPort = createSerialTransport({
         path: portPath,
         baudRate: baudRate,
         dataBits: dataBits,
@@ -1357,7 +1358,7 @@ async function startSerialSession(event, options) {
         xon: flowControl === 'xon/xoff',
         xoff: flowControl === 'xon/xoff',
         autoOpen: false,
-      });
+      }, SerialPort);
 
       const abortPendingOpen = () => {
         try { serialPort.close(); } catch { /* ignore */ }

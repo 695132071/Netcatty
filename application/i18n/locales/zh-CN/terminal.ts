@@ -969,6 +969,7 @@ export const zhCNTerminalMessages: Messages = {
   'serial.field.flowControl': '流控制',
   'serial.noPorts': '未检测到串口设备。请连接设备后刷新。',
   'serial.field.customPort': '自定义串口路径',
+  'serial.field.namedPipeHint': 'Windows 虚拟机控制台：输入 \\\\.\\pipe\\name。虚拟机需作为服务端创建管道，波特率和串口帧设置不生效。',
   'serial.field.customPortPlaceholder': '例如 /dev/ttys001 或 COM1',
   'serial.type.hardware': '硬件',
   'serial.type.pseudo': '虚拟终端',

@@ -783,3 +783,13 @@ test("CloudLinker skips the cwd probe without restricting generic Go servers", (
     true,
   );
 });
+
+test("sanitizeHost preserves named-pipe spaces and restores the authoritative serial path", () => {
+  const path = String.raw`\\.\pipe\VM console`;
+  const host = makeHost({ protocol: 'serial', hostname: String.raw`\\.\pipe\VM`, serialConfig: {
+    path, baudRate: 115200, dataBits: 8, stopBits: 1, parity: 'none', flowControl: 'none',
+  } });
+  assert.equal(sanitizeHost(host).hostname, path);
+  assert.equal(sanitizeHost(host).serialConfig?.path, path);
+  assert.equal(sanitizeHost(makeHost({ hostname: 'example.com extra' })).hostname, 'example.com');
+});

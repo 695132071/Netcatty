@@ -415,7 +415,10 @@ export const hostsEqualForIdentityReuse = (a: Host, b: Host): boolean => {
 };
 
 export const sanitizeHost = (host: Host, snippets: Snippet[] = []): Host => {
-  const cleanHostname = (host.hostname || '').trim().split(/\s+/)[0];
+  // Serial endpoints are paths, not network hostnames; pipe names may contain spaces.
+  const cleanHostname = host.protocol === 'serial'
+    ? (host.serialConfig?.path || host.hostname || '').trim()
+    : (host.hostname || '').trim().split(/\s+/)[0];
   const cleanDistro = normalizeDistroId(host.distro);
   const cleanManualDistro = normalizeDistroId(host.manualDistro);
   const cleanDistroMode =

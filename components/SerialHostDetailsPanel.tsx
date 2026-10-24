@@ -12,6 +12,8 @@ import {
   resolveSerialBackspaceOverrideOnSave,
 } from '../domain/serialBackspace';
 
+import { isSerialEndpointPath, isWindowsNamedPipePath } from '../domain/serialEndpoint';
+
 import { Button } from './ui/button';
 import { Combobox, ComboboxOption, MultiCombobox } from './ui/combobox';
 import { Input } from './ui/input';
@@ -91,7 +93,7 @@ export const SerialHostDetailsPanel: React.FC<SerialHostDetailsPanelPropsWithRes
   // input alone cannot restore `password` to undefined — the user needs a
   // dedicated control to delete the credential entirely.
   const [passwordCleared, setPasswordCleared] = useState(false);
-  const [selectedPort, setSelectedPort] = useState(initialData.hostname || initialData.serialConfig?.path || '');
+  const [selectedPort, setSelectedPort] = useState(initialData.serialConfig?.path || initialData.hostname || '');
   const [baudRate, setBaudRate] = useState(initialData.serialConfig?.baudRate || initialData.port || 115200);
   const [dataBits, setDataBits] = useState<5 | 6 | 7 | 8>(initialData.serialConfig?.dataBits || 8);
   const [stopBits, setStopBits] = useState<1 | 1.5 | 2>(initialData.serialConfig?.stopBits || 1);
@@ -131,7 +133,7 @@ export const SerialHostDetailsPanel: React.FC<SerialHostDetailsPanelPropsWithRes
     if (!selectedPort) return;
 
     const config: SerialConfig = {
-      path: selectedPort,
+      path: selectedPort.trim(),
       baudRate,
       dataBits,
       stopBits,
@@ -151,7 +153,7 @@ export const SerialHostDetailsPanel: React.FC<SerialHostDetailsPanelPropsWithRes
     const updatedHost: Host = {
       ...initialData,
       label: label.trim() || `Serial: ${portName}`,
-      hostname: selectedPort,
+      hostname: selectedPort.trim(),
       port: baudRate,
       username: username.trim() || undefined,
       // An empty password is meaningful for serial auto-login: the detector
@@ -206,12 +208,10 @@ export const SerialHostDetailsPanel: React.FC<SerialHostDetailsPanelPropsWithRes
 
   // Validation
   const trimmedPort = selectedPort.trim();
-  const isPortValid =
-    trimmedPort.startsWith('/dev/') ||
-    /^COM\d+$/i.test(trimmedPort) ||
-    /^\\\\\.\\COM\d+$/i.test(trimmedPort);
+  const isNamedPipe = isWindowsNamedPipePath(trimmedPort);
+  const isPortValid = isSerialEndpointPath(trimmedPort);
   const isBaudRateValid = Number.isInteger(baudRate) && baudRate > 0;
-  const isValid = isPortValid && isBaudRateValid;
+  const isValid = isPortValid && (isNamedPipe || isBaudRateValid);
 
   // Check if using 1.5 stop bits (limited Windows support)
   const isStopBits15 = stopBits === 1.5;
@@ -265,6 +265,9 @@ export const SerialHostDetailsPanel: React.FC<SerialHostDetailsPanelPropsWithRes
             createText={t('common.use')}
             icon={<Usb size={14} className="text-muted-foreground" />}
           />
+          <p className="text-xs text-muted-foreground">
+            {t('serial.field.namedPipeHint')}
+          </p>
           {!isPortValid && selectedPort && (
             <p className="text-xs text-destructive">
               {t('serial.field.customPortPlaceholder')}
@@ -272,32 +275,34 @@ export const SerialHostDetailsPanel: React.FC<SerialHostDetailsPanelPropsWithRes
           )}
         </div>
 
-        {/* Baud Rate */}
-        <div className="space-y-2">
-          <Label htmlFor="baud-rate">{t('serial.field.baudRate')}</Label>
-          <Combobox
-            options={BAUD_RATES.map((rate) => ({
-              value: String(rate),
-              label: String(rate),
-            }))}
-            value={String(baudRate)}
-            onValueChange={(val) => {
-              const parsed = parseInt(val, 10);
-              if (!isNaN(parsed) && parsed > 0) {
-                setBaudRate(parsed);
-              }
-            }}
-            placeholder={t('serial.field.baudRatePlaceholder')}
-            emptyText={t('serial.field.baudRateEmpty')}
-            allowCreate
-            createText={t('common.use')}
-          />
-          {baudRate > 0 && !BAUD_RATES.includes(baudRate) && (
-            <p className="text-xs text-muted-foreground">
-              {t('serial.field.customBaudRate')}
-            </p>
-          )}
-        </div>
+        {/* Baud Rate (not used by named pipes) */}
+        {!isNamedPipe && (
+          <div className="space-y-2">
+            <Label htmlFor="baud-rate">{t('serial.field.baudRate')}</Label>
+            <Combobox
+              options={BAUD_RATES.map((rate) => ({
+                value: String(rate),
+                label: String(rate),
+              }))}
+              value={String(baudRate)}
+              onValueChange={(val) => {
+                const parsed = parseInt(val, 10);
+                if (!isNaN(parsed) && parsed > 0) {
+                  setBaudRate(parsed);
+                }
+              }}
+              placeholder={t('serial.field.baudRatePlaceholder')}
+              emptyText={t('serial.field.baudRateEmpty')}
+              allowCreate
+              createText={t('common.use')}
+            />
+            {baudRate > 0 && !BAUD_RATES.includes(baudRate) && (
+              <p className="text-xs text-muted-foreground">
+                {t('serial.field.customBaudRate')}
+              </p>
+            )}
+          </div>
+        )}
 
         {/* Login credentials (auto-login) */}
         <div className="space-y-2">
@@ -408,92 +413,98 @@ export const SerialHostDetailsPanel: React.FC<SerialHostDetailsPanelPropsWithRes
             </Button>
           </CollapsibleTrigger>
           <CollapsibleContent className="space-y-4 pt-2">
-            {/* Data Bits */}
-            <div className="grid grid-cols-2 gap-4">
+            {/* Hardware-only serial framing is not used by named pipes. */}
+            {!isNamedPipe && (
+              <>
+              {/* Data Bits */}
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <Label htmlFor="data-bits">{t('serial.field.dataBits')}</Label>
+                  <Select
+                    value={String(dataBits)}
+                    onValueChange={(v) => setDataBits(parseInt(v, 10) as 5 | 6 | 7 | 8)}
+                  >
+                    <SelectTrigger id="data-bits">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {DATA_BITS.map((bits) => (
+                        <SelectItem key={bits} value={String(bits)}>
+                          {bits}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                {/* Stop Bits */}
+                <div className="space-y-2">
+                  <Label htmlFor="stop-bits">{t('serial.field.stopBits')}</Label>
+                  <Select
+                    value={String(stopBits)}
+                    onValueChange={(v) => setStopBits(parseFloat(v) as 1 | 1.5 | 2)}
+                  >
+                    <SelectTrigger id="stop-bits">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {STOP_BITS.map((bits) => (
+                        <SelectItem key={bits} value={String(bits)}>
+                          {bits}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  {isStopBits15 && (
+                    <p className="text-xs text-yellow-500">
+                      {t('serial.field.stopBits15Warning')}
+                    </p>
+                  )}
+                </div>
+              </div>
+
+              {/* Parity */}
               <div className="space-y-2">
-                <Label htmlFor="data-bits">{t('serial.field.dataBits')}</Label>
+                <Label htmlFor="parity">{t('serial.field.parity')}</Label>
                 <Select
-                  value={String(dataBits)}
-                  onValueChange={(v) => setDataBits(parseInt(v, 10) as 5 | 6 | 7 | 8)}
+                  value={parity}
+                  onValueChange={(v) => setParity(v as SerialParity)}
                 >
-                  <SelectTrigger id="data-bits">
+                  <SelectTrigger id="parity">
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    {DATA_BITS.map((bits) => (
-                      <SelectItem key={bits} value={String(bits)}>
-                        {bits}
+                    {PARITY_OPTIONS.map((option) => (
+                      <SelectItem key={option} value={option}>
+                        {t(`serial.parity.${option}`)}
                       </SelectItem>
                     ))}
                   </SelectContent>
                 </Select>
               </div>
 
-              {/* Stop Bits */}
+              {/* Flow Control */}
               <div className="space-y-2">
-                <Label htmlFor="stop-bits">{t('serial.field.stopBits')}</Label>
+                <Label htmlFor="flow-control">{t('serial.field.flowControl')}</Label>
                 <Select
-                  value={String(stopBits)}
-                  onValueChange={(v) => setStopBits(parseFloat(v) as 1 | 1.5 | 2)}
+                  value={flowControl}
+                  onValueChange={(v) => setFlowControl(v as SerialFlowControl)}
                 >
-                  <SelectTrigger id="stop-bits">
+                  <SelectTrigger id="flow-control">
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    {STOP_BITS.map((bits) => (
-                      <SelectItem key={bits} value={String(bits)}>
-                        {bits}
+                    {FLOW_CONTROL_OPTIONS.map((option) => (
+                      <SelectItem key={option} value={option}>
+                        {t(`serial.flowControl.${option}`)}
                       </SelectItem>
                     ))}
                   </SelectContent>
                 </Select>
-                {isStopBits15 && (
-                  <p className="text-xs text-yellow-500">
-                    {t('serial.field.stopBits15Warning')}
-                  </p>
-                )}
               </div>
-            </div>
 
-            {/* Parity */}
-            <div className="space-y-2">
-              <Label htmlFor="parity">{t('serial.field.parity')}</Label>
-              <Select
-                value={parity}
-                onValueChange={(v) => setParity(v as SerialParity)}
-              >
-                <SelectTrigger id="parity">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {PARITY_OPTIONS.map((option) => (
-                    <SelectItem key={option} value={option}>
-                      {t(`serial.parity.${option}`)}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-
-            {/* Flow Control */}
-            <div className="space-y-2">
-              <Label htmlFor="flow-control">{t('serial.field.flowControl')}</Label>
-              <Select
-                value={flowControl}
-                onValueChange={(v) => setFlowControl(v as SerialFlowControl)}
-              >
-                <SelectTrigger id="flow-control">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {FLOW_CONTROL_OPTIONS.map((option) => (
-                    <SelectItem key={option} value={option}>
-                      {t(`serial.flowControl.${option}`)}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
+              </>
+            )}
 
             {/* Terminal Options */}
             <div className="space-y-3 pt-2 border-t border-border/60">

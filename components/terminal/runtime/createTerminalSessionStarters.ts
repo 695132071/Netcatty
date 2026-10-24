@@ -1,3 +1,4 @@
+import { isWindowsNamedPipePath } from '../../../domain/serialEndpoint';
 import type { Terminal as XTerm } from "@xterm/xterm";
 import type { ProviderValidationIssue } from "@netcatty/plugin-contract";
 import { logger } from "../../../lib/logger";
@@ -2172,7 +2173,9 @@ export const createTerminalSessionStarters = (ctx: TerminalSessionStartersContex
       autoLoginAttached = true;
       ctx.updateStatus("connected");
       ctx.setProgressValue(100);
-      writeTerminalLine(ctx, term, `[Connected to ${ctx.serialConfig.path} at ${ctx.serialConfig.baudRate} baud]`);
+      writeTerminalLine(ctx, term, isWindowsNamedPipePath(ctx.serialConfig.path)
+        ? `[Connected to ${ctx.serialConfig.path}]`
+        : `[Connected to ${ctx.serialConfig.path} at ${ctx.serialConfig.baudRate} baud]`);
 
       if (waitsForAutoLogin) {
         if (autoLoginCompletedBeforeAttach) {
