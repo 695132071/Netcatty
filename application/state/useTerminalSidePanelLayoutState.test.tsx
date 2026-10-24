@@ -279,6 +279,82 @@ test('a pending side-panel write survives an urgent render on another tab', asyn
   }
 });
 
+test('a pending tool switch does not leave another tab ref behind an urgent open', async () => {
+  const dom = new JSDOM('<!doctype html><html><body></body></html>', { url: 'http://localhost' });
+  const previousWindow = globalThis.window;
+  const previousDocument = globalThis.document;
+  Object.defineProperty(globalThis, 'window', { configurable: true, value: dom.window });
+  Object.defineProperty(globalThis, 'document', { configurable: true, value: dom.window.document });
+  const actEnvironment = globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean };
+  const previousActEnvironment = actEnvironment.IS_REACT_ACT_ENVIRONMENT;
+  actEnvironment.IS_REACT_ACT_ENVIRONMENT = true;
+
+  let state: ReturnType<typeof useTerminalSidePanelLayoutState> | null = null;
+  const Probe = () => {
+    state = useTerminalSidePanelLayoutState();
+    return null;
+  };
+
+  const container = document.createElement('div');
+  document.body.appendChild(container);
+  const root: Root = createRoot(container);
+  const focusedTool = (tabId: string, fromRef = false) => {
+    const layout = fromRef
+      ? state?.sidePanelLayoutsRef.current.get(tabId)
+      : state?.sidePanelLayouts.get(tabId);
+    if (!layout) return null;
+    return collectSidePanelPanes(layout.root).find((pane) => pane.id === layout.focusedPaneId)?.tool ?? null;
+  };
+
+  try {
+    await act(async () => {
+      root.render(React.createElement(Probe));
+    });
+    await act(async () => {
+      state?.selectSidePanelToolForTab('terminal-a', 'notes');
+      state?.selectSidePanelToolForTab('terminal-b', 'scripts');
+    });
+
+    await act(async () => {
+      startTransition(() => {
+        state?.selectSidePanelToolForTab('terminal-a', 'history');
+      });
+      flushSync(() => {
+        state?.setSidePanelOpenTabs((previous) => new Map(previous).set('terminal-b', 'browser'));
+      });
+    });
+
+    assert.equal(state!.sidePanelOpenTabs.get('terminal-a'), 'history');
+    assert.equal(state!.sidePanelOpenTabs.get('terminal-b'), 'browser');
+    assert.equal(state!.sidePanelOpenTabsRef.current.get('terminal-a'), 'history');
+    assert.equal(
+      state!.sidePanelOpenTabsRef.current.get('terminal-b'),
+      'browser',
+      'B stays rendered as browser while its ref still reports the pre-queue tool',
+    );
+    assert.equal(focusedTool('terminal-b', true), 'browser');
+
+    // handleSwitchSidePanelTab returns before select when the ref already
+    // matches the clicked tool. A stale scripts ref would ignore this click.
+    assert.notEqual(state!.sidePanelOpenTabsRef.current.get('terminal-b'), 'scripts');
+    await act(async () => {
+      state?.selectSidePanelToolForTab('terminal-b', 'scripts');
+    });
+    assert.equal(state!.sidePanelOpenTabs.get('terminal-b'), 'scripts');
+    assert.equal(state!.sidePanelOpenTabsRef.current.get('terminal-b'), 'scripts');
+    assert.equal(focusedTool('terminal-b'), 'scripts');
+    assert.equal(state!.sidePanelOpenTabs.get('terminal-a'), 'history');
+  } finally {
+    await act(async () => {
+      root.unmount();
+    });
+    actEnvironment.IS_REACT_ACT_ENVIRONMENT = previousActEnvironment;
+    Object.defineProperty(globalThis, 'window', { configurable: true, value: previousWindow });
+    Object.defineProperty(globalThis, 'document', { configurable: true, value: previousDocument });
+    dom.window.close();
+  }
+});
+
 test('side panel icon clicks write the tool through selectSidePanelToolForTab', () => {
   const layerSource = readFileSync(new URL('../../components/TerminalLayer.tsx', import.meta.url), 'utf8');
   const start = layerSource.indexOf('const handleSwitchSidePanelTab = useCallback');

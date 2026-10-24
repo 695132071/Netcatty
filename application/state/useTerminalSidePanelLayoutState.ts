@@ -27,6 +27,64 @@ function deleteMapEntry<T>(previous: Map<string, T>, key: string): Map<string, T
   return next;
 }
 
+function entryMatches<T>(left: Map<string, T>, right: Map<string, T>, key: string): boolean {
+  return left.has(key) === right.has(key) && left.get(key) === right.get(key);
+}
+
+/**
+ * Keep a ref aligned with committed state without dropping a write React has
+ * not rendered yet. An urgent update can rebase onto a transition: the
+ * transition updater stores an intermediate map in the ref, and the later
+ * updater changes only state. Copy committed entries the pending map did not
+ * change, and follow committed once it moves past that pending value.
+ */
+function syncTrackedMap<T>(
+  pending: Map<string, T>,
+  lastRendered: Map<string, T>,
+  committed: Map<string, T>,
+): Map<string, T> {
+  if (pending === lastRendered) return committed;
+  if (pending === committed) return pending;
+
+  let changed = false;
+  const merged = new Map(pending);
+
+  for (const key of committed.keys()) {
+    if (entryMatches(pending, committed, key)) continue;
+    const pendingMatchesRendered = entryMatches(pending, lastRendered, key);
+    const committedMatchesRendered = entryMatches(committed, lastRendered, key);
+    if (pendingMatchesRendered || !committedMatchesRendered) {
+      merged.set(key, committed.get(key) as T);
+      changed = true;
+    }
+  }
+
+  for (const key of pending.keys()) {
+    if (committed.has(key)) continue;
+    if (entryMatches(pending, lastRendered, key)) {
+      merged.delete(key);
+      changed = true;
+    }
+  }
+
+  return changed ? merged : pending;
+}
+
+function publishQueuedMap<T>(
+  live: Map<string, T>,
+  capturedBase: Map<string, T>,
+  previous: Map<string, T>,
+  stateNext: Map<string, T>,
+  tabId: string,
+  value: T | null,
+): Map<string, T> {
+  // The captured map is the synchronous write. Replaying it after an
+  // intervening render drops entries that render already merged. When the ref
+  // has moved ahead of this updater's base, reapply only this tab.
+  if (live === capturedBase || live === previous) return stateNext;
+  return value === null ? deleteMapEntry(live, tabId) : replaceMapEntry(live, tabId, value);
+}
+
 function reconcileSidePanelLayouts(
   layouts: Map<string, SidePanelLayout>,
   openTabs: Map<string, SidePanelTool>,
@@ -62,17 +120,22 @@ export function useTerminalSidePanelLayoutState() {
   const sidePanelLayoutsRef = useRef(sidePanelLayouts);
   // Last maps this hook rendered. A transition can update the refs before React
   // commits them; an urgent render in between must not copy the stale state
-  // back over that pending write. Functional updates still merge onto queued
-  // state when the ref and the committed map have diverged.
+  // back over that pending write. Once the queue commits, entries the pending
+  // write did not touch still have to catch up, or the ref stays on the
+  // transition updater's intermediate map.
   const renderedOpenTabsRef = useRef(sidePanelOpenTabs);
   const renderedLayoutsRef = useRef(sidePanelLayouts);
-  if (sidePanelOpenTabsRef.current === renderedOpenTabsRef.current) {
-    sidePanelOpenTabsRef.current = sidePanelOpenTabs;
-  }
+  sidePanelOpenTabsRef.current = syncTrackedMap(
+    sidePanelOpenTabsRef.current,
+    renderedOpenTabsRef.current,
+    sidePanelOpenTabs,
+  );
   renderedOpenTabsRef.current = sidePanelOpenTabs;
-  if (sidePanelLayoutsRef.current === renderedLayoutsRef.current) {
-    sidePanelLayoutsRef.current = sidePanelLayouts;
-  }
+  sidePanelLayoutsRef.current = syncTrackedMap(
+    sidePanelLayoutsRef.current,
+    renderedLayoutsRef.current,
+    sidePanelLayouts,
+  );
   renderedLayoutsRef.current = sidePanelLayouts;
 
   // Legacy and external open paths write the focused-tool map. Reconcile that
@@ -117,14 +180,28 @@ export function useTerminalSidePanelLayoutState() {
       const next = previous === layoutBase
         ? layouts
         : (openTab === null ? deleteMapEntry(previous, tabId) : replaceMapEntry(previous, tabId, layout));
-      sidePanelLayoutsRef.current = next;
+      sidePanelLayoutsRef.current = publishQueuedMap(
+        sidePanelLayoutsRef.current,
+        layoutBase,
+        previous,
+        next,
+        tabId,
+        openTab === null ? null : layout,
+      );
       return next;
     });
     setSidePanelOpenTabs((previous) => {
       const next = previous === openTabBase
         ? openTabs
         : (openTab === null ? deleteMapEntry(previous, tabId) : replaceMapEntry(previous, tabId, openTab));
-      sidePanelOpenTabsRef.current = next;
+      sidePanelOpenTabsRef.current = publishQueuedMap(
+        sidePanelOpenTabsRef.current,
+        openTabBase,
+        previous,
+        next,
+        tabId,
+        openTab,
+      );
       return next;
     });
   }, []);
