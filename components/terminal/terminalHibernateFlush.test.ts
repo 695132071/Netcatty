@@ -211,7 +211,7 @@ test("ended soft-hidden and alternate-screen sessions can fully hibernate", () =
   );
   assert.match(
     hibernateBody,
-    /if \(softHiddenRef\.current\) \{\s*if \(statusRef\.current === "disconnected"\) \{\s*upgradeSoftHiddenRuntimeToHibernate\(\);\s*\}\s*return;/,
+    /if \(softHiddenRef\.current\) \{\s*const retainedKeepCount = statusRef\.current === "connected"\s*\? resolveHibernateKeepRendererCount\(terminalSettingsRef\.current\)\s*: 0;\s*if \(statusRef\.current === "disconnected" \|\| !\(retainedKeepCount > 0\)\) \{\s*upgradeSoftHiddenRuntimeToHibernate\(\);\s*\}\s*return;/,
   );
   assert.match(
     alternateSkipBody,
@@ -227,7 +227,7 @@ test("a cancelled soft-hidden upgrade resumes its renderer", () => {
 
   assert.match(
     hibernateBody,
-    /if \(softHiddenRef\.current\) \{\s*if \(statusRef\.current === "disconnected"\) \{\s*upgradeSoftHiddenRuntimeToHibernate\(\);/,
+    /if \(softHiddenRef\.current\) \{\s*const retainedKeepCount = statusRef\.current === "connected"\s*\? resolveHibernateKeepRendererCount\(terminalSettingsRef\.current\)\s*: 0;\s*if \(statusRef\.current === "disconnected" \|\| !\(retainedKeepCount > 0\)\) \{\s*upgradeSoftHiddenRuntimeToHibernate\(\);/,
   );
   const wakeIndex = upgradeBody.indexOf("wakeSoftHiddenRuntimeRef.current?.()");
   const upgradeIndex = upgradeBody.indexOf("fullHibernateRuntime().then(");
@@ -311,10 +311,15 @@ test("a full keep count soft-hides the leaving session instead of snapshotting i
   assert.match(body, /getSoftHiddenOccupancy\(\)/);
   assert.match(body, /stillWantsRetention:/);
   assert.match(body, /softHide: \(\) => hideRuntimeOnly\(\)/);
+  assert.match(
+    body,
+    /resolveKeepCount: \(\) => \(\s*statusRef\.current === "connected"\s*\? resolveHibernateKeepRendererCount\(terminalSettingsRef\.current\)\s*: 0\s*\)/,
+    "retention after eviction must read the live keep count, not the captured one",
+  );
   assert.doesNotMatch(body, /resolveHiddenTabEviction/);
   assert.doesNotMatch(body, /requestEviction\(keepDecision/);
   assert.match(
     body,
-    /if \(softHiddenRef\.current\) \{\s*if \(statusRef\.current === "disconnected"\) \{\s*upgradeSoftHiddenRuntimeToHibernate\(\);\s*\}\s*return;\s*\}/,
+    /if \(softHiddenRef\.current\) \{\s*const retainedKeepCount = statusRef\.current === "connected"\s*\? resolveHibernateKeepRendererCount\(terminalSettingsRef\.current\)\s*: 0;\s*if \(statusRef\.current === "disconnected" \|\| !\(retainedKeepCount > 0\)\) \{\s*upgradeSoftHiddenRuntimeToHibernate\(\);\s*\}\s*return;\s*\}/,
   );
 });

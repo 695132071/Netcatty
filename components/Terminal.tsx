@@ -2355,8 +2355,14 @@ const TerminalComponent: React.FC<TerminalProps> = ({
       return;
     }
 
+    // Disconnected sessions never stay soft-hidden. A connected session whose
+    // keep count dropped to zero takes the same upgrade. A positive count stays
+    // retained until a later leave evicts overflow.
     if (softHiddenRef.current) {
-      if (statusRef.current === "disconnected") {
+      const retainedKeepCount = statusRef.current === "connected"
+        ? resolveHibernateKeepRendererCount(terminalSettingsRef.current)
+        : 0;
+      if (statusRef.current === "disconnected" || !(retainedKeepCount > 0)) {
         upgradeSoftHiddenRuntimeToHibernate();
       }
       return;
@@ -2387,6 +2393,13 @@ const TerminalComponent: React.FC<TerminalProps> = ({
         sessionId,
         candidates: keepDecision.candidates,
         keepCount,
+        // Re-read after the victim drain. The count above was captured when
+        // this timer fired; a zero or tighter setting must full-hibernate.
+        resolveKeepCount: () => (
+          statusRef.current === "connected"
+            ? resolveHibernateKeepRendererCount(terminalSettingsRef.current)
+            : 0
+        ),
         stillWantsRetention: () => (
           hibernateEvictionAttemptRef.current === attempt
           && !isVisibleRef.current
@@ -4756,6 +4769,7 @@ const TerminalComponent: React.FC<TerminalProps> = ({
     isSearchOpen,
     hibernateEnabled: hibernateEnabled,
     hibernateDelayMs: resolveTerminalHibernateDelayMs(terminalSettings),
+    hibernateKeepRendererCount: resolveHibernateKeepRendererCount(terminalSettings),
     fileTransferActive: hibernateFileTransferActive,
     hibernatedRef,
     softHiddenRef,

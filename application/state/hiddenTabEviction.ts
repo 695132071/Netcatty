@@ -11,7 +11,14 @@ import { terminalHiddenRendererStore } from "./terminalHiddenRendererStore.ts";
 export async function retainLeavingTabAfterEviction(input: {
   sessionId: string;
   candidates: readonly string[];
+  /** Count captured when this leave started. Used only if resolveKeepCount is absent. */
   keepCount: number;
+  /**
+   * Live keep-count read after eviction settles. Settings can change while the
+   * victim drains or serializes; retaining against the captured count would
+   * soft-hide a tab the user no longer wants kept.
+   */
+  resolveKeepCount?: () => number;
   stillWantsRetention: () => boolean;
   softHide: () => void;
   fullHibernate: () => void;
@@ -31,9 +38,10 @@ export async function retainLeavingTabAfterEviction(input: {
       }
     }
     if (!input.stillWantsRetention()) return;
+    const keepCount = input.resolveKeepCount?.() ?? input.keepCount;
     if (
       completed
-      && terminalHiddenRendererStore.leavingSlotStillFits(input.sessionId, input.keepCount)
+      && terminalHiddenRendererStore.leavingSlotStillFits(input.sessionId, keepCount)
     ) {
       input.softHide();
       return;

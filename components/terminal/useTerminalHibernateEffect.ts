@@ -20,6 +20,8 @@ type UseTerminalHibernateEffectOptions = {
   isSearchOpen: boolean;
   hibernateEnabled: boolean;
   hibernateDelayMs: number;
+  /** Current retained-renderer limit. Zero rechecks soft-hidden tabs immediately. */
+  hibernateKeepRendererCount?: number;
   fileTransferActive: boolean;
   hibernatedRef: React.MutableRefObject<boolean>;
   softHiddenRef: React.MutableRefObject<boolean>;
@@ -49,6 +51,7 @@ export function useTerminalHibernateEffect({
   isSearchOpen,
   hibernateEnabled,
   hibernateDelayMs,
+  hibernateKeepRendererCount,
   fileTransferActive,
   hibernatedRef,
   softHiddenRef,
@@ -209,5 +212,28 @@ export function useTerminalHibernateEffect({
     sessionId,
     softHiddenRef,
     status,
+  ]);
+
+  // Separate from the visibility timer so a keep-count edit does not clear an
+  // in-flight leave. Already soft-hidden tabs have no timer left to notice a
+  // later zero; this one re-enters hibernate without stacking a second snapshot
+  // when StrictMode runs the effect twice.
+  useEffect(() => {
+    if (!hibernateEnabled || hibernateKeepRendererCount !== 0) return;
+    if (!softHiddenRef.current) return;
+    if (resolvePaneVisible(sessionId, isVisibleRef.current)) return;
+    const timer = window.setTimeout(() => {
+      if (resolvePaneVisible(sessionId, isVisibleRef.current)) return;
+      if (!softHiddenRef.current) return;
+      onHibernateRef.current();
+    }, 0);
+    return () => window.clearTimeout(timer);
+  }, [
+    hibernateEnabled,
+    hibernateKeepRendererCount,
+    isVisible,
+    isVisibleRef,
+    sessionId,
+    softHiddenRef,
   ]);
 }

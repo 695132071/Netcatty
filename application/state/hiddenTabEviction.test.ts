@@ -80,6 +80,76 @@ test("hibernate failure after the soft-hidden marker drops does not retain the l
   assert.deepEqual(recoveredOutcomes, ["soft-hide"]);
 });
 
+test("a live keep count that still fits after eviction soft-hides the leaving tab", async () => {
+  let keepCount = 0;
+  const outcomes: string[] = [];
+  await retainLeavingTabAfterEviction({
+    sessionId: "leaving",
+    candidates: ["victim"],
+    keepCount,
+    resolveKeepCount: () => keepCount,
+    stillWantsRetention: () => true,
+    softHide: () => outcomes.push("soft-hide"),
+    fullHibernate: () => outcomes.push("full-hibernate"),
+    evict: async () => {
+      keepCount = 2;
+      await Promise.resolve();
+      return true;
+    },
+  });
+  assert.deepEqual(outcomes, ["soft-hide"]);
+  assert.equal(terminalHiddenRendererStore.getSoftHiddenOccupancy(), 0);
+});
+
+test("a keep count dropped to zero during eviction full-hibernates the leaving tab", async () => {
+  let keepCount = 2;
+  const outcomes: string[] = [];
+  await retainLeavingTabAfterEviction({
+    sessionId: "leaving",
+    candidates: ["victim"],
+    keepCount,
+    resolveKeepCount: () => keepCount,
+    stillWantsRetention: () => true,
+    softHide: () => outcomes.push("soft-hide"),
+    fullHibernate: () => outcomes.push("full-hibernate"),
+    evict: async () => {
+      keepCount = 0;
+      await Promise.resolve();
+      return true;
+    },
+  });
+  assert.deepEqual(outcomes, ["full-hibernate"]);
+  assert.equal(terminalHiddenRendererStore.getSoftHiddenOccupancy(), 0);
+});
+
+test("a keep count that no longer fits after eviction full-hibernates the leaving tab", async () => {
+  const sessions = ["victim", "other", "leaving"];
+  for (const sessionId of sessions) terminalHiddenRendererStore.clearSoftHidden(sessionId);
+  terminalHiddenRendererStore.markSoftHidden("other");
+  let keepCount = 2;
+  const outcomes: string[] = [];
+  try {
+    await retainLeavingTabAfterEviction({
+      sessionId: "leaving",
+      candidates: ["victim"],
+      keepCount,
+      resolveKeepCount: () => keepCount,
+      stillWantsRetention: () => true,
+      softHide: () => outcomes.push("soft-hide"),
+      fullHibernate: () => outcomes.push("full-hibernate"),
+      evict: async () => {
+        keepCount = 1;
+        await Promise.resolve();
+        return true;
+      },
+    });
+    assert.deepEqual(outcomes, ["full-hibernate"]);
+    assert.equal(terminalHiddenRendererStore.isSoftHidden("leaving"), false);
+  } finally {
+    for (const sessionId of sessions) terminalHiddenRendererStore.clearSoftHidden(sessionId);
+  }
+});
+
 test("a leaving tab that no longer wants retention is not soft-hidden or hibernated", async () => {
   const outcomes: string[] = [];
   await retainLeavingTabAfterEviction({
