@@ -73,6 +73,11 @@ function normalizePassword(password) {
   return typeof password === "string" ? password : "";
 }
 
+// Bare CR/LF used to wake a silent serial console before "login:" appears.
+function isAutoLoginWakeInput(data) {
+  return typeof data === "string" && /^[\r\n]+$/.test(data);
+}
+
 function createTelnetAutoLogin(options = {}) {
   const username = normalizeUsername(options.username);
   const password = normalizePassword(options.password);
@@ -207,7 +212,26 @@ function createTelnetAutoLogin(options = {}) {
         notifyIncomplete();
       }
     },
-    handleUserInput() {
+    // Silent serial consoles need a bare CR/LF to wake getty before "login:"
+    // appears. While the detector is still active that wake is not a
+    // takeover: keep autofill armed, leave the caller's write on the port,
+    // and do not consume the one-shot continue-prompt response. A later
+    // "Press RETURN to continue" must still be answered. Once the detector
+    // is disabled (expiry, completion, or a prior cancel), the same Enter
+    // notifies like any other user input so callers can drop a deferred
+    // startup command. Any other user input still cancels.
+    handleUserInput(data) {
+      const wakeOnly = isAutoLoginWakeInput(data);
+      if (
+        wakeOnly
+        && !disabled
+        && !sentUsername
+        && !sentPassword
+        && !isUsernamePrompt(tail)
+        && !isPasswordPrompt(tail)
+      ) {
+        return;
+      }
       disabled = true;
       clearExpiryTimer();
       notifyUserInput();
@@ -224,6 +248,7 @@ function createTelnetAutoLogin(options = {}) {
 
 module.exports = {
   createTelnetAutoLogin,
+  isAutoLoginWakeInput,
   isCommandPrompt,
   isContinuePrompt,
   isPasswordPrompt,

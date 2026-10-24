@@ -63,7 +63,7 @@ const { discoverShells } = require("./shellDiscovery.cjs");
 const { isWindowsAppExecutionAliasPath } = require("../../lib/localShell.cjs");
 const moshHandshake = require("./moshHandshake.cjs");
 const tempDirBridge = require("./tempDirBridge.cjs");
-const { createTelnetAutoLogin } = require("./telnetAutoLogin.cjs");
+const { createTelnetAutoLogin, isAutoLoginWakeInput } = require("./telnetAutoLogin.cjs");
 const telnetProtocol = require("./telnetProtocol.cjs");
 const { createPtyOutputBuffer } = require("./ptyOutputBuffer.cjs");
 const { enableTcpNoDelay } = require("./tcpNoDelay.cjs");
@@ -1713,8 +1713,9 @@ function writeToSessionNow(payload, data, logRewrite = payload.logRewrite) {
       (session.type === 'telnet-native' || session.type === 'serial')
       && !payload.automated
       && !isTerminalReportSequence(data)
+      && !payload.autoLoginInputHandled
     ) {
-      session.autoLogin?.handleUserInput();
+      session.autoLogin?.handleUserInput(data);
     }
 
     // Encode keystrokes with the SAME charset the output path decodes with so
@@ -1805,6 +1806,8 @@ function writeToSessionWithInterception(
   paste = null,
   index = 0,
 ) {
+  // Stays the original payload until ingress classification marks this write.
+  let sessionWritePayload = payload;
   const writeWithReceipt = (nextData) => {
     if (paste && !paste.active) return;
     const current = sessions.get(payload.sessionId);
@@ -1817,7 +1820,7 @@ function writeToSessionWithInterception(
       paste.finish(index, true);
       return;
     }
-    const written = writeToSessionNow(payload, nextData, logRewrite);
+    const written = writeToSessionNow(sessionWritePayload, nextData, logRewrite);
     if (paste) paste.finish(written ? index : undefined);
   };
   const bypass = payload?.sensitive === true || isTerminalReportSequence(data);
@@ -1830,26 +1833,43 @@ function writeToSessionWithInterception(
     writeWithReceipt(data);
     return;
   }
-  // Cancel the auto-login detector at input ingress, before the asynchronous
+  // Classify auto-login at input ingress, before the asynchronous
   // interception pipeline: a slow interceptor would otherwise leave the
   // detector armed while the user's keystrokes are queued, letting a login
   // prompt that arrives during that wait trigger a saved-credential
   // transmission after the user has already taken over. Same guard
-  // conditions as writeToSessionNow; handleUserInput is idempotent, so the
-  // later call there stays a no-op.
+  // conditions as writeToSessionNow. Wake-only CR/LF is not idempotent once
+  // credentials start, so mark this write and do not classify those bytes
+  // again when they reach writeToSessionNow. That preserved classification
+  // describes the queued bytes only while they stay wake-only; writeIfCurrent
+  // classifies an interceptor rewrite that is no longer wake-only.
   if (
     expectedSession
     && (expectedSession.type === 'telnet-native' || expectedSession.type === 'serial')
     && !payload.automated
     && !isTerminalReportSequence(data)
   ) {
-    expectedSession.autoLogin?.handleUserInput();
+    expectedSession.autoLogin?.handleUserInput(data);
+    sessionWritePayload = { ...payload, autoLoginInputHandled: true };
   }
   const writeIfCurrent = (nextData) => {
     const current = sessions.get(payload.sessionId);
     if (!current || current !== expectedSession || current.closed) {
       paste?.finish();
       return;
+    }
+    // An Enter-to-command macro can turn the wake CR/LF classified above
+    // into ordinary text. Classify that transformed value before it is
+    // written. autoLoginInputHandled stays set so writeToSessionNow does not
+    // classify the same write again. A rewrite that is still only CR/LF keeps
+    // the ingress classification: those bytes are not idempotent once
+    // credentials have started.
+    if (
+      sessionWritePayload.autoLoginInputHandled
+      && !isAutoLoginWakeInput(nextData)
+      && !isTerminalReportSequence(nextData)
+    ) {
+      current.autoLogin?.handleUserInput(nextData);
     }
     writeWithReceipt(nextData);
   };
