@@ -1164,6 +1164,7 @@ export function handleConnectToHostImpl(getCtx: AppContextGetter, host: Host, hi
     if (effectiveHost.protocol === 'serial') {
       const portName = host.hostname.split('/').pop() || host.hostname;
       const sessionId = connectToHost(effectiveHost, { hidden });
+      if (!sessionId) return null;
       addConnectionLog({
         sessionId,
         hostId: host.id,
@@ -1183,6 +1184,7 @@ export function handleConnectToHostImpl(getCtx: AppContextGetter, host: Host, hi
     const protocol = resolveEffectiveTerminalProtocol(effectiveHost);
     const resolvedAuth = resolveHostAuth({ host: effectiveHost, keys, identities });
     const sessionId = connectToHost(effectiveHost, { hidden });
+    if (!sessionId) return null;
     addConnectionLog({
       sessionId,
       hostId: host.id,
