@@ -195,6 +195,9 @@ module.exports = {
         'node_modules/@cursor/sdk-*/**/*',
         'node_modules/sqlite3/**/*',
         'node_modules/@modelcontextprotocol/sdk/**/*',
+        // External MCP scripts run from asarUnpack via ELECTRON_RUN_AS_NODE and
+        // must resolve re2js from a real directory (issue #3910).
+        'node_modules/re2js/**/*',
         'lib/**/*.cjs',
         'lib/**/*.json',
         'node_modules/zod/**/*',

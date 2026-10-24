@@ -128,6 +128,13 @@ test("asarUnpack no longer references removed legacy agent packages", () => {
 test("asarUnpack keeps MCP server runtime deps unpacked", () => {
   // @modelcontextprotocol/sdk is now a direct dep and the MCP server hard-requires it.
   assert.ok(config.asarUnpack.includes("node_modules/@modelcontextprotocol/sdk/**/*"));
+  // externalMcpRedaction.cjs requires re2js. The launcher runs from
+  // app.asar.unpacked with ELECTRON_RUN_AS_NODE, which cannot see modules
+  // that exist only inside app.asar (issue #3910).
+  assert.ok(
+    config.asarUnpack.includes("node_modules/re2js/**/*"),
+    "external MCP bridge must unpack re2js so the stdio launcher can resolve it",
+  );
 });
 
 test("asarUnpack keeps Cursor SDK runtime deps unpacked", () => {
