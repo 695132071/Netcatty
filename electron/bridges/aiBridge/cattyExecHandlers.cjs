@@ -196,6 +196,7 @@ function registerCattyExecHandlers(ctx) {
             return { ok: false, error: `Command blocked by safety policy. Pattern: ${safety.matchedPattern}` };
           }
           return execViaPty(ptyStream, command, {
+            beforeInput: beforeExecute,
             onInterrupt: () => clearSessionFlowState(session),
             stripMarkers: true,
             trackForCancellation: mcpServerBridge.activePtyExecs,

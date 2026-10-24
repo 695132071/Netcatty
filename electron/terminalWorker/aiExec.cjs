@@ -310,6 +310,10 @@ function createWorkerAiExecHandler({
       const blocked = await checkWorkerExecution(event, activePtyExecs, chatSessionId);
       if (blocked) return blocked;
       return execViaPty(ptyStream, command, {
+        beforeInput: async () => {
+          const blocked = await checkWorkerExecution(event, null, chatSessionId);
+          if (blocked) throw new Error(blocked.error);
+        },
         onInterrupt: () => clearSessionFlowState(session),
         stripMarkers: true,
         trackForCancellation: activePtyExecs,
@@ -534,6 +538,10 @@ function createWorkerAiJobStartHandler({
     let handle;
     try {
       handle = startPtyJob(ptyStream, command, {
+        beforeInput: async () => {
+          const blocked = await checkWorkerExecution(event, null, chatSessionId);
+          if (blocked) throw new Error(blocked.error);
+        },
         onInterrupt: () => clearSessionFlowState(session),
         timeoutMs,
         sessionId,

@@ -70,6 +70,7 @@ function startPtyJob(ptyStream, command, options) {
     sessionId = null,
     diagnosticsSession = null,
     getReadyPrompt,
+    beforeInput,
     promptWaitTimeoutMs = 30000,
     typedInput = false,
     echoCommand,
@@ -82,6 +83,7 @@ function startPtyJob(ptyStream, command, options) {
   let expectedPrompt = initialExpectedPrompt;
   let waitingForPrompt = typeof getReadyPrompt === "function";
   let readinessFailureCode = null;
+  let waitingForInputGuard = typeof beforeInput === "function";
 
   const marker = `__NCMCP_${Date.now().toString(36)}_${crypto.randomBytes(16).toString('hex')}__`;
   let resolvedShellKind = resolveEffectiveShellKind(shellKind, expectedPrompt, {
@@ -178,7 +180,7 @@ function startPtyJob(ptyStream, command, options) {
   }
 
   function armOutputTimeout() {
-    if (waitingForPrompt) return;
+    if (waitingForPrompt || waitingForInputGuard) return;
     clearTimeout(timeoutId);
     timeoutId = setTimeout(() => {
       sendInterrupt("inactivity-timeout");
@@ -200,9 +202,11 @@ function startPtyJob(ptyStream, command, options) {
     if (!enforceWallTimeout || maxBufferedChars > 0) return;
     wallTimeoutId = setTimeout(() => {
       if (finished) return;
-      if (waitingForPrompt) {
-        readinessFailureCode = "SHELL_NOT_READY";
-        finish("", -1, "Shell prompt is not ready; no command was sent");
+      if (waitingForPrompt || waitingForInputGuard) {
+        readinessFailureCode = waitingForPrompt ? "SHELL_NOT_READY" : "EXECUTION_NOT_AUTHORIZED";
+        finish("", -1, waitingForPrompt
+          ? "Shell prompt is not ready; no command was sent"
+          : "Execution authorization timed out; no command was sent");
         return;
       }
       if (pendingEnd) {
@@ -312,7 +316,7 @@ function startPtyJob(ptyStream, command, options) {
 
   function requestCancel() {
     if (finished || cancelRequested) return;
-    if (waitingForPrompt) {
+    if (waitingForPrompt || waitingForInputGuard) {
       cancelRequested = true;
       finish("", 130, "Cancelled");
       return;
@@ -931,6 +935,49 @@ function startPtyJob(ptyStream, command, options) {
   // the _R reset (onProbeAborted) when the command never starts.
   function beginInputDelivery() {
     if (finished || cancelRequested) return;
+    if (!waitingForInputGuard) return deliverAuthorizedInput();
+    // Readiness can wait for seconds. Revalidate the chat/privacy snapshot
+    // immediately before any probe, command, control byte, or synthetic echo.
+    // The worker guard is async, so cancellation must remain pre-input until
+    // it settles and a late reply must never resume a cancelled job.
+    const guardTimer = setTimeout(() => rejectInput(new Error("Execution authorization timed out; no command was sent")), 30000);
+    cleanupFns.push(() => clearTimeout(guardTimer));
+    function rejectInput(error) {
+      clearTimeout(guardTimer);
+      if (finished || cancelRequested) return;
+      readinessFailureCode = "EXECUTION_NOT_AUTHORIZED";
+      finish("", -1, error?.message || "Execution authorization failed; no command was sent");
+    }
+    function acceptInput() {
+      clearTimeout(guardTimer);
+      if (finished || cancelRequested) return;
+      // A worker authorization round trip can outlive the prompt itself.
+      if (typeof getReadyPrompt === "function") {
+        let prompt;
+        try { prompt = getReadyPrompt(); } catch { /* fail closed below */ }
+        if (!prompt) {
+          readinessFailureCode = "SHELL_NOT_READY";
+          finish("", -1, "Shell prompt changed while checking authorization; no command was sent");
+          return;
+        }
+      }
+      waitingForInputGuard = false;
+      deliverAuthorizedInput();
+    }
+    try {
+      const pending = beforeInput();
+      if (pending && typeof pending.then === "function") {
+        Promise.resolve(pending).then(acceptInput, rejectInput);
+      } else {
+        acceptInput();
+      }
+    } catch (error) {
+      rejectInput(error);
+    }
+  }
+
+  function deliverAuthorizedInput() {
+    if (finished || cancelRequested) return;
     echoPendingCommand();
     if (typeof onEchoSuppressionPrime === "function") {
       try {
@@ -1015,6 +1062,7 @@ function startPtyJob(ptyStream, command, options) {
  * @param {AbortSignal} [options.abortSignal] - AbortSignal to cancel execution
  * @param {string} [options.expectedPrompt] - Last observed idle prompt for exact fallback matching
  * @param {() => string} [options.getReadyPrompt] - Read current prompt; wait without writing until non-empty
+ * @param {function} [options.beforeInput] - Revalidate authorization before the first PTY byte (may return a promise)
  * @param {number} [options.promptWaitTimeoutMs=30000] - Bounded pre-input wait (maximum 30 seconds)
  * @param {boolean} [options.typedInput=false] - Emit synthetic command echo before execution
  * @param {(command: string) => void} [options.echoCommand] - Callback used to display synthetic command echo

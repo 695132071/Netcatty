@@ -86,3 +86,75 @@ test('a prompt inspection error fails closed without typing', async () => {
   assert.equal(result.code, 'SHELL_NOT_READY');
   assert.deepEqual(pty.writes, []);
 });
+
+test('cancel during asynchronous input authorization never writes after a late grant', async () => {
+  const pty = new TestPty();
+  let authorize;
+  let entered;
+  const authorizationStarted = new Promise(resolve => { entered = resolve; });
+  const job = startPtyJob(pty, 'echo forbidden', {
+    getReadyPrompt: () => 'user@host:~$ ',
+    beforeInput: () => {
+      entered();
+      return new Promise(resolve => { authorize = resolve; });
+    },
+  });
+  await authorizationStarted;
+  job.cancel();
+  assert.equal((await job.resultPromise).error, 'Cancelled');
+  authorize();
+  await new Promise(resolve => setImmediate(resolve));
+  assert.deepEqual(pty.writes, []);
+});
+
+test('input authorization rejects without command echo or control bytes', async () => {
+  const pty = new TestPty();
+  const echoes = [];
+  const result = await startPtyJob(pty, 'echo forbidden', {
+    getReadyPrompt: () => 'user@host:~$ ',
+    beforeInput: async () => { throw new Error('Authorization revoked'); },
+    typedInput: true, echoCommand: value => echoes.push(value),
+  }).resultPromise;
+  assert.equal(result.code, 'EXECUTION_NOT_AUTHORIZED');
+  assert.deepEqual(pty.writes, []);
+  assert.deepEqual(echoes, []);
+});
+
+test('a prompt lost during asynchronous authorization fails closed', async () => {
+  const pty = new TestPty();
+  let prompt = 'user@host:~$ ';
+  const result = await startPtyJob(pty, 'echo forbidden', {
+    getReadyPrompt: () => prompt,
+    beforeInput: async () => { prompt = ''; },
+  }).resultPromise;
+  assert.equal(result.code, 'SHELL_NOT_READY');
+  assert.deepEqual(pty.writes, []);
+});
+
+test('stalled input authorization is bounded without interrupting the PTY', async (t) => {
+  t.mock.timers.enable({ apis: ['Date', 'setTimeout'] });
+  const pty = new TestPty();
+  const job = startPtyJob(pty, 'echo forbidden', {
+    getReadyPrompt: () => 'user@host:~$ ',
+    beforeInput: () => new Promise(() => {}),
+  });
+  t.mock.timers.tick(30001);
+  const result = await job.resultPromise;
+  assert.equal(result.code, 'EXECUTION_NOT_AUTHORIZED');
+  assert.deepEqual(pty.writes, []);
+});
+
+test('wall deadline during authorization reports authorization failure rather than readiness', async (t) => {
+  t.mock.timers.enable({ apis: ['Date', 'setTimeout'] });
+  const pty = new TestPty();
+  const job = startPtyJob(pty, 'echo forbidden', {
+    getReadyPrompt: () => 'user@host:~$ ',
+    beforeInput: () => new Promise(() => {}),
+    timeoutMs: 25, enforceWallTimeout: true,
+  });
+  t.mock.timers.tick(26);
+  const result = await job.resultPromise;
+  assert.equal(result.code, 'EXECUTION_NOT_AUTHORIZED');
+  assert.match(result.error, /authorization timed out/);
+  assert.deepEqual(pty.writes, []);
+});

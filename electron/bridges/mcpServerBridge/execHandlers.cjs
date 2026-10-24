@@ -146,6 +146,7 @@ function createExecHandlerApi(ctx) {
             return { ok: false, error: `Command blocked by safety policy. Pattern: ${safety.matchedPattern}` };
           }
           return execViaPty(ptyStream, command, {
+            beforeInput: executionContext.beforeExecute,
             onInterrupt: () => clearSessionFlowState(session),
             trackForCancellation: activePtyExecs,
             timeoutMs: commandTimeoutMs,
@@ -320,6 +321,7 @@ function createExecHandlerApi(ctx) {
         try {
           executionContext.beforeExecute?.();
           handle = startPtyJob(ptyStream, command, {
+            beforeInput: executionContext.beforeExecute,
             onInterrupt: () => clearSessionFlowState(session),
             // Intentionally do NOT register in activePtyExecs: terminal_start jobs
             // are designed to survive SDK agent "Stop" so the model can stop polling

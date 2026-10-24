@@ -354,3 +354,38 @@ test("MCP background readiness timeout survives job polling without PTY writes",
   t.mock.timers.tick(1000);
   assert.deepEqual(pty.writes, [], "late readiness must not deliver the failed job");
 });
+
+for (const route of ['exec', 'job']) {
+  test(`MCP ${route} revalidates privacy when the awaited prompt becomes ready`, async (t) => {
+    t.mock.timers.enable({ apis: ['Date', 'setTimeout'] });
+    const privacy = createAiPrivacyService();
+    privacy.checkSession('readiness-chat');
+    const pty = new FakePty();
+    const session = { protocol: 'local', pty, shellKind: 'posix', _promptTrackTail: '' };
+    const ctx = createExecHandlerTestContext({
+      sessions: new Map([['waiting', session]]), backgroundJobs: new Map(),
+    });
+    let prompt = '';
+    ctx.getFreshIdlePrompt = () => prompt;
+    Object.assign(ctx, require('./ai/ptyExec.cjs'));
+    const api = createExecHandlerApi(ctx);
+    const pending = (route === 'job' ? api.handleJobStart : api.handleExec)({
+      sessionId: 'waiting', chatSessionId: 'readiness-chat', command: 'echo forbidden',
+    }, { beforeExecute: () => privacy.restore('readiness-chat', []) });
+    await nextTick();
+    assert.deepEqual(pty.writes, []);
+    privacy.configure({ enabled: true });
+    prompt = 'user@host:~$ ';
+    t.mock.timers.tick(50);
+    await nextTick();
+    // Also clean up on the old implementation, where a probe was already sent.
+    pty.emit('close');
+    const startedOrFinished = await pending;
+    const result = route === 'job'
+      ? api.handleJobPoll({ jobId: startedOrFinished.jobId, chatSessionId: 'readiness-chat' })
+      : startedOrFinished;
+    assert.deepEqual(pty.writes, [], 'retired privacy session must not send even probe/control bytes');
+    assert.match(result.error, /start a new chat/);
+    assert.equal(ctx.activeSessionExecutions.size, 0);
+  });
+}

@@ -152,3 +152,32 @@ test("Catty terminal rechecks a deleted chat after shell probing and releases it
   assert.equal(ctx.effects.length, 0);
   assert.deepEqual(ctx.locks, ["released"]);
 });
+
+test('Catty main PTY fallback revalidates privacy after prompt readiness', async (t) => {
+  t.mock.timers.enable({ apis: ['Date', 'setTimeout'] });
+  const service = createAiPrivacyService();
+  service.checkSession('pinned');
+  const pty = new (require('node:events').EventEmitter)();
+  const writes = [];
+  pty.write = data => writes.push(data);
+  let prompt = '';
+  const ctx = harness(service, {
+    sessions: new Map([['session', { protocol: 'local', shellKind: 'posix', pty, _promptTrackTail: '' }]]),
+    ensureSessionShellKindForExec: async () => ({ ok: true }),
+    execViaPty: require('../ai/ptyExec.cjs').execViaPty,
+    getFreshIdlePrompt: () => prompt,
+  });
+  const pending = ctx.exec('pinned');
+  await new Promise(resolve => setImmediate(resolve));
+  assert.deepEqual(writes, []);
+  service.configure({ enabled: true });
+  prompt = 'user@host:~$ ';
+  t.mock.timers.tick(50);
+  await new Promise(resolve => setImmediate(resolve));
+  pty.emit('close');
+  const result = await pending;
+  assert.deepEqual(writes, []);
+  assert.equal(result.code, 'EXECUTION_NOT_AUTHORIZED');
+  assert.match(result.error, /privacy session is unavailable/);
+  assert.deepEqual(ctx.locks, ['released']);
+});

@@ -666,3 +666,33 @@ test("worker background readiness timeout survives job polling without PTY write
   t.mock.timers.tick(1000);
   assert.deepEqual(pty.writes, [], "late readiness must not deliver the failed job");
 });
+
+for (const channel of ['netcatty:ai:exec', 'netcatty:ai:jobStart']) {
+  test(`${channel} revalidates privacy after prompt readiness`, async (t) => {
+    t.mock.timers.enable({ apis: ['Date', 'setTimeout'] });
+    const privacy = require('../shared/aiPrivacyService.cjs').createAiPrivacyService();
+    privacy.checkSession('readiness-chat');
+    const pty = new FakePty();
+    const session = { protocol: 'local', pty, shellKind: 'posix', _promptTrackTail: '', lastIdlePrompt: '' };
+    const ipcMain = createFakeIpcMain();
+    registerWorkerAiExecHandlers(ipcMain, { sessions: new Map([['waiting', session]]) });
+    const event = { ...createFakeEvent(), beforeExecute: async () => privacy.restore('readiness-chat', []) };
+    const pending = ipcMain.handlers.get(channel)(event, {
+      sessionId: 'waiting', chatSessionId: 'readiness-chat', command: 'echo forbidden',
+    });
+    await nextTick();
+    assert.deepEqual(pty.writes, []);
+    privacy.configure({ enabled: true });
+    trackSessionIdlePrompt(session, 'user@host:~$ ');
+    t.mock.timers.tick(50);
+    await nextTick();
+    pty.emit('close');
+    const startedOrFinished = await pending;
+    const result = channel.endsWith('jobStart')
+      ? ipcMain.handlers.get('netcatty:ai:jobPoll')(event, { jobId: startedOrFinished.jobId, chatSessionId: 'readiness-chat' })
+      : startedOrFinished;
+    assert.deepEqual(pty.writes, []);
+    assert.equal(result.code, 'EXECUTION_NOT_AUTHORIZED');
+    assert.match(result.error, /start a new chat/);
+  });
+}
