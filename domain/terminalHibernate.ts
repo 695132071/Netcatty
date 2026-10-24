@@ -158,6 +158,50 @@ export function shouldSkipHibernateForAltScreen(
   return alternateScreen && resolveHibernateSkipAltScreen(settings);
 }
 
+export type HiddenTabKeepCountDecision = {
+  /**
+   * Soft-hide immediately when the keep set has room. Await eviction when it
+   * is full. Full-hibernate when keepCount is 0 or no other candidate exists.
+   * Callers retain the leaving tab only after a victim's hibernate completes.
+   */
+  action: "soft-hide" | "full-hibernate" | "await-eviction";
+  /** Oldest-first victims to try when action is await-eviction. */
+  candidates: readonly string[];
+};
+
+/**
+ * Keep-count policy for a hidden session that is not already soft-hidden.
+ * Callers still handle alternate screen, inline images, and a soft-hidden
+ * session that later disconnects before asking. keepCount 0 (disconnected, or
+ * the setting) full-hibernates. When the soft-hide set is full this only
+ * lists candidates. It does not evict, reserve a slot, or touch renderer
+ * lifecycle. Waking a victim clears its marker before hibernate finishes, so
+ * the caller awaits that outside this helper. Wake replay order stays in
+ * resolveHibernateWakeHistory (#2762). Atlas clear on a soft wake stays in
+ * wakeSoftHiddenRuntime (#1063).
+ */
+export function decideHiddenTabKeepCountAction(input: {
+  keepCount: number;
+  softHiddenCount: number;
+  sessionId: string;
+  /** Oldest soft-hidden session first. Snapshot this before eviction mutates it. */
+  candidatesOldestFirst: readonly string[];
+}): HiddenTabKeepCountDecision {
+  if (!(input.keepCount > 0)) {
+    return { action: "full-hibernate", candidates: [] };
+  }
+  if (input.softHiddenCount < input.keepCount) {
+    return { action: "soft-hide", candidates: [] };
+  }
+  const candidates = input.candidatesOldestFirst.filter((candidate) => (
+    Boolean(candidate) && candidate !== input.sessionId
+  ));
+  if (candidates.length === 0) {
+    return { action: "full-hibernate", candidates: [] };
+  }
+  return { action: "await-eviction", candidates };
+}
+
 /** Snapshot + buffered output to replay when recreating xterm after hibernate. */
 export type TerminalHibernateWakePayload = {
   /** Full serialized terminal state -- preferred wake history (coherent ANSI). */

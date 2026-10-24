@@ -6,6 +6,7 @@ import {
   canHibernateTerminalRuntimeStatus,
   capHibernateBuffer,
   capHibernateBufferByLines,
+  decideHiddenTabKeepCountAction,
   isTerminalFileTransferActive,
   normalizeHibernateHiddenTabsDelaySec,
   resolveTerminalHibernateDelayMs,
@@ -90,6 +91,54 @@ test("normalizeHibernateHiddenTabsDelaySec clamps to the allowed range", () => {
   assert.equal(normalizeHibernateHiddenTabsDelaySec(45), 45);
   assert.equal(normalizeHibernateHiddenTabsDelaySec(1), TERMINAL_HIBERNATE_DELAY_SEC_MIN);
   assert.equal(normalizeHibernateHiddenTabsDelaySec(9999), TERMINAL_HIBERNATE_DELAY_SEC_MAX);
+});
+
+test("a full keep-count lists eviction candidates and does not evict them itself", () => {
+  assert.deepEqual(decideHiddenTabKeepCountAction({
+    keepCount: 2,
+    softHiddenCount: 1,
+    sessionId: "leaving",
+    candidatesOldestFirst: ["older"],
+  }), { action: "soft-hide", candidates: [] });
+
+  assert.deepEqual(decideHiddenTabKeepCountAction({
+    keepCount: 2,
+    softHiddenCount: 2,
+    sessionId: "leaving",
+    candidatesOldestFirst: ["oldest", "newer"],
+  }), { action: "await-eviction", candidates: ["oldest", "newer"] });
+
+  assert.deepEqual(decideHiddenTabKeepCountAction({
+    keepCount: 2,
+    softHiddenCount: 3,
+    sessionId: "leaving",
+    candidatesOldestFirst: ["oldest"],
+  }), { action: "await-eviction", candidates: ["oldest"] });
+});
+
+test("keep-count zero still full-hibernates and does not evict", () => {
+  assert.deepEqual(decideHiddenTabKeepCountAction({
+    keepCount: 0,
+    softHiddenCount: 4,
+    sessionId: "leaving",
+    candidatesOldestFirst: ["oldest"],
+  }), { action: "full-hibernate", candidates: [] });
+});
+
+test("a full keep-count does not evict the session that is deciding", () => {
+  assert.deepEqual(decideHiddenTabKeepCountAction({
+    keepCount: 2,
+    softHiddenCount: 2,
+    sessionId: "leaving",
+    candidatesOldestFirst: ["leaving"],
+  }), { action: "full-hibernate", candidates: [] });
+
+  assert.deepEqual(decideHiddenTabKeepCountAction({
+    keepCount: 2,
+    softHiddenCount: 2,
+    sessionId: "leaving",
+    candidatesOldestFirst: ["leaving", "other"],
+  }), { action: "await-eviction", candidates: ["other"] });
 });
 
 test("resolveTerminalHibernateDelayMs converts seconds to milliseconds", () => {

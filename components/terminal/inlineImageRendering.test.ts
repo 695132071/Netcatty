@@ -84,7 +84,7 @@ test("a session holding inline images degrades to soft-hide instead of full hibe
   const gateIndex = hibernateBody.indexOf("if (runtimeHasInlineImages()) {");
   const softHideIndex = hibernateBody.indexOf("hideRuntimeOnly();", gateIndex);
   const keepCountIndex = hibernateBody.indexOf("resolveHibernateKeepRendererCount(terminalSettings)");
-  const evictionIndex = hibernateBody.indexOf("terminalHiddenRendererStore.pickEvictionCandidate(");
+  const evictionIndex = hibernateBody.indexOf("retainLeavingTabAfterEviction(");
   const fullHibernateIndex = hibernateBody.indexOf("void fullHibernateRuntime()");
 
   assert.notEqual(gateIndex, -1, "hibernate must check for inline images");
