@@ -16,7 +16,7 @@ import {
   Upload,
   X,
 } from "lucide-react";
-import React, { lazy, Suspense, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import React, { lazy, memo, Suspense, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useI18n } from "../../application/i18n/I18nProvider";
 import { useApplicationBackend } from "../../application/state/useApplicationBackend";
 import { useStoredNumber } from "../../application/state/useStoredNumber";
@@ -357,6 +357,57 @@ export const getValidatedNoteSelectionState = (
   return null;
 };
 
+export type NotesTreePaneProps = {
+  notes: VaultNote[];
+  noteGroups: string[];
+  selectedNoteId: string | null;
+  selectedGroup: string | null;
+  expandedGroups: ReadonlySet<string>;
+  editingNoteId: string | null;
+  editingGroupPath: string | null;
+  query: string;
+  locale: string;
+  hosts: Host[];
+  draggingNoteId: string | null;
+  draggingGroupPath: string | null;
+  creatingGroupParent: string | null | undefined;
+  isSidebarMode: boolean;
+  /**
+   * Row elements. Identity changes every parent render; equality ignores it so
+   * a visibility flip does not rebuild the tree. Event handlers close over the
+   * render that last changed one of the compared fields.
+   */
+  renderRows: () => React.ReactNode;
+};
+
+/**
+ * Hide/show passes a new `isActive` into NotesManager, but that flag is not a
+ * tree input. Equality therefore keys off the data the rows actually paint.
+ * `selected` / `editing` / `expanded` are required so a memo bailout cannot
+ * freeze selection, rename, or folder expansion.
+ */
+export function notesTreePanePropsEqual(prev: NotesTreePaneProps, next: NotesTreePaneProps): boolean {
+  return prev.notes === next.notes
+    && prev.noteGroups === next.noteGroups
+    && prev.selectedNoteId === next.selectedNoteId
+    && prev.selectedGroup === next.selectedGroup
+    && prev.expandedGroups === next.expandedGroups
+    && prev.editingNoteId === next.editingNoteId
+    && prev.editingGroupPath === next.editingGroupPath
+    && prev.query === next.query
+    && prev.locale === next.locale
+    && prev.hosts === next.hosts
+    && prev.draggingNoteId === next.draggingNoteId
+    && prev.draggingGroupPath === next.draggingGroupPath
+    && prev.creatingGroupParent === next.creatingGroupParent
+    && prev.isSidebarMode === next.isSidebarMode;
+}
+
+const NotesTreePane = memo(function NotesTreePane({ renderRows }: NotesTreePaneProps) {
+  return <>{renderRows()}</>;
+}, notesTreePanePropsEqual);
+NotesTreePane.displayName = "NotesTreePane";
+
 export const getNotesGroupDropAction = (
   sourceGroup: string | null,
   targetGroup: string,
@@ -381,7 +432,7 @@ export const NotesManager: React.FC<NotesManagerProps> = ({
   openNoteRequestId = null,
   onOpenNoteIdHandled,
 }) => {
-  const { t } = useI18n();
+  const { t, locale } = useI18n();
   const { openExternal } = useApplicationBackend();
   const isSidebarMode = displayMode === "sidebar";
   const initialOpenNoteId = openNoteId && notes.some((note) => note.id === openNoteId)
@@ -561,10 +612,12 @@ export const NotesManager: React.FC<NotesManagerProps> = ({
     flushNoteDraftRef.current();
   }, []);
 
+  // Hide edge only. The ref is the latest flush, so this does not subscribe
+  // the tree render to draft-writer identity, and it does not remount the editor.
   useLayoutEffect(() => {
     if (isActive) return;
-    flushNoteDraft();
-  }, [flushNoteDraft, isActive]);
+    flushNoteDraftRef.current();
+  }, [isActive]);
 
   useEffect(() => {
     if (!isActive) return;
@@ -1486,11 +1539,28 @@ export const NotesManager: React.FC<NotesManagerProps> = ({
     );
   };
 
-  const visibleRootNotes = noteTree.rootNotes.filter(noteMatches);
-  const visibleTree = noteTree.children
-    .map((child) => renderFolderRow(child, 0))
-    .filter(Boolean);
-  const treeIsEmpty = visibleRootNotes.length === 0 && visibleTree.length === 0;
+  // Built only when NotesTreePane's compared props change. isActive / the
+  // hidden class stay on the parent, so a side-panel hide does not reconcile rows.
+  const renderTreeRows = () => {
+    const visibleRootNotes = noteTree.rootNotes.filter(noteMatches);
+    const visibleTree = noteTree.children
+      .map((child) => renderFolderRow(child, 0))
+      .filter(Boolean);
+    const treeIsEmpty = visibleRootNotes.length === 0 && visibleTree.length === 0;
+    return (
+      <>
+        {renderCreateGroupRow(null, 0)}
+        {visibleTree}
+        {visibleRootNotes.map((note) => renderNoteRow(note, 0))}
+        {treeIsEmpty && (
+          <div className="rounded-lg border border-dashed border-border/70 p-4 text-center text-sm text-muted-foreground">
+            <Search size={20} className="mx-auto mb-2 opacity-60" />
+            {query.trim() ? t("notes.search.noResults") : t("notes.empty.group")}
+          </div>
+        )}
+      </>
+    );
+  };
   const hasSearch = query.trim().length > 0;
   const canExpandCollapse = allGroupPaths.length > 0 && !hasSearch;
   const shouldShowNotesTree = isSidebarMode || sortedNotes.length > 0;
@@ -1750,15 +1820,23 @@ export const NotesManager: React.FC<NotesManagerProps> = ({
               }}
               onDrop={(event) => handleGroupDrop(null, event)}
             >
-              {renderCreateGroupRow(null, 0)}
-              {visibleTree}
-              {visibleRootNotes.map((note) => renderNoteRow(note, 0))}
-              {treeIsEmpty && (
-                <div className="rounded-lg border border-dashed border-border/70 p-4 text-center text-sm text-muted-foreground">
-                  <Search size={20} className="mx-auto mb-2 opacity-60" />
-                  {query.trim() ? t("notes.search.noResults") : t("notes.empty.group")}
-                </div>
-              )}
+              <NotesTreePane
+                notes={sortedNotes}
+                noteGroups={groups}
+                selectedNoteId={selectedNoteId}
+                selectedGroup={selectedGroup}
+                expandedGroups={expandedGroups}
+                editingNoteId={editingNoteId}
+                editingGroupPath={editingGroupPath}
+                query={query}
+                locale={locale}
+                hosts={hosts}
+                draggingNoteId={draggingNoteId}
+                draggingGroupPath={draggingGroupPath}
+                creatingGroupParent={creatingGroupParent}
+                isSidebarMode={isSidebarMode}
+                renderRows={renderTreeRows}
+              />
             </div>
           </ScrollArea>
           </div>
@@ -2048,6 +2126,7 @@ export const NotesManager: React.FC<NotesManagerProps> = ({
         )}
       </div>
 
+      {/* Kept mounted while the panel is hidden. Do not key this on isActive. */}
       {isSidebarMode && overlayNoteView && (
         <div className="absolute inset-0 z-30 flex min-h-0 flex-col bg-background text-foreground">
           <div className={cn(

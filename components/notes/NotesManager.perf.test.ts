@@ -43,6 +43,26 @@ test("note content drafts stay in refs so MDX keystrokes do not rebuild the shel
   );
 });
 
+test("hidden notes flush drafts on the isActive edge without rebuilding the tree", () => {
+  assert.match(
+    managerSource,
+    /useLayoutEffect\(\(\) => \{\s*if \(isActive\) return;\s*flushNoteDraftRef\.current\(\);\s*\}, \[isActive\]\);/,
+  );
+  assert.match(managerSource, /const NotesTreePane = memo\(/);
+  assert.match(managerSource, /notesTreePanePropsEqual/);
+  assert.match(managerSource, /prev\.selectedNoteId === next\.selectedNoteId/);
+  assert.match(managerSource, /prev\.editingNoteId === next\.editingNoteId/);
+  assert.match(managerSource, /prev\.editingGroupPath === next\.editingGroupPath/);
+  assert.match(managerSource, /prev\.expandedGroups === next\.expandedGroups/);
+  assert.match(managerSource, /<NotesTreePane/);
+  assert.doesNotMatch(managerSource, /key=\{isActive\}/);
+  assert.doesNotMatch(
+    managerSource,
+    /if \(!isActive\) return null;/,
+    "hiding notes must not unmount NotesManager",
+  );
+});
+
 test("NotesManager teardown flush uses a stable ref under StrictMode", () => {
   assert.match(managerSource, /flushNoteDraftRef\.current = flushNoteDraft/);
   assert.match(
@@ -73,6 +93,21 @@ test("hidden terminal notes side panel does not subscribe to notes publishes", (
     "utf8",
   );
   assert.match(slotsSource, /useNotesStore\(\{\s*enabled:\s*isVisible\s*\}\)/);
+  const notesSlot = slotsSource.slice(
+    slotsSource.indexOf("function SidePanelNotesSlotInner"),
+    slotsSource.indexOf("export const SidePanelNotesSlot"),
+  );
+  assert.doesNotMatch(notesSlot, /if \(!isVisible\) return null/);
+  assert.match(notesSlot, /<NotesManager/);
+  const notesStoreSource = readFileSync(
+    new URL("../../application/state/notesStore.ts", import.meta.url),
+    "utf8",
+  );
+  assert.doesNotMatch(
+    notesStoreSource,
+    /enabled \? getNotesSnapshot : getEmptyNotesSnapshot/,
+    "enabled:false must keep the live snapshot so reopen does not flash empty",
+  );
 });
 
 test("notes manager prefetches the MDXEditor chunk when becoming active", () => {

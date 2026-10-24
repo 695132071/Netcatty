@@ -22,7 +22,9 @@ import {
   isNoteFolderTreeSelected,
   isNoteEditorMode,
   normalizeNoteEditorMode,
+  notesTreePanePropsEqual,
   NotesManager,
+  type NotesTreePaneProps,
 } from "./NotesManager.tsx";
 
 const note = (overrides: Partial<VaultNote> = {}): VaultNote => ({
@@ -369,8 +371,38 @@ test("NotesManager flushes drafts when retained mounts become inactive", () => {
   const source = readFileSync(new URL("./NotesManager.tsx", import.meta.url), "utf8");
   assert.match(source, /isActive\?: boolean/);
   assert.match(source, /if \(isActive\) return;/);
-  assert.match(source, /useLayoutEffect\(\(\) => \{\s*if \(isActive\) return;/);
+  assert.match(source, /useLayoutEffect\(\(\) => \{\s*if \(isActive\) return;\s*flushNoteDraftRef\.current\(\);/);
   assert.match(source, /visibilitychange/);
+});
+
+const treePaneProps = (overrides: Partial<NotesTreePaneProps> = {}): NotesTreePaneProps => ({
+  notes: [note()],
+  noteGroups: ["Ops"],
+  selectedNoteId: "note-1",
+  selectedGroup: null,
+  expandedGroups: new Set(["Ops"]),
+  editingNoteId: null,
+  editingGroupPath: null,
+  query: "",
+  locale: "en",
+  hosts: [],
+  draggingNoteId: null,
+  draggingGroupPath: null,
+  creatingGroupParent: undefined,
+  isSidebarMode: true,
+  renderRows: () => null,
+  ...overrides,
+});
+
+test("notes tree pane equality ignores render callbacks and compares selection state", () => {
+  const base = treePaneProps();
+  assert.equal(notesTreePanePropsEqual(base, { ...base, renderRows: () => "other" }), true);
+  assert.equal(notesTreePanePropsEqual(base, { ...base, selectedNoteId: "note-2" }), false);
+  assert.equal(notesTreePanePropsEqual(base, { ...base, selectedGroup: "Ops" }), false);
+  assert.equal(notesTreePanePropsEqual(base, { ...base, editingNoteId: "note-1" }), false);
+  assert.equal(notesTreePanePropsEqual(base, { ...base, editingGroupPath: "Ops" }), false);
+  assert.equal(notesTreePanePropsEqual(base, { ...base, expandedGroups: new Set(["Ops"]) }), false);
+  assert.equal(notesTreePanePropsEqual(base, { ...base, notes: [note({ title: "Renamed" })] }), false);
 });
 
 test("NotesManager tree rename allows clearing note titles", () => {
