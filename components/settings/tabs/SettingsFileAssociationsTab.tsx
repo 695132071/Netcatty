@@ -9,6 +9,7 @@ import { useSettingsState } from "../../../application/state/useSettingsState";
 import type { FileOpenerType, SystemAppInfo } from "../../../lib/sftpFileUtils";
 import { netcattyBridge } from "../../../infrastructure/services/netcattyBridge";
 import { Button } from "../../ui/button";
+import { ConfirmDialog } from "../../ui/confirm-dialog";
 import { Tooltip, TooltipContent, TooltipTrigger } from "../../ui/tooltip";
 import {
   SectionHeader,
@@ -52,6 +53,7 @@ export default function SettingsFileAssociationsTab() {
   const defaultOpener = getDefaultOpener();
   const [editingExtension, setEditingExtension] = useState<string | null>(null);
   const [isSelectingDefaultApp, setIsSelectingDefaultApp] = useState(false);
+  const [removeConfirmExt, setRemoveConfirmExt] = useState<string | null>(null);
 
   const defaultOpenerValue = useMemo(() => {
     if (!defaultOpener) return 'ask';
@@ -60,10 +62,14 @@ export default function SettingsFileAssociationsTab() {
   }, [defaultOpener]);
 
   const handleRemove = useCallback((extension: string) => {
-    if (confirm(t('settings.sftpFileAssociations.removeConfirm', { ext: extension === 'file' ? t('sftp.opener.noExtension') : extension }))) {
-      removeAssociation(extension);
-    }
-  }, [removeAssociation, t]);
+    setRemoveConfirmExt(extension);
+  }, []);
+
+  const handleConfirmRemove = useCallback(() => {
+    if (!removeConfirmExt) return;
+    removeAssociation(removeConfirmExt);
+    setRemoveConfirmExt(null);
+  }, [removeAssociation, removeConfirmExt]);
 
   const handleSelectDefaultSystemApp = useCallback(async () => {
     setIsSelectingDefaultApp(true);
@@ -372,6 +378,16 @@ export default function SettingsFileAssociationsTab() {
           </table>
         </div>
       )}
+      <ConfirmDialog
+        open={removeConfirmExt !== null}
+        title={removeConfirmExt ? t('settings.sftpFileAssociations.removeConfirm', { ext: removeConfirmExt === 'file' ? t('sftp.opener.noExtension') : removeConfirmExt }) : ''}
+        confirmLabel={t('action.remove')}
+        destructive
+        onOpenChange={(open) => {
+          if (!open) setRemoveConfirmExt(null);
+        }}
+        onConfirm={handleConfirmRemove}
+      />
     </SettingsTabContent>
   );
 }
