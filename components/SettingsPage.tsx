@@ -523,7 +523,8 @@ const SettingsPageContent: React.FC<{ settings: SettingsState; appLock?: AppLock
                     </TabsList>
                 </div>
 
-                <div className="flex-1 h-full flex flex-col min-h-0 bg-muted/10">
+                {/* min-w-0: row flex item must shrink so long Agent paths truncate inside the pane. */}
+                <div className="flex-1 h-full flex flex-col min-h-0 min-w-0 bg-muted/10">
                     {mountedTabs.has("application") && (
                         <SettingsLazyTab value="application">
                             <LazySettingsApplicationTab

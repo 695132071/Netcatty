@@ -117,13 +117,13 @@ export const CodebuddyCard: React.FC<{
       </div>
 
       {found && (
-        <div className="flex items-center gap-2 text-xs">
-          <span className="text-muted-foreground">{t('ai.codebuddy.path')}</span>
-          <span className="font-mono text-foreground truncate">{pathInfo.path}</span>
+        <div className="flex items-center gap-2 text-xs min-w-0">
+          <span className="text-muted-foreground shrink-0">{t('ai.codebuddy.path')}</span>
+          <span className="font-mono text-foreground min-w-0 flex-1 truncate" title={pathInfo.path ?? undefined}>{pathInfo.path}</span>
           {pathInfo.version && (
             <>
-              <span className="text-muted-foreground">|</span>
-              <span className="text-muted-foreground">{pathInfo.version}</span>
+              <span className="text-muted-foreground shrink-0">|</span>
+              <span className="text-muted-foreground shrink-0">{pathInfo.version}</span>
             </>
           )}
         </div>
@@ -142,7 +142,7 @@ export const CodebuddyCard: React.FC<{
               value={customPath}
               onChange={(e) => onCustomPathChange(e.target.value)}
               placeholder={t('ai.codebuddy.customPathPlaceholder')}
-              className="flex-1 h-8 rounded-md border border-input bg-background px-3 text-sm font-mono placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+              className="flex-1 min-w-0 h-8 rounded-md border border-input bg-background px-3 text-sm font-mono placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
             />
             <Button variant="outline" size="sm" onClick={onRecheckPath} disabled={!customPath.trim()}>
               <RefreshCw size={14} className="mr-1.5" />
