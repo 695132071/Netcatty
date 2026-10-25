@@ -77,6 +77,13 @@ export const SUPPORTED_HMAC_ALGORITHMS: readonly string[] = [
 ];
 
 export const SUPPORTED_SERVER_HOST_KEY_ALGORITHMS: readonly string[] = [
+  "ssh-ed25519-cert-v01@openssh.com",
+  "ecdsa-sha2-nistp256-cert-v01@openssh.com",
+  "ecdsa-sha2-nistp384-cert-v01@openssh.com",
+  "ecdsa-sha2-nistp521-cert-v01@openssh.com",
+  "rsa-sha2-512-cert-v01@openssh.com",
+  "rsa-sha2-256-cert-v01@openssh.com",
+  "ssh-rsa-cert-v01@openssh.com",
   "ssh-ed25519",
   "ecdsa-sha2-nistp256",
   "ecdsa-sha2-nistp384",
@@ -148,6 +155,13 @@ const MODERN_DEFAULT_ALGORITHMS: Readonly<Record<SSHAlgorithmCategory, readonly 
     "hmac-sha1",
   ],
   serverHostKey: [
+    "ssh-ed25519-cert-v01@openssh.com",
+    "ecdsa-sha2-nistp256-cert-v01@openssh.com",
+    "ecdsa-sha2-nistp384-cert-v01@openssh.com",
+    "ecdsa-sha2-nistp521-cert-v01@openssh.com",
+    "rsa-sha2-512-cert-v01@openssh.com",
+    "rsa-sha2-256-cert-v01@openssh.com",
+    "ssh-rsa-cert-v01@openssh.com",
     "ssh-ed25519",
     "ecdsa-sha2-nistp256",
     "ecdsa-sha2-nistp384",

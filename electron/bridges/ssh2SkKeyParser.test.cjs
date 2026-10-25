@@ -2,10 +2,12 @@
 
 const test = require("node:test");
 const assert = require("node:assert/strict");
+const { createHash, generateKeyPairSync, sign } = require("node:crypto");
 const {
   parseKey,
   getOpenSSHCertSignatureAlgorithm,
 } = require("ssh2/lib/protocol/keyParser.js");
+const { convertSignature } = require("ssh2/lib/protocol/utils.js");
 
 function buildSkEd25519PublicLine() {
   const type = Buffer.from("sk-ssh-ed25519@openssh.com");
@@ -145,4 +147,90 @@ test("ssh2 agent protocol preserves SK signature framing, flags and counter", as
       server.destroy();
     }
   }
+});
+
+function sshString(value) {
+  const body = Buffer.isBuffer(value) ? value : Buffer.from(value);
+  const out = Buffer.alloc(4 + body.length);
+  out.writeUInt32BE(body.length, 0);
+  body.copy(out, 4);
+  return out;
+}
+
+function opensshPublicLine(typeName, fields) {
+  const blob = Buffer.concat([
+    sshString(typeName),
+    ...fields.map((field) => sshString(field)),
+  ]);
+  return `${typeName} ${blob.toString("base64")} netcatty@sk`;
+}
+
+function skEcdsaSignature(rawSig, flags, counter) {
+  const out = Buffer.alloc(4 + rawSig.length + 5);
+  out.writeUInt32BE(rawSig.length, 0);
+  rawSig.copy(out, 4);
+  const pos = 4 + rawSig.length;
+  out[pos] = flags;
+  out.writeUInt32BE(counter, pos + 1);
+  return out;
+}
+
+test("ssh2 verifies an SK ECDSA certificate with the same P-256 signature as the plain key", () => {
+  const { publicKey, privateKey } = generateKeyPairSync("ec", {
+    namedCurve: "prime256v1",
+  });
+  const jwk = publicKey.export({ format: "jwk" });
+  const point = Buffer.concat([
+    Buffer.from([0x04]),
+    Buffer.from(jwk.x, "base64url"),
+    Buffer.from(jwk.y, "base64url"),
+  ]);
+  const application = "ssh:";
+  const plain = parseKey(opensshPublicLine("sk-ecdsa-sha2-nistp256@openssh.com", [
+    "nistp256",
+    point,
+    application,
+  ]));
+  const cert = parseKey(opensshPublicLine("sk-ecdsa-sha2-nistp256-cert-v01@openssh.com", [
+    Buffer.alloc(16, 3),
+    "nistp256",
+    point,
+    application,
+  ]));
+  assert.equal(plain instanceof Error, false, plain instanceof Error ? plain.message : "");
+  assert.equal(cert instanceof Error, false, cert instanceof Error ? cert.message : "");
+  assert.equal(cert.type, "sk-ecdsa-sha2-nistp256-cert-v01@openssh.com");
+  assert.equal(cert.getApplication(), application);
+
+  const message = Buffer.from("kex-exchange-hash");
+  const flags = 0x01;
+  const counter = 0x12345678;
+  const appHash = createHash("sha256").update(application).digest();
+  const dataHash = createHash("sha256").update(message).digest();
+  const signedData = Buffer.alloc(appHash.length + 1 + 4 + dataHash.length);
+  let offset = 0;
+  appHash.copy(signedData, offset);
+  offset += appHash.length;
+  signedData[offset++] = flags;
+  signedData.writeUInt32BE(counter, offset);
+  offset += 4;
+  dataHash.copy(signedData, offset);
+
+  const der = sign("sha256", signedData, privateKey);
+  const rawSig = convertSignature(der, "ecdsa-sha2-nistp256");
+  assert.ok(Buffer.isBuffer(rawSig));
+  const signature = skEcdsaSignature(rawSig, flags, counter);
+
+  const plainResult = plain.verify(message, signature);
+  assert.equal(
+    plainResult,
+    true,
+    plainResult instanceof Error ? plainResult.message : String(plainResult),
+  );
+  const certResult = cert.verify(message, signature);
+  assert.equal(
+    certResult,
+    true,
+    certResult instanceof Error ? certResult.message : String(certResult),
+  );
 });

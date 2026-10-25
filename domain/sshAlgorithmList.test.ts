@@ -47,6 +47,16 @@ test("effectiveDefaultAlgorithms (modern) includes chacha20-poly1305", () => {
   assert.ok(result.cipher.includes("chacha20-poly1305@openssh.com"));
 });
 
+test("effectiveDefaultAlgorithms offers OpenSSH host certificates before plain host keys", () => {
+  const cert = "ssh-ed25519-cert-v01@openssh.com";
+  const modern = effectiveDefaultAlgorithms(false);
+  assert.ok(modern.serverHostKey.includes(cert));
+  assert.ok(modern.serverHostKey.indexOf(cert) < modern.serverHostKey.indexOf("ssh-ed25519"));
+  const legacy = effectiveDefaultAlgorithms(true);
+  assert.ok(legacy.serverHostKey.includes(cert));
+  assert.ok(legacy.serverHostKey.includes("ssh-dss"));
+});
+
 test("effectiveDefaultAlgorithms (legacy) appends sha1 KEX, CBC, and ssh-dss", () => {
   const modern = effectiveDefaultAlgorithms(false);
   const legacy = effectiveDefaultAlgorithms(true);

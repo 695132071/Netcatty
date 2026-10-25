@@ -1,7 +1,8 @@
 diff --git a/node_modules/ssh2/lib/agent.js b/node_modules/ssh2/lib/agent.js
+index bb495d1..32c48a0 100644
 --- a/node_modules/ssh2/lib/agent.js
 +++ b/node_modules/ssh2/lib/agent.js
-@@ -6,7 +6,7 @@
+@@ -6,7 +6,7 @@ const { resolve } = require('path');
  const { readFile } = require('fs');
  const { execFile, spawn } = require('child_process');
  
@@ -10,7 +11,7 @@ diff --git a/node_modules/ssh2/lib/agent.js b/node_modules/ssh2/lib/agent.js
  
  const {
    makeBufferParser,
-@@ -655,8 +655,12 @@
+@@ -655,8 +655,12 @@ const AgentProtocol = (() => {
                // TODO: verify signature type based on key and options used
                // during initial sign request
                binaryParser.init(signature, 0);
@@ -25,7 +26,7 @@ diff --git a/node_modules/ssh2/lib/agent.js b/node_modules/ssh2/lib/agent.js
                binaryParser.clear();
  
                if (signature === undefined)
-@@ -711,7 +715,10 @@
+@@ -711,7 +715,10 @@ const AgentProtocol = (() => {
                  hash: undefined,
                };
                let ctx;
@@ -37,7 +38,7 @@ diff --git a/node_modules/ssh2/lib/agent.js b/node_modules/ssh2/lib/agent.js
                  if (flagsVal & SSH_AGENT_RSA_SHA2_256) {
                    ctx = 'rsa-sha2-256';
                    flags.hash = 'sha256';
-@@ -721,7 +728,7 @@
+@@ -721,7 +728,7 @@ const AgentProtocol = (() => {
                  }
                }
                if (ctx === undefined)
@@ -46,7 +47,7 @@ diff --git a/node_modules/ssh2/lib/agent.js b/node_modules/ssh2/lib/agent.js
  
                const req = new AgentInboundRequest(msgType, ctx);
                this[SYM_REQS].push(req);
-@@ -732,6 +739,9 @@
+@@ -732,6 +739,9 @@ const AgentProtocol = (() => {
              default: {
                const req = new AgentInboundRequest(msgType);
                this[SYM_REQS].push(req);
@@ -56,7 +57,7 @@ diff --git a/node_modules/ssh2/lib/agent.js b/node_modules/ssh2/lib/agent.js
                this.failureReply(req);
              }
            }
-@@ -781,7 +791,11 @@
+@@ -781,7 +791,11 @@ const AgentProtocol = (() => {
        if (pubKey instanceof Error)
          throw new Error('Invalid public key argument');
  
@@ -69,7 +70,7 @@ diff --git a/node_modules/ssh2/lib/agent.js b/node_modules/ssh2/lib/agent.js
          switch (options.hash) {
            case 'sha256':
              flags = SSH_AGENT_RSA_SHA2_256;
-@@ -992,19 +1006,24 @@
+@@ -992,19 +1006,24 @@ const AgentProtocol = (() => {
        let p = 0;
        const sigFormat = req.getContext();
        const sigFormatLen = Buffer.byteLength(sigFormat);
@@ -99,9 +100,10 @@ diff --git a/node_modules/ssh2/lib/agent.js b/node_modules/ssh2/lib/agent.js
        return respond(this, req, buf);
      }
 diff --git a/node_modules/ssh2/lib/client.js b/node_modules/ssh2/lib/client.js
+index 7291c2c..8943c9a 100644
 --- a/node_modules/ssh2/lib/client.js
 +++ b/node_modules/ssh2/lib/client.js
-@@ -2170,6 +2170,29 @@
+@@ -2170,6 +2170,29 @@ function getKeyAlgos(client, key, serverSigAlgs) {
            return [];
        }
        return [['ssh-rsa', 'sha1']];
@@ -132,9 +134,10 @@ diff --git a/node_modules/ssh2/lib/client.js b/node_modules/ssh2/lib/client.js
  }
  
 diff --git a/node_modules/ssh2/lib/protocol/Protocol.js b/node_modules/ssh2/lib/protocol/Protocol.js
+index 7302488..df0c9b3 100644
 --- a/node_modules/ssh2/lib/protocol/Protocol.js
 +++ b/node_modules/ssh2/lib/protocol/Protocol.js
-@@ -58,6 +58,7 @@
+@@ -58,6 +58,7 @@ const {
  } = require('./kex.js');
  const {
    parseKey,
@@ -142,7 +145,7 @@ diff --git a/node_modules/ssh2/lib/protocol/Protocol.js b/node_modules/ssh2/lib/
  } = require('./keyParser.js');
  const MESSAGE_HANDLERS = require('./handlers.js');
  const {
-@@ -701,11 +702,19 @@
+@@ -701,11 +702,19 @@ class Protocol {
        if (signature === false)
          throw new Error('Error while converting handshake signature');
  
@@ -163,7 +166,7 @@ diff --git a/node_modules/ssh2/lib/protocol/Protocol.js b/node_modules/ssh2/lib/
        );
  
        // TODO: simply copy from original "packet" to new `packet` to avoid
-@@ -729,13 +738,17 @@
+@@ -729,13 +738,17 @@ class Protocol {
        writeUInt32BE(packet, pubKeyLen, p += algoLen);
        packet.set(pubKey, p += 4);
  
@@ -186,7 +189,7 @@ diff --git a/node_modules/ssh2/lib/protocol/Protocol.js b/node_modules/ssh2/lib/
  
        // Servers shouldn't send packet type 60 in response to signed publickey
        // attempts, but if they do, interpret as type 60.
-@@ -810,20 +823,32 @@
+@@ -810,20 +823,32 @@ class Protocol {
        if (!signature)
          throw new Error('Error while converting handshake signature');
  
@@ -225,7 +228,7 @@ diff --git a/node_modules/ssh2/lib/protocol/Protocol.js b/node_modules/ssh2/lib/
  
        this._authsQueue.push('hostbased');
  
-@@ -1916,7 +1941,10 @@
+@@ -1916,7 +1941,10 @@ class Protocol {
  }
  
  // SSH-protoversion-softwareversion (SP comments) CR LF
@@ -238,9 +241,10 @@ diff --git a/node_modules/ssh2/lib/protocol/Protocol.js b/node_modules/ssh2/lib/
  // TODO: optimize this by starting n bytes from the end of this._buffer instead
  // of the beginning
 diff --git a/node_modules/ssh2/lib/protocol/SFTP.js b/node_modules/ssh2/lib/protocol/SFTP.js
+index 9f33c02..9751164 100644
 --- a/node_modules/ssh2/lib/protocol/SFTP.js
 +++ b/node_modules/ssh2/lib/protocol/SFTP.js
-@@ -117,6 +117,20 @@
+@@ -117,6 +117,20 @@ const OPENSSH_MAX_PKT_LEN = 256 * 1024;
  
  const bufferParser = makeBufferParser();
  
@@ -261,7 +265,7 @@ diff --git a/node_modules/ssh2/lib/protocol/SFTP.js b/node_modules/ssh2/lib/prot
  const fakeStderr = {
    readable: false,
    writable: false,
-@@ -155,6 +169,8 @@
+@@ -155,6 +169,8 @@ class SFTP extends EventEmitter {
      this._writeReqid = -1;
      this._requests = {};
      this._maxInPktLen = OPENSSH_MAX_PKT_LEN;
@@ -270,7 +274,7 @@ diff --git a/node_modules/ssh2/lib/protocol/SFTP.js b/node_modules/ssh2/lib/prot
      this._maxOutPktLen = 34000;
      this._maxReadLen =
        (this._isOpenSSH ? OPENSSH_MAX_PKT_LEN : 34000) - PKT_RW_OVERHEAD;
-@@ -196,6 +212,53 @@
+@@ -196,6 +212,53 @@ class SFTP extends EventEmitter {
        this.emit('end');
        return;
      }
@@ -324,7 +328,7 @@ diff --git a/node_modules/ssh2/lib/protocol/SFTP.js b/node_modules/ssh2/lib/prot
      /*
          uint32             length
          byte               type
-@@ -339,7 +402,7 @@
+@@ -339,7 +402,7 @@ class SFTP extends EventEmitter {
        uint32        pflags
        ATTRS         attrs
      */
@@ -333,7 +337,7 @@ diff --git a/node_modules/ssh2/lib/protocol/SFTP.js b/node_modules/ssh2/lib/prot
      let p = 9;
      const buf = Buffer.allocUnsafe(4 + 1 + 4 + 4 + pathLen + 4 + 4 + attrsLen);
  
-@@ -349,7 +412,7 @@
+@@ -349,7 +412,7 @@ class SFTP extends EventEmitter {
      writeUInt32BE(buf, reqid, 5);
  
      writeUInt32BE(buf, pathLen, p);
@@ -342,7 +346,7 @@ diff --git a/node_modules/ssh2/lib/protocol/SFTP.js b/node_modules/ssh2/lib/prot
      writeUInt32BE(buf, flags, p += pathLen);
      writeUInt32BE(buf, attrsFlags, p += 4);
      if (attrsLen) {
-@@ -734,7 +797,7 @@
+@@ -734,7 +797,7 @@ class SFTP extends EventEmitter {
        uint32     id
        string     filename
      */
@@ -351,7 +355,7 @@ diff --git a/node_modules/ssh2/lib/protocol/SFTP.js b/node_modules/ssh2/lib/prot
      let p = 9;
      const buf = Buffer.allocUnsafe(4 + 1 + 4 + 4 + fnameLen);
  
-@@ -744,7 +807,7 @@
+@@ -744,7 +807,7 @@ class SFTP extends EventEmitter {
      writeUInt32BE(buf, reqid, 5);
  
      writeUInt32BE(buf, fnameLen, p);
@@ -360,7 +364,7 @@ diff --git a/node_modules/ssh2/lib/protocol/SFTP.js b/node_modules/ssh2/lib/prot
  
      this._requests[reqid] = { cb };
  
-@@ -762,8 +825,8 @@
+@@ -762,8 +825,8 @@ class SFTP extends EventEmitter {
        string     oldpath
        string     newpath
      */
@@ -371,7 +375,7 @@ diff --git a/node_modules/ssh2/lib/protocol/SFTP.js b/node_modules/ssh2/lib/prot
      let p = 9;
      const buf = Buffer.allocUnsafe(4 + 1 + 4 + 4 + oldLen + 4 + newLen);
  
-@@ -773,9 +836,9 @@
+@@ -773,9 +836,9 @@ class SFTP extends EventEmitter {
      writeUInt32BE(buf, reqid, 5);
  
      writeUInt32BE(buf, oldLen, p);
@@ -383,7 +387,7 @@ diff --git a/node_modules/ssh2/lib/protocol/SFTP.js b/node_modules/ssh2/lib/prot
  
      this._requests[reqid] = { cb };
  
-@@ -806,7 +869,7 @@
+@@ -806,7 +869,7 @@ class SFTP extends EventEmitter {
        string     path
        ATTRS      attrs
      */
@@ -392,7 +396,7 @@ diff --git a/node_modules/ssh2/lib/protocol/SFTP.js b/node_modules/ssh2/lib/prot
      let p = 9;
      const buf = Buffer.allocUnsafe(4 + 1 + 4 + 4 + pathLen + 4 + attrsLen);
  
-@@ -816,7 +879,7 @@
+@@ -816,7 +879,7 @@ class SFTP extends EventEmitter {
      writeUInt32BE(buf, reqid, 5);
  
      writeUInt32BE(buf, pathLen, p);
@@ -401,7 +405,7 @@ diff --git a/node_modules/ssh2/lib/protocol/SFTP.js b/node_modules/ssh2/lib/prot
      writeUInt32BE(buf, flags, p += pathLen);
      if (attrsLen) {
        p += 4;
-@@ -844,7 +907,7 @@
+@@ -844,7 +907,7 @@ class SFTP extends EventEmitter {
        uint32     id
        string     path
      */
@@ -410,7 +414,7 @@ diff --git a/node_modules/ssh2/lib/protocol/SFTP.js b/node_modules/ssh2/lib/prot
      let p = 9;
      const buf = Buffer.allocUnsafe(4 + 1 + 4 + 4 + pathLen);
  
-@@ -854,7 +917,7 @@
+@@ -854,7 +917,7 @@ class SFTP extends EventEmitter {
      writeUInt32BE(buf, reqid, 5);
  
      writeUInt32BE(buf, pathLen, p);
@@ -419,7 +423,7 @@ diff --git a/node_modules/ssh2/lib/protocol/SFTP.js b/node_modules/ssh2/lib/prot
  
      this._requests[reqid] = { cb };
  
-@@ -987,7 +1050,7 @@
+@@ -987,7 +1050,7 @@ class SFTP extends EventEmitter {
        uint32     id
        string     path
      */
@@ -428,7 +432,7 @@ diff --git a/node_modules/ssh2/lib/protocol/SFTP.js b/node_modules/ssh2/lib/prot
      let p = 9;
      const buf = Buffer.allocUnsafe(4 + 1 + 4 + 4 + pathLen);
  
-@@ -997,7 +1060,7 @@
+@@ -997,7 +1060,7 @@ class SFTP extends EventEmitter {
      writeUInt32BE(buf, reqid, 5);
  
      writeUInt32BE(buf, pathLen, p);
@@ -437,7 +441,7 @@ diff --git a/node_modules/ssh2/lib/protocol/SFTP.js b/node_modules/ssh2/lib/prot
  
      this._requests[reqid] = { cb };
  
-@@ -1014,7 +1077,7 @@
+@@ -1014,7 +1077,7 @@ class SFTP extends EventEmitter {
        uint32     id
        string     path
      */
@@ -446,7 +450,7 @@ diff --git a/node_modules/ssh2/lib/protocol/SFTP.js b/node_modules/ssh2/lib/prot
      let p = 9;
      const buf = Buffer.allocUnsafe(4 + 1 + 4 + 4 + pathLen);
  
-@@ -1024,7 +1087,7 @@
+@@ -1024,7 +1087,7 @@ class SFTP extends EventEmitter {
      writeUInt32BE(buf, reqid, 5);
  
      writeUInt32BE(buf, pathLen, p);
@@ -455,7 +459,7 @@ diff --git a/node_modules/ssh2/lib/protocol/SFTP.js b/node_modules/ssh2/lib/prot
  
      this._requests[reqid] = { cb };
  
-@@ -1041,7 +1104,7 @@
+@@ -1041,7 +1104,7 @@ class SFTP extends EventEmitter {
        uint32     id
        string     path
      */
@@ -464,7 +468,7 @@ diff --git a/node_modules/ssh2/lib/protocol/SFTP.js b/node_modules/ssh2/lib/prot
      let p = 9;
      const buf = Buffer.allocUnsafe(4 + 1 + 4 + 4 + pathLen);
  
-@@ -1051,7 +1114,7 @@
+@@ -1051,7 +1114,7 @@ class SFTP extends EventEmitter {
      writeUInt32BE(buf, reqid, 5);
  
      writeUInt32BE(buf, pathLen, p);
@@ -473,7 +477,7 @@ diff --git a/node_modules/ssh2/lib/protocol/SFTP.js b/node_modules/ssh2/lib/prot
  
      this._requests[reqid] = { cb };
  
-@@ -1080,7 +1143,7 @@
+@@ -1080,7 +1143,7 @@ class SFTP extends EventEmitter {
        string     path
        ATTRS      attrs
      */
@@ -482,7 +486,7 @@ diff --git a/node_modules/ssh2/lib/protocol/SFTP.js b/node_modules/ssh2/lib/prot
      let p = 9;
      const buf = Buffer.allocUnsafe(4 + 1 + 4 + 4 + pathLen + 4 + attrsLen);
  
-@@ -1090,7 +1153,7 @@
+@@ -1090,7 +1153,7 @@ class SFTP extends EventEmitter {
      writeUInt32BE(buf, reqid, 5);
  
      writeUInt32BE(buf, pathLen, p);
@@ -491,7 +495,7 @@ diff --git a/node_modules/ssh2/lib/protocol/SFTP.js b/node_modules/ssh2/lib/prot
      writeUInt32BE(buf, flags, p += pathLen);
      if (attrsLen) {
        p += 4;
-@@ -1205,7 +1268,7 @@
+@@ -1205,7 +1268,7 @@ class SFTP extends EventEmitter {
        uint32     id
        string     path
      */
@@ -500,7 +504,7 @@ diff --git a/node_modules/ssh2/lib/protocol/SFTP.js b/node_modules/ssh2/lib/prot
      let p = 9;
      const buf = Buffer.allocUnsafe(4 + 1 + 4 + 4 + pathLen);
  
-@@ -1215,7 +1278,7 @@
+@@ -1215,7 +1278,7 @@ class SFTP extends EventEmitter {
      writeUInt32BE(buf, reqid, 5);
  
      writeUInt32BE(buf, pathLen, p);
@@ -509,7 +513,7 @@ diff --git a/node_modules/ssh2/lib/protocol/SFTP.js b/node_modules/ssh2/lib/prot
  
      this._requests[reqid] = {
        cb: (err, names) => {
-@@ -1243,8 +1306,8 @@
+@@ -1243,8 +1306,8 @@ class SFTP extends EventEmitter {
        string     linkpath
        string     targetpath
      */
@@ -520,7 +524,7 @@ diff --git a/node_modules/ssh2/lib/protocol/SFTP.js b/node_modules/ssh2/lib/prot
      let p = 9;
      const buf = Buffer.allocUnsafe(4 + 1 + 4 + 4 + linkLen + 4 + targetLen);
  
-@@ -1256,14 +1319,14 @@
+@@ -1256,14 +1319,14 @@ class SFTP extends EventEmitter {
      if (this._isOpenSSH) {
        // OpenSSH has linkpath and targetpath positions switched
        writeUInt32BE(buf, targetLen, p);
@@ -539,7 +543,7 @@ diff --git a/node_modules/ssh2/lib/protocol/SFTP.js b/node_modules/ssh2/lib/prot
      }
  
      this._requests[reqid] = { cb };
-@@ -1281,7 +1344,7 @@
+@@ -1281,7 +1344,7 @@ class SFTP extends EventEmitter {
        uint32     id
        string     path
      */
@@ -548,7 +552,7 @@ diff --git a/node_modules/ssh2/lib/protocol/SFTP.js b/node_modules/ssh2/lib/prot
      let p = 9;
      const buf = Buffer.allocUnsafe(4 + 1 + 4 + 4 + pathLen);
  
-@@ -1291,7 +1354,7 @@
+@@ -1291,7 +1354,7 @@ class SFTP extends EventEmitter {
      writeUInt32BE(buf, reqid, 5);
  
      writeUInt32BE(buf, pathLen, p);
@@ -557,7 +561,7 @@ diff --git a/node_modules/ssh2/lib/protocol/SFTP.js b/node_modules/ssh2/lib/prot
  
      this._requests[reqid] = {
        cb: (err, names) => {
-@@ -1325,8 +1388,8 @@
+@@ -1325,8 +1388,8 @@ class SFTP extends EventEmitter {
        string    oldpath
        string    newpath
      */
@@ -568,7 +572,7 @@ diff --git a/node_modules/ssh2/lib/protocol/SFTP.js b/node_modules/ssh2/lib/prot
      let p = 9;
      const buf =
        Buffer.allocUnsafe(4 + 1 + 4 + 4 + 24 + 4 + oldLen + 4 + newLen);
-@@ -1337,11 +1400,11 @@
+@@ -1337,11 +1400,11 @@ class SFTP extends EventEmitter {
      writeUInt32BE(buf, reqid, 5);
  
      writeUInt32BE(buf, 24, p);
@@ -583,7 +587,7 @@ diff --git a/node_modules/ssh2/lib/protocol/SFTP.js b/node_modules/ssh2/lib/prot
  
      this._requests[reqid] = { cb };
  
-@@ -1364,7 +1427,7 @@
+@@ -1364,7 +1427,7 @@ class SFTP extends EventEmitter {
        string    "statvfs@openssh.com"
        string    path
      */
@@ -592,7 +596,7 @@ diff --git a/node_modules/ssh2/lib/protocol/SFTP.js b/node_modules/ssh2/lib/prot
      let p = 9;
      const buf = Buffer.allocUnsafe(4 + 1 + 4 + 4 + 19 + 4 + pathLen);
  
-@@ -1374,9 +1437,9 @@
+@@ -1374,9 +1437,9 @@ class SFTP extends EventEmitter {
      writeUInt32BE(buf, reqid, 5);
  
      writeUInt32BE(buf, 19, p);
@@ -604,7 +608,7 @@ diff --git a/node_modules/ssh2/lib/protocol/SFTP.js b/node_modules/ssh2/lib/prot
  
      this._requests[reqid] = { extended: 'statvfs@openssh.com', cb };
  
-@@ -1411,7 +1474,7 @@
+@@ -1411,7 +1474,7 @@ class SFTP extends EventEmitter {
      writeUInt32BE(buf, reqid, 5);
  
      writeUInt32BE(buf, 20, p);
@@ -613,7 +617,7 @@ diff --git a/node_modules/ssh2/lib/protocol/SFTP.js b/node_modules/ssh2/lib/prot
      writeUInt32BE(buf, handleLen, p += 20);
      buf.set(handle, p += 4);
  
-@@ -1437,8 +1500,8 @@
+@@ -1437,8 +1500,8 @@ class SFTP extends EventEmitter {
        string    oldpath
        string    newpath
      */
@@ -624,7 +628,7 @@ diff --git a/node_modules/ssh2/lib/protocol/SFTP.js b/node_modules/ssh2/lib/prot
      let p = 9;
      const buf =
        Buffer.allocUnsafe(4 + 1 + 4 + 4 + 20 + 4 + oldLen + 4 + newLen);
-@@ -1449,11 +1512,11 @@
+@@ -1449,11 +1512,11 @@ class SFTP extends EventEmitter {
      writeUInt32BE(buf, reqid, 5);
  
      writeUInt32BE(buf, 20, p);
@@ -639,7 +643,7 @@ diff --git a/node_modules/ssh2/lib/protocol/SFTP.js b/node_modules/ssh2/lib/prot
  
      this._requests[reqid] = { cb };
  
-@@ -1488,7 +1551,7 @@
+@@ -1488,7 +1551,7 @@ class SFTP extends EventEmitter {
      writeUInt32BE(buf, reqid, 5);
  
      writeUInt32BE(buf, 17, p);
@@ -648,7 +652,7 @@ diff --git a/node_modules/ssh2/lib/protocol/SFTP.js b/node_modules/ssh2/lib/prot
      writeUInt32BE(buf, handleLen, p += 17);
      buf.set(handle, p += 4);
  
-@@ -1524,7 +1587,7 @@
+@@ -1524,7 +1587,7 @@ class SFTP extends EventEmitter {
        string    path
        ATTRS     attrs
      */
@@ -657,7 +661,7 @@ diff --git a/node_modules/ssh2/lib/protocol/SFTP.js b/node_modules/ssh2/lib/prot
      let p = 9;
      const buf =
        Buffer.allocUnsafe(4 + 1 + 4 + 4 + 20 + 4 + pathLen + 4 + attrsLen);
-@@ -1535,10 +1598,10 @@
+@@ -1535,10 +1598,10 @@ class SFTP extends EventEmitter {
      writeUInt32BE(buf, reqid, 5);
  
      writeUInt32BE(buf, 20, p);
@@ -670,7 +674,7 @@ diff --git a/node_modules/ssh2/lib/protocol/SFTP.js b/node_modules/ssh2/lib/prot
  
      writeUInt32BE(buf, flags, p += pathLen);
      if (attrsLen) {
-@@ -1573,7 +1636,7 @@
+@@ -1573,7 +1636,7 @@ class SFTP extends EventEmitter {
        string    "expand-path@openssh.com"
        string    path
      */
@@ -679,7 +683,7 @@ diff --git a/node_modules/ssh2/lib/protocol/SFTP.js b/node_modules/ssh2/lib/prot
      let p = 9;
      const buf = Buffer.allocUnsafe(4 + 1 + 4 + 4 + 23 + 4 + pathLen);
  
-@@ -1583,10 +1646,10 @@
+@@ -1583,10 +1646,10 @@ class SFTP extends EventEmitter {
      writeUInt32BE(buf, reqid, 5);
  
      writeUInt32BE(buf, 23, p);
@@ -692,7 +696,7 @@ diff --git a/node_modules/ssh2/lib/protocol/SFTP.js b/node_modules/ssh2/lib/prot
  
      this._requests[reqid] = {
        cb: (err, names) => {
-@@ -1653,7 +1716,7 @@
+@@ -1653,7 +1716,7 @@ class SFTP extends EventEmitter {
  
      writeUInt32BE(buf, 9, p);
      p += 4;
@@ -701,7 +705,7 @@ diff --git a/node_modules/ssh2/lib/protocol/SFTP.js b/node_modules/ssh2/lib/prot
      p += 9;
  
      writeUInt32BE(buf, srcHandle.length, p);
-@@ -1708,7 +1771,7 @@
+@@ -1708,7 +1771,7 @@ class SFTP extends EventEmitter {
        string    username
      */
      let p = 0;
@@ -710,7 +714,7 @@ diff --git a/node_modules/ssh2/lib/protocol/SFTP.js b/node_modules/ssh2/lib/prot
      const buf = Buffer.allocUnsafe(
        4 + 1
        + 4
-@@ -1728,12 +1791,12 @@
+@@ -1728,12 +1791,12 @@ class SFTP extends EventEmitter {
  
      writeUInt32BE(buf, 14, p);
      p += 4;
@@ -725,7 +729,7 @@ diff --git a/node_modules/ssh2/lib/protocol/SFTP.js b/node_modules/ssh2/lib/prot
      p += usernameLen;
  
      this._requests[reqid] = {
-@@ -1806,7 +1869,7 @@
+@@ -1806,7 +1869,7 @@ class SFTP extends EventEmitter {
  
      writeUInt32BE(buf, 30, p);
      p += 4;
@@ -734,7 +738,7 @@ diff --git a/node_modules/ssh2/lib/protocol/SFTP.js b/node_modules/ssh2/lib/prot
      p += 30;
  
      writeUInt32BE(buf, 4 * uids.length, p);
-@@ -1871,7 +1934,7 @@
+@@ -1871,7 +1934,7 @@ class SFTP extends EventEmitter {
  
      message || (message = '');
  
@@ -743,7 +747,7 @@ diff --git a/node_modules/ssh2/lib/protocol/SFTP.js b/node_modules/ssh2/lib/prot
      let p = 9;
      const buf = Buffer.allocUnsafe(4 + 1 + 4 + 4 + 4 + msgLen + 4);
  
-@@ -1884,7 +1947,7 @@
+@@ -1884,7 +1947,7 @@ class SFTP extends EventEmitter {
      writeUInt32BE(buf, msgLen, p += 4);
      p += 4;
      if (msgLen) {
@@ -752,7 +756,7 @@ diff --git a/node_modules/ssh2/lib/protocol/SFTP.js b/node_modules/ssh2/lib/prot
        p += msgLen;
      }
  
-@@ -1913,7 +1976,7 @@
+@@ -1913,7 +1976,7 @@ class SFTP extends EventEmitter {
      const dataLen = (
        isBuffer
        ? data.length
@@ -761,7 +765,7 @@ diff --git a/node_modules/ssh2/lib/protocol/SFTP.js b/node_modules/ssh2/lib/prot
      );
      let p = 9;
      const buf = Buffer.allocUnsafe(4 + 1 + 4 + 4 + dataLen);
-@@ -1927,7 +1990,7 @@
+@@ -1927,7 +1990,7 @@ class SFTP extends EventEmitter {
        if (isBuffer)
          buf.set(data, p += 4);
        else if (isUTF8)
@@ -770,7 +774,7 @@ diff --git a/node_modules/ssh2/lib/protocol/SFTP.js b/node_modules/ssh2/lib/prot
        else
          buf.write(data, p += 4, dataLen, encoding);
      }
-@@ -1959,13 +2022,13 @@
+@@ -1959,13 +2022,13 @@ class SFTP extends EventEmitter {
          ? ''
          : name.filename
        );
@@ -786,7 +790,7 @@ diff --git a/node_modules/ssh2/lib/protocol/SFTP.js b/node_modules/ssh2/lib/prot
  
        if (typeof name.attrs === 'object' && name.attrs !== null) {
          nameAttrs = attrsToBytes(name.attrs);
-@@ -2011,11 +2074,11 @@
+@@ -2011,11 +2074,11 @@ class SFTP extends EventEmitter {
            ? ''
            : name.filename
          );
@@ -800,7 +804,7 @@ diff --git a/node_modules/ssh2/lib/protocol/SFTP.js b/node_modules/ssh2/lib/prot
            p += len;
          }
        }
-@@ -2026,11 +2089,11 @@
+@@ -2026,11 +2089,11 @@ class SFTP extends EventEmitter {
            ? ''
            : name.longname
          );
@@ -814,7 +818,7 @@ diff --git a/node_modules/ssh2/lib/protocol/SFTP.js b/node_modules/ssh2/lib/prot
            p += len;
          }
        }
-@@ -2749,7 +2812,7 @@
+@@ -2749,7 +2812,7 @@ function requestLimits(sftp, cb) {
    writeUInt32BE(buf, reqid, 5);
  
    writeUInt32BE(buf, 18, p);
@@ -823,7 +827,7 @@ diff --git a/node_modules/ssh2/lib/protocol/SFTP.js b/node_modules/ssh2/lib/prot
  
    sftp._requests[reqid] = { extended: 'limits@openssh.com', cb };
  
-@@ -2953,18 +3016,28 @@
+@@ -2953,18 +3016,28 @@ const CLIENT_HANDLERS = {
          // spec not specifying an encoding because the specs for newer
          // versions of the protocol all explicitly specify UTF-8 for
          // filenames
@@ -856,21 +860,41 @@ diff --git a/node_modules/ssh2/lib/protocol/SFTP.js b/node_modules/ssh2/lib/prot
        if (names !== undefined) {
          sftp._debug && sftp._debug(
 diff --git a/node_modules/ssh2/lib/protocol/constants.js b/node_modules/ssh2/lib/protocol/constants.js
+index ad77592..a249e00 100644
 --- a/node_modules/ssh2/lib/protocol/constants.js
 +++ b/node_modules/ssh2/lib/protocol/constants.js
-@@ -73,7 +73,11 @@
+@@ -71,9 +71,30 @@ const DEFAULT_SERVER_HOST_KEY = [
+ ];
+ if (eddsaSupported)
    DEFAULT_SERVER_HOST_KEY.unshift('ssh-ed25519');
++// OpenSSH host certificates, offered before the matching plain key so a
++// cert-only server (for example ssh-ed25519-cert-v01@openssh.com) can
++// negotiate. Plain keys stay as fallbacks.
++const OPENSSH_HOST_CERT_ALGS = [
++  'ecdsa-sha2-nistp256-cert-v01@openssh.com',
++  'ecdsa-sha2-nistp384-cert-v01@openssh.com',
++  'ecdsa-sha2-nistp521-cert-v01@openssh.com',
++  'rsa-sha2-512-cert-v01@openssh.com',
++  'rsa-sha2-256-cert-v01@openssh.com',
++  'ssh-rsa-cert-v01@openssh.com',
++];
++if (eddsaSupported)
++  OPENSSH_HOST_CERT_ALGS.unshift('ssh-ed25519-cert-v01@openssh.com');
++DEFAULT_SERVER_HOST_KEY.unshift(...OPENSSH_HOST_CERT_ALGS);
  const SUPPORTED_SERVER_HOST_KEY = DEFAULT_SERVER_HOST_KEY.concat([
    'ssh-dss',
 +  // FIDO/U2F security keys (client publickey auth / rare host keys).
 +  'sk-ecdsa-sha2-nistp256@openssh.com',
++  'sk-ecdsa-sha2-nistp256-cert-v01@openssh.com',
  ]);
-+if (eddsaSupported)
++if (eddsaSupported) {
 +  SUPPORTED_SERVER_HOST_KEY.push('sk-ssh-ed25519@openssh.com');
++  SUPPORTED_SERVER_HOST_KEY.push('sk-ssh-ed25519-cert-v01@openssh.com');
++}
  
  
  const canUseCipher = (() => {
-@@ -160,6 +164,7 @@
+@@ -160,6 +181,7 @@ const COMPAT = {
    DYN_RPORT_BUG: 1 << 2,
    BUG_DHGEX_LARGE: 1 << 3,
    IMPLY_RSA_SHA2_SIGALGS: 1 << 4,
@@ -878,7 +902,7 @@ diff --git a/node_modules/ssh2/lib/protocol/constants.js b/node_modules/ssh2/lib
  };
  
  module.exports = {
-@@ -330,6 +335,7 @@
+@@ -330,6 +352,7 @@ module.exports = {
    COMPAT_CHECKS: [
      [ 'Cisco-1.25', COMPAT.BAD_DHGEX ],
      [ /^Cisco-1[.]/, COMPAT.BUG_DHGEX_LARGE ],
@@ -887,9 +911,198 @@ diff --git a/node_modules/ssh2/lib/protocol/constants.js b/node_modules/ssh2/lib
      [ /^OpenSSH_5[.][0-9]+/, COMPAT.DYN_RPORT_BUG ],
      [ /^OpenSSH_7[.]4/, COMPAT.IMPLY_RSA_SHA2_SIGALGS ],
 diff --git a/node_modules/ssh2/lib/protocol/kex.js b/node_modules/ssh2/lib/protocol/kex.js
+index 811e631..422a198 100644
 --- a/node_modules/ssh2/lib/protocol/kex.js
 +++ b/node_modules/ssh2/lib/protocol/kex.js
-@@ -1377,8 +1377,13 @@
+@@ -30,7 +30,10 @@ const {
+   createDecipher,
+   MAC_INFO,
+ } = require('./crypto.js');
+-const { parseDERKey } = require('./keyParser.js');
++const {
++  parseDERKey,
++  getOpenSSHCertSignatureAlgorithm,
++} = require('./keyParser.js');
+ const {
+   bufferFill,
+   bufferParser,
+@@ -49,6 +52,68 @@ const {
+ 
+ let MESSAGE_HANDLERS;
+ 
++const LEGACY_RSA_HOST_CERT = /^ssh-rsa-cert-v0[01]@openssh\.com$/;
++const RSA_SHA2_256_HOST_CERT = /^rsa-sha2-256-cert-v0[01]@openssh\.com$/;
++const RSA_SHA2_512_HOST_CERT = /^rsa-sha2-512-cert-v0[01]@openssh\.com$/;
++const LEGACY_RSA_HOST_SIGNATURES = new Set([
++  'rsa-sha2-256',
++  'rsa-sha2-512',
++  'ssh-rsa',
++]);
++
++// Client KEX accepts the negotiated host-key name or, for OpenSSH host
++// certificates, the underlying key algorithm. Real servers sign with the
++// embedded key (ssh-ed25519, ecdsa-sha2-*, rsa-sha2-*) rather than the
++// certificate algorithm name. OpenSSH allows any RSA signature only for the
++// legacy ssh-rsa certificate. rsa-sha2-256/512 certificates must use the
++// hash that was negotiated.
++function hostKeySignatureTypeAccepted(negotiatedServerHostKey, sigType) {
++  if (RSA_SHA2_256_HOST_CERT.test(negotiatedServerHostKey))
++    return sigType === 'rsa-sha2-256';
++  if (RSA_SHA2_512_HOST_CERT.test(negotiatedServerHostKey))
++    return sigType === 'rsa-sha2-512';
++  if (sigType === negotiatedServerHostKey)
++    return true;
++  if (sigType === getOpenSSHCertSignatureAlgorithm(negotiatedServerHostKey))
++    return true;
++  return LEGACY_RSA_HOST_CERT.test(negotiatedServerHostKey)
++    && LEGACY_RSA_HOST_SIGNATURES.has(sigType);
++}
++
++// Plain rsa-sha2-* keeps an ssh-rsa key blob. An RSA certificate negotiation
++// is KEY_RSA_CERT: the blob must be ssh-rsa-cert-v01@openssh.com, never a
++// plain ssh-rsa key.
++function hostKeyBlobTypeAccepted(negotiatedServerHostKey, hostPubKeyType) {
++  if (hostPubKeyType === negotiatedServerHostKey)
++    return true;
++  switch (negotiatedServerHostKey) {
++    case 'rsa-sha2-256':
++    case 'rsa-sha2-512':
++      return hostPubKeyType === 'ssh-rsa';
++    case 'rsa-sha2-256-cert-v01@openssh.com':
++    case 'rsa-sha2-512-cert-v01@openssh.com':
++      return hostPubKeyType === 'ssh-rsa-cert-v01@openssh.com';
++    default:
++      return false;
++  }
++}
++
++function hashAlgoForHostKey(negotiatedServerHostKey, sigType) {
++  // Negotiated RSA-SHA2 wins over the signature label so a mismatched
++  // signature cannot select a weaker hash.
++  if (negotiatedServerHostKey === 'rsa-sha2-256'
++      || RSA_SHA2_256_HOST_CERT.test(negotiatedServerHostKey))
++    return 'sha256';
++  if (negotiatedServerHostKey === 'rsa-sha2-512'
++      || RSA_SHA2_512_HOST_CERT.test(negotiatedServerHostKey))
++    return 'sha512';
++  if (sigType === 'rsa-sha2-256')
++    return 'sha256';
++  if (sigType === 'rsa-sha2-512')
++    return 'sha512';
++  return undefined;
++}
++
+ const GEX_MIN_BITS = 2048; // RFC 8270
+ const GEX_MAX_BITS = 8192; // RFC 8270
+ 
+@@ -635,7 +700,7 @@ const createKeyExchange = (() => {
+           );
+         }
+ 
+-        if (sigType !== negotiated.serverHostKey) {
++        if (!hostKeySignatureTypeAccepted(negotiated.serverHostKey, sigType)) {
+           return doFatalError(
+             this._protocol,
+             `Wrong signature type: ${sigType}, `
+@@ -659,7 +724,10 @@ const createKeyExchange = (() => {
+           );
+         }
+ 
+-        if (!(sigValue = sigSSHToASN1(sigValue, sigType))) {
++        if (!(sigValue = sigSSHToASN1(
++          sigValue,
++          getOpenSSHCertSignatureAlgorithm(sigType)
++        ))) {
+           return doFatalError(
+             this._protocol,
+             'Malformed signature',
+@@ -685,12 +753,10 @@ const createKeyExchange = (() => {
+           }
+         }
+ 
+-        let hashAlgo;
+-        // Check if we need to override the default hash algorithm
+-        switch (this.negotiated.serverHostKey) {
+-          case 'rsa-sha2-256': hashAlgo = 'sha256'; break;
+-          case 'rsa-sha2-512': hashAlgo = 'sha512'; break;
+-        }
++        const hashAlgo = hashAlgoForHostKey(
++          this.negotiated.serverHostKey,
++          sigType
++        );
+ 
+         this._protocol._debug
+           && this._protocol._debug('Verifying signature ...');
+@@ -717,12 +783,7 @@ const createKeyExchange = (() => {
+       } else {
+         // Server
+ 
+-        let hashAlgo;
+-        // Check if we need to override the default hash algorithm
+-        switch (this.negotiated.serverHostKey) {
+-          case 'rsa-sha2-256': hashAlgo = 'sha256'; break;
+-          case 'rsa-sha2-512': hashAlgo = 'sha512'; break;
+-        }
++        const hashAlgo = hashAlgoForHostKey(this.negotiated.serverHostKey);
+ 
+         this._protocol._debug && this._protocol._debug(
+           'Generating signature ...'
+@@ -739,7 +800,12 @@ const createKeyExchange = (() => {
+           );
+         }
+ 
+-        signature = convertSignature(signature, this._hostKey.type);
++        // OpenSSH signs a host certificate with the embedded key algorithm,
++        // not the certificate algorithm name.
++        const sigType = getOpenSSHCertSignatureAlgorithm(
++          this.negotiated.serverHostKey
++        );
++        signature = convertSignature(signature, sigType);
+         if (signature === false) {
+           return doFatalError(
+             this._protocol,
+@@ -759,7 +825,6 @@ const createKeyExchange = (() => {
+           string    <method-specific data>
+           string    signature of H
+         */
+-        const sigType = this.negotiated.serverHostKey;
+         const sigTypeLen = Buffer.byteLength(sigType);
+         const sigLen = 4 + sigTypeLen + 4 + signature.length;
+         let p = this._protocol._packetRW.write.allocStartKEX;
+@@ -1167,22 +1232,16 @@ const createKeyExchange = (() => {
+                 DISCONNECT_REASON.KEY_EXCHANGE_FAILED
+               );
+             }
+-            if (hostPubKeyType !== this.negotiated.serverHostKey) {
+-              // Check if we need to make an exception
+-              switch (this.negotiated.serverHostKey) {
+-                case 'rsa-sha2-256':
+-                case 'rsa-sha2-512':
+-                  if (hostPubKeyType === 'ssh-rsa')
+-                    break;
+-                // FALLTHROUGH
+-                default:
+-                  return doFatalError(
+-                    this._protocol,
+-                    'Host key does not match negotiated type',
+-                    'handshake',
+-                    DISCONNECT_REASON.KEY_EXCHANGE_FAILED
+-                  );
+-              }
++            if (!hostKeyBlobTypeAccepted(
++              this.negotiated.serverHostKey,
++              hostPubKeyType
++            )) {
++              return doFatalError(
++                this._protocol,
++                'Host key does not match negotiated type',
++                'handshake',
++                DISCONNECT_REASON.KEY_EXCHANGE_FAILED
++              );
+             }
+ 
+             this._hostKey = hostPubKey;
+@@ -1377,8 +1436,13 @@ const createKeyExchange = (() => {
        this._generator = null;
        this._minBits = GEX_MIN_BITS;
        this._prefBits = dhEstimate(this.negotiated);
@@ -904,10 +1117,20 @@ diff --git a/node_modules/ssh2/lib/protocol/kex.js b/node_modules/ssh2/lib/proto
        this._maxBits = GEX_MAX_BITS;
      }
      start() {
+@@ -1868,6 +1932,8 @@ function trySendNEWKEYS(kex) {
+ 
+ module.exports = {
+   KexInit,
++  hostKeyBlobTypeAccepted,
++  hostKeySignatureTypeAccepted,
+   kexinit,
+   onKEXPayload,
+   DEFAULT_KEXINIT_CLIENT: new KexInit({
 diff --git a/node_modules/ssh2/lib/protocol/keyParser.js b/node_modules/ssh2/lib/protocol/keyParser.js
+index a276c1a..c8ff9d1 100644
 --- a/node_modules/ssh2/lib/protocol/keyParser.js
 +++ b/node_modules/ssh2/lib/protocol/keyParser.js
-@@ -35,6 +35,9 @@
+@@ -35,6 +35,9 @@ const SYM_PRIV_PEM = Symbol('Private key PEM');
  const SYM_PUB_PEM = Symbol('Public key PEM');
  const SYM_PUB_SSH = Symbol('Public key SSH');
  const SYM_DECRYPTED = Symbol('Decrypted Key');
@@ -917,7 +1140,7 @@ diff --git a/node_modules/ssh2/lib/protocol/keyParser.js b/node_modules/ssh2/lib
  
  // Create OpenSSL cipher name -> SSH cipher name conversion table
  const CIPHER_INFO_OPENSSL = Object.create(null);
-@@ -258,6 +261,55 @@
+@@ -258,6 +261,55 @@ function genOpenSSHEdPub(pub) {
    return publicKey;
  }
  
@@ -973,7 +1196,7 @@ diff --git a/node_modules/ssh2/lib/protocol/keyParser.js b/node_modules/ssh2/lib
  function genOpenSSLEdPriv(priv) {
    const asnWriter = new Ber.Writer();
    asnWriter.startSequence();
-@@ -451,6 +503,82 @@
+@@ -451,6 +503,82 @@ const BaseKey = {
    },
  };
  
@@ -1035,7 +1258,7 @@ diff --git a/node_modules/ssh2/lib/protocol/keyParser.js b/node_modules/ssh2/lib
 +    signedData.set(dataHash, p);
 +
 +    let toVerify = rawSig;
-+    if (this.type === 'sk-ecdsa-sha2-nistp256@openssh.com') {
++    if (getOpenSSHCertBaseType(this.type) === 'sk-ecdsa-sha2-nistp256@openssh.com') {
 +      // Convert SSH ECDSA r,s blob to ASN.1 for OpenSSL
 +      const { sigSSHToASN1 } = require('./utils.js');
 +      toVerify = sigSSHToASN1(rawSig, 'ecdsa-sha2-nistp256');
@@ -1056,7 +1279,7 @@ diff --git a/node_modules/ssh2/lib/protocol/keyParser.js b/node_modules/ssh2/lib
  
  function OpenSSH_Private(type, comment, privPEM, pubPEM, pubSSH, algo,
                           decrypted) {
-@@ -463,6 +591,26 @@
+@@ -463,6 +591,26 @@ function OpenSSH_Private(type, comment, privPEM, pubPEM, pubSSH, algo,
    this[SYM_DECRYPTED] = decrypted;
  }
  OpenSSH_Private.prototype = BaseKey;
@@ -1083,7 +1306,7 @@ diff --git a/node_modules/ssh2/lib/protocol/keyParser.js b/node_modules/ssh2/lib
  {
    const regexp = /^-----BEGIN OPENSSH PRIVATE KEY-----(?:\r\n|\n)([\s\S]+)(?:\r\n|\n)-----END OPENSSH PRIVATE KEY-----$/;
    OpenSSH_Private.parse = (str, passphrase) => {
-@@ -771,6 +919,87 @@
+@@ -771,6 +919,87 @@ OpenSSH_Private.prototype = BaseKey;
            privPEM = genOpenSSLECDSAPriv(oid, ecpub, ecpriv);
            break;
          }
@@ -1171,7 +1394,7 @@ diff --git a/node_modules/ssh2/lib/protocol/keyParser.js b/node_modules/ssh2/lib
          default:
            return new Error(`Unsupported OpenSSH private key type: ${type}`);
        }
-@@ -1186,31 +1415,97 @@
+@@ -1186,31 +1415,97 @@ function OpenSSH_Public(type, comment, pubPEM, pubSSH, algo) {
    this[SYM_DECRYPTED] = false;
  }
  OpenSSH_Public.prototype = BaseKey;
@@ -1281,7 +1504,7 @@ diff --git a/node_modules/ssh2/lib/protocol/keyParser.js b/node_modules/ssh2/lib
    };
  }
  
-@@ -1309,7 +1604,7 @@
+@@ -1309,7 +1604,7 @@ RFC4716_Public.prototype = BaseKey;
  }
  
  
@@ -1290,7 +1513,7 @@ diff --git a/node_modules/ssh2/lib/protocol/keyParser.js b/node_modules/ssh2/lib
    if (!isSupportedKeyType(baseType))
      return new Error(`Unsupported OpenSSH public key type: ${baseType}`);
  
-@@ -1317,6 +1612,10 @@
+@@ -1317,6 +1612,10 @@ function parseDER(data, baseType, comment, fullType) {
    let oid;
    let pubPEM = null;
    let pubSSH = null;
@@ -1301,7 +1524,7 @@ diff --git a/node_modules/ssh2/lib/protocol/keyParser.js b/node_modules/ssh2/lib
  
    switch (baseType) {
      case 'ssh-rsa': {
-@@ -1383,11 +1682,66 @@
+@@ -1383,11 +1682,66 @@ function parseDER(data, baseType, comment, fullType) {
        pubSSH = genOpenSSHECDSAPub(oid, ecpub);
        break;
      }
@@ -1369,7 +1592,7 @@ diff --git a/node_modules/ssh2/lib/protocol/keyParser.js b/node_modules/ssh2/lib
  }
  
  function isSupportedKeyType(type) {
-@@ -1397,8 +1751,10 @@
+@@ -1397,8 +1751,10 @@ function isSupportedKeyType(type) {
      case 'ecdsa-sha2-nistp256':
      case 'ecdsa-sha2-nistp384':
      case 'ecdsa-sha2-nistp521':
@@ -1380,7 +1603,7 @@ diff --git a/node_modules/ssh2/lib/protocol/keyParser.js b/node_modules/ssh2/lib
        if (eddsaSupported)
          return true;
      // FALLTHROUGH
-@@ -1460,7 +1816,13 @@
+@@ -1460,7 +1816,13 @@ function parseKey(data, passphrase) {
      if (type !== undefined) {
        data = binaryKeyParser.readRaw();
        if (data !== undefined) {
@@ -1395,11 +1618,12 @@ diff --git a/node_modules/ssh2/lib/protocol/keyParser.js b/node_modules/ssh2/lib
          // Ignore potentially useless errors in case the data was not actually
          // in the binary format
          if (ret instanceof Error)
-@@ -1479,6 +1841,7 @@
+@@ -1479,6 +1841,7 @@ function parseKey(data, passphrase) {
  module.exports = {
    isParsedKey,
    isSupportedKeyType,
+-  parseDERKey: (data, type) => parseDER(data, type, '', type),
 +  getOpenSSHCertSignatureAlgorithm,
-   parseDERKey: (data, type) => parseDER(data, type, '', type),
++  parseDERKey: (data, type) => parseDER(data, getOpenSSHCertBaseType(type), '', type),
    parseKey,
  };
