@@ -37,6 +37,9 @@ const KNOWN_MONOSPACE_FONTS = new Set([
     'victor mono',
     'ibm plex mono',
     'sf mono',
+    // Nerd Font / patched builds often use the glued typographic family
+    // "SFMono Nerd Font" (name ID 16), which does not match "sf mono" (#3929).
+    'sfmono',
     'operator mono',
     'input mono',
     'pragmata pro',
