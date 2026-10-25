@@ -18,12 +18,19 @@ const LOCALIZED_SETTINGS_LOCALES = [
 
 const APP_LOCK_LOCALES = [
   { name: "en", messages: en },
-  { name: "zh-CN", messages: zhCN },
+  { name: "es", messages: es },
   { name: "ru", messages: ru },
+  { name: "zh-CN", messages: zhCN },
+  { name: "zh-TW", messages: zhTW },
+];
+
+const ALL_SETTINGS_LOCALES = [
+  { name: "en", messages: en },
+  ...LOCALIZED_SETTINGS_LOCALES,
 ];
 
 test("localized settings include names for every default shortcut", () => {
-  for (const locale of LOCALIZED_SETTINGS_LOCALES) {
+  for (const locale of ALL_SETTINGS_LOCALES) {
     const missing = DEFAULT_KEY_BINDINGS
       .map((binding) => `settings.shortcuts.binding.${binding.id}`)
       .filter((key) => !locale.messages[key]);
