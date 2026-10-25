@@ -329,6 +329,43 @@ test("expired local and unknown jobs do not claim a lost worker route", (t) => {
 });
 
 
+test("MCP exec sends on an idle PowerShell prompt hidden by a CSI erase", async () => {
+  const pty = new FakePty();
+  pty.write = (data) => {
+    pty.writes.push(String(data));
+    const marker = String(data).match(/(__NCMCP_[0-9a-z]+_[0-9a-f]+__)/i)?.[1];
+    if (!marker) return;
+    queueMicrotask(() => pty.emit("data", `${marker}_S\r\nok\r\n${marker}_E:0\r\n`));
+  };
+  const { trackSessionIdlePrompt } = require("./ai/shellUtils.cjs");
+  const session = {
+    protocol: "ssh",
+    pty,
+    shellKind: "powershell",
+    _promptTrackTail: "",
+    lastIdlePrompt: "",
+  };
+  trackSessionIdlePrompt(session, "PS C:\\Users\\alice> ggd2147483647d\x1b[20G\x1b[0J");
+  const ctx = createExecHandlerTestContext({
+    sessions: new Map([["ps", session]]),
+    backgroundJobs: new Map(),
+  });
+  ctx.commandTimeoutMs = 200;
+  ctx.startPtyJob = require("./ai/ptyExec.cjs").startPtyJob;
+  ctx.execViaPty = require("./ai/ptyExec.cjs").execViaPty;
+  ctx.getFreshIdlePrompt = require("./ai/shellUtils.cjs").getFreshIdlePrompt;
+  const api = createExecHandlerApi(ctx);
+  const result = await api.handleExec({
+    sessionId: "ps",
+    chatSessionId: "ps-chat",
+    command: "Write-Output ok",
+  });
+  assert.equal(result.ok, true);
+  assert.equal(result.stdout, "ok");
+  assert.equal(pty.writes.length, 1);
+  assert.match(pty.writes[0], /\$__NCMCP_/);
+});
+
 test("MCP background readiness timeout survives job polling without PTY writes", async (t) => {
   t.mock.timers.enable({ apis: ["Date", "setTimeout"] });
   const pty = new FakePty();

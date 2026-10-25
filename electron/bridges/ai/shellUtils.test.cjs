@@ -8,6 +8,7 @@ const {
   extractTrailingIdlePrompt,
   formatSyntheticEcho,
   getFreshIdlePrompt,
+  getVisibleIdlePrompt,
   isDefaultPowerShellPromptLine,
   isDefaultCmdPromptLine,
   isDefaultPosixPromptLine,
@@ -793,6 +794,51 @@ test("trackSessionIdlePrompt and getFreshIdlePrompt accept an Oracle/RHEL bracke
   trackSessionIdlePrompt(bracketedPath, "Last login...\r\n[user@host My [Project]]$ ");
   assert.equal(bracketedPath.lastIdlePrompt, "[user@host My [Project]]$ ");
   assert.equal(getFreshIdlePrompt(bracketedPath), "[user@host My [Project]]$ ");
+});
+
+test("visible idle prompt survives a PSReadLine erase that leaves the raw tail dirty", () => {
+  // PSReadLine echoes the pending-input clear prefix (`ggd2147483647d` / `i`),
+  // then homes the cursor and erases those keys with CSI. stripAnsi drops the
+  // erase but keeps the keys, so the cached prompt no longer matches the tail.
+  // The screen is still an idle default PowerShell prompt (#3927).
+  const session = {};
+  const prompt = "PS C:\\Users\\alice> ";
+  trackSessionIdlePrompt(session, `Windows PowerShell\r\n${prompt}ggd2147483647d\x1b[20G\x1b[0J`);
+  assert.equal(getFreshIdlePrompt(session), "");
+  assert.equal(extractTrailingIdlePrompt(session._promptTrackTail), "");
+  assert.equal(getVisibleIdlePrompt(session), prompt);
+
+  const backspaced = {};
+  trackSessionIdlePrompt(backspaced, `${prompt}\x08`);
+  assert.equal(getFreshIdlePrompt(backspaced), "");
+  assert.equal(getVisibleIdlePrompt(backspaced), prompt);
+
+  const crHomed = {};
+  trackSessionIdlePrompt(crHomed, `${prompt}\r`);
+  assert.equal(getFreshIdlePrompt(crHomed), "");
+  assert.equal(getVisibleIdlePrompt(crHomed), prompt);
+});
+
+test("visible idle prompt stays empty for pending input, a following line, and an unrecognized prompt", () => {
+  const pending = {};
+  trackSessionIdlePrompt(pending, "PS C:\\Users\\alice> Write-Output ok");
+  assert.equal(getFreshIdlePrompt(pending), "");
+  assert.equal(getVisibleIdlePrompt(pending), "");
+
+  const movedOn = {};
+  trackSessionIdlePrompt(movedOn, "PS C:\\Users\\alice> \r\n");
+  assert.equal(getVisibleIdlePrompt(movedOn), "");
+
+  const custom = {};
+  trackSessionIdlePrompt(custom, "PS C:\\Users\\alice>\r\nexit\r\n❯ ");
+  assert.equal(getVisibleIdlePrompt(custom), "");
+
+  const fullscreen = {};
+  trackSessionIdlePrompt(fullscreen, "PS C:\\Users\\alice> \x1b[?1049h\x1b[Hvim");
+  assert.equal(getVisibleIdlePrompt(fullscreen), "");
+
+  assert.equal(getVisibleIdlePrompt({ _promptTrackTail: "" }), "");
+  assert.equal(getVisibleIdlePrompt(null), "");
 });
 
 test("getFreshIdlePrompt and trackSessionIdlePrompt round-trip through a real PTY-like flow", () => {

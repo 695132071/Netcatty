@@ -76,6 +76,11 @@ class TerminalTextRenderer {
     return this.toString();
   }
 
+  getCursorLine() {
+    const line = this.lines[this.row] || [];
+    return line.map((cell) => cell?.ch || " ").join("");
+  }
+
   toString({ includePendingClearedScreen = false, formatLine = (line) => line } = {}) {
     const lines = includePendingClearedScreen ? this.#linesWithPendingClearedScreen() : this.lines;
     return lines
@@ -515,6 +520,89 @@ function terminalDataToPlainText(terminalData) {
   return renderer.finish();
 }
 
+function terminalCursorLine(terminalData, options) {
+  // Prompt tracking keeps a rolling tail, so the alternate-screen entry may
+  // already have scrolled off. Seed the mode that was active at the first
+  // byte still in that tail; a fresh renderer would otherwise treat TUI paint
+  // as the main screen.
+  const renderer = new TerminalTextRenderer({
+    alternateScreenActive: options?.alternateScreenActive === true,
+  });
+  renderer.feed(terminalData || "");
+  renderer.finish();
+  // A full-screen program owns the display. The main buffer may still hold
+  // the shell prompt from before the alternate screen was entered.
+  if (renderer.alternateScreenActive) return "";
+  return renderer.getCursorLine();
+}
+
+// Alternate-screen transitions from TerminalTextRenderer, without a text
+// buffer. Callers replay the bytes a rolling tail dropped so truncation
+// cannot clear the guard.
+function alternateScreenActiveAfter(text, alternateScreenActive) {
+  let active = alternateScreenActive === true;
+  if (!text) return active;
+  let state = "normal";
+  let escapeBuffer = "";
+
+  for (const ch of text) {
+    if (state === "esc") {
+      if (ch === "[") {
+        state = "csi";
+        escapeBuffer = "";
+        continue;
+      }
+      if (ch === "]") {
+        state = "osc";
+        continue;
+      }
+      if (ch === "c") active = false;
+      state = "normal";
+      continue;
+    }
+    if (state === "csi") {
+      escapeBuffer += ch;
+      if (CSI_FINAL_RE.test(ch)) {
+        active = alternateScreenActiveFromCsi(escapeBuffer, active);
+        state = "normal";
+        escapeBuffer = "";
+      }
+      continue;
+    }
+    if (state === "osc") {
+      if (ch === "\x07") state = "normal";
+      else if (ch === "\x1b") state = "oscEsc";
+      continue;
+    }
+    if (state === "oscEsc") {
+      state = ch === "\\" ? "normal" : "osc";
+      continue;
+    }
+    if (ch === "\x1b") {
+      state = "esc";
+      continue;
+    }
+    if (ch === "\x9b") {
+      state = "csi";
+      escapeBuffer = "";
+    }
+  }
+  return active;
+}
+
+function alternateScreenActiveFromCsi(sequence, active) {
+  const final = sequence.at(-1);
+  if (final !== "h" && final !== "l") return active;
+  const params = sequence.slice(0, -1);
+  if (!params.includes("?")) return active;
+  for (const part of params.replace(/[?><=]/g, "").split(";")) {
+    if (part === "") continue;
+    const mode = Number.parseInt(part, 10);
+    if (mode === 47 || mode === 1047 || mode === 1049) return final === "h";
+  }
+  return active;
+}
+
 function terminalDataToHtmlContent(terminalData) {
   const renderer = new TerminalTextRenderer();
   renderer.feed(terminalData || "");
@@ -531,6 +619,8 @@ module.exports = {
   createTerminalTextRenderer,
   terminalDataToHtmlContent,
   terminalDataToPlainText,
+  terminalCursorLine,
+  alternateScreenActiveAfter,
 };
 
 function createDefaultStyle() {

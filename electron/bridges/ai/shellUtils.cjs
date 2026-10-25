@@ -143,7 +143,20 @@ function looksLikeIdleAutoLogout(outputTail) {
 function trackSessionIdlePrompt(session, chunk) {
   if (!session || typeof chunk !== "string" || !chunk) return "";
 
-  const nextTail = `${session._promptTrackTail || ""}${chunk}`.slice(-MAX_PROMPT_TRACK_TAIL);
+  const previousTail = session._promptTrackTail || "";
+  const combined = `${previousTail}${chunk}`;
+  const overflow = combined.length - MAX_PROMPT_TRACK_TAIL;
+  if (overflow > 0) {
+    // The kept tail no longer starts where the previous tail started. Replay
+    // the dropped prefix so an alternate-screen enter or leave that scrolls
+    // off is still the mode at the first kept byte.
+    const { alternateScreenActiveAfter } = require("../terminalLogSanitizer.cjs");
+    session._promptTrackAltScreenAtTailStart = alternateScreenActiveAfter(
+      combined.slice(0, overflow),
+      session._promptTrackAltScreenAtTailStart === true,
+    );
+  }
+  const nextTail = overflow > 0 ? combined.slice(overflow) : combined;
   session._promptTrackTail = nextTail;
 
   const prompt = extractTrailingIdlePrompt(nextTail);
@@ -180,6 +193,34 @@ function getFreshIdlePrompt(session) {
   if (!normalizedCached) return "";
 
   return normalizedTail.endsWith(normalizedCached) ? cached : "";
+}
+
+// Readiness companion to getFreshIdlePrompt. PSReadLine echoes keys (including
+// the pending-input clear prefix) and then erases them with cursor-column +
+// ED/EL without appending a fresh copy of the prompt. stripAnsi removes the
+// erase, so the raw tail no longer ends with the cached prompt while the
+// screen is still an idle default prompt (#3927). Collapse those cursor and
+// erase operations, then accept only the line the cursor is actually on.
+function getVisibleIdlePrompt(session) {
+  const tail = session?._promptTrackTail;
+  if (typeof tail !== "string" || !tail) return "";
+
+  const { terminalCursorLine } = require("../terminalLogSanitizer.cjs");
+  const cursorLine = terminalCursorLine(tail, {
+    alternateScreenActive: session._promptTrackAltScreenAtTailStart === true,
+  });
+  const rightTrimmed = cursorLine.replace(/\s+$/, "");
+  if (!rightTrimmed) return "";
+  if (
+    !isDefaultPowerShellPromptLine(rightTrimmed)
+    && !isDefaultPosixPromptLine(rightTrimmed)
+    && !isDefaultCmdPromptLine(rightTrimmed)
+  ) {
+    return "";
+  }
+  // Keep one trailing space when the visible prompt has one. Erase-to-end
+  // padding must not become part of the expected prompt.
+  return /\s$/.test(cursorLine) ? `${rightTrimmed} ` : rightTrimmed;
 }
 
 // ── URL helpers ──
@@ -1122,6 +1163,7 @@ module.exports = {
   formatSyntheticEcho,
   extractTrailingIdlePrompt,
   getFreshIdlePrompt,
+  getVisibleIdlePrompt,
   isDefaultPowerShellPromptLine,
   isDefaultCmdPromptLine,
   isDefaultPosixPromptLine,

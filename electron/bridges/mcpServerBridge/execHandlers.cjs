@@ -2,6 +2,7 @@
 // Module-level require: code inside createExecHandlerApi runs under `with (ctx)`
 // where bare `require` resolves to ctx.require (based in electron/bridges/).
 const { clearSessionFlowState } = require("../terminalFlowAck.cjs");
+const { getVisibleIdlePrompt } = require("../ai/shellUtils.cjs");
 const { emitJobDiag } = require("../ai/jobStartupDiagnostics.cjs");
 const {
   ensureSessionShellKind,
@@ -159,7 +160,7 @@ function createExecHandlerApi(ctx) {
             onEchoSuppressionPrime: (marker) => echoCommandToSession(session, sessionId, `${marker}_I`, { syntheticEcho: false }),
             expectedPrompt: getFreshIdlePrompt(session),
             getReadyPrompt: typeof session._promptTrackTail === "string"
-              ? () => getFreshIdlePrompt(session) : undefined,
+              ? () => getFreshIdlePrompt(session) || getVisibleIdlePrompt(session) : undefined,
             typedInput: true,
             echoCommand: (rawCommand) => echoCommandToSession(session, sessionId, rawCommand),
             chatSessionId,
@@ -341,7 +342,7 @@ function createExecHandlerApi(ctx) {
             chatSessionId,
             expectedPrompt: getFreshIdlePrompt(session),
             getReadyPrompt: typeof session._promptTrackTail === "string"
-              ? () => getFreshIdlePrompt(session) : undefined,
+              ? () => getFreshIdlePrompt(session) || getVisibleIdlePrompt(session) : undefined,
             typedInput: true,
             echoCommand: (rawCommand) => echoCommandToSession(session, sessionId, rawCommand),
             maxBufferedChars: MAX_BACKGROUND_JOB_OUTPUT_CHARS,
