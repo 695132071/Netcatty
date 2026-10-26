@@ -14,7 +14,7 @@ function fixture(options = {}) {
     // Domain tests isolate nonce/owner lifecycle. Canonical schema validation is
     // exercised separately when the shared contract is integrated.
     cancelProviderStreams: () => {},
-    validateRequest: () => true, validateResponse: () => true, timeoutMs: 40,
+    validateRequest: () => true, validateResponse: () => true, timeoutMs: 1_000,
     dialog: { showMessageBox: async () => ({ response: 0 }) }, ...options });
   const context = { runtimeId: "r", pluginId: "plugin", pluginVersion: "1", assertActive: async () => {} };
   adapter.setReady(sender, true);
@@ -36,7 +36,7 @@ test("trusted renderer replies require the exact owner and one-use nonce", async
 
 test("owner navigation/hide, runtime release, cancellation and timeout discard pending replies", async () => {
   for (const action of ["navigate", "hide", "runtime", "abort", "timeout"]) {
-    const f = fixture(); const controller = new AbortController();
+    const f = fixture(action === "timeout" ? { timeoutMs: 20 } : {}); const controller = new AbortController();
     const selecting = f.adapter.selectModel({ ...f.context, signal: controller.signal });
     const rejected = assert.rejects(selecting); await tick();
     const request = f.messages.at(-1).payload;
