@@ -13,6 +13,8 @@ import type {
   ConnectionStatusResult,
   ConnectionValidateResult,
   CredentialRef,
+  PluginNetworkRequest,
+  PluginNetworkResponse,
   FeatureId,
   ImporterDetectPayload,
   ImporterDetectResult,
@@ -636,20 +638,7 @@ export interface PluginCredentialBroker {
   createLease(credential: SecretRef | CredentialRef, options: PluginCredentialLeaseOptions): Promise<SecretLeaseRef>;
 }
 
-export interface PluginNetworkRequest {
-  readonly url: string;
-  readonly method?: "GET" | "POST" | "PUT" | "PATCH" | "DELETE" | "HEAD";
-  readonly headers?: Readonly<Record<string, string>>;
-  readonly body?: Readonly<{ encoding: "utf8" | "base64"; data: string }>;
-  readonly timeoutMs?: number;
-}
-
-export interface PluginNetworkResponse {
-  readonly url: string;
-  readonly status: number;
-  readonly headers: Readonly<Record<string, string>>;
-  readonly body: Readonly<{ encoding: "base64"; data: string }>;
-}
+export type { PluginNetworkAuthorization, PluginNetworkRequest, PluginNetworkResponse } from "@netcatty/plugin-contract";
 
 export interface PluginNetworkClient {
   request(request: PluginNetworkRequest): Promise<PluginNetworkResponse>;
@@ -922,3 +911,5 @@ export function definePlugin<T extends NetcattyPlugin>(plugin: T): T {
 export function throwIfCancellationRequested(token: CancellationToken): void {
   if (token.isCancellationRequested) throw new CancellationError();
 }
+
+export { PLUGIN_NETWORK_CREDENTIAL_LEASE_FEATURE } from "@netcatty/plugin-contract";

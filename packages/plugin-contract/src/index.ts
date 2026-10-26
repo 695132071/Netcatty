@@ -49,3 +49,5 @@ export {
 } from "./streamTransport.js";
 
 export { inspectPluginBrandIcon, PLUGIN_BRAND_ICON_FEATURE, PLUGIN_BRAND_ICON_MAX_BYTES, PLUGIN_BRAND_ICON_MAX_EDGE } from './brandIcon.js';
+
+export const PLUGIN_NETWORK_CREDENTIAL_LEASE_FEATURE = "network.credential-lease" as const satisfies import("./generated/plugin-contract.js").NetworkCredentialLeaseFeature;

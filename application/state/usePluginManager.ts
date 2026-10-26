@@ -41,7 +41,7 @@ export function usePluginManager() {
     }
   }, [refresh]);
   return {
-    plugins, available, busy, error, credentialStorageAvailable,
+    plugins, available, busy, error, credentialStorageAvailable, refresh,
     importPackage: () => run(async (bridge) => {
       if (!bridge.selectFile || !bridge.installPluginPackage) throw new Error('Plugin import unavailable');
       const path = await bridge.selectFile('Import plugin package', undefined, [{ name: 'Netcatty plugin', extensions: ['ncpkg'] }]);

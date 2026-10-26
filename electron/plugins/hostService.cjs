@@ -1,6 +1,7 @@
 "use strict";
 
 const path = require("node:path");
+const NETWORK_CREDENTIAL_LEASE_FEATURE = require("./generated/plugin-contract.schema.json").$defs.NetworkCredentialLeaseFeature.const;
 
 const { assertBrowserOnlyPlugin } = require("../../domain/pluginRuntimePolicy.cjs");
 const { isPluginDevelopmentEnabled, PLUGIN_API_VERSION } = require("./constants.cjs");
@@ -92,7 +93,7 @@ function createPluginHostService(options) {
       database,
       netcattyVersion: options.app.getVersion(),
       apiVersion: PLUGIN_API_VERSION,
-      supportedFeatures: [...new Set(["metadata.brand-icon", ...(options.supportedFeatures ?? [])])],
+      supportedFeatures: [...new Set(["metadata.brand-icon", NETWORK_CREDENTIAL_LEASE_FEATURE, ...(options.supportedFeatures ?? [])])],
     });
     const contributionIconService = new PluginContributionIconService({
       database,
@@ -223,7 +224,7 @@ function createPluginHostService(options) {
       paths,
       netcattyVersion: options.app.getVersion(),
       apiVersion: PLUGIN_API_VERSION,
-      supportedFeatures: [...new Set(["metadata.brand-icon", ...(options.supportedFeatures ?? [])])],
+      supportedFeatures: [...new Set(["metadata.brand-icon", NETWORK_CREDENTIAL_LEASE_FEATURE, ...(options.supportedFeatures ?? [])])],
       runtimeDirectory,
       appRoot,
       rpcRegistry,
@@ -353,6 +354,7 @@ function createPluginHostService(options) {
         })
       : null;
     const manager = new PluginManager({
+      permissionEngine,
       database,
       packageStore,
       runtimeSupervisor,

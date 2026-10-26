@@ -355,6 +355,8 @@ export type MenuContribution = {
 
 export type MenuLocation = "commandPalette" | "application" | "host/context" | "terminal/context" | "terminal/toolbar" | "statusBar";
 
+export type NetworkCredentialLeaseFeature = "network.credential-lease";
+
 export type NonResourceScopedPermission = "storage" | "runtime.advanced" | "settings.read" | "settings.write" | "commands" | "menus" | "views" | "clipboard.read" | "clipboard.write" | "terminal.metadata" | "terminal.output" | "terminal.input" | "terminal.decorate" | "terminal.complete" | "terminal.intercept.input" | "terminal.intercept.output" | "vault.metadata" | "vault.write" | "vault.credentials" | "sftp.read" | "sftp.write" | "secrets" | "provider.terminal" | "provider.connection" | "provider.authentication" | "provider.sync" | "provider.importer";
 
 export type NullableRpcId = (RpcId) | (null);
@@ -480,6 +482,34 @@ export type PluginManifestHeader = ({
   version: SemanticVersion;
   engines: PluginEngineHeader;
 } & Record<string, unknown>);
+
+export type PluginNetworkAuthorization = {
+  scheme?: "Basic" | "Bearer";
+  username?: string;
+};
+
+export type PluginNetworkRequest = {
+  url: string;
+  method?: "GET" | "POST" | "PUT" | "PATCH" | "DELETE" | "HEAD";
+  headers?: { [key: string]: string };
+  body?: {
+    encoding: "utf8" | "base64";
+    data: string;
+  };
+  timeoutMs?: number;
+  credentialLease?: SecretLeaseRef;
+  authorization?: PluginNetworkAuthorization;
+};
+
+export type PluginNetworkResponse = {
+  url: string;
+  status: number;
+  headers: { [key: string]: string };
+  body: {
+    encoding: "base64";
+    data: string;
+  };
+};
 
 export type PluginPermission = "storage" | "runtime.advanced" | "settings.read" | "settings.write" | "commands" | "menus" | "views" | "clipboard.read" | "clipboard.write" | "terminal.metadata" | "terminal.output" | "terminal.input" | "terminal.decorate" | "terminal.complete" | "terminal.intercept.input" | "terminal.intercept.output" | "vault.metadata" | "vault.write" | "vault.credentials" | "sftp.read" | "sftp.write" | "network" | "filesystem.read" | "filesystem.write" | "secrets" | "companion.execute" | "provider.terminal" | "provider.connection" | "provider.authentication" | "provider.sync" | "provider.importer";
 

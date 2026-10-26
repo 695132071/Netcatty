@@ -3,6 +3,9 @@
 const fs = require("node:fs/promises");
 const { randomUUID } = require("node:crypto");
 
+const { createDefinitionValidator } = require("./contractValidator.cjs");
+const validateManagedPluginId = createDefinitionValidator("PluginId");
+
 const { raceWithAbort } = require("./rpcRouter.cjs");
 const {
   INLINE_SYNC_OBJECT_SAFE_BYTES,
@@ -14,6 +17,8 @@ const { assertSecretKey } = require("./secretStore.cjs");
 const CHANNELS = Object.freeze({
   status: "netcatty:plugins:status",
   list: "netcatty:plugins:list",
+  permissions: "netcatty:plugins:permissions",
+  revokePermissions: "netcatty:plugins:revoke-permissions",
   catalog: "netcatty:plugins:catalog",
   catalogReadme: "netcatty:plugins:catalog-readme",
   catalogInstall: "netcatty:plugins:catalog-install",
@@ -657,6 +662,36 @@ function registerPluginBridge(ipcMain, options) {
     return options.catalogService.install(payload?.id, payload?.selectionToken);
   });
   handle(CHANNELS.list, async (activeManager) => activeManager.list());
+  const assertManagedPluginId = (payload) => {
+    const id = payload?.pluginId;
+    if (!validateManagedPluginId(id)) {
+      throw new TypeError("Plugin ID is invalid");
+    }
+    return id;
+  };
+  handle(CHANNELS.permissions, async (_manager, payload) => {
+    const pluginId = assertManagedPluginId(payload);
+    if (!options.permissionEngine || !options.database) throw new Error("Plugin permissions are unavailable");
+    const groups = options.permissionEngine.listGrants(pluginId);
+    // Host-only summaries: never return arbitrary audit details, reasons,
+    // operation IDs, credentials, terminal content or future database columns.
+    const grants = ["always", "application", "session"].flatMap((scope) => (
+      (groups[scope] ?? []).map((grant) => ({
+        permission: grant.permission, resource: grant.resource,
+        resourceKind: grant.resourceKind, scope,
+        sessionId: grant.sessionId ?? null, grantedAt: grant.grantedAt,
+      }))
+    ));
+    const audit = options.database.listSecurityAudit(pluginId, 100).map((entry) => ({
+      event: entry.event, createdAt: entry.createdAt,
+      ...(typeof entry.details?.permission === "string" ? { permission: entry.details.permission } : {}),
+      ...(typeof entry.details?.scope === "string" ? { scope: entry.details.scope } : {}),
+    }));
+    return { grants, audit };
+  });
+  handle(CHANNELS.revokePermissions, async (activeManager, payload) => (
+    activeManager.revokePermissions(assertManagedPluginId(payload))
+  ));
   handle(CHANNELS.install, async (activeManager, payload) => activeManager.install(
     payload?.archivePath,
     { enable: typeof payload?.enable === "boolean" ? payload.enable : undefined },

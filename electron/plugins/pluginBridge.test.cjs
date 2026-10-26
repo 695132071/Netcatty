@@ -1635,3 +1635,35 @@ test('brand metadata bridge accepts only trusted UI and forwards only the plugin
   await ipcMain.handlers.get(CHANNELS.brandIcon)({ trusted: true }, { pluginId: 'com.test.brand', path: '/secret', url: 'https://attacker.invalid/' });
   assert.deepEqual(seen, [['com.test.brand']]);
 });
+
+test("permission management is trusted-host-only and projects bounded audit summaries", async () => {
+  const ipcMain = createIpcMain();
+  let reads = 0;
+  const revoked = [];
+  registerPluginBridge(ipcMain, {
+    manager: { async initialize() {}, async revokePermissions(id) { revoked.push(id); return { enabled: false }; } },
+    isTrustedSender: (event) => event?.trusted === true,
+    permissionEngine: { listGrants(id) {
+      reads++;
+      assert.equal(id, "com.example.synthetic");
+      return { always: [{ permission: "network", resource: "https://example.invalid", resourceKind: "exact", grantedAt: 12, declarationHash: "private" }], application: [], session: [] };
+    } },
+    database: { listSecurityAudit(id, limit) {
+      assert.equal(id, "com.example.synthetic");
+      assert.equal(limit, 100);
+      return [{ event: "permission.used", createdAt: 13, details: { permission: "network", scope: "always", operationId: "hidden", secret: "synthetic-private" } }];
+    } },
+  });
+  const payload = { pluginId: "com.example.synthetic" };
+  for (const channel of [CHANNELS.permissions, CHANNELS.revokePermissions]) {
+    await assert.rejects(ipcMain.handlers.get(channel)({}, payload), /Untrusted/);
+    await assert.rejects(ipcMain.handlers.get(channel)({ trusted: true }, { pluginId: "../invalid" }), /Plugin ID/);
+  }
+  assert.equal(reads, 0);
+  assert.deepEqual(await ipcMain.handlers.get(CHANNELS.permissions)({ trusted: true }, payload), {
+    grants: [{ permission: "network", resource: "https://example.invalid", resourceKind: "exact", scope: "always", sessionId: null, grantedAt: 12 }],
+    audit: [{ event: "permission.used", createdAt: 13, permission: "network", scope: "always" }],
+  });
+  assert.deepEqual(await ipcMain.handlers.get(CHANNELS.revokePermissions)({ trusted: true }, payload), { enabled: false });
+  assert.deepEqual(revoked, [payload.pluginId]);
+});

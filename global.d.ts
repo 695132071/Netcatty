@@ -355,6 +355,14 @@ declare global {
     artifact?: { url: string; sha256: string };
   }
 
+  interface NetcattyPluginPermissionSnapshot {
+    grants: Array<{
+      permission: string; resource: string; resourceKind: string;
+      scope: 'always' | 'application' | 'session'; sessionId: string | null; grantedAt: number;
+    }>;
+    audit: Array<{ event: string; createdAt: number; permission?: string; scope?: string }>;
+  }
+
   interface NetcattyInstalledPlugin {
     id: string;
     enabled: boolean;
@@ -436,6 +444,8 @@ declare global {
     getPluginCatalogReadme?(id: string, selectionToken?: string): Promise<string>;
     installCatalogPlugin?(id: string, selectionToken?: string): Promise<NetcattyInstalledPlugin>;
     listPlugins?(): Promise<NetcattyInstalledPlugin[]>;
+    getPluginPermissions?(pluginId: string): Promise<NetcattyPluginPermissionSnapshot>;
+    revokePluginPermissions?(pluginId: string): Promise<NetcattyInstalledPlugin>;
     installPluginPackage?(archivePath: string, options?: { enable?: boolean }): Promise<NetcattyInstalledPlugin>;
     setPluginEnabled?(pluginId: string, enabled: boolean): Promise<NetcattyInstalledPlugin>;
     restartPlugin?(pluginId: string): Promise<NetcattyInstalledPlugin>;

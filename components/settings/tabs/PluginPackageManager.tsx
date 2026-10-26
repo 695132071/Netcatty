@@ -1,6 +1,7 @@
 import { describePluginPermission } from '@/domain/pluginPermissionDescriptions.cjs';
 import { describePluginRuntime } from '@/domain/pluginRuntimePolicy.cjs';
 import React, { useRef, useState } from 'react';
+import { PluginPermissionPanel } from './PluginPermissionPanel';
 import { PluginBrandIcon } from '../../plugins/PluginBrandIcon';
 import { ArrowLeft } from 'lucide-react';
 import { usePluginManager } from '../../../application/state/usePluginManager';
@@ -108,6 +109,7 @@ export function PluginPackageManager({ manager, onSelectionChange }: { manager: 
       {plugin.runtime.lastError && <p role="status" className="break-words text-xs text-destructive">{t('settings.plugins.manager.lastError')}: {plugin.runtime.lastError}</p>}
       {selected === plugin.id && <>
         <PluginPackageDetails plugin={plugin} />
+        <PluginPermissionPanel key={plugin.id} pluginId={plugin.id} onChanged={async () => { await manager.refresh(); }} />
         {removing === plugin.id ? <div className="space-y-2 rounded-lg border border-destructive/30 p-3">
           <p className="text-xs">{t('settings.plugins.manager.removeNote')}</p>
           <Button variant="destructive" size="sm" disabled={manager.busy} onClick={() => { void manager.uninstall(plugin.id); setRemoving(null); }}>{t('settings.plugins.manager.remove')}</Button>

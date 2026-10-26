@@ -103,6 +103,8 @@ function createPreloadApi(ctx) {
   getPluginCatalogReadme: (id, selectionToken) => ipcRenderer.invoke("netcatty:plugins:catalog-readme", { id, selectionToken }),
   installCatalogPlugin: (id, selectionToken) => ipcRenderer.invoke("netcatty:plugins:catalog-install", { id, selectionToken }),
   listPlugins: () => ipcRenderer.invoke("netcatty:plugins:list"),
+  getPluginPermissions: (pluginId) => ipcRenderer.invoke("netcatty:plugins:permissions", { pluginId }),
+  revokePluginPermissions: (pluginId) => ipcRenderer.invoke("netcatty:plugins:revoke-permissions", { pluginId }),
   installPluginPackage: (archivePath, options) => ipcRenderer.invoke("netcatty:plugins:install", {
     archivePath,
     enable: options?.enable === true,

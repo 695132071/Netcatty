@@ -395,3 +395,21 @@ test("CancellationTokenSource finishes disposal when a cancellation listener fai
   assert.throws(() => source.dispose(true), AggregateError);
   assert.doesNotThrow(() => source.dispose(true));
 });
+
+test("network requests expose canonical host-consumed credential leases without plaintext fields", () => {
+  assertSdkTypeChecks(`
+    import type { PluginNetworkRequest, PluginNetworkClient, SecretLeaseRef } from './index.ts';
+    declare const network: PluginNetworkClient;
+    declare const lease: SecretLeaseRef;
+    const request: PluginNetworkRequest = {
+      url: 'https://example.invalid', credentialLease: lease,
+      authorization: { scheme: 'Basic', username: 'synthetic' },
+    };
+    void network.request(request);
+    void network.request({ url: 'https://example.invalid' });
+    // @ts-expect-error Plaintext credential handoff is not supported.
+    void network.request({ url: 'https://example.invalid', authorization: { scheme: 'Bearer', password: 'secret' } });
+    // @ts-expect-error Unsupported authentication schemes fail at compile time.
+    void network.request({ url: 'https://example.invalid', authorization: { scheme: 'Digest' } });
+  `);
+});
