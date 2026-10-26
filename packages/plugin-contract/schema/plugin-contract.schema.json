@@ -998,7 +998,10 @@
     },
     "ViewLocation": {
       "type": "string",
-      "enum": ["aside", "panel", "tab", "modal", "settings"]
+      "enum": ["aside", "panel", "tab", "modal", "settings", "vault-page"]
+    },
+    "VaultPagesFeature": {
+      "const": "views.vault-pages"
     },
     "ViewContribution": {
       "type": "object",

@@ -54,3 +54,5 @@ export { inspectPluginBrandIcon, PLUGIN_BRAND_ICON_FEATURE, PLUGIN_BRAND_ICON_MA
 export const PLUGIN_NETWORK_CREDENTIAL_LEASE_FEATURE = "network.credential-lease" as const satisfies import("./generated/plugin-contract.js").NetworkCredentialLeaseFeature;
 
 export const PLUGIN_HOST_INTERACTION_FEATURE = "host.interactions" as const satisfies import("./generated/plugin-contract.js").HostInteractionFeature;
+
+export const PLUGIN_VAULT_PAGES_FEATURE = "views.vault-pages" as const satisfies import("./generated/plugin-contract.js").VaultPagesFeature;

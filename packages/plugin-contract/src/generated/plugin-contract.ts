@@ -1035,6 +1035,8 @@ export type ThemeIcon = {
   name: string;
 };
 
+export type VaultPagesFeature = "views.vault-pages";
+
 export type ViewContribution = {
   id: ContributionId;
   title: LocalizedText;
@@ -1046,6 +1048,6 @@ export type ViewContribution = {
   retainContextWhenHidden?: boolean;
 };
 
-export type ViewLocation = "aside" | "panel" | "tab" | "modal" | "settings";
+export type ViewLocation = "aside" | "panel" | "tab" | "modal" | "settings" | "vault-page";
 
 export type WireIntegerLimits = {"maxSafeInteger":9007199254740991};

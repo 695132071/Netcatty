@@ -1280,8 +1280,12 @@
         "panel",
         "tab",
         "modal",
-        "settings"
+        "settings",
+        "vault-page"
       ]
+    },
+    "VaultPagesFeature": {
+      "const": "views.vault-pages"
     },
     "ViewContribution": {
       "type": "object",
