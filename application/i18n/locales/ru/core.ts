@@ -1150,6 +1150,8 @@ export const ruCoreMessages: Messages = {
   "settings.plugins.manager.data": "Данные KV остаются на устройстве. Синхронизируются только явно отмеченные несекретные настройки в зашифрованных данных. Пакеты и разрешения не синхронизируются.",
   "settings.plugins.market.results": "Плагинов: {count}",
   "settings.plugins.manager.lastError": "Последняя записанная ошибка",
+  "settings.plugins.manager.details": "Подробнее",
+  "settings.plugins.manager.noDescription": "Описание не предоставлено.",
   "settings.plugins.market.installed": "Установлен",
   "settings.plugins.market.sourceBadge": "Пример исходного кода",
   "settings.plugins.market.title": "Каталог",

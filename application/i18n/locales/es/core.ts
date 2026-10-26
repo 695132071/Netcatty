@@ -1255,6 +1255,8 @@ Resalta el panel dividido enfocado:
   "settings.plugins.manager.data": "Los datos KV permanecen en este dispositivo. Solo los ajustes no secretos marcados para sincronización participan en los datos auxiliares cifrados. Los paquetes y las autorizaciones no se sincronizan.",
   "settings.plugins.market.results": "{count} plugins",
   "settings.plugins.manager.lastError": "Último error registrado",
+  "settings.plugins.manager.details": "Ver detalles",
+  "settings.plugins.manager.noDescription": "No se proporcionó una descripción.",
   "settings.plugins.market.installed": "Instalado",
   "settings.plugins.market.sourceBadge": "Ejemplo de código",
   "settings.plugins.market.title": "Catálogo",

@@ -1255,6 +1255,8 @@ Highlight the focused split pane:
   "settings.plugins.manager.data": "Local KV stays on this device. Only non-secret settings explicitly marked for sync participate in encrypted cloud sidecars. Packages and permission grants do not sync.",
   "settings.plugins.market.results": "{count} plugins",
   "settings.plugins.manager.lastError": "Last recorded error",
+  "settings.plugins.manager.details": "View details",
+  "settings.plugins.manager.noDescription": "No description provided.",
   "settings.plugins.market.installed": "Installed",
   "settings.plugins.market.sourceBadge": "Source example",
   "settings.plugins.market.title": "Marketplace",

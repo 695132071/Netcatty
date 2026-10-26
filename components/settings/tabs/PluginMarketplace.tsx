@@ -72,10 +72,11 @@ export function PluginMarketplaceContent({ catalog, installed, selected, onSelec
         <div className="plugin-marketplace-grid">{filtered.map((item) => {
           const isInstalled = installed.some((plugin) => plugin.id === item.id);
           return <button key={item.id} type="button" data-plugin-id={item.id} aria-current={selected === item.id ? 'true' : undefined} onClick={() => choose(item.id)}
-            className={`min-w-0 space-y-3 rounded-lg border p-4 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${selected === item.id ? 'border-primary/40 bg-primary/10 text-foreground' : 'border-border bg-card hover:bg-muted/50'}`}>
+            className={`min-w-0 flex flex-col gap-3 rounded-lg border p-4 text-left ${entry ? '' : 'min-h-[200px]'} transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${selected === item.id ? 'border-primary/40 bg-primary/10 text-foreground' : 'border-border bg-card hover:bg-muted/50'}`}>
             <div className="flex items-start gap-2"><PluginBrandIcon entry={item} size={32} className="mt-0.5 shrink-0 text-muted-foreground" /><span className="min-w-0 break-words text-sm font-semibold">{item.name}</span></div>
-            <p className="line-clamp-2 text-xs leading-5 text-muted-foreground">{item.description}</p>
-            <p className="break-words text-xs text-muted-foreground">{item.author} · {item.version} · {item.license}</p>
+            <p className="break-words text-xs text-muted-foreground">{item.author}</p>
+            <p className="line-clamp-3 break-words text-sm leading-5 text-muted-foreground">{item.description}</p>
+            <div className="mt-auto flex flex-wrap items-center justify-between gap-2 pt-1 text-xs text-muted-foreground"><span>{item.version} · {item.license}</span><span className="text-foreground">{t('settings.plugins.manager.details')}</span></div>
             <div className="flex flex-wrap gap-2 text-xs text-muted-foreground">{isInstalled && <span className="rounded bg-muted px-2 py-0.5 text-foreground">{t('settings.plugins.market.installed')}</span>}{!item.artifact && <span className="rounded border px-2 py-0.5">{t('settings.plugins.market.sourceBadge')}</span>}</div>
           </button>;
         })}</div>

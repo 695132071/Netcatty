@@ -15,7 +15,7 @@ test('installed grid filters, opens one detail and restores search, scroll and c
   const selections: unknown[] = []; const toggles: unknown[] = []; const focus: string[] = [];
   const pane = { scrollTop: 160 };
   const plugins = ['Alpha', 'Beta'].map((name) => ({ id: `com.test.${name.toLowerCase()}`, enabled: false, activeVersion: '1.0.0',
-    manifest: { name, publisher: 'Example', main: { browser: 'index.js' }, engines: { api: '0.1.0-internal', netcatty: '*' } },
+    manifest: { name, publisher: 'Example', description: `${name} safely formats synthetic greetings without accessing hosts or secrets.`, license: 'MIT', main: { browser: 'index.js' }, engines: { api: '0.1.0-internal', netcatty: '*' } },
     runtime: { lastError: name === 'Beta' ? 'Incompatible version' : null },
   })) as NetcattyInstalledPlugin[];
   const manager = { available: true, plugins, busy: false, setEnabled: async (...args: unknown[]) => { toggles.push(args); } } as unknown as ReturnType<typeof usePluginManager>;
@@ -30,6 +30,11 @@ test('installed grid filters, opens one detail and restores search, scroll and c
     }); });
     const cards = () => renderer.root.findAllByType('button').filter((node) => node.props['data-plugin-card']);
     assert.equal(cards().length, 2);
+    const alphaCard = renderer.root.findAllByType('article')[0];
+    assert.match(JSON.stringify(renderer.toJSON()), /Alpha safely formats synthetic greetings/);
+    assert.ok(alphaCard.findAllByType('p').some((node) => node.children.includes('Example')), 'author has its own line');
+    assert.ok(alphaCard.findAllByType('p').some((node) => node.props.className?.includes('line-clamp-3')), 'card description is bounded');
+    assert.match(JSON.stringify(renderer.toJSON()), /MIT/);
     assert.match(JSON.stringify(renderer.toJSON()), /Incompatible version/);
     assert.ok(renderer.root.findAllByType('div').some((node) => node.props.className?.includes('repeat(auto-fill')));
     const pill = renderer.root.findAllByType('button').find((node) => node.props['aria-pressed'] !== undefined)!;
@@ -41,6 +46,7 @@ test('installed grid filters, opens one detail and restores search, scroll and c
     assert.deepEqual(selections, [plugins[0].id]); assert.equal(pane.scrollTop, 0); assert.equal(focus.at(-1), 'detail');
     assert.equal(renderer.root.findAllByType('input').length, 0);
     assert.match(JSON.stringify(renderer.toJSON()), /Declared permissions/);
+    assert.ok(renderer.root.findByType('article').findAllByType('p').some((node) => node.props.className?.includes('whitespace-pre-wrap')), 'detail shows the complete description');
     const back = renderer.root.findAllByType('button').find((node) => node.children.includes('Installed plugins'))!;
     await act(async () => back.props.onClick()); frames.splice(0).forEach((fn) => fn(0));
     assert.equal(renderer.root.findByType('input').props.value, 'Alpha'); assert.equal(cards().length, 1);
