@@ -32,22 +32,28 @@ function canonicalizeStreamEndpoint(value) {
   });
 }
 
+function normalizeStreamAddress(address) {
+  if (net.isIP(address) === 4) return address;
+  if (net.isIP(address) !== 6) return null;
+  const canonical = new URL(`http://[${address.split("%")[0]}]`).hostname.slice(1, -1);
+  if (!canonical.startsWith("::ffff:")) return canonical;
+  const words = canonical.slice(7).split(":");
+  const n = (parseInt(words[0], 16) * 65536) + parseInt(words[1], 16);
+  return [n >>> 24, (n >>> 16) & 255, (n >>> 8) & 255, n & 255].join(".");
+}
+
 function isLocalControlAddress(address) {
+  address = normalizeStreamAddress(address);
   if (net.isIP(address) === 4) {
     const [a, b] = address.split(".").map(Number);
     return a === 0 || a === 127 || a >= 224 || (a === 169 && b === 254);
   }
   if (net.isIP(address) !== 6) return true;
-  const canonical = new URL(`http://[${address}]`).hostname.slice(1, -1);
-  if (canonical.startsWith("::ffff:")) {
-    const words = canonical.slice(7).split(":");
-    const n = (parseInt(words[0], 16) * 65536) + parseInt(words[1], 16);
-    return isLocalControlAddress([n >>> 24, (n >>> 16) & 255, (n >>> 8) & 255, n & 255].join("."));
-  }
+  const canonical = address;
   // Also exclude compatible/tunnel addresses that can obscure a local IPv4 peer.
   return canonical.startsWith("::") || canonical.startsWith("ff")
     || /^fe[89ab]/u.test(canonical) || canonical.startsWith("2002:")
     || canonical.startsWith("2001:0:");
 }
 
-module.exports = { canonicalizeStreamEndpoint, isLocalControlAddress };
+module.exports = { canonicalizeStreamEndpoint, isLocalControlAddress, normalizeStreamAddress };

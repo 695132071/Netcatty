@@ -88,6 +88,7 @@ class PluginStreamRouter {
         streamId: frame.streamId,
         nextSequence: 1,
         availableBytes: frame.windowBytes,
+        windowBytes: frame.windowBytes,
         updateSequence: -1,
         openController: new AbortController(),
         closed: false,
@@ -139,7 +140,7 @@ class PluginStreamRouter {
       if (outgoing.availableBytes > outgoing.maxCreditBytes) {
         throw new Error(`Plugin stream credit exceeds its negotiated window: ${frame.streamId}`);
       }
-      if (outgoing.terminalKind === "end") {
+      if (outgoing.terminalKind === "end" || outgoing.terminalKind === "cancel") {
         if (outgoing.availableBytes === outgoing.maxCreditBytes) {
           this.outgoing.delete(frame.streamId);
         }
@@ -216,7 +217,17 @@ class PluginStreamRouter {
       ? frame.error
       : new Error(`Plugin stream ${frame.kind}: ${frame.streamId}`);
     state.openController.abort(abortReason);
-    await state.onClose?.(closeReason);
+    try {
+      if (frame.kind === "cancel" && state.availableBytes < state.windowBytes) {
+        // The producer has stopped. Return discarded credit once so it can
+        // retire its terminal state, without releasing more queued writes.
+        state.updateSequence += 1;
+        this.send({ frame: {
+          streamId: state.streamId, sequence: state.updateSequence,
+          kind: "windowUpdate", creditBytes: state.windowBytes - state.availableBytes,
+        } });
+      }
+    } finally { await state.onClose?.(closeReason); }
   }
 
   bindIncoming(streamId, handlers) {
@@ -379,7 +390,6 @@ class PluginStreamRouter {
       state.queuedBytes = 0;
       if (
         !terminalSent
-        || kind !== "end"
         || state.availableBytes === state.maxCreditBytes
       ) {
         this.outgoing.delete(state.streamId);

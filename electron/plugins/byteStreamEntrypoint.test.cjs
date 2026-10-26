@@ -38,13 +38,14 @@ test("installed browser entrypoint uses registered SDK/RPC streams, denial and r
     main: { browser: "browser.js" }, features: { required: ["network.byte-streams", "ai.model-invocation", "context.selected-read"] },
     activationEvents: [`onCommand:${id}.run`],
     permissions: { required: ["commands"], optional: [{ permission: "network.stream", resources: [endpoint] }, "ai.invoke", "context.selected.list", "context.selected.read"] },
-    contributes: { commands: ["run", "pending", "cancel", "spoof", "ai", "selected", "aiSpoof"].map((name) => ({ id: `${id}.${name}`, title: name })) },
+    contributes: { commands: ["run", "retain", "readCancelled", "pending", "cancel", "spoof", "ai", "selected", "aiSpoof"].map((name) => ({ id: `${id}.${name}`, title: name })) },
   };
   await fs.writeFile(path.join(packageRoot, "netcatty.plugin.json"), JSON.stringify(manifest));
   await fs.writeFile(path.join(packageRoot, "browser.js"), `
 export default { activate(context) {
   let connection;
-  for (const name of ["run", "pending", "cancel", "spoof", "ai", "selected", "aiSpoof"]) context.subscriptions.add(context.commands.registerCommand(${JSON.stringify(id)} + "." + name, async () => {
+  for (const name of ["run", "retain", "readCancelled", "pending", "cancel", "spoof", "ai", "selected", "aiSpoof"]) context.subscriptions.add(context.commands.registerCommand(${JSON.stringify(id)} + "." + name, async () => {
+    if (name === "readCancelled") return connection.readable.read();
     if (name === "aiSpoof") return context.ai.openChat({ sourceOwner: "spoofed" });
     if (name === "selected") {
       const selected = await context.selectedContext.list({});
@@ -62,6 +63,10 @@ export default { activate(context) {
     if (name === "spoof") return context.network.connect({ endpoint: ${JSON.stringify(endpoint)}, sourceOwner: "spoofed" });
     connection = await context.network.connect({ endpoint: ${JSON.stringify(endpoint)} });
     if (name === "pending") return { connected: true };
+    if (name === "retain") {
+      await connection.writable.write(Uint8Array.of(42));
+      return Array.from(await connection.readable.read());
+    }
     try {
       await connection.writable.write(Uint8Array.of(0, 255, 42));
       return Array.from(await connection.readable.read());
@@ -114,10 +119,11 @@ export default { activate(context) {
   ]);
   assert.equal((await run("selected")).text, "synthetic selected text");
   await assert.rejects(run("aiSpoof"), /invalid/u);
-  assert.deepEqual(await run("pending"), { connected: true });
+  assert.deepEqual(await run("retain"), [42]);
   service.permissionEngine.revokeApplication(id, "network.stream", endpoint);
   assert.equal(service.byteStreamService.records.size, 0);
   assert.equal(service.byteStreamService.broker.connections.size, 0);
+  await assert.rejects(run("readCancelled"), /cancel/u);
   await run("cancel");
   await run("pending");
   await service.manager.setEnabled(id, false);

@@ -2,6 +2,7 @@
 
 const { randomUUID } = require("node:crypto");
 const os = require("node:os");
+const { normalizeStreamAddress } = require("./byteStreamEndpoint.cjs");
 const { PluginByteStreamBroker, LIMITS } = require("./byteStreamBroker.cjs");
 const { PluginRpcError, RPC_ERRORS } = require("./rpcRouter.cjs");
 const { createDefinitionValidator } = require("./contractValidator.cjs");
@@ -27,7 +28,11 @@ class PluginByteStreamService {
       permissionEngine: options.permissionEngine,
       quotaManager: options.quotaManager,
       // The public host service never forwards transport fixture overrides.
-      isControlEndpoint: (address) => Object.values(os.networkInterfaces()).flat().some((item) => item?.address === address),
+      isControlEndpoint: (address) => {
+        const normalized = normalizeStreamAddress(address);
+        return normalized !== null && Object.values(os.networkInterfaces()).flat()
+          .some((item) => item?.address && normalizeStreamAddress(item.address) === normalized);
+      },
       audit: (pluginId, operation, fields, state) => {
         if (this.sourceMatches(state)) this.database.recordSecurityAudit(pluginId, operation, fields);
       },
