@@ -1176,6 +1176,7 @@ Vaults 分頁維持扁平，不使用這塊背景。
   "settings.plugins.description": "管理已安裝插件，瀏覽精選目錄。",
   'settings.plugins.loading': '正在載入外掛程式設定…',
   "settings.plugins.market.results": "{count} 個插件",
+  "settings.plugins.manager.lastError": "上次記錄的錯誤",
   "settings.plugins.market.installed": "已安裝",
   "settings.plugins.market.sourceBadge": "原始碼範例",
   "settings.plugins.market.title": "插件市場",

@@ -1254,6 +1254,7 @@ Highlight the focused split pane:
   "settings.plugins.manager.advanced": "Advanced runtime: full Node filesystem and network authority. Broker permissions cannot restrict this access. Development preview only.",
   "settings.plugins.manager.data": "Local KV stays on this device. Only non-secret settings explicitly marked for sync participate in encrypted cloud sidecars. Packages and permission grants do not sync.",
   "settings.plugins.market.results": "{count} plugins",
+  "settings.plugins.manager.lastError": "Last recorded error",
   "settings.plugins.market.installed": "Installed",
   "settings.plugins.market.sourceBadge": "Source example",
   "settings.plugins.market.title": "Marketplace",

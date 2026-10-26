@@ -71,7 +71,7 @@ export function PluginMarketplaceContent({ catalog, installed, selected, onSelec
         <div className="plugin-marketplace-grid">{filtered.map((item) => {
           const isInstalled = installed.some((plugin) => plugin.id === item.id);
           return <button key={item.id} type="button" data-plugin-id={item.id} aria-current={selected === item.id ? 'true' : undefined} onClick={() => choose(item.id)}
-            className={`min-w-0 space-y-3 rounded-lg border p-4 text-left transition-colors hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${selected === item.id ? 'bg-accent text-accent-foreground' : 'bg-card'}`}>
+            className={`min-w-0 space-y-3 rounded-lg border p-4 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${selected === item.id ? 'border-primary/40 bg-primary/10 text-foreground' : 'border-border bg-card hover:bg-muted/50'}`}>
             <div className="flex items-start gap-2"><Package size={18} className="mt-0.5 shrink-0 text-muted-foreground" /><span className="min-w-0 break-words text-sm font-semibold">{item.name}</span></div>
             <p className="line-clamp-2 text-xs leading-5 text-muted-foreground">{item.description}</p>
             <p className="break-words text-xs text-muted-foreground">{item.author} · {item.version} · {item.license}</p>
@@ -84,7 +84,7 @@ export function PluginMarketplaceContent({ catalog, installed, selected, onSelec
         <div className="space-y-2"><h4 className="break-words text-xl font-semibold">{entry.name}</h4><p className="text-xs text-muted-foreground">{entry.author} · {entry.version} · {entry.license}</p>
           {installedEntry && <p className="text-xs text-muted-foreground">{t('settings.plugins.market.installed')} · {installedEntry.activeVersion} · {t(installedEntry.enabled ? 'settings.plugins.manager.enabled' : 'settings.plugins.manager.disabled')}</p>}
         </div>
-        {installedEntry?.runtime?.lastError && <p role="status" className="break-words text-xs text-destructive">{installedEntry.runtime.lastError}</p>}
+        {installedEntry?.runtime?.lastError && <p role="status" className="break-words text-xs text-destructive">{t('settings.plugins.manager.lastError')}: {installedEntry.runtime.lastError}</p>}
         <p className="text-sm leading-6 text-muted-foreground">{entry.description}</p>
         <a className="block break-all text-xs text-primary underline underline-offset-4" href={`https://github.com/${entry.repository}/tree/${entry.commit}`} target="_blank" rel="noopener noreferrer">{entry.repository} @ {entry.commit.slice(0, 12)}</a>
         {entry.artifact ? <div className="space-y-2"><p className="text-xs text-muted-foreground">{t('settings.plugins.market.installNote')}</p><Button size="sm" disabled={catalog.busy} onClick={() => void catalog.install(entry.id)}>{t('settings.plugins.market.install')}</Button></div> : <p className="rounded-lg bg-muted/40 p-3 text-xs leading-5">{t('settings.plugins.market.sourceOnly')}</p>}

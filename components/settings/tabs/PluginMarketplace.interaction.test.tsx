@@ -44,6 +44,10 @@ test('catalog keeps search during selection/back, switches detail, and displays 
     assert.match(detailText, /0.9.0/);
     assert.match(detailText, /Disabled/);
     assert.match(detailText, /Incompatible with this host/);
+    assert.match(detailText, /Last recorded error/);
+    assert.match(cards()[0].props.className, /bg-primary\/10/);
+    assert.match(cards()[0].props.className, /border-primary\/40/);
+    assert.doesNotMatch(cards()[0].props.className, /bg-accent|text-accent-foreground/);
     assert.match(detailText, /1 plugins/);
     assert.equal(renderer.root.findAllByType('details').length, 0, 'permissions are not hidden in a disclosure');
     assert.equal(renderer.root.findAll((node) => node.type === 'button' && node.children.includes('Install this version (disabled)')).length, 0, 'source-only cards have no install action');

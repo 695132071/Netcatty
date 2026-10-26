@@ -1169,6 +1169,7 @@ Vaults 标签保持扁平，不使用这块背景。
   "settings.plugins.manager.advanced": "高级运行时：拥有完整 Node 文件系统和网络能力，代理权限无法限制这些访问。仅供开发预览。",
   "settings.plugins.manager.data": "本地 KV 仅保留在此设备。只有明确标记为同步的非秘密设置进入加密云 sidecar。插件包和权限授权不参与同步。",
   "settings.plugins.market.results": "{count} 个插件",
+  "settings.plugins.manager.lastError": "上次记录的错误",
   "settings.plugins.market.installed": "已安装",
   "settings.plugins.market.sourceBadge": "源码示例",
   "settings.plugins.market.title": "插件市场",

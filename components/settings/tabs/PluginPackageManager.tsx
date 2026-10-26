@@ -65,7 +65,7 @@ export function PluginPackageManager({ manager }: { manager: ReturnType<typeof u
         </button>
         <Button variant="outline" size="sm" disabled={manager.busy} onClick={() => void manager.setEnabled(plugin.id, !plugin.enabled)}>{t(plugin.enabled ? 'settings.plugins.manager.disable' : 'settings.plugins.manager.enable')}</Button>
       </div>
-      {plugin.runtime.lastError && <p role="status" className="break-words text-xs text-destructive">{plugin.runtime.lastError}</p>}
+      {plugin.runtime.lastError && <p role="status" className="break-words text-xs text-destructive">{t('settings.plugins.manager.lastError')}: {plugin.runtime.lastError}</p>}
       {selected === plugin.id && <>
         <PluginPackageDetails plugin={plugin} />
         {removing === plugin.id ? <div className="space-y-2 rounded-lg border border-destructive/30 p-3">
