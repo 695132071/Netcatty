@@ -27,7 +27,7 @@ export class PluginHostActionResources {
     return {
       resourceId: host.id, revision: entry.revision,
       label: host.label, hostname: host.hostname, username: host.username,
-      port: host.port, protocol: host.protocol ?? 'ssh',
+      ...(host.port === undefined ? {} : { port: host.port }), protocol: host.protocol ?? 'ssh',
       group: host.group ?? '', tags: [...host.tags],
     };
   }

@@ -24,7 +24,8 @@ export function PluginHostActionHost() {
       {selection ? <>
         <p className="px-4 pt-3 text-xs text-muted-foreground">{t('plugins.hostActions.selectionNote')}</p>
         <p className="px-4 pt-2 text-sm font-medium break-words">{request.title}</p>
-        <SelectHostPanelContent hosts={entry.candidates} customGroups={entry.customGroups} selectedHostIds={state.selectedIds} multiSelect className="flex-1 min-h-0" onSelect={(host) => state.setSelectedIds((ids) => ids.includes(host.id) ? ids.filter((id) => id !== host.id) : [...ids, host.id])} onSelectionChange={state.setSelectedIds} onConfirm={() => { if (!state.busy) void state.respond('submit'); }} />
+        {state.selectedIds.length > 50 && <p role="alert" className="px-4 text-sm text-destructive">{t('plugins.hostActions.selectionLimit')}</p>}
+        <SelectHostPanelContent hosts={entry.candidates} customGroups={entry.customGroups} selectedHostIds={state.selectedIds} multiSelect className="flex-1 min-h-0" confirmDisabled={state.busy || state.selectedIds.length > 50} onSelect={(host) => state.setSelectedIds((ids) => ids.includes(host.id) ? ids.filter((id) => id !== host.id) : [...ids, host.id])} onSelectionChange={state.setSelectedIds} onConfirm={() => { if (!state.busy && state.selectedIds.length <= 50) void state.respond('submit'); }} />
       </> : connection && effective ? <>
         <p className="break-all text-sm font-medium">{effective.label}</p>
         <p className="break-all text-sm">{effective.username ? `${effective.username}@` : ''}{effective.hostname}{effective.port ? `:${effective.port}` : ''} ({effective.protocol ?? 'ssh'})</p>

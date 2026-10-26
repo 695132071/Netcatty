@@ -35,5 +35,6 @@ test('connection warning covers host, inherited, global and output automation wi
   assert.equal(pluginHostRunsSavedScripts(host, [], []), true);
   assert.equal(pluginHostRunsSavedScripts({ ...clean, group: 'Synthetic' }, [{ path: 'Synthetic', startupCommand: 'synthetic-group-script' }], []), true);
   assert.equal(pluginHostRunsSavedScripts(clean, [], [{ id: 'global', label: 'Global', command: 'synthetic', kind: 'script', trigger: 'onConnect', targetsAllHosts: true } as Snippet]), true);
+  assert.equal(pluginHostRunsSavedScripts(clean, [], [{ id: 'output', label: 'Output', command: 'synthetic', kind: 'script', trigger: 'onOutput', triggerPattern: 'ready' } as Snippet]), true);
   assert.equal(pluginHostRunsSavedScripts({ ...clean, outputTriggers: [{ id: 't', pattern: 'ready', scriptId: 'synthetic' }] }, [], []), true);
 });

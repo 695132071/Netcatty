@@ -35,9 +35,9 @@ export function usePluginHostActions() {
     const vault = getAppVaultRuntime();
     const lock = getAppAppLockRuntime();
     if (!vault?.isInitialized || !lock?.initialized || lock.locked) throw new Error('Vault is locked or unavailable');
-    const hosts = vault.readCurrentHosts();
-    resources.current.observe(hosts);
-    return { ...vault, hosts };
+    const actionState = vault.readCurrentHostActionState();
+    resources.current.observe(actionState.hosts);
+    return { ...vault, ...actionState };
   }, []);
 
   const assertCurrent = useCallback((entry: Review) => {

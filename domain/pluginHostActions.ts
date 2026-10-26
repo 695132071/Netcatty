@@ -4,6 +4,8 @@ import { applyGroupDefaults, resolveGroupDefaults } from './groupConfig';
 import { hasHostConnectAutomation } from './hostConnectScripts';
 import { normalizePluginImporterRecords } from './pluginImporter';
 import { buildVaultHostFromDraft } from './vaultHostCreate';
+import { isScriptSnippet } from './snippetScript';
+import { snippetAppliesToOutputTrigger } from './snippetTargets';
 
 // Keep the public host draft a subset of the existing typed importer. In
 // particular, references to credentials, plugin configuration and executable
@@ -60,5 +62,6 @@ export function pluginHostRunsSavedScripts(host: Host, groups: GroupConfig[], sn
   const effective = applyGroupDefaults(host, host.group ? resolveGroupDefaults(host.group, groups) : {});
   return Boolean(effective.startupCommand?.trim())
     || hasHostConnectAutomation(effective, snippets)
+    || snippets.some((snippet) => isScriptSnippet(snippet) && snippetAppliesToOutputTrigger(snippet, effective))
     || Boolean(effective.outputTriggers?.length);
 }

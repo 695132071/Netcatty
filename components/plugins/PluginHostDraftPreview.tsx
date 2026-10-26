@@ -28,7 +28,10 @@ export function PluginHostDraftPreview({ before, draft, busy, onConfirm }: {
     };
     try {
       const after = before ? applyPluginHostEdit(before, value) : normalizePluginHostDraft(value, 'preview');
-      return { value, diff: pluginHostFieldDiff(before, after) };
+      return { value: {
+        label: after.label, group: after.group ?? '', tags: after.tags,
+        ...(!before ? { hostname: after.hostname, username: after.username, port: after.port } : {}),
+      }, diff: pluginHostFieldDiff(before, after) };
     } catch { return null; }
   }, [before, fields]);
   return <div className="space-y-4">

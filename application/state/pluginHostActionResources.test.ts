@@ -9,7 +9,7 @@ test('selected metadata projects only the allowlist and replacement invalidates 
   const resources = new PluginHostActionResources();
   resources.observe([first]);
   const metadata = resources.metadata(first.id);
-  assert.deepEqual(Object.keys(metadata), ['resourceId', 'revision', 'label', 'hostname', 'username', 'port', 'protocol', 'group', 'tags']);
+  assert.deepEqual(Object.keys(metadata), ['resourceId', 'revision', 'label', 'hostname', 'username', 'protocol', 'group', 'tags']);
   assert.equal(JSON.stringify(metadata).includes('synthetic-password'), false);
   resources.observe([first]);
   assert.equal(resources.resolve(first.id, metadata.revision), first);

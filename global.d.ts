@@ -459,7 +459,7 @@ declare global {
     getPluginCatalogReadme?(id: string, selectionToken?: string, sourceId?: string): Promise<string>;
     installCatalogPlugin?(id: string, selectionToken?: string, sourceId?: string, acceptedSourceId?: string): Promise<NetcattyInstalledPlugin>;
     setPluginInteractionReady?(ready: boolean): Promise<boolean>;
-    respondPluginInteraction?(response: import("@netcatty/plugin-contract").HostInteractionResponse): Promise<boolean>;
+    respondPluginInteraction?(response: import("@netcatty/plugin-contract").HostInteractionResponse): Promise<import("@netcatty/plugin-contract").HostInteractionReceipt>;
     onPluginInteraction?(callback: (event: import("@netcatty/plugin-contract").HostInteractionEvent) => void): () => void;
     listPlugins?(): Promise<NetcattyInstalledPlugin[]>;
     getPluginPermissions?(pluginId: string): Promise<NetcattyPluginPermissionSnapshot>;

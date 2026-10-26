@@ -13,6 +13,7 @@ import { TooltipProvider } from './components/ui/tooltip';
 import { ScriptAutomationRoot } from './components/scripts/ScriptAutomationRoot';
 import { ExternalMcpApprovalsHost } from './components/ai/ExternalMcpApprovalsHost';
 import { PluginHostInteractionHost } from './components/plugins/PluginHostInteractionHost';
+import { PluginHostActionHost } from './components/plugins/PluginHostActionHost';
 import { PluginAuthenticationHost } from './components/plugins/PluginAuthenticationHost';
 import { MultilinePasteConfirmHost } from './components/terminal/MultilinePasteConfirmDialog';
 import { useExternalMcpGrantPersister } from './components/ai/useExternalMcpGrantPersister';
@@ -92,6 +93,7 @@ function AppWithProviders({ settings, appLock }: { settings: SettingsState; appL
               <VaultPublisher>
                 <SessionPublisher persistSessionRestore={!isPeerSessionWindow}>
                   <App />
+                  <PluginHostActionHost />
                 </SessionPublisher>
               </VaultPublisher>
             </TooltipProvider>

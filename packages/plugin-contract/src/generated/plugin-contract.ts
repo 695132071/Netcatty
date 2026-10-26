@@ -228,18 +228,27 @@ export type HostInteractionPrompt = {
   pluginId: PluginId;
   pluginVersion: SemanticVersion;
   expiresAt: SafePositiveInteger;
-  phase: "request" | "preview";
-  request: HostInteractionRequest;
+  phase: "request" | "preview" | "commit";
+  request: (HostInteractionRequest) | (VaultHostActionRequest);
   previewText?: string;
+  vaultTarget?: VaultHostLocalTarget;
+  reviewedDraft?: (VaultHostCreateFields) | (VaultHostEditFields);
 };
+
+export type HostInteractionReceipt = (boolean) | ({
+  completionToken: string;
+});
 
 export type HostInteractionRequest = (HostQuickPickRequest) | (HostInputRequest) | (HostClipboardReadRequest) | (HostClipboardWriteRequest);
 
 export type HostInteractionResponse = {
   requestId: string;
   actionToken: string;
-  action: "cancel" | "preview" | "submit";
+  action: "cancel" | "preview" | "submit" | "commit" | "complete" | "fail";
   value?: string;
+  resources?: VaultHostSelectedResources;
+  draft?: (VaultHostCreateFields) | (VaultHostEditFields);
+  scriptsRun?: boolean;
 };
 
 export type HostInteractionResult = ({
@@ -247,7 +256,7 @@ export type HostInteractionResult = ({
 }) | ({
   cancelled: false;
   value: (string) | (true);
-});
+}) | (VaultHostSelectedResult) | (VaultHostActionAccepted);
 
 export type HostQuickPickItem = {
   id: string;
@@ -262,6 +271,8 @@ export type HostQuickPickRequest = {
 };
 
 export type HostSingleLineInputText = string;
+
+export type HostVaultFeature = "vault.host-actions";
 
 export type IconReference = (ThemeIcon) | (PackageIcon);
 
@@ -1235,7 +1246,116 @@ export type ThemePackSelection = {
 
 export type ThemePackVariant = "light" | "dark";
 
+export type VaultHostActionAccepted = {
+  cancelled: false;
+  status: "saved" | "requested";
+};
+
+export type VaultHostActionRequest = ({
+  kind: "vault.selectHosts";
+  title: string;
+}) | ({
+  kind: "vault.requestHostDraft";
+  draft: VaultHostCreateFields;
+}) | ({
+  kind: "vault.requestHostDraft";
+  target: VaultHostRef;
+  expectedRevision: string;
+  draft: VaultHostEditFields;
+}) | ({
+  kind: "vault.requestConnect";
+  target: VaultHostRef;
+  expectedRevision: string;
+});
+
+export type VaultHostActionResult = ({
+  cancelled: true;
+}) | (VaultHostActionAccepted);
+
+export type VaultHostConnectParams = {
+  target: VaultHostRef;
+  expectedRevision: string;
+};
+
+export type VaultHostCreateFields = {
+  label?: string;
+  hostname: string;
+  username?: string;
+  port?: number;
+  group?: string;
+  tags?: Array<string>;
+};
+
+export type VaultHostDraftParams = ({
+  draft: VaultHostCreateFields;
+}) | ({
+  target: VaultHostRef;
+  expectedRevision: string;
+  draft: VaultHostEditFields;
+});
+
+export type VaultHostEditFields = {
+  label?: string;
+  group?: string;
+  tags?: Array<string>;
+};
+
+export type VaultHostLocalTarget = {
+  resourceId: string;
+  revision: string;
+};
+
+export type VaultHostMetadata = {
+  label: string;
+  hostname: string;
+  username: string;
+  port?: number;
+  group: string;
+  tags: Array<string>;
+  protocol: string;
+};
+
+export type VaultHostRef = {
+  kind: "host.selection";
+  scope: "metadata";
+  handle: string;
+  revision: string;
+  expiresAt: SafePositiveInteger;
+};
+
+export type VaultHostSelectedResources = Array<{
+  resourceId: string;
+  revision: string;
+  label: string;
+  hostname: string;
+  username: string;
+  port?: number;
+  group: string;
+  tags: Array<string>;
+  protocol: string;
+}>;
+
+export type VaultHostSelectedResult = {
+  cancelled: false;
+  hosts: Array<{
+    target: VaultHostRef;
+    metadata: VaultHostMetadata;
+  }>;
+  groups: Array<{
+    path: string;
+    members: Array<VaultHostRef>;
+  }>;
+};
+
+export type VaultHostSelectionResult = ({
+  cancelled: true;
+}) | (VaultHostSelectedResult);
+
 export type VaultPagesFeature = "views.vault-pages";
+
+export type VaultSelectHostsParams = {
+  title: string;
+};
 
 export type ViewContribution = {
   id: ContributionId;

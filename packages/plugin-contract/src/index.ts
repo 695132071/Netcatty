@@ -58,6 +58,7 @@ export const PLUGIN_AI_MODEL_INVOCATION_FEATURE = "ai.model-invocation" as const
 export const PLUGIN_SELECTED_CONTEXT_FEATURE = "context.selected-read" as const satisfies import("./generated/plugin-contract.js").PluginSelectedContextFeature;
 
 export const PLUGIN_HOST_INTERACTION_FEATURE = "host.interactions" as const satisfies import("./generated/plugin-contract.js").HostInteractionFeature;
+export const PLUGIN_HOST_VAULT_FEATURE = "vault.host-actions" as const satisfies import("./generated/plugin-contract.js").HostVaultFeature;
 
 export const PLUGIN_VAULT_PAGES_FEATURE = "views.vault-pages" as const satisfies import("./generated/plugin-contract.js").VaultPagesFeature;
 export const PLUGIN_TERMINAL_SIDEBAR_FEATURE = "views.terminal-sidebar" as const satisfies import("./generated/plugin-contract.js").TerminalSidebarFeature;
