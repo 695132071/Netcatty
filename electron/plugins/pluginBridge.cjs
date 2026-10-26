@@ -5,6 +5,7 @@ const { randomUUID } = require("node:crypto");
 
 const { createDefinitionValidator } = require("./contractValidator.cjs");
 const validateManagedPluginId = createDefinitionValidator("PluginId");
+const validateViewFocus = createDefinitionValidator("PluginViewFocusRequest");
 
 const { raceWithAbort } = require("./rpcRouter.cjs");
 const {
@@ -75,6 +76,7 @@ const CHANNELS = Object.freeze({
   importerProgress: "netcatty:plugins:importer-progress",
   openView: "netcatty:plugins:open-view",
   closeView: "netcatty:plugins:close-view",
+  focusView: "netcatty:plugins:focus-view",
   setViewBounds: "netcatty:plugins:set-view-bounds",
   setViewVisibility: "netcatty:plugins:set-view-visibility",
   viewMessage: "netcatty:plugins:view-message",
@@ -1603,6 +1605,12 @@ function registerPluginBridge(ipcMain, options) {
   handle(CHANNELS.closeView, async (_activeManager, payload, event) => {
     if (!viewHost) throw new Error("Plugin views are unavailable");
     await viewHost.close(payload?.instanceId, event.sender);
+    return null;
+  });
+  handle(CHANNELS.focusView, async (_activeManager, payload, event) => {
+    if (!viewHost) throw new Error("Plugin views are unavailable");
+    if (!validateViewFocus(payload)) throw new TypeError("Plugin view focus request is invalid");
+    viewHost.focus(payload.instanceId, event.sender);
     return null;
   });
   handle(CHANNELS.setViewBounds, async (_activeManager, payload, event) => {

@@ -270,6 +270,7 @@ function createPreloadApi(ctx) {
   },
   openPluginView: (payload) => ipcRenderer.invoke("netcatty:plugins:open-view", payload),
   closePluginView: (instanceId) => ipcRenderer.invoke("netcatty:plugins:close-view", { instanceId }),
+  focusPluginView: (payload) => ipcRenderer.invoke("netcatty:plugins:focus-view", payload),
   setPluginViewBounds: (instanceId, bounds) => ipcRenderer.invoke("netcatty:plugins:set-view-bounds", { instanceId, bounds }),
   setPluginViewVisibility: (instanceId, visible) => ipcRenderer.invoke("netcatty:plugins:set-view-visibility", {
     instanceId,
@@ -289,6 +290,11 @@ function createPreloadApi(ctx) {
     const listener = (_event, payload) => callback(payload);
     ipcRenderer.on("netcatty:plugins:view-closed", listener);
     return () => ipcRenderer.removeListener("netcatty:plugins:view-closed", listener);
+  },
+  onPluginViewFocused: (callback) => {
+    const listener = (_event, payload) => callback(payload);
+    ipcRenderer.on("netcatty:plugins:view-focused", listener);
+    return () => ipcRenderer.removeListener("netcatty:plugins:view-focused", listener);
   },
   getPluginScopeCatalog: () => ipcRenderer.invoke("netcatty:plugins:get-scope-catalog"),
   setPluginScopeCatalog: (catalog) => ipcRenderer.invoke("netcatty:plugins:set-scope-catalog", catalog),

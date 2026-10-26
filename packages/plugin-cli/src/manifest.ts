@@ -367,6 +367,8 @@ function validateSemantics(manifest: PluginManifest): string[] {
   }
 
   const requiredFeatures = new Set(manifest.features?.required ?? []);
+  if (manifest.contributes?.views?.some((view) => view.location === 'terminal-sidebar')
+    && !requiredFeatures.has('views.terminal-sidebar')) errors.push('Terminal sidebar pages require views.terminal-sidebar');
   if (manifest.contributes?.views?.some((view) => view.location === 'vault-page')
     && !requiredFeatures.has('views.vault-pages')) {
     errors.push('Vault pages require views.vault-pages');

@@ -1294,11 +1294,32 @@
         "tab",
         "modal",
         "settings",
-        "vault-page"
+        "vault-page",
+        "terminal-sidebar"
       ]
     },
     "VaultPagesFeature": {
       "const": "views.vault-pages"
+    },
+    "TerminalSidebarFeature": {
+      "const": "views.terminal-sidebar"
+    },
+    "PluginViewFocusEvent": {
+      "type": "object",
+      "required": [
+        "instanceId"
+      ],
+      "properties": {
+        "instanceId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        }
+      },
+      "additionalProperties": false
+    },
+    "PluginViewFocusRequest": {
+      "$ref": "#/$defs/PluginViewFocusEvent"
     },
     "ViewContribution": {
       "type": "object",

@@ -13,11 +13,11 @@ import {
 } from '../../infrastructure/config/storageKeys';
 import { localStorageAdapter } from '../../infrastructure/persistence/localStorageAdapter';
 import { useToolbarItemLayout } from './useToolbarItemLayout';
-import type { SidePanelTool } from '../../domain/sidePanelLayout';
+import type { BuiltinSidePanelTool, SidePanelTool } from '../../domain/sidePanelLayout';
 
 export type TerminalSidePanelTabId = SidePanelTool;
 
-export const TERMINAL_SIDE_PANEL_TAB_DEFAULT_ORDER: TerminalSidePanelTabId[] = [
+export const TERMINAL_SIDE_PANEL_TAB_DEFAULT_ORDER: BuiltinSidePanelTool[] = [
   'sftp',
   'browser',
   'scripts',

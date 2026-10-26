@@ -82,7 +82,7 @@ export function usePluginViewLifecycle({
   const mountRef = useRef<HTMLDivElement>(null);
   const resolvedActiveView = useMemo(() => viewContributions.snapshot.plugins
     .flatMap((plugin) => plugin.views.map((view) => ({ plugin, view })))
-    .find(({ view }) => view.id === effectiveRequested?.viewId && view.visible && view.location !== 'vault-page') ?? null,
+    .find(({ view }) => view.id === effectiveRequested?.viewId && view.visible && !['vault-page', 'terminal-sidebar'].includes(view.location)) ?? null,
   [effectiveRequested?.viewId, viewContributions.snapshot.plugins]);
   const stableActiveViewRef = useRef<PluginViewSnapshotSelection<ResolvedPluginView> | null>(null);
   const activeView = resolvePluginViewSnapshotSelection({

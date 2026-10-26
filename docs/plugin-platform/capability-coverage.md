@@ -32,7 +32,7 @@ mean complete. Existing APIs remain available.
 | AI, MCP, automation | Host agent catalog and harness exist separately | No generic plugin AI or tool forwarding | Selection-to-proposal workflow through the same controlled primitives | Content disclosure, account authority and model cost | Explicit content sharing plus service origin/budget | No inherited history, tools, account, or hidden cron | Controlled workflow planned. Generic host AI and visible schedules deferred to distinct product decision |
 | Known hosts, app lock and global security | Host security management UI | No plugin management API | Future allowlisted security-page navigation | Host-key trust, unlock, keys and security policy affect all sessions | Host navigation action only | No mutation or sensitive DTO | Security policy mutation, private-key reads, auto-trust and unlocking deferred indefinitely |
 | Plugin blob/cache | Local KV exists | No exclusive blob cache | Evaluate bounded plugin-owned cache when a real workflow needs it | Disk growth and lifecycle ambiguity | Plugin namespace, no arbitrary path | Size quota, eviction and uninstall policy required | Deferred until a concrete larger-than-KV workflow establishes value and retention policy |
-| Vault and terminal navigation | `tab` mounts a sandbox page through TopTabs/QuickSwitcher; aside/panel are overlays | No Vault subpage registry or terminal side-panel plugin tool. `settings` is a detail entry, not a new settings category | Accepted independent slice: host-owned namespaced Vault pages in an Extensions group, mounted in the Vault content area through existing ViewHost; then terminal pane/split pages for the selected session | Navigation cannot disclose session contents or replace built-in/security navigation | Declared page contribution plus host selection. Content reads have independent permissions | Host order/when/focus, cancellation of late open, view cleanup on hide/update/disable/uninstall, safe invalid-link fallback | [Vault page slice](./vault-pages.md) implemented and synthetic-tested: actual Vault content slot, private Scratchpad, catalog withdrawal, host occlusion, reserved-open cancellation, owner/crash/lock cleanup. Exact CI/independent/native acceptance pending. Terminal pane/split pages remain the next separate stage. No arbitrary router/DOM API |
+| Vault and terminal navigation | `tab` mounts a sandbox page through TopTabs/QuickSwitcher; aside/panel are overlays | No Vault subpage registry or terminal side-panel plugin tool. `settings` is a detail entry, not a new settings category | Accepted independent slice: host-owned namespaced Vault pages in an Extensions group, mounted in the Vault content area through existing ViewHost; then terminal pane/split pages for the selected session | Navigation cannot disclose session contents or replace built-in/security navigation | Declared page contribution plus host selection. Content reads have independent permissions | Host order/when/focus, cancellation of late open, view cleanup on hide/update/disable/uninstall, safe invalid-link fallback | [Vault page slice](./vault-pages.md) implemented and synthetic-tested: actual Vault content slot, private Scratchpad, catalog withdrawal, host occlusion, reserved-open cancellation, owner/crash/lock cleanup. Exact CI/independent/native acceptance pending. [Terminal sidebar slice](./terminal-sidebar.md) also implemented with actual pane/split mounting, owner focus and session-change cleanup; no automatic session data. Exact CI/independent/native acceptance pending for the new stack. No arbitrary router/DOM API |
 | Distribution and runtimes | Browser-only public catalog, immutable packages, advanced developer gate | Signing/trust and release remain separate phase | Retain existing boundary | Package execution and publisher trust | Pinned catalog selection, hash, engine/features | Existing install transaction, quarantine and cleanup | No merge/release. Do not extend to arbitrary Node, IPC, shell, or global capabilities |
 
 ## Delivery order and stopping rule
@@ -98,3 +98,16 @@ components/hooks, and localized strings. PluginMarketplace/PluginPackageManager
 layouts are not rewritten. Native acceptance belongs to the parent with a new
 fixture-specific own-views approval. Sidebar, ThemePack, selected context and
 SFTP remain unfinished; this checkpoint is not overall completion.
+
+## Terminal sidebar checkpoint
+
+`views.terminal-sidebar` exposes one more existing sandbox view placement,
+using only the existing own-views permission. The host owns navigation,
+selection, split/close and focus. Its context is a surface string only; no
+terminal DTO or resource authority is implied. The Session Scratchpad fixture
+uses explicitly typed synthetic text and its own view state.
+
+This stage builds on ordinary merges containing #3960 8e4dd0c and the #3971
+stale-layout callback fix. Prior QA heads and PR bases are not rewritten. The
+ThemePack implementation, selected-context/drafts and file handles remain
+unfinished; parent review/native gates still apply to each delivered head.

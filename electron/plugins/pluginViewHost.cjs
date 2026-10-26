@@ -62,7 +62,7 @@ class PluginViewHost {
         if (["plugin-disabled", "runtime-stopped", "runtime-error", "runtime-quarantined"].includes(event.reason)
           && instance.pluginId === event.pluginId) {
           void this.close(instance.instanceId, undefined, event.reason);
-        } else if (instance.location === "vault-page") {
+        } else if (["vault-page", "terminal-sidebar"].includes(instance.location)) {
           try { this.contributionService.assertViewActivationCurrent(instance.activation, { context: instance.context }); }
           catch { void this.close(instance.instanceId, undefined, "contribution-unavailable"); }
         }
@@ -233,7 +233,7 @@ class PluginViewHost {
       });
       contents.on("will-attach-webview", (event) => event.preventDefault());
       contents.once("render-process-gone", () => { void this.close(instanceId, undefined, "view-renderer-gone"); });
-      if (view.location === "vault-page") contents.on("before-input-event", (event, input) => {
+      if (["vault-page", "terminal-sidebar"].includes(view.location)) contents.on("before-input-event", (event, input) => {
         if (input.type === "keyDown" && input.key === "Escape" && !input.control && !input.meta && !input.alt && !input.shift) {
           event.preventDefault();
           void this.close(instanceId, undefined, "host-escape");
@@ -256,9 +256,13 @@ class PluginViewHost {
         sessionRegistration,
         state: "opening",
         attached: false,
-        visible: view.location !== "vault-page",
+        visible: !["vault-page", "terminal-sidebar"].includes(view.location),
       };
       this.instances.set(instanceId, instance);
+      contents.on("focus", () => {
+        if (this.instances.get(instanceId) !== instance || instance.state !== "open") return;
+        try { owner.webContents?.send("netcatty:plugins:view-focused", { instanceId }); } catch {}
+      });
       this.byWebContentsId.set(contents.id, instance);
       owner.once?.("closed", ownerClosed);
       contents.once("destroyed", () => { void this.close(instanceId, undefined, "contents-destroyed"); });
@@ -271,7 +275,7 @@ class PluginViewHost {
       this.#assertOpening(opening);
       // Embedded pages start hidden until the trusted renderer checks host
       // dialogs/lock/popovers. A late open must never cover a security surface.
-      if (view.location === "vault-page") contentsView.setVisible(false);
+      if (["vault-page", "terminal-sidebar"].includes(view.location)) contentsView.setVisible(false);
       owner.contentView.addChildView(contentsView);
       instance.attached = true;
       contentsView.setBounds(normalizeBounds(payload.bounds));
@@ -301,6 +305,12 @@ class PluginViewHost {
     instance.visible = visible;
     instance.view.setVisible(visible);
     if (rising && instance.location === "vault-page" && instance.owner.isFocused?.()) instance.contents.focus?.();
+  }
+
+  focus(instanceId, sender) {
+    const instance = this.#ownedInstance(instanceId, sender);
+    if (!instance.visible || this.isLocked() || instance.owner.isFocused?.() !== true) return;
+    instance.contents.focus?.();
   }
 
   async postMessage(instanceId, message, sender) {

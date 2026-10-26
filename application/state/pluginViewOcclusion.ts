@@ -1,7 +1,7 @@
 /** Native child views must yield to host dialogs and overlapping portals. */
 export function isPluginViewOccluded(mount: HTMLElement): boolean {
   const rect = mount.getBoundingClientRect();
-  if (!mount.isConnected || mount.closest('[hidden], [inert]')) return true;
+  if (!mount.isConnected || mount.closest('[hidden], [inert], [aria-hidden="true"]')) return true;
   const overlays = mount.ownerDocument.querySelectorAll(
     '[data-app-lock-overlay], [role="dialog"], [role="alertdialog"], '
     + '[role="menu"][data-state="open"], [data-radix-popper-content-wrapper] > *, [data-native-view-occluder]',

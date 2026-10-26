@@ -931,4 +931,5 @@ export { PLUGIN_NETWORK_CREDENTIAL_LEASE_FEATURE } from "@netcatty/plugin-contra
 
 export { PLUGIN_HOST_INTERACTION_FEATURE } from "@netcatty/plugin-contract";
 export { PLUGIN_VAULT_PAGES_FEATURE } from "@netcatty/plugin-contract";
+export { PLUGIN_TERMINAL_SIDEBAR_FEATURE } from "@netcatty/plugin-contract";
 export { PLUGIN_INTERACTIVE_COMMAND_FEATURE } from "@netcatty/plugin-contract";

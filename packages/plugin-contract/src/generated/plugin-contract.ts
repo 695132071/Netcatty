@@ -587,6 +587,12 @@ export type PluginNetworkResponse = {
 
 export type PluginPermission = "storage" | "runtime.advanced" | "settings.read" | "settings.write" | "commands" | "menus" | "views" | "ui.interact" | "clipboard.read" | "clipboard.write" | "terminal.metadata" | "terminal.output" | "terminal.input" | "terminal.decorate" | "terminal.complete" | "terminal.intercept.input" | "terminal.intercept.output" | "vault.metadata" | "vault.write" | "vault.credentials" | "sftp.read" | "sftp.write" | "network" | "filesystem.read" | "filesystem.write" | "secrets" | "companion.execute" | "provider.terminal" | "provider.connection" | "provider.authentication" | "provider.sync" | "provider.importer";
 
+export type PluginViewFocusEvent = {
+  instanceId: string;
+};
+
+export type PluginViewFocusRequest = PluginViewFocusEvent;
+
 export type PluginWireErrorCode = -32001 | -32002 | -32003 | -32004 | -32005 | -32006 | -32007 | -32008 | -32009 | -32010 | -32011 | -32012 | -32013 | -32014 | -32015 | -32016;
 
 export type ProgressBegin = {
@@ -1035,6 +1041,8 @@ export type TerminalSessionSnapshot = {
   alternateScreen?: boolean;
 };
 
+export type TerminalSidebarFeature = "views.terminal-sidebar";
+
 export type ThemeIcon = {
   kind: "theme";
   name: string;
@@ -1053,6 +1061,6 @@ export type ViewContribution = {
   retainContextWhenHidden?: boolean;
 };
 
-export type ViewLocation = "aside" | "panel" | "tab" | "modal" | "settings" | "vault-page";
+export type ViewLocation = "aside" | "panel" | "tab" | "modal" | "settings" | "vault-page" | "terminal-sidebar";
 
 export type WireIntegerLimits = {"maxSafeInteger":9007199254740991};

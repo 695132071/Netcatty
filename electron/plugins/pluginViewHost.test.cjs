@@ -25,6 +25,7 @@ function fixture(options = {}) {
       if (options.loadURL) await options.loadURL(this);
     }
     send(channel, payload) { this.sent.push([channel, payload]); }
+    focus() { this.emit("focus"); }
     isDestroyed() { return this.destroyed; }
     close() { this.destroyed = true; this.emit("destroyed"); }
   }
@@ -454,4 +455,22 @@ test("host reload, host/view renderer exit, and host Escape close embedded pages
     assert.equal(sender.listenerCount("render-process-gone"), 0, action);
     await value.host.shutdown();
   }
+});
+
+test("sidebar native focus is explicit, owner-bound and cannot raise a hidden or locked page", async () => {
+  let locked = false;
+  const value = fixture({ location: "terminal-sidebar", isLocked: () => locked });
+  const { owner, sender } = value.createOwner(); const other = value.createOwner();
+  const events = [];
+  sender.send = (channel, event) => events.push({ channel, event }); owner.webContents = sender; owner.isFocused = () => true;
+  const { instanceId } = await value.host.open({ viewId: "com.example.view.panel", scopeId: "window-1:terminal-sidebar" }, sender);
+  assert.equal(value.views[0].visible, false);
+  value.host.focus(instanceId, sender); assert.deepEqual(events, []);
+  value.host.setVisible(instanceId, true, sender); assert.deepEqual(events, [], "revealing multiple panes does not focus each one");
+  assert.throws(() => value.host.focus(instanceId, other.sender), /another window/i);
+  value.host.focus(instanceId, sender);
+  assert.deepEqual(events, [{ channel: "netcatty:plugins:view-focused", event: { instanceId } }]);
+  locked = true; value.host.focus(instanceId, sender); assert.equal(events.length, 1);
+  locked = false; value.setActivationCurrent(false); value.changeListener()({ reason: "context-key-changed" });
+  assert.equal(owner.children.length, 0); await value.host.shutdown();
 });

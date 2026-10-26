@@ -1,0 +1,5 @@
+:root { color-scheme: light dark; font-family: system-ui, sans-serif; }
+body { margin: 0; padding: 24px; } main { max-width: 720px; margin: auto; }
+textarea { display: block; box-sizing: border-box; width: 100%; margin: 12px 0; padding: 10px; font: inherit; }
+button { padding: 8px 12px; margin: 0 8px 0 0; font: inherit; }
+#status { min-height: 1.5em; }

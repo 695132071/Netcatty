@@ -581,10 +581,12 @@ declare global {
     closePluginView?(instanceId: string): Promise<void>;
     setPluginViewBounds?(instanceId: string, bounds: { x: number; y: number; width: number; height: number }): Promise<void>;
     setPluginViewVisibility?(instanceId: string, visible: boolean): Promise<void>;
+    focusPluginView?(payload: import('@netcatty/plugin-contract').PluginViewFocusRequest): Promise<void>;
     postPluginViewMessage?(instanceId: string, message: unknown): Promise<void>;
     onPluginContributionsChanged?(callback: (event: { reason: string; pluginId: string | null; revision: number }) => void): () => void;
     onPluginViewMessage?(callback: (event: { pluginId: string; viewId: string; message: unknown }) => void): () => void;
     onPluginViewClosed?(callback: (event: NetcattyPluginViewClosedEvent) => void): () => void;
+    onPluginViewFocused?(callback: (event: import('@netcatty/plugin-contract').PluginViewFocusEvent) => void): () => void;
     getPluginScopeCatalog?(): Promise<NetcattyPluginScopeCatalog>;
     setPluginScopeCatalog?(catalog: NetcattyPluginScopeCatalog): Promise<void>;
     onPluginScopeCatalogChanged?(callback: (catalog: NetcattyPluginScopeCatalog) => void): () => void;
