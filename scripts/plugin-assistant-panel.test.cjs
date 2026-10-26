@@ -164,4 +164,17 @@ test("expired real selected Note requires explicit re-selection, then fresh cont
   assert.ok(grants.every((grant) => grant.permission === "context.selected.read" && grant.allowedScopes[0] === "once"
     && grant.resources[0] === `selected:${newHandle}:v1`));
   assert.match(f.element("prompt").value, /must survive/);
+  // Repeat with both lifetimes expired, without manually refreshing the model.
+  now = 600_002;
+  f.send(); await f.waitFor(() => !f.element("prompt").disabled);
+  assert.match(f.element("status").textContent, /reference expired/i);
+  assert.equal(modelCalls, 1); assert.equal(selections, 2);
+  f.element("choose-reference").click(); await f.waitFor(() => f.element("status").textContent.startsWith("References updated"));
+  const repeatedHandle = selector.options[1].value;
+  assert.notEqual(repeatedHandle, newHandle); assert.equal(selector.value, "");
+  selector.value = repeatedHandle;
+  f.send(); await f.waitFor(() => f.element("status").textContent === "Complete");
+  assert.equal(modelCalls, 2); assert.equal(grants.at(-1).resources[0], `selected:${repeatedHandle}:v1`);
+  await assert.rejects(service.selected.assertCurrent({ handle: newHandle, version: "v1" }, caller));
+  assert.match(f.element("prompt").value, /must survive/);
 });

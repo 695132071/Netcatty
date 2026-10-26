@@ -29,8 +29,9 @@ browser runtime entry. It has no Node entry, networking, filesystem, secrets,
 storage, terminal, or command-execution permission. Its `commands` permission
 registers its own view callbacks. It cannot execute terminal commands.
 The six-file artifact at this checkpoint has SHA-256
-`c0f733697b8f43a8591f39c02aeea5d8b7b4bd544b642ed87e758e62d98696a5`.
-This replaces the earlier `8ef162d1...` artifact after the session recovery repair.
+`c7d784d5c3bd2feb463afd58eae3a9594615395b168174cb8a3d0677584ae395`.
+This replaces the earlier `c0f73369...` artifact after the selected-Note expiry
+recovery repair.
 
 ## Start the deterministic fixture
 
@@ -111,9 +112,19 @@ Synthetic retry plan: add a retry button and show a connection status label.
     must not increase. Change the selected configured model in host Settings,
     refresh again, and check the displayed model before explicitly sending.
     Refresh and failed requests must never automatically resend inference.
+13. Keep a selected synthetic Note until its five-minute handle expires. Send
+    must explain that the reference expired without reading text or calling the
+    fixture. Refresh model must not share the Note again. Click **Choose
+    reference**, confirm the Note in the host chooser, select its fresh reference
+    in the dropdown, and click Send yourself. Deny the fresh content permission
+    once and cancel text review once before allowing a successful fixture run.
+    The draft must survive all steps, and no request may be silently retried.
 
 The expiry regression in `scripts/plugin-assistant-panel.test.cjs` controls the
-panel clock and advances past 300,000 ms without network calls. The broker budget
+panel and actual host service/selected-context authority clocks and advances past
+300,000 ms using a real selected Note handle, without network calls. It checks
+fresh host selection, old-handle rejection, independent content permission and
+exact-text review, and a successful explicit send. The broker budget
 regression controls its clock across runtime replacement and the minute boundary.
 Do not change the host clock or production limits to reproduce those cases in
 native QA.
@@ -131,5 +142,9 @@ blocked; after newer exact maintainer security-task evidence, the same worker
 completed its bounded read-only review at `173ef5abb`, with no repeated restriction
 or alternate route/model. Two additional P2 findings were reproduced and repaired
 in `ee5a4a406` (stable source budgets) and `e1cb95ee8` (sample session recovery).
-Independent verification of those corrections is still pending. CI and native
-evidence do not replace that verification.
+Correction review independently confirmed the stable source-budget fix, then
+identified the remaining selected-Note expiry path at `07eb68c5e`. Commit
+`9e7c9df58` repairs that path with explicit reference re-selection and fresh
+handles after host confirmation. The real-Note panel and service regressions
+failed before repair and pass afterward. Independent verification of this latest
+correction remains pending. CI and native evidence do not replace it.
