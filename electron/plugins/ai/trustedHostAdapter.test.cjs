@@ -65,3 +65,13 @@ test("selected text review is Cancel by default and cannot approve after cancell
   await tick(); assert.equal(options.defaultId, options.cancelId); assert.equal(options.cancelId, 1);
   controller.abort(); resolve({ response: 0 }); await assert.rejects(review); f.adapter.shutdown();
 });
+
+test("text review tolerates native permission focus restoration without focusing a window", async () => {
+  const f = fixture(); let focused = false; let focusCalls = 0;
+  f.window.isFocused = () => focused; f.window.focus = () => { focusCalls++; };
+  const timer = setTimeout(() => { focused = true; }, 25);
+  try {
+    assert.equal(await f.adapter.reviewText({ title: "Synthetic", scope: "note", version: "1", text: "Synthetic", pluginId: "plugin" }, f.context), true);
+    assert.equal(focusCalls, 0);
+  } finally { clearTimeout(timer); f.adapter.shutdown(); }
+});

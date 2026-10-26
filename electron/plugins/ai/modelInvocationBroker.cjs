@@ -36,6 +36,7 @@ class ModelInvocationBroker {
     this.clock = clock;
     this.limits = boundedLimits(limits);
     this.chats = new Map();
+    this.openings = new Set();
     this.turns = new Map();
     this.rates = new Map();
     this.closed = false;
@@ -81,22 +82,33 @@ class ModelInvocationBroker {
 
   async open(context) {
     const binding = await this.#binding(context);
-    // Host chooses from configured models. Plugin parameters cannot override it.
-    const model = await this.selectModel(context);
-    await context.assertActive();
-    if (!model || typeof model.invoke !== "function" || typeof model.isCurrent !== "function"
-      || typeof model.label !== "string" || model.label.length > 160 || !await model.isCurrent()) {
-      throw fail("unavailable", "Choose a configured model in the host first");
-    }
-    await context.assertActive();
     this.#prune();
-    if (this.closed || this.chats.size >= this.limits.chats
-      || [...this.chats.values()].filter((chat) => chat.runtimeId === context.runtimeId).length >= this.limits.perRuntime) {
+    if (this.closed || this.chats.size + this.openings.size >= this.limits.chats
+      || [...this.chats.values(), ...this.openings].filter((chat) => chat.runtimeId === context.runtimeId).length >= this.limits.perRuntime) {
       throw fail("resourceExhausted", "Plugin chat limit reached");
     }
-    const chat = { ...binding, handle: randomUUID(), model, expiresAt: this.clock() + this.limits.chatMs, turn: null };
-    this.chats.set(chat.handle, chat);
-    return { chatHandle: chat.handle, model: model.label, expiresAt: chat.expiresAt };
+    // Reserve before awaiting the host picker. Revoke/close can invalidate this
+    // admission even if a host callback ignores cancellation and returns late.
+    const opening = { ...binding, active: true };
+    this.openings.add(opening);
+    let model;
+    try {
+      model = await this.selectModel(context);
+      const current = await this.#binding(context);
+      if (!opening.active || this.closed || current.owner !== binding.owner) throw fail("cancelled", "Model selection was revoked");
+      if (!model || typeof model.invoke !== "function" || typeof model.isCurrent !== "function"
+        || typeof model.label !== "string" || model.label.length > 160 || !await model.isCurrent()) {
+        throw fail("unavailable", "Choose a configured model in the host first");
+      }
+      await context.assertActive();
+      if (!opening.active || this.closed || (await this.#binding(context)).owner !== binding.owner) throw fail("cancelled", "Model selection was revoked");
+      const chat = { ...binding, handle: randomUUID(), model, expiresAt: this.clock() + this.limits.chatMs, turn: null };
+      this.chats.set(chat.handle, chat);
+      return { chatHandle: chat.handle, model: model.label, expiresAt: chat.expiresAt };
+    } catch (error) {
+      try { Promise.resolve(model?.dispose?.()).catch(() => {}); } catch {}
+      throw this.#safe(error);
+    } finally { this.openings.delete(opening); }
   }
 
   async start({ chatHandle, prompt, contexts = [] }, context) {
@@ -251,14 +263,16 @@ class ModelInvocationBroker {
     await this.#ownedChat(chat, context); this.#close(chat); return true;
   }
   releaseRuntime(runtimeId) {
+    for (const opening of [...this.openings]) if (opening.runtimeId === runtimeId) { opening.active = false; this.openings.delete(opening); }
     for (const chat of [...this.chats.values()]) if (chat.runtimeId === runtimeId) this.#close(chat);
     this.contexts?.releaseRuntime(runtimeId);
   }
   releaseOwner(owner) {
+    for (const opening of [...this.openings]) if (opening.owner === owner) { opening.active = false; this.openings.delete(opening); }
     for (const chat of [...this.chats.values()]) if (chat.owner === owner) this.#close(chat);
     this.contexts?.releaseOwner(owner);
   }
-  shutdown() { this.closed = true; for (const chat of [...this.chats.values()]) this.#close(chat); this.rates.clear(); this.contextSubscription?.dispose(); }
+  shutdown() { this.closed = true; for (const opening of this.openings) opening.active = false; this.openings.clear(); for (const chat of [...this.chats.values()]) this.#close(chat); this.rates.clear(); this.contextSubscription?.dispose(); }
 }
 
 module.exports = { ModelInvocationBroker, MODEL_INVOCATION_LIMITS: LIMITS };

@@ -24,11 +24,13 @@ class PluginAITrustedHostAdapter {
   }
 
   registerIpc(ipcMain) {
+    if (this.ipcRegistration) throw new Error("Trusted AI host IPC is already registered");
     this.validateRequest ??= createDefinitionValidator("PluginAIHostRequest");
     this.validateResponse ??= createDefinitionValidator("PluginAIHostResponse");
     ipcMain.handle(CHANNELS.ready, (event, ready) => this.setReady(event.sender, ready));
     ipcMain.handle(CHANNELS.response, (event, response) => this.respond(event.sender, response));
-    return { dispose: () => { ipcMain.removeHandler(CHANNELS.ready); ipcMain.removeHandler(CHANNELS.response); } };
+    this.ipcRegistration = { dispose: () => { ipcMain.removeHandler(CHANNELS.ready); ipcMain.removeHandler(CHANNELS.response); } };
+    return this.ipcRegistration;
   }
 
   #owner() {
@@ -170,7 +172,15 @@ class PluginAITrustedHostAdapter {
   async reviewText(selected, context) {
     await this.assertActive(context);
     const window = this.getWindow(); const generation = this.generation;
-    if (window.isFocused?.() !== true || typeof this.dialog?.showMessageBox !== "function") return false;
+    if (typeof this.dialog?.showMessageBox !== "function") return false;
+    // A native permission dialog can resolve just before its parent regains
+    // focus. Wait briefly for this exact owner, without focusing it ourselves.
+    const focusDeadline = Date.now() + 1_000;
+    while (window.isFocused?.() !== true) {
+      await this.assertActive(context);
+      if (generation !== this.generation || Date.now() >= focusDeadline) return false;
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
     const controller = new AbortController();
     const signal = context.signal ? AbortSignal.any([context.signal, controller.signal]) : controller.signal;
     this.reviewControllers.set(controller, context.runtimeId);
@@ -200,7 +210,7 @@ class PluginAITrustedHostAdapter {
     for (const listener of [...this.listeners]) { try { listener(); } catch {} }
     if (releaseOwner) { this.ownerCleanup?.(); this.ownerCleanup = null; this.owner = null; }
   }
-  shutdown() { this.closed = true; this.invalidate(true); this.unsubscribeLock?.(); this.listeners.clear(); }
+  shutdown() { this.ipcRegistration?.dispose(); this.ipcRegistration = null; this.closed = true; this.invalidate(true); this.unsubscribeLock?.(); this.listeners.clear(); }
 }
 
 module.exports = { PluginAITrustedHostAdapter, PLUGIN_AI_HOST_CHANNELS: CHANNELS };

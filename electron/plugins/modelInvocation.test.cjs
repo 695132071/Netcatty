@@ -5,3 +5,4 @@ require("./context/selectedContextAuthority.test.cjs");
 require("./ai/sourceBinding.test.cjs");
 require("./ai/trustedHostAdapter.test.cjs");
 require("./ai/aiContextService.test.cjs");
+require("./ai/aiContextEntrypoint.test.cjs");

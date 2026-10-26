@@ -2,16 +2,16 @@
 
 Base: ThemePack #3978, `91b8927c56314e68c06e2c008e84559ddfb96d78`.
 Branch: `feat/plugin-ai-context`.
-Status: isolated host internals and fixture-tested transport reuse. Public contract,
-production adapters, installable example, independent review, and native acceptance
-are pending. This source is not ready to merge or release.
+Status: source-bound services, trusted main/renderer adapters, and an installable
+minimal example are implemented. Shared trusted-preload wiring, complete independent
+review, and native acceptance remain pending. This source is not ready to merge or release.
 
-## Proposed public boundaries
+## Public boundaries
 
-The proposed optional features are `ai.model-invocation` and
-`context.selected-read`. The parent has not confirmed these names. No canonical
-schema, generated contract, SDK, runtime peer, hostService, or installer changes
-are included in this checkpoint.
+The parent approved `ai.model-invocation` and `context.selected-read`. The
+transport task owns the canonical schema, SDK, runtime peer, and hostService
+registration. Its `c4433d4961ecf4a81bea92b0a14f47b4ec12f679` head contains the
+public AI/context routes. This branch does not overwrite those shared files.
 
 The model API uses a host-selected configured model. Plugins receive a chat
 handle, a display label, an expiry, turn handles, text chunks, and usage totals.
@@ -32,7 +32,7 @@ or arbitrary entity-ID lookup.
 | --- | --- |
 | This task | `electron/plugins/ai/`, `electron/plugins/context/`, `infrastructure/ai/plugin/`, `examples/plugins/assistant/`, this document |
 | This task | Opt-in `requireBridge` and `maxStreamBytes` request context in `infrastructure/ai/sdk/providers.ts` |
-| Parent coordination | Canonical schema, generated files, SDK, runtime forwarding, hostService registration, trusted renderer adapters |
+| Transport task | Canonical schema, generated files, SDK, runtime forwarding, hostService registration, trusted preload methods, app host mount |
 | Market task | Source identity, private data-owner namespace, installer database, marketplace UI |
 | Transport task | Generic TCP and TLS streams |
 | Logging task | Optional local plugin logs |
@@ -43,6 +43,12 @@ The existing `feat/plugin-terminal-sharing` commit
 This branch does not claim that workflow is complete.
 
 ## Implemented authority
+
+`PluginAISourceBinding` authenticates the current browser runtime before reading
+`getActivePlugin().source`, `getRetainedPluginSource`, `privateOwner`, and
+`publicPluginId`. Source binding is rechecked after asynchronous work. The source
+database and sync implementation are unchanged. Source origin does not imply
+that a package is officially maintained.
 
 `ModelInvocationBroker` requires host-provided `resolveDataOwner` and
 `selectModel` adapters. It keeps chats and turns in memory. It stores no chat
@@ -67,7 +73,10 @@ trusted sharing UI must preview the selected text before sharing it.
 `createPluginModelAdapter` calls the existing `createModelFromConfig` and
 `streamText`, through the existing host provider transport. Credential injection
 stays in Netcatty. Direct-fetch fallback is disabled for this adapter. Incoming
-SSE payloads have an aggregate 128 KiB cap before SDK buffering. SDK retries are
+SSE payloads have an aggregate 128 KiB cap before SDK buffering. The main
+transport also enforces a plugin-specific 128 KiB response cap and a 60-second
+total deadline. Host-owned request tags allow sender/runtime cancellation
+without cancelling the internal Agent's ordinary streams. SDK retries are
 disabled. Only text and allowlisted token totals reach the broker. Provider
 errors, raw chunks, reasoning, headers, and tool payloads do not cross it.
 
@@ -87,7 +96,8 @@ restart within the broker's lifetime. Host shutdown clears this in-memory state.
 
 ## Required host adapters
 
-Production integration is blocked on these parent-owned contracts:
+The public service is registered in the transport integration. Its trusted
+renderer wiring still needs these parent-owned connections:
 
 1. `resolveDataOwner(context)` must return the current private source owner from
    host provenance. A plugin-supplied source value or plugin ID is insufficient.
@@ -134,19 +144,40 @@ node --test --import tsx infrastructure/ai/plugin/modelInvocationAdapter.test.ts
 npx eslint infrastructure/ai/plugin/*.ts infrastructure/ai/sdk/providers.ts examples/plugins/assistant/panel.js
 ```
 
-The final focused domain run passes 16 tests. The transport suite passes three
-tests, including the actual assistant panel's Send, streaming, usage, and Stop
-handlers in JSDOM. The test bridge uses structured clones to model the existing
-view command boundary. It does not replace installed-plugin or native coverage.
-The wider plugin runtime run passes 556 tests with one skipped. The existing
-provider regression suites pass 34 tests.
+The installed assistant command test passes against the parent-coordinated local
+integration of the AI branch and transport head `c4433d496`. It installs and
+activates the six-file sample through the actual package manager and runtime peer,
+then checks canonical SDK/RPC, independent model/content denial, text-review
+cancellation, text/usage streaming, spoofed fields, revocation, and stale versions.
+The in-process browser harness is a Node test transport, not native sandbox proof.
 
-The full repository typecheck fails in existing code, including provider tool-call
-inference and plugin CLI test manifest literals. No new adapter type errors were
-reported. The focused lint passes.
+The trusted main/renderer suites cover nonce replay, sender substitution, owner
+replacement, navigation, hide, runtime release, lock, cancellation, focus recovery,
+safe field projection, and late selected-content results. The main transport test
+also verifies targeted plugin cancellation leaves an ordinary synthetic Agent
+stream running and aborts an oversized plugin stream.
 
-Native Electron launch aborts because the bundled `chrome-sandbox` is not owned
-by root with mode 4755. No sandbox bypass was attempted. Native screenshots,
-video, installed-plugin UI tests, packaged builds, and independent review are
-pending on the parent's working desktop after shared integration. The panel
-source alone is not evidence of native acceptance.
+The first integrated runtime checkpoint reports 603 passed, 1 failed, and 2 skipped.
+The failure is shared permission-copy coverage: the new AI/context and byte-stream
+permissions need entries in `domain/pluginPermissionDescriptions.cjs`. The full
+repository run has additional failures and is not a passing acceptance record.
+Ten Cursor discovery failures also reproduce on the unchanged core baseline.
+Other failures have not yet been attributed. Focused changed-source lint passes.
+The repository typecheck retains existing errors; the new adapter files have no
+diagnostics after the local type repair.
+
+The package build validates six files. The final artifact and native procedure
+are recorded in [the native QA recipe](assistant-native-qa.md). The source staging
+excludes build tooling and has no Node entry, network, filesystem, secret, storage,
+or terminal permission.
+
+Independent review confirmed the malformed-reference revocation defect on
+`afe831bfc`. The two regression tests failed before the repair and pass afterward.
+The repair is retained in #3985 head `4882e0501`. Further independent review was
+blocked by the review tool/model restriction. That review is incomplete and has
+not been retried through another route. CI is not a substitute for that review.
+
+Native Electron launch on this executor aborts because `chrome-sandbox` is not
+root-owned mode 4755. No sandbox bypass or native retry was attempted. Native
+screenshots, video, and installed UI acceptance belong to the parent's working
+cloud GUI machine after shared wiring. No native acceptance is claimed here.

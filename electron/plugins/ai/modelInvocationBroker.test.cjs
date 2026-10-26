@@ -209,3 +209,14 @@ test("malformed context cannot publish a turn or interrupt two-handle runtime re
   assert.equal(f.calls.length, 0);
   f.broker.shutdown();
 });
+
+test("pending model selections reserve capacity and cannot publish after revocation", async () => {
+  const f = fixture({ limits: { perRuntime: 1 } }); const pending = deferred(); let disposed = 0;
+  f.broker.selectModel = () => pending.promise;
+  const opening = f.broker.open(f.context); const rejected = assert.rejects(opening);
+  await new Promise(setImmediate);
+  await assert.rejects(f.broker.open(f.context), (error) => error.code === RPC_ERRORS.resourceExhausted);
+  f.broker.releaseRuntime("r1");
+  pending.resolve({ ...f.model, dispose: () => { disposed++; } });
+  await rejected; assert.equal(f.broker.chats.size, 0); assert.equal(f.broker.openings.size, 0); assert.equal(disposed, 1); f.broker.shutdown();
+});
