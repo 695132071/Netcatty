@@ -84,7 +84,14 @@ function isDefaultCmdPromptLine(line) {
 
 function isDefaultPosixPromptLine(line) {
   const normalized = String(line || "").replace(/\s+$/, "");
-  return POSIX_PROMPT_PATTERN.test(normalized) || ALPINE_PROMPT_PATTERN.test(normalized);
+  // Optional virtualenv / conda / BT-panel style env name prefix: "(name) "
+  // before the shell prompt. Recognition only; callers still return the full
+  // prompt line so suffix matching sees the visible prefix (#3947).
+  const withoutEnvPrefix = normalized.replace(/^\([^()\n\r]+\)\s+/, "");
+  return (
+    POSIX_PROMPT_PATTERN.test(withoutEnvPrefix) ||
+    ALPINE_PROMPT_PATTERN.test(withoutEnvPrefix)
+  );
 }
 
 function extractTrailingIdlePrompt(output) {

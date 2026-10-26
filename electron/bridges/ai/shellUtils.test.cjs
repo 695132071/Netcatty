@@ -219,6 +219,50 @@ test("extracts a trailing RHEL-family bracketed idle prompt", () => {
   assert.equal(extractTrailingIdlePrompt("welcome\r\nroot@host ~#"), "");
 });
 
+test("isDefaultPosixPromptLine accepts virtualenv, conda, and BT-panel env prefixes", () => {
+  // Python venv / conda / BT-panel prepend "(name) " before the real prompt.
+  // Recognition strips that prefix; a missing space after ")" is already
+  // accepted because the username class absorbs the parens (#3947).
+  for (const prompt of [
+    "(3.12.12) root@example:~# ",
+    "(3.12.12) root@example:~#",
+    "(venv) alice@host:~$ ",
+    "(base) [opc@host ~]$ ",
+    "(my-env) localhost:~# ",
+    "(3.12.12)root@example:~# ",
+  ]) {
+    assert.equal(isDefaultPosixPromptLine(prompt), true, prompt);
+  }
+});
+
+test("extractTrailingIdlePrompt keeps the full env-prefixed POSIX prompt", () => {
+  // Suffix matching compares the visible PTY line, so the captured prompt
+  // must still include the "(name) " prefix rather than the stripped form.
+  for (const prompt of [
+    "(3.12.12) root@example:~# ",
+    "(3.12.12) root@example:~#",
+    "(venv) alice@host:~$ ",
+    "(base) [opc@host ~]$ ",
+    "(my-env) localhost:~# ",
+  ]) {
+    assert.equal(extractTrailingIdlePrompt(`Last login\r\n${prompt}`), prompt, prompt);
+  }
+});
+
+test("env-prefixed POSIX recognition rejects incomplete prefixes and non-prompts", () => {
+  for (const line of [
+    "(3.12.12 root@example:~# ",
+    "(3.12.12) root@example:~# printf busy",
+    "(venv) not a prompt",
+    "root@host ~#",
+    "(base) [opc@host ~]$ printf busy",
+    "(my-env) localhost:~# printf busy",
+  ]) {
+    assert.equal(isDefaultPosixPromptLine(line), false, line);
+    assert.equal(extractTrailingIdlePrompt(`welcome\r\n${line}`), "", line);
+  }
+});
+
 test("isPlausibleCliVersionOutput rejects stack traces and file URLs", () => {
   assert.equal(isPlausibleCliVersionOutput("2.1.123 (Claude Code)"), true);
   assert.equal(isPlausibleCliVersionOutput("codex-cli 0.125.0"), true);
