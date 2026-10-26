@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { netcattyBridge } from '../../../infrastructure/services/netcattyBridge';
 import { useI18n } from '../../../application/i18n/I18nProvider';
-import { describePluginPermission } from '../../../domain/pluginPermissionDescriptions.cjs';
+import { describePluginPermission } from '@/domain/pluginPermissionDescriptions.cjs';
 import { Button } from '../../ui/button';
 
 /** Host UI only. Plugin views cannot query or mutate this security state. */
