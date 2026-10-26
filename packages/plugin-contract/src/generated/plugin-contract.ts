@@ -232,9 +232,11 @@ export type HostInteractionPrompt = {
   request: HostInteractionRequest;
   previewText?: string;
   terminalSessionId?: string;
+  terminalRendererId?: string;
+  terminalLabel?: string;
 };
 
-export type HostInteractionRequest = (HostQuickPickRequest) | (HostInputRequest) | (HostClipboardReadRequest) | (HostClipboardWriteRequest) | (HostTerminalSelectionReadRequest);
+export type HostInteractionRequest = (HostQuickPickRequest) | (HostInputRequest) | (HostClipboardReadRequest) | (HostClipboardWriteRequest) | (HostTerminalSelectionReadRequest) | (HostTerminalInputProposalRequest);
 
 export type HostInteractionResponse = {
   requestId: string;
@@ -264,14 +266,19 @@ export type HostQuickPickRequest = {
 
 export type HostSingleLineInputText = string;
 
+export type HostTerminalInputProposalRequest = {
+  kind: "terminal.input.propose";
+  title: string;
+  handle: string;
+  text: string;
+};
+
 export type HostTerminalSelectionReadRequest = {
   kind: "terminal.selection.read";
   title: string;
 };
 
-export type HostTerminalTarget = {
-  sessionId: string | null;
-};
+export type HostTerminalTarget = (unknown);
 
 export type IconReference = (ThemeIcon) | (PackageIcon);
 
@@ -467,7 +474,7 @@ export type MenuLocation = "commandPalette" | "application" | "host/context" | "
 
 export type NetworkCredentialLeaseFeature = "network.credential-lease";
 
-export type NonResourceScopedPermission = "storage" | "ai.invoke" | "context.selected.list" | "context.selected.read" | "runtime.advanced" | "settings.read" | "settings.write" | "commands" | "menus" | "views" | "ui.interact" | "clipboard.read" | "clipboard.write" | "terminal.metadata" | "terminal.output" | "terminal.input" | "terminal.decorate" | "terminal.complete" | "terminal.intercept.input" | "terminal.intercept.output" | "vault.metadata" | "vault.write" | "vault.credentials" | "sftp.read" | "sftp.write" | "secrets" | "provider.terminal" | "provider.connection" | "provider.authentication" | "provider.sync" | "provider.importer" | "terminal.selection.read";
+export type NonResourceScopedPermission = "storage" | "ai.invoke" | "context.selected.list" | "context.selected.read" | "runtime.advanced" | "settings.read" | "settings.write" | "commands" | "menus" | "views" | "ui.interact" | "clipboard.read" | "clipboard.write" | "terminal.metadata" | "terminal.output" | "terminal.input" | "terminal.decorate" | "terminal.complete" | "terminal.intercept.input" | "terminal.intercept.output" | "vault.metadata" | "vault.write" | "vault.credentials" | "sftp.read" | "sftp.write" | "secrets" | "provider.terminal" | "provider.connection" | "provider.authentication" | "provider.sync" | "provider.importer" | "terminal.selection.read" | "terminal.input.propose";
 
 export type NullableRpcId = (RpcId) | (null);
 
@@ -808,7 +815,7 @@ export type PluginNetworkResponse = {
   };
 };
 
-export type PluginPermission = "storage" | "ai.invoke" | "context.selected.list" | "context.selected.read" | "runtime.advanced" | "settings.read" | "settings.write" | "commands" | "menus" | "views" | "ui.interact" | "clipboard.read" | "clipboard.write" | "terminal.metadata" | "terminal.output" | "terminal.input" | "terminal.decorate" | "terminal.complete" | "terminal.intercept.input" | "terminal.intercept.output" | "vault.metadata" | "vault.write" | "vault.credentials" | "sftp.read" | "sftp.write" | "network" | "network.stream" | "filesystem.read" | "filesystem.write" | "secrets" | "companion.execute" | "provider.terminal" | "provider.connection" | "provider.authentication" | "provider.sync" | "provider.importer" | "terminal.selection.read";
+export type PluginPermission = "storage" | "ai.invoke" | "context.selected.list" | "context.selected.read" | "runtime.advanced" | "settings.read" | "settings.write" | "commands" | "menus" | "views" | "ui.interact" | "clipboard.read" | "clipboard.write" | "terminal.metadata" | "terminal.output" | "terminal.input" | "terminal.decorate" | "terminal.complete" | "terminal.intercept.input" | "terminal.intercept.output" | "vault.metadata" | "vault.write" | "vault.credentials" | "sftp.read" | "sftp.write" | "network" | "network.stream" | "filesystem.read" | "filesystem.write" | "secrets" | "companion.execute" | "provider.terminal" | "provider.connection" | "provider.authentication" | "provider.sync" | "provider.importer" | "terminal.selection.read" | "terminal.input.propose";
 
 export type PluginSelectedContextContent = {
   handle: string;
@@ -1213,6 +1220,8 @@ export type SyncWriteObjectResult = {
   created: boolean;
   revision?: SyncObjectRevision;
 };
+
+export type TerminalInputDraftFeature = "terminal.input-drafts";
 
 export type TerminalInterceptorAttachmentDescriptor = {
   providerId: ContributionId;

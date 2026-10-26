@@ -336,6 +336,9 @@
         },
         {
           "$ref": "#/$defs/HostTerminalSelectionReadRequest"
+        },
+        {
+          "$ref": "#/$defs/HostTerminalInputProposalRequest"
         }
       ]
     },
@@ -490,6 +493,16 @@
           "type": "string",
           "maxLength": 128,
           "pattern": "^[A-Za-z0-9_-]+$"
+        },
+        "terminalRendererId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "terminalLabel": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 160
         }
       },
       "additionalProperties": false
@@ -1113,7 +1126,8 @@
         "provider.authentication",
         "provider.sync",
         "provider.importer",
-        "terminal.selection.read"
+        "terminal.selection.read",
+        "terminal.input.propose"
       ]
     },
     "NonResourceScopedPermission": {
@@ -1151,7 +1165,8 @@
         "provider.authentication",
         "provider.sync",
         "provider.importer",
-        "terminal.selection.read"
+        "terminal.selection.read",
+        "terminal.input.propose"
       ]
     },
     "ResourceScopedPermission": {
@@ -1236,7 +1251,10 @@
         }
       ],
       "not": {
-        "const": "terminal.selection.read"
+        "enum": [
+          "terminal.selection.read",
+          "terminal.input.propose"
+        ]
       }
     },
     "PermissionSet": {
@@ -4244,12 +4262,39 @@
           ],
           "maxLength": 128,
           "pattern": "^[A-Za-z0-9_-]+$"
+        },
+        "rendererId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "label": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 160
         }
       },
       "required": [
         "sessionId"
       ],
-      "additionalProperties": false
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "sessionId": {
+                "type": "string"
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "rendererId",
+              "label"
+            ]
+          }
+        }
+      ]
     },
     "HostTerminalSelectionReadRequest": {
       "type": "object",
@@ -4292,6 +4337,38 @@
         "handle",
         "expiresAt"
       ],
+      "additionalProperties": false
+    },
+    "TerminalInputDraftFeature": {
+      "const": "terminal.input-drafts"
+    },
+    "HostTerminalInputProposalRequest": {
+      "type": "object",
+      "required": [
+        "kind",
+        "title",
+        "handle",
+        "text"
+      ],
+      "properties": {
+        "kind": {
+          "const": "terminal.input.propose"
+        },
+        "title": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "handle": {
+          "type": "string",
+          "minLength": 64,
+          "maxLength": 256
+        },
+        "text": {
+          "type": "string",
+          "maxLength": 4096
+        }
+      },
       "additionalProperties": false
     }
   }

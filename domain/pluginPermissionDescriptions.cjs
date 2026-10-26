@@ -17,6 +17,7 @@ const PERMISSION_DESCRIPTIONS = {
   "clipboard.read": [true, "Read clipboard", "Read copied text, which may contain passwords or other sensitive data.", "读取剪贴板", "读取复制的文本，其中可能包含密码或其他敏感数据。"],
   "clipboard.write": [true, "Write clipboard", "Replace clipboard content that you may paste elsewhere.", "写入剪贴板", "替换剪贴板内容，可能影响你随后粘贴的数据。"],
   "terminal.selection.read": [true, "Share terminal selection", "Read only text explicitly previewed and shared from the selected live terminal. It may contain secrets. Each action requires approval.", "分享终端选区", "仅读取用户从当前活跃终端明确预览并分享的文本，可能包含秘密；每次操作均需确认。"],
+  "terminal.input.propose": [true, "Review terminal input draft", "Open an editable host draft for one selected terminal. Does not send input or Enter.", "审阅终端输入草稿", "打开所选终端的可编辑宿主草稿，不发送输入或回车。"],
   "terminal.metadata": [true, "Terminal metadata", "Read terminal/session details that may identify hosts and activity.", "终端元数据", "读取终端和会话信息，可能暴露主机及操作活动。"],
   "terminal.output": [true, "Read terminal output", "Receive terminal output through supported providers; it may contain credentials or private data.", "读取终端输出", "通过支持的提供器接收终端输出，其中可能包含凭据或隐私信息。"],
   "terminal.input": [true, "Send terminal input", "Send input to a terminal; input may execute commands or change a remote host.", "发送终端输入", "向终端发送输入，可能执行命令或更改远程主机。"],

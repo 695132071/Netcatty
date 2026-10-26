@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { HostInteractionPrompt, HostInteractionResponse } from '@netcatty/plugin-contract';
+import { readPluginTerminalSelection } from '../../infrastructure/plugins/terminalSelectionRegistry';
 import { netcattyBridge } from '../../infrastructure/services/netcattyBridge';
 
 export function usePluginHostInteractions() {
@@ -18,7 +19,7 @@ export function usePluginHostInteractions() {
         current.current = null; setPrompt(null);
       } else {
         current.current = event; setPrompt(event);
-        setValue(event.request.kind === 'input' ? event.request.initialValue ?? '' : '');
+        setValue(event.request.kind === 'input' ? event.request.initialValue ?? '' : event.request.kind === 'terminal.input.propose' ? event.request.text : '');
       }
       pending.current = false; setBusy(false); setError(false);
     });
@@ -36,8 +37,11 @@ export function usePluginHostInteractions() {
     try {
       const bridge = netcattyBridge.require();
       if (!bridge.respondPluginInteraction) throw new Error('Host interactions unavailable');
+      const selection = action === 'preview' && active.request.kind === 'terminal.selection.read'
+        ? readPluginTerminalSelection(active.terminalSessionId ?? '', active.terminalRendererId ?? '') : undefined;
       const accepted = await bridge.respondPluginInteraction({
         requestId: active.requestId, actionToken: active.actionToken, action,
+        ...(selection === undefined ? {} : { value: selection }),
         ...(action === 'submit' && (active.request.kind === 'input' || active.request.kind === 'quickPick') ? { value } : {}),
       });
       if (!accepted && current.current?.actionToken === active.actionToken) {

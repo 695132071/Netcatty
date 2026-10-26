@@ -1,5 +1,10 @@
 # Selected terminal sharing — implementation WIP
 
+This historical checklist describes commit `3cdc97782`. The continuation on
+`feat/plugin-terminal-sharing-complete` is documented in
+[the implemented contract](terminal-sharing.md). Native acceptance remains
+[parent-coordinated and pending](terminal-sharing-native-qa.md).
+
 Base: ThemePack `f868221b5f11810802f929369ac8eee46166079a`.
 Branch: `feat/plugin-terminal-sharing`. This is saved unfinished source, not an
 accepted API or an installable/native-tested workflow. Do not merge or release.

@@ -1,3 +1,4 @@
+import { usePluginTerminalSelection } from "../application/state/usePluginTerminalSelection";
 import { clearTerminalBroadcastUserInput, markTerminalBroadcastUserInput } from "./terminal/runtime/terminalPacedBroadcast";
 import { shouldBroadcastDuringSensitivePrompt } from "../domain/terminalBroadcast";
 import { STORAGE_KEY_TERMINAL_BROADCAST_PASSWORD_BYPASS } from "../infrastructure/config/storageKeys";
@@ -926,6 +927,17 @@ const TerminalComponent: React.FC<TerminalProps> = ({
   statusRef.current = status;
   const getSessionConnectedRef = useRef(() => statusRef.current === "connected" && Boolean(sessionRef.current));
   getSessionConnectedRef.current = () => statusRef.current === "connected" && Boolean(sessionRef.current);
+  usePluginTerminalSelection(sessionId, () => ({
+    sessionId: sessionRef.current,
+    bootEpoch: bootEpochRef.current,
+    term: termRef.current,
+    visible: isVisibleRef.current === true,
+    focused: isFocusedRef.current === true,
+    connected: getSessionConnectedRef.current(),
+    sensitive: passwordPromptActiveRef.current,
+    normalize: terminalSettings?.normalizeTextOnCopy ?? true,
+    label: sessionDisplayName ?? host.label,
+  }), JSON.stringify([sessionId, status, isVisible, isFocused, sessionDisplayName, host.label]));
   const sudoAutofillRef = useRef<SudoPasswordAutofill | null>(null);
   // Prefer parent-supplied candidates (TerminalLayer); otherwise derive from
   // host/keys/identities so standalone popups (TerminalPopupPage) still work.
