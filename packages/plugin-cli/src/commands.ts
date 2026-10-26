@@ -30,7 +30,7 @@ export async function initPlugin(
   const activationMessage = JSON.stringify(`${displayName} activated`);
   const packageName = options.id.replaceAll(".", "-");
   const manifest: PluginManifest = {
-    $schema: "https://netcatty.com/schemas/plugins/0.1.0-internal/plugin-contract.schema.json",
+    $schema: "https://netcatty.com/schemas/plugins/0.1.0-internal.1/plugin-contract.schema.json",
     manifestVersion: 1,
     id: options.id,
     name: displayName,
