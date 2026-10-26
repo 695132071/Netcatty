@@ -133,3 +133,27 @@ This is source identity and a source-based ordering diagnosis, not a claim that 
 baseline runtime failure was reproduced locally. The updated test needs the new
 exact-head CI result. That same first run passed the added Vite browser-import
 smoke, resolving the earlier local temp-directory limitation for that head.
+
+### Native security-color delta
+
+Parent native acceptance at f868 verified zero-permission installation/enabling,
+light/dark Preview and Cancel, Apply across main/Settings windows, Restore
+default, restart persistence, and Disable fallback with the unavailable notice.
+The isolated schema-3 profile was not touched. These core results remain valid.
+
+Native QA also found Forest-colored inner New Host cards/inputs/Save and some
+grant-panel text inside an otherwise fixed security container. The cause was
+Tailwind's derived `--color-*` aliases: changing only raw semantic tokens at the
+boundary does not recompute aliases already resolved on an ancestor. The same
+existing security rule now fixes both raw tokens and those color aliases. The
+selector and protected regions are unchanged; ordinary application cards remain
+theme-controlled. No host, credential or grant operation changed.
+
+The regression renders the actual HostDetailsPanel (including General, Address,
+Credentials cards, real Inputs and Save), plus the real grant-panel root. It
+compiles the production Tailwind source, verifies which aliases those utilities
+consume, checks the fixed declarations, and verifies an ordinary card is outside
+the security selector. This is component/compiled-CSS coverage, not a claim of
+native computed-color acceptance. The parent's native color delta remains the
+final visual check. A local Chromium probe aborted because its SUID sandbox was
+not configured; sandboxing was not disabled to retry.

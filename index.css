@@ -2221,6 +2221,26 @@ html[data-theme-transition] *::after {
   --border: var(--host-security-border) !important;
   --input: var(--host-security-input) !important;
   --ring: var(--host-security-ring) !important;
+  /* Tailwind theme aliases resolve where declared; pin them in this scope too. */
+  --color-background: hsl(var(--host-security-background)) !important;
+  --color-foreground: hsl(var(--host-security-foreground)) !important;
+  --color-card: hsl(var(--host-security-card)) !important;
+  --color-card-foreground: hsl(var(--host-security-card-foreground)) !important;
+  --color-popover: hsl(var(--host-security-popover)) !important;
+  --color-popover-foreground: hsl(var(--host-security-popover-foreground)) !important;
+  --color-primary: hsl(var(--host-security-primary)) !important;
+  --color-primary-foreground: hsl(var(--host-security-primary-foreground)) !important;
+  --color-secondary: hsl(var(--host-security-secondary)) !important;
+  --color-secondary-foreground: hsl(var(--host-security-secondary-foreground)) !important;
+  --color-muted: hsl(var(--host-security-muted)) !important;
+  --color-muted-foreground: hsl(var(--host-security-muted-foreground)) !important;
+  --color-accent: hsl(var(--host-security-accent)) !important;
+  --color-accent-foreground: hsl(var(--host-security-accent-foreground)) !important;
+  --color-destructive: hsl(var(--host-security-destructive)) !important;
+  --color-destructive-foreground: hsl(var(--host-security-destructive-foreground)) !important;
+  --color-border: hsl(var(--host-security-border)) !important;
+  --color-input: hsl(var(--host-security-input)) !important;
+  --color-ring: hsl(var(--host-security-ring)) !important;
   color: hsl(var(--foreground)) !important;
   background-color: hsl(var(--background)) !important;
   border-color: hsl(var(--border)) !important;
