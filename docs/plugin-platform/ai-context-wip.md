@@ -55,8 +55,12 @@ This branch does not claim that workflow is complete.
 database and sync implementation are unchanged. Source origin does not imply
 that a package is officially maintained.
 
-`ModelInvocationBroker` requires host-provided `resolveDataOwner` and
-`selectModel` adapters. It keeps chats and turns in memory. It stores no chat
+`ModelInvocationBroker` requires host-provided `resolveDataOwner`,
+`resolveBudgetOwner`, and `selectModel` adapters. The service derives the stable
+budget owner from the authenticated source key and opaque private owner. It never
+accepts a plugin-supplied budget key or falls back to a bare plugin ID. Strict
+runtime binding objects still govern handle access; their replacement does not
+reset request or token budgets. It keeps chats and turns in memory. It stores no chat
 history and makes no database changes. Data owners are opaque host identities;
 no private storage is keyed by `pluginId`.
 
@@ -191,6 +195,8 @@ Failed aggregate runs remain evidence, not passing acceptance records:
 | `netcatty-ai-connected-final-runtime.log` | Connected code: 610 tests, 607 passed, 1 failed, 0 cancelled, 2 skipped |
 | `netcatty-ai-fixed-runtime.log` | After `0ba3ea606`: 610 tests, 608 passed, 0 failed, 0 cancelled, 2 skipped |
 | `netcatty-ai-fixed-contract-suite.log` | After `0ba3ea606`: all 88 contract/SDK/CLI tests passed |
+| `netcatty-ai-fixed-final-tests.log` | Before the later review corrections, `173ef5abb`: 15,248 tests, 15,205 passed, 0 failed, 0 cancelled, 43 skipped |
+| `netcatty-ai-review-final-runtime.log` | After both review corrections: 614 tests, 612 passed, 0 failed, 0 cancelled, 2 skipped |
 
 The ten Cursor failures in the second full run came from its missing SQLite
 native dependency. Rebuilding the existing dependency with the standard
@@ -229,9 +235,37 @@ or terminal permission.
 
 Independent review confirmed the malformed-reference revocation defect on
 `afe831bfc`. The two regression tests failed before the repair and pass afterward.
-The repair is retained in #3985 head `4882e0501`. Further independent review was
-blocked by the review tool/model restriction. That review is incomplete and has
-not been retried through another route. CI is not a substitute for that review.
+The repair is retained in #3985 head `4882e0501`. Further review was initially
+blocked. After receiving newer exact maintainer security-task evidence, the same
+worker completed its bounded read-only review of `173ef5abb` without a repeated
+restriction or alternate route/model. It confirmed the earlier repair and found
+two additional P2 defects: runtime-bound budget keys and the sample's expired
+chat recovery.
+
+Commit `ee5a4a406` separates stable source budgets from strict runtime handle
+identity. Its fake-clock regression uses the actual source-binding class,
+replaces runtime binding objects, tests request and reserved-token budgets,
+isolates another source with the same public plugin ID, and checks the minute
+boundary. Both budget subtests fail on the reviewed source and pass after repair.
+Missing or invalid host budget identities fail closed.
+
+Commit `e1cb95ee8` reopens an expired sample chat before an explicit Send and adds
+**Refresh model** for changed-model or failed sessions. Refresh preserves the
+draft and does not send inference. A failed send/read is never automatically
+retried. Stop or page teardown invalidates pending opens and closes late sessions.
+Four controlled-time DOM regressions fail before the repair and pass afterward,
+including an uncertain inference outcome and Stop during reopening. They use no
+network or paid provider. Failed-before logs are
+`/tmp/netcatty-ai-budget-review-before.log` and
+`/tmp/netcatty-ai-panel-review-before.log`; passing logs use the corresponding
+`-after.log` names. Independent rechecking of these corrections and native
+acceptance remain pending. CI is not a substitute for either.
+
+The corrected broker suite passes all 17 tests, the sample's controlled-time
+panel suite passes all 4, and the connected provider/UI suite passes all 4. Full
+lint still reports zero errors and seven existing warnings; codegen drift and
+the production build pass. Two independent package builds reproduce SHA-256
+`c0f733697b8f43a8591f39c02aeea5d8b7b4bd544b642ed87e758e62d98696a5`.
 
 Native Electron launch on this executor aborts because `chrome-sandbox` is not
 root-owned mode 4755. No sandbox bypass or native retry was attempted. Native
