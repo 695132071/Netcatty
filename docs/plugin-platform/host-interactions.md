@@ -10,9 +10,14 @@ separate parent-owned gate.
 | SDK call | Permission | Result |
 | --- | --- | --- |
 | `ui.quickPick(title, items)` | `ui.interact` | Approved item ID or `undefined` on cancel |
-| `ui.input(title, initialValue?)` | `ui.interact` | Approved text or `undefined` on cancel |
+| `ui.input(title, initialValue?)` | `ui.interact` | Approved single-line text or `undefined` on cancel |
 | `clipboard.readText(title)` | `clipboard.read` | Explicitly shared snapshot or `undefined` on cancel |
 | `clipboard.writeText(text, title)` | `clipboard.write` | `true` after copy, `false` on cancel |
+
+`ui.input` rejects CR and LF in initial values before any dialog is displayed,
+and rejects line breaks on submission. It does not silently remove hidden
+newlines. The displayed single-line value is the value submitted to the plugin.
+Clipboard text continues to support multiple lines.
 
 All calls use the canonical `ui.interact` RPC. No host DOM, native object,
 router, general command ID, or arbitrary IPC channel enters the SDK. Existing
@@ -66,6 +71,13 @@ The current main-window-only adapter is narrower than the total pending bound.
 Admission runs before the permission prompt. The generic capability quotas and
 byte windows still apply. Text exceeding its cap is rejected without silent
 truncation. RPC uses the same generated deadline.
+
+After a native permission decision, an originally foreground request can wait
+at most one second for the same owner to regain focus. The host never focuses
+the window itself, presents content in the background, or postpones admission
+for an originally background request. Hide, lock, revoke, runtime stop, owner
+replacement and reload invalidate this admission, even during the permission
+dialog. Runtime activity and foreground state are checked again after waiting.
 
 Input cancellation, timeout, disable/update/crash/revoke, owner blur/hide/close,
 main-document reload, renderer exit, and app lock invalidate pending tokens.

@@ -34,7 +34,7 @@ function fixture(t, options = {}) {
   const respond = (prompt, action, value) => service.respond(sender, { requestId: prompt.requestId, actionToken: prompt.actionToken, action, ...(value === undefined ? {} : { value }) });
   return { service, sender, window, context, messages, audit, writes, charges, begin, respond, signal,
     get reads() { return reads; }, revoke() { onRevoke({ pluginId: context.pluginId }); },
-    lock() { locked = true; }, blur() { focused = false; window.emit("blur"); }, stale() { active = false; },
+    lock() { locked = true; }, blur() { focused = false; window.emit("blur"); }, focus() { focused = true; window.emit("focus"); }, stale() { active = false; },
   };
 }
 
@@ -48,6 +48,67 @@ test("normal input and quick pick return only an approved bounded value", async 
   assert.deepEqual(await choice.promise, { cancelled: false, value: "one" });
   assert.equal(JSON.stringify(f.audit).includes("approved"), false);
   assert.equal(f.reads, 0); assert.deepEqual(f.writes, []);
+});
+
+test("Once permission dialog may restore the same owner's focus after its decision resolves", async (t) => {
+  const { PluginHostRpcRegistry } = require("./hostRpcRegistry.cjs");
+  const { PluginPermissionEngine } = require("./permissionEngine.cjs");
+  const f = fixture(t);
+  let decisions = 0;
+  const engine = new PluginPermissionEngine({
+    database: { listPermissionGrants: () => [], recordSecurityAudit() {} },
+    requestDecision: async (request) => {
+      decisions++;
+      f.blur();
+      setTimeout(() => f.focus(), 30);
+      return { requestId: request.requestId, decision: "allow", scope: "once" };
+    },
+  });
+  t.after(() => engine.shutdown());
+  const registry = new PluginHostRpcRegistry();
+  registry.use(engine.createMiddleware());
+  f.service.registerRpcCapabilities(registry);
+  const route = registry.createRoutes({ ...f.context, runtimeKind: "browser", assertCurrent() {},
+    manifest: { id: f.context.pluginId, publisher: "example", permissions: { optional: ["ui.interact"] } },
+  }).requestHandlers["ui.interact"];
+  const result = route({ kind: "input", title: "Synthetic input", initialValue: "visible" }, { signal: f.context.signal });
+  await new Promise((resolve) => setTimeout(resolve, 10));
+  assert.equal(f.messages.length, 0, "no dialog is delivered while the owner is backgrounded");
+  await new Promise((resolve) => setTimeout(resolve, 45));
+  const prompt = f.messages.find((message) => !message.closed);
+  assert.ok(prompt);
+  await f.respond(prompt, "submit", "visible");
+  assert.deepEqual(await result, { cancelled: false, value: "visible" });
+  assert.equal(decisions, 1);
+  assert.equal(f.reads, 0); assert.deepEqual(f.writes, []);
+});
+
+test("focus restoration is bounded and admission cannot survive owner or access lifecycle changes", async (t) => {
+  for (const action of ["timeout", "hide", "revoke", "runtime", "window", "lock", "signal", "stale"]) {
+    const f = fixture(t, { focusRestoreMs: 35 });
+    let authorize;
+    f.service.registerRpcCapabilities({ registerRequest(_name, _handler, options) { authorize = options.authorization; } });
+    const params = assertInteractionRequest({ kind: "clipboard.write", title: "Never copied", text: "synthetic" });
+    authorize(params, f.context); // admission is host-owned and originally foregrounded
+    f.blur();
+    const result = f.service.request(params, f.context);
+    void result.catch(() => {});
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    if (action === "hide") f.window.emit("hide");
+    if (action === "revoke") f.revoke();
+    if (action === "runtime") f.service.releaseRuntime(f.context.runtimeId);
+    if (action === "window") { f.sender.emit("did-start-navigation", { isMainFrame: true, isSameDocument: false }); f.service.setReady(f.sender, true); }
+    if (action === "lock") f.lock();
+    if (action === "signal") f.signal.abort();
+    if (action === "stale") f.stale();
+    if (action !== "timeout") f.focus();
+    await assert.rejects(result, /focused unlocked|revoked|unavailable|abort|stale/i, action);
+    assert.equal(f.messages.length, 0, action);
+    assert.deepEqual(f.writes, []); assert.equal(f.reads, 0);
+  }
+  const background = fixture(t);
+  background.blur();
+  await assert.rejects(background.service.request(assertInteractionRequest({ kind: "input", title: "Background" }), background.context), /focused unlocked/);
 });
 
 test("clipboard read waits for preview action and a separate single-use sharing confirmation", async (t) => {
@@ -192,4 +253,18 @@ test("host lock subscription cancels previewed text before it can be shared", as
   await assert.rejects(request.promise, /cancelled/);
   assert.equal(await f.respond(preview, "submit"), false);
   assert.equal(f.reads, 1); assert.equal(f.service.pending.size, 0);
+});
+
+test("single-line inputs reject CR/LF before display and submission while clipboard text stays multiline", async (t) => {
+  const f = fixture(t);
+  for (const text of ["first\nsecond", "first\rsecond", "first\r\nsecond"]) {
+    assert.throws(() => assertInteractionRequest({ kind: "input", title: "Single line", initialValue: text }), /invalid/);
+    const request = await f.begin({ kind: "input", title: "Single line", initialValue: "first second" });
+    await assert.rejects(f.respond(request.prompt, "submit", text), /single line/);
+    await assert.rejects(request.promise, /single line/);
+  }
+  const copy = await f.begin({ kind: "clipboard.write", title: "Multiline clipboard", text: "first\nsecond" });
+  await f.respond(copy.prompt, "submit");
+  assert.deepEqual(await copy.promise, { cancelled: false, value: true });
+  assert.deepEqual(f.writes, ["first\nsecond"]);
 });

@@ -9,6 +9,7 @@ const HOST_INTERACTION_FEATURE = schema.$defs.HostInteractionFeature.const;
 const validateRequest = createDefinitionValidator("HostInteractionRequest");
 const validateResponse = createDefinitionValidator("HostInteractionResponse");
 const validateResult = createDefinitionValidator("HostInteractionResult");
+const validateSingleLineInput = createDefinitionValidator("HostSingleLineInputText");
 const PROMPT_CHANNEL = "netcatty:plugins:host-interaction";
 
 function fail(code, message) { return new PluginRpcError(RPC_ERRORS[code], message); }
@@ -56,6 +57,8 @@ class PluginHostInteractionService {
     this.pending = new Map();
     this.rates = new Map();
     this.admissions = new WeakMap();
+    this.admissionRevision = 0;
+    this.focusRestoreMs = Math.min(options.focusRestoreMs ?? 1_000, 1_000);
     this.owner = null;
     this.ownerCleanup = null;
     this.closed = false;
@@ -68,8 +71,8 @@ class PluginHostInteractionService {
       metadata: { capability: "ui", mutating: true },
       validateParams: assertInteractionRequest,
       authorization: (params, context) => {
-        this.#admit(params, context);
-        this.admissions.set(params, context.runtimeId);
+        const sender = this.#admit(params, context);
+        this.admissions.set(params, { sender, runtimeId: context.runtimeId, revision: this.admissionRevision });
         return interactionAuthorization(params);
       },
     });
@@ -87,7 +90,11 @@ class PluginHostInteractionService {
     if (this.owner) this.releaseWindow(this.owner);
     this.owner = sender;
     const close = () => this.releaseWindow(sender);
-    const blur = () => this.cancelAll();
+    // A native permission dialog can temporarily blur its parent. Already
+    // displayed interactions still cancel immediately; pre-prompt admission
+    // can only resume once this same owner actually regains focus.
+    const blur = () => this.cancelAll(false);
+    const hide = () => this.cancelAll();
     const navigate = (details, _url, isInPlace, isMainFrame) => {
       const main = details?.isMainFrame ?? isMainFrame;
       const sameDocument = details?.isSameDocument ?? isInPlace;
@@ -97,13 +104,13 @@ class PluginHostInteractionService {
     sender.on?.("did-start-navigation", navigate);
     sender.on?.("render-process-gone", close);
     window.on?.("blur", blur);
-    window.on?.("hide", blur);
+    window.on?.("hide", hide);
     this.ownerCleanup = () => {
       sender.removeListener?.("destroyed", close);
       sender.removeListener?.("did-start-navigation", navigate);
       sender.removeListener?.("render-process-gone", close);
       window.removeListener?.("blur", blur);
-      window.removeListener?.("hide", blur);
+      window.removeListener?.("hide", hide);
     };
     return true;
   }
@@ -182,9 +189,33 @@ class PluginHostInteractionService {
 
   async request(params, context) {
     await context.assertActive();
-    const preauthorized = this.admissions.get(params) === context.runtimeId;
+    const admission = this.admissions.get(params);
     this.admissions.delete(params);
-    const sender = preauthorized ? this.#assertWindow() : this.#admit(params, context);
+    let sender;
+    if (admission?.runtimeId === context.runtimeId) {
+      // Electron may resolve showMessageBox before restoring parent focus.
+      // Never focus it ourselves or defer an originally background request.
+      // Owner replacement, lock, hide, revoke and runtime stop invalidate this
+      // host-owned admission, including changes during the permission prompt.
+      const deadline = Date.now() + this.focusRestoreMs;
+      for (;;) {
+        context.signal?.throwIfAborted();
+        if (admission.revision !== this.admissionRevision || admission.sender !== this.owner) {
+          throw fail("cancelled", "Host interaction admission was revoked");
+        }
+        const window = this.getWindow();
+        if (this.closed || this.isLocked() || window?.webContents !== admission.sender
+          || window.isDestroyed?.() || admission.sender.isDestroyed?.() || window.isVisible?.() === false) {
+          throw fail("unavailable", "Host interaction owner is unavailable");
+        }
+        if (window.isFocused?.() === true) break;
+        if (Date.now() >= deadline) throw fail("unavailable", "Host interactions require the focused unlocked main window");
+        await new Promise((resolve) => setTimeout(resolve, Math.min(20, Math.max(1, deadline - Date.now()))));
+      }
+      await context.assertActive();
+      if (admission.revision !== this.admissionRevision) throw fail("cancelled", "Host interaction admission was revoked");
+      sender = this.#assertWindow(admission.sender);
+    } else sender = this.#admit(params, context);
     if (this.pending.size >= LIMITS.pendingTotal || [...this.pending.values()].some((entry) => entry.context.runtimeId === context.runtimeId || entry.sender === sender)) {
       throw fail("resourceExhausted", "Host interaction limit reached");
     }
@@ -240,7 +271,10 @@ class PluginHostInteractionService {
       }
       if (response.action !== "submit") throw fail("invalidArgument", "Host interaction action is invalid");
       let value;
-      if (entry.params.kind === "input") value = assertTextBytes(response.value);
+      if (entry.params.kind === "input") {
+        if (!validateSingleLineInput(response.value)) throw fail("invalidArgument", "Host input must be a single line");
+        value = assertTextBytes(response.value);
+      }
       else if (entry.params.kind === "quickPick") {
         if (!entry.params.items.some((item) => item.id === response.value)) throw fail("invalidArgument", "Host interaction choice is invalid");
         value = response.value;
@@ -260,6 +294,7 @@ class PluginHostInteractionService {
 
   releaseWindow(sender) {
     if (this.owner !== sender) return;
+    this.admissionRevision++;
     this.owner = null;
     this.ownerCleanup?.(); this.ownerCleanup = null;
     for (const entry of [...this.pending.values()]) {
@@ -267,17 +302,20 @@ class PluginHostInteractionService {
     }
   }
   releasePlugin(pluginId) {
+    this.admissionRevision++;
     for (const entry of [...this.pending.values()]) {
       if (entry.context.pluginId === pluginId) this.#finish(entry, null, fail("cancelled", "Plugin access was revoked"));
     }
   }
   releaseRuntime(runtimeId) {
+    this.admissionRevision++;
     for (const entry of [...this.pending.values()]) {
       if (entry.context.runtimeId === runtimeId) this.#finish(entry, null, fail("cancelled", "Plugin runtime stopped"));
     }
     this.rates.delete(runtimeId);
   }
-  cancelAll() {
+  cancelAll(invalidateAdmission = true) {
+    if (invalidateAdmission) this.admissionRevision++;
     for (const entry of [...this.pending.values()]) this.#finish(entry, null, fail("cancelled", "Host interaction was cancelled"));
   }
   shutdown() {

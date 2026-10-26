@@ -58,6 +58,8 @@ test('host dialog drives choice/input/copy and the two-phase clipboard share usi
     await click(document.querySelector<HTMLInputElement>('input[type="radio"]')!);
     await click(button('Continue'));
     assert.deepEqual(await choice.promise, { cancelled: false, value: 'compose' });
+    await assert.rejects(begin({ kind: 'input', title: 'Invalid hidden newline', initialValue: 'first\nsecond' }), /invalid/);
+    assert.equal(document.querySelector('[role="dialog"]'), null, 'invalid initial text never creates a misleading single-line dialog');
     const input = await begin({ kind: 'input', title: 'Synthetic input', initialValue: 'synthetic output' });
     assert.equal(document.querySelector<HTMLInputElement>('input')?.value, 'synthetic output');
     await click(button('Continue'));
@@ -83,7 +85,7 @@ test('host dialog drives choice/input/copy and the two-phase clipboard share usi
     assert.deepEqual(writes, ['synthetic output']);
     assert.equal(service.pending.size, 0);
   } finally {
-    await act(async () => { root.unmount(); }); service.shutdown(); dom.window.close();
+    await act(async () => { root.unmount(); await settle(); }); service.shutdown(); dom.window.close();
     for (const [key, descriptor] of previous) { if (descriptor) Object.defineProperty(globalThis, key, descriptor); else Reflect.deleteProperty(globalThis, key); }
   }
 });

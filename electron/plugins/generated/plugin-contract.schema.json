@@ -297,6 +297,12 @@
       },
       "additionalProperties": false
     },
+    "HostSingleLineInputText": {
+      "description": "Single-line host input. CR and LF are rejected before display and on submission; clipboard text remains multiline.",
+      "type": "string",
+      "maxLength": 4096,
+      "pattern": "^[^\\u0000\\r\\n]*$"
+    },
     "HostInputRequest": {
       "type": "object",
       "required": [
@@ -314,9 +320,7 @@
           "pattern": "^[^\\u0000-\\u001f\\u007f]*$"
         },
         "initialValue": {
-          "type": "string",
-          "maxLength": 4096,
-          "pattern": "^[^\\u0000]*$"
+          "$ref": "#/$defs/HostSingleLineInputText"
         }
       },
       "additionalProperties": false

@@ -181,7 +181,7 @@ export type HostClipboardWriteRequest = {
 export type HostInputRequest = {
   kind: "input";
   title: string;
-  initialValue?: string;
+  initialValue?: HostSingleLineInputText;
 };
 
 export type HostInteractionClosed = {
@@ -233,6 +233,8 @@ export type HostQuickPickRequest = {
   title: string;
   items: Array<HostQuickPickItem>;
 };
+
+export type HostSingleLineInputText = string;
 
 export type IconReference = (ThemeIcon) | (PackageIcon);
 

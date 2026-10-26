@@ -111,6 +111,7 @@ export interface PluginCommands {
 
 export interface PluginHostUI {
   quickPick(title: string, items: readonly import("@netcatty/plugin-contract").HostQuickPickItem[]): Promise<string | undefined>;
+  /** Single-line text. The host rejects CR/LF in initial values and submitted responses. */
   input(title: string, initialValue?: string): Promise<string | undefined>;
 }
 
