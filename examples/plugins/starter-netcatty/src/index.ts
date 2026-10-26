@@ -6,7 +6,7 @@ export default definePlugin({
       "com.netcatty.starter.greet",
       async () => {
         const greeting = await context.settings.get<string>("com.netcatty.starter.greeting") ?? "Hello, synthetic world!";
-        context.logger.info("Starter greeting", { greeting });
+        context.views.postMessage("com.netcatty.starter.panel", { greeting });
         return { greeting };
       },
     ));

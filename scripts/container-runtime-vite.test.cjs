@@ -38,6 +38,17 @@ async function checkDevImport() {
       }
       return modules.get(url);
     }
+    const managerResponse = await fetch(new URL("/components/settings/tabs/PluginPackageManager.tsx", origin));
+    assert.equal(managerResponse.status, 200);
+    const managerSource = await managerResponse.text();
+    for (const [helper, exported] of [["pluginRuntimePolicy", "describePluginRuntime"], ["pluginPermissionDescriptions", "describePluginPermission"]]) {
+      const match = managerSource.match(new RegExp('from "([^"\\n]*' + helper + '[^"\\n]*)"'));
+      assert.ok(match, `Missing prebundled ${helper} import`);
+      const module = await load(new URL(match[1], origin).href);
+      await module.link((specifier, importer) => load(new URL(specifier, importer.identifier).href));
+      await module.evaluate();
+      assert.equal(typeof module.namespace.default[exported], "function");
+    }
     const entry = await load(new URL("/domain/systemManager/containerRuntime.ts", origin).href);
     await entry.link((specifier, importer) => load(new URL(specifier, importer.identifier).href));
     await entry.evaluate();
@@ -53,7 +64,7 @@ async function checkDevImport() {
   }
 }
 
-test("Vite serves the renderer container runtime with browser-compatible exports", { timeout: 60_000 }, () => {
+test("Vite serves the renderer shared helpers with browser-compatible exports", { timeout: 60_000 }, () => {
   const result = spawnSync(process.execPath, [
     "--experimental-vm-modules", "--input-type=module", "-e",
     `(${checkDevImport.toString()})().catch(error => { console.error(error); process.exitCode = 1; });`,

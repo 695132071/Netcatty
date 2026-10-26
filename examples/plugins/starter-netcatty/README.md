@@ -1,7 +1,7 @@
 # Plugin Starter
 
 A minimal first-party browser plugin for learning import, settings and lifecycle.
-It requests only `commands` and `settings.read`: no terminal text, host credentials,
+It requests `commands`, `settings.read`, `menus` and `views`: no terminal text, host credentials,
 network, files, secrets or advanced Node access. It works without OS key storage.
 Permission declarations are not grants; follow the app's normal mediation.
 
@@ -15,9 +15,12 @@ node packages/plugin-cli/dist/cli.js pack examples/plugins/starter-netcatty --ou
 
 Start the actual app normally with a fresh test profile; no development flag is
 needed. Open **Settings > Plugins > Installed**, import the package, inspect its
-permissions and enable it. Change **Greeting**, then find **Starter: Read Greeting**
-in the command palette. The command reads the preference and records it in the
-plugin's local log; it does not write to a terminal or connect to a host.
+permissions and enable it. Change **Greeting**, then find **Starter: Greeting Panel** (入门：问候面板)
+in the command palette. Review the normal permission prompts, then click
+**Show greeting** to see the exact preference in the sandboxed panel.
+**Starter: Read Greeting** is also listed and refreshes an already-open panel.
+The panel inserts text using `textContent`, never HTML. It does not write to
+a terminal or connect to a host. Denied permissions remain denied.
 
 Disable, restart and re-enable to verify the preference persists. Re-importing
 the same package leaves it disabled for review. Uninstall removes code and local

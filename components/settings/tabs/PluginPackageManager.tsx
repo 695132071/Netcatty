@@ -1,5 +1,5 @@
-import { describePluginPermission } from '../../../domain/pluginPermissionDescriptions.cjs';
-import { describePluginRuntime } from '../../../domain/pluginRuntimePolicy.cjs';
+import { describePluginPermission } from '@/domain/pluginPermissionDescriptions.cjs';
+import { describePluginRuntime } from '@/domain/pluginRuntimePolicy.cjs';
 import React, { useState } from 'react';
 import { ArrowLeft, Package } from 'lucide-react';
 import { usePluginManager } from '../../../application/state/usePluginManager';
