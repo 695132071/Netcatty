@@ -53,6 +53,7 @@ export function PluginPackageManager({ manager, onSelectionChange }: { manager: 
   const { t, resolvedLocale } = useI18n();
   const [selected, setSelected] = useState<string | null>(null);
   const [search, setSearch] = useState('');
+  const [sourceFilter, setSourceFilter] = useState('');
   const rootRef = useRef<HTMLElement>(null);
   const scrollTop = useRef(0);
   const lastSelection = useRef<string | null>(null);
@@ -72,11 +73,13 @@ export function PluginPackageManager({ manager, onSelectionChange }: { manager: 
       else Array.from(rootRef.current?.querySelectorAll<HTMLButtonElement>('[data-plugin-card]') ?? []).find((button) => button.dataset.pluginCard === lastSelection.current)?.focus({ preventScroll: true });
     });
   };
-  const visible = selectedPlugin ? [selectedPlugin] : manager.plugins.filter((plugin) => [nameOf(plugin), plugin.manifest?.publisher, plugin.manifest?.description, plugin.id].some((value) => JSON.stringify(value ?? '').toLocaleLowerCase().includes(search.trim().toLocaleLowerCase())));
+  const visible = selectedPlugin ? [selectedPlugin] : manager.plugins.filter((plugin) => (!sourceFilter || (plugin.source?.id ?? 'local') === sourceFilter) && [nameOf(plugin), plugin.manifest?.publisher, plugin.manifest?.description, plugin.id].some((value) => JSON.stringify(value ?? '').toLocaleLowerCase().includes(search.trim().toLocaleLowerCase())));
   const [removing, setRemoving] = useState<string | null>(null);
+  const [clearSource, setClearSource] = useState(false);
   if (!manager.available) return null;
   return <section ref={rootRef} className="space-y-4" aria-label={t('settings.plugins.manager.installed')}>
     {selectedPlugin && <Button variant="ghost" size="sm" onClick={() => choose(null)}><ArrowLeft size={14} className="mr-2" />{t('settings.plugins.manager.installed')}</Button>}
+    {!selectedPlugin && manager.plugins.length > 0 && <select aria-label={t('settings.plugins.sources.source')} value={sourceFilter} onChange={(event) => setSourceFilter(event.target.value)} className="h-9 rounded-md border border-input bg-background px-3 text-sm"><option value="">{t('settings.plugins.sources.all')}</option>{[...new Map(manager.plugins.map((plugin) => [plugin.source?.id ?? 'local', plugin.source])).entries()].map(([id, source]) => <option key={id} value={id}>{source?.origin ?? t('settings.plugins.sources.local')}</option>)}</select>}
     {!selectedPlugin && manager.plugins.length > 0 && <Input value={search} onChange={(event) => setSearch(event.target.value)} placeholder={t('settings.plugins.market.search')} aria-label={t('settings.plugins.market.search')} />}
     {!selectedPlugin && manager.plugins.length > 0 && visible.length === 0 && <p className="p-6 text-center text-sm text-muted-foreground">{t('settings.plugins.market.noResults')}</p>}
     {manager.error && <p role="alert" className="text-sm text-destructive">{manager.error}</p>}
@@ -99,6 +102,7 @@ export function PluginPackageManager({ manager, onSelectionChange }: { manager: 
           {t(manager.statusKnown === false ? 'settings.plugins.permissions.statusUnknown' : plugin.enabled ? 'settings.plugins.manager.enabled' : 'settings.plugins.manager.disabled')}
         </Button>
       </div>
+      <p className="break-all text-xs text-muted-foreground">{t('settings.plugins.sources.source')}: {t(plugin.source?.kind === 'official' ? 'settings.plugins.sources.official' : plugin.source?.kind === 'third-party' ? 'settings.plugins.sources.thirdparty' : 'settings.plugins.sources.local')}{plugin.source?.origin ? ` · ${plugin.source.origin}` : ''}</p>
       {plugin.manifest?.publisher && <p className="break-words text-xs text-muted-foreground">{plugin.manifest.publisher}</p>}
       <p className={`break-words text-sm leading-5 text-muted-foreground ${selectedPlugin ? 'whitespace-pre-wrap' : 'line-clamp-3'}`}>{descriptionOf(plugin) || t('settings.plugins.manager.noDescription')}</p>
       {!selectedPlugin ? <div className="mt-auto flex flex-wrap items-center justify-between gap-2 pt-1">
@@ -111,9 +115,10 @@ export function PluginPackageManager({ manager, onSelectionChange }: { manager: 
         <PluginPermissionPanel key={plugin.id} pluginId={plugin.id} onChanged={async () => { await manager.refresh(); }} />
         {removing === plugin.id ? <div className="space-y-2 rounded-lg border border-destructive/30 p-3">
           <p className="text-xs">{t('settings.plugins.manager.removeNote')}</p>
-          <Button variant="destructive" size="sm" disabled={manager.busy} onClick={() => { void manager.uninstall(plugin.id); setRemoving(null); }}>{t('settings.plugins.manager.remove')}</Button>
+          <label className="flex items-start gap-2 text-xs"><input type="checkbox" checked={clearSource} onChange={(event) => setClearSource(event.target.checked)} />{t('settings.plugins.sources.clearPrivate')}</label>
+          <Button variant="destructive" size="sm" disabled={manager.busy} onClick={() => { void manager.uninstall(plugin.id, clearSource); setRemoving(null); }}>{t('settings.plugins.manager.remove')}</Button>
           <Button variant="ghost" size="sm" onClick={() => setRemoving(null)}>{t('common.cancel')}</Button>
-        </div> : <Button variant="ghost" size="sm" disabled={manager.busy} onClick={() => setRemoving(plugin.id)}>{t('settings.plugins.manager.remove')}</Button>}
+        </div> : <Button variant="ghost" size="sm" disabled={manager.busy} onClick={() => { setClearSource(false); setRemoving(plugin.id); }}>{t('settings.plugins.manager.remove')}</Button>}
       </>}
     </article>)}
     </div>

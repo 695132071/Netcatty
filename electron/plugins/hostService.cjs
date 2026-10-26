@@ -21,7 +21,7 @@ const {
   createUtilityModuleMappings,
   normalizePluginModuleResources,
 } = require("./moduleResources.cjs");
-const { RegistryCatalogService } = require("./registryCatalogService.cjs");
+const { MarketSourcesService } = require("./marketSourcesService.cjs");
 const { PluginThemeService } = require("./themeService.cjs");
 const { PackageStore } = require("./packageStore.cjs");
 const { createPluginPaths } = require("./paths.cjs");
@@ -373,6 +373,7 @@ function createPluginHostService(options) {
       : null;
     const themeService = new PluginThemeService({database,packageStore,contributionService});
     const manager = new PluginManager({
+      secretStore,
       permissionEngine,
       database,
       packageStore,
@@ -394,7 +395,7 @@ function createPluginHostService(options) {
     return {
       themeService,
       interactionService,
-      catalogService: new RegistryCatalogService({ manager, fetch: options.electron.net?.fetch?.bind(options.electron.net) }),
+      catalogService: new MarketSourcesService({ database, manager, fetch: options.electron.net?.fetch?.bind(options.electron.net) }),
       companionSupervisor,
       contributionIconService,
       contributionService,

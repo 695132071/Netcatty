@@ -1,5 +1,6 @@
 import { createPortal } from 'react-dom';
 import { PluginStatus } from './PluginStatus';
+import { Dialog, DialogContent, DialogDescription, DialogTitle } from '../../ui/dialog';
 import { PluginInfo } from './PluginInfo';
 import React, { useRef, useState } from 'react';
 import { PluginBrandIcon } from '../../plugins/PluginBrandIcon';
@@ -11,14 +12,15 @@ import { Button } from '../../ui/button';
 import { PluginPackageDetails } from './PluginPackageManager';
 import { PluginReadme } from './PluginReadme';
 
-export function PluginMarketplace({ installed = [], toolbarContainer, noVault }: { noVault?: boolean; installed?: NetcattyInstalledPlugin[]; toolbarContainer?: HTMLElement | null }) {
+export function PluginMarketplace({ installed = [], toolbarContainer, noVault, source }: { source?: NetcattyPluginSource; noVault?: boolean; installed?: NetcattyInstalledPlugin[]; toolbarContainer?: HTMLElement | null }) {
   const [selected, setSelected] = useState<string | null>(null);
-  const catalog = usePluginCatalog(selected);
-  return <PluginMarketplaceContent catalog={catalog} installed={installed} selected={selected} onSelect={setSelected} toolbarContainer={toolbarContainer} noVault={noVault} />;
+  const catalog = usePluginCatalog(selected, source?.id);
+  return <PluginMarketplaceContent catalog={catalog} marketSource={source} installed={installed} selected={selected} onSelect={setSelected} toolbarContainer={toolbarContainer} noVault={noVault} />;
 }
 
 // The browser owns only presentation state; installation and README policy stay in the existing hook.
-export function PluginMarketplaceContent({ catalog, installed, selected, onSelect, toolbarContainer, noVault }: {
+export function PluginMarketplaceContent({ catalog, installed, selected, onSelect, toolbarContainer, noVault, marketSource }: {
+  marketSource?: NetcattyPluginSource;
   noVault?: boolean;
   toolbarContainer?: HTMLElement | null;
   catalog: ReturnType<typeof usePluginCatalog>;
@@ -28,6 +30,8 @@ export function PluginMarketplaceContent({ catalog, installed, selected, onSelec
 }) {
   const { t } = useI18n();
   const [search, setSearch] = useState('');
+  const [confirmInstall, setConfirmInstall] = useState(false);
+  const [clearPreviousSource, setClearPreviousSource] = useState(false);
   const listRef = useRef<HTMLDivElement>(null);
   const detailRef = useRef<HTMLHeadingElement>(null);
   const lastSelection = useRef<string | null>(null);
@@ -89,7 +93,7 @@ export function PluginMarketplaceContent({ catalog, installed, selected, onSelec
         {installedEntry?.runtime?.lastError && <p role="status" className="break-words text-xs text-destructive">{t('settings.plugins.manager.lastError')}: {installedEntry.runtime.lastError}</p>}
         <p className="text-sm leading-6 text-muted-foreground">{entry.description}</p>
         <a className="block break-all text-xs text-primary underline underline-offset-4" href={`https://github.com/${entry.repository}/tree/${entry.commit}`} target="_blank" rel="noopener noreferrer">{entry.repository} @ {entry.commit.slice(0, 12)}</a>
-        {entry.artifact ? <div className="space-y-2"><p className="text-xs text-muted-foreground">{t('settings.plugins.market.installNote')}</p>{catalog.listError && <p role="status" className="text-xs text-muted-foreground">{t('settings.plugins.market.offlineShort')}</p>}<Button size="sm" disabled={catalog.busy || Boolean(catalog.listError)} onClick={() => void catalog.install(entry.id)}>{t('settings.plugins.market.install')}</Button></div> : <div className="flex items-center gap-1 text-xs text-muted-foreground"><span>{t('settings.plugins.market.sourceBadge')}</span><PluginInfo label={t('settings.plugins.market.sourceBadge')}>{t('settings.plugins.market.sourceOnly')}</PluginInfo></div>}
+        {entry.artifact ? <div className="space-y-2"><p className="text-xs text-muted-foreground">{t('settings.plugins.market.installNote')}</p>{catalog.listError && <p role="status" className="text-xs text-muted-foreground">{t('settings.plugins.market.offlineShort')}</p>}<Button size="sm" disabled={catalog.busy || Boolean(catalog.listError)} onClick={() => { if (marketSource?.kind === 'third-party' || (catalog.sourceBinding && catalog.sourceBinding.id !== (marketSource?.id ?? 'official'))) { setClearPreviousSource(false); setConfirmInstall(true); } else void catalog.install(entry.id); }}>{t('settings.plugins.market.install')}</Button></div> : <div className="flex items-center gap-1 text-xs text-muted-foreground"><span>{t('settings.plugins.market.sourceBadge')}</span><PluginInfo label={t('settings.plugins.market.sourceBadge')}>{t('settings.plugins.market.sourceOnly')}</PluginInfo></div>}
         <section><h4 className="mb-3 text-sm font-semibold">{t('settings.plugins.market.manifest')}</h4><PluginPackageDetails plugin={{ id: entry.id, activeVersion: entry.version, enabled: false, manifest: entry.manifest, archiveSha256: entry.artifact?.sha256, runtime: { status: 'stopped', kind: null, lastError: null, quarantinedAt: null } }} /></section>
         <div className="min-w-0 border-t pt-4"><div className="flex items-center gap-1"><h4 className="text-sm font-semibold">README</h4><PluginInfo label={t('settings.plugins.market.readmeInfo')}>{t('settings.plugins.market.readmeNote')}</PluginInfo></div>{catalog.readmeStatus === 'loading' && <p className="mt-3 text-xs text-muted-foreground">{t('settings.plugins.loading')}</p>}
           {catalog.readmeStatus === 'error' && <div role="alert" className="mt-3 space-y-2 text-xs text-destructive"><p>{catalog.readmeError}</p><Button variant="outline" size="sm" onClick={catalog.retryReadme}>{t('settings.plugins.market.retry')}</Button></div>}
@@ -97,6 +101,13 @@ export function PluginMarketplaceContent({ catalog, installed, selected, onSelec
         </div>
       </article>}
     </div>
+    <Dialog open={confirmInstall && Boolean(entry)} onOpenChange={setConfirmInstall}><DialogContent className="max-h-[85vh] overflow-y-auto">
+      <DialogTitle>{t('settings.plugins.sources.installConfirm')}</DialogTitle><DialogDescription>{t('settings.plugins.sources.risk')}</DialogDescription>
+      <p className="break-all text-sm font-medium">{marketSource?.origin}</p>
+      {entry && <PluginPackageDetails plugin={{ id: entry.id, activeVersion: entry.version, enabled: false, manifest: entry.manifest, source: marketSource, archiveSha256: entry.artifact?.sha256, runtime: { status: 'stopped', kind: null, lastError: null, quarantinedAt: null } }} />}
+      {catalog.sourceBinding && catalog.sourceBinding.id !== (marketSource?.id ?? 'official') && <label className="flex items-start gap-2 text-xs"><input type="checkbox" checked={clearPreviousSource} onChange={(event) => setClearPreviousSource(event.target.checked)} />{t('settings.plugins.sources.clearPrivate')}<span className="break-all">{catalog.sourceBinding.origin ?? t('settings.plugins.sources.local')}</span></label>}
+      <Button disabled={catalog.busy || Boolean(catalog.listError) || Boolean(catalog.sourceBinding && catalog.sourceBinding.id !== (marketSource?.id ?? 'official') && !clearPreviousSource)} onClick={() => { if (entry) void catalog.install(entry.id, marketSource?.id, clearPreviousSource).then(() => setConfirmInstall(false)); }}>{t('settings.plugins.market.install')}</Button>
+    </DialogContent></Dialog>
   </section>;
 }
 

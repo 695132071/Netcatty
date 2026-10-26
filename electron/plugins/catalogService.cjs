@@ -12,13 +12,14 @@ const { assertPluginJsonValue } = require("./jsonBoundary.cjs");
 const MAX_CATALOG_BYTES = 2 * 1024 * 1024;
 const CATALOG_FIELDS = new Set(["id", "version", "name", "description", "author", "repository", "commit", "license", "readme", "manifest", "artifact"]);
 
+const { OFFICIAL_SOURCE, assertSource } = require("./sourceIdentity.cjs");
 const DISTRIBUTION_ORIGIN = "https://plugins.netcatty.app";
-function assertDownloadUrl(value) {
+function assertDownloadUrl(value, origin = DISTRIBUTION_ORIGIN) {
   if (typeof value !== "string" || /[\u0000-\u0020\u007f\\%?#]/u.test(value)) {
     throw new Error("Catalog download URL is not an approved HTTPS static distribution source");
   }
   const url = new URL(value);
-  if (url.origin !== DISTRIBUTION_ORIGIN || url.username || url.password || url.port
+  if (url.origin !== origin || url.username || url.password || url.port
     || url.href !== value || url.pathname.split("/").some((part) => part === "." || part === "..")) {
     throw new Error("Catalog download URL is not an approved HTTPS static distribution source");
   }
@@ -33,7 +34,7 @@ function assertReadmeSource(entry) {
     throw new Error("README source escapes the pinned commit");
   }
 }
-function validateCatalog(entries) {
+function validateCatalog(entries, origin = DISTRIBUTION_ORIGIN) {
   assertPluginJsonValue(entries, { maxBytes: MAX_CATALOG_BYTES });
   if (!Array.isArray(entries) || entries.length > 1000) throw new Error("Invalid plugin catalog");
   const ids = new Set();
@@ -58,15 +59,15 @@ function validateCatalog(entries) {
         || typeof asset.url !== "string" || typeof asset.sha256 !== "string") {
         throw new Error(`Invalid catalog ${field} metadata`);
       }
-      assertDownloadUrl(asset.url);
+      assertDownloadUrl(asset.url, origin);
       if (!/^[a-f0-9]{64}$/u.test(asset.sha256)) throw new Error(`Catalog ${field} requires SHA-256`);
     }
   }
   return entries;
 }
-async function fetchBounded(url, limit, fetchImpl = fetch) {
+async function fetchBounded(url, limit, fetchImpl = fetch, origin = DISTRIBUTION_ORIGIN) {
   const signal = AbortSignal.timeout(30_000);
-  const response = await fetchImpl(assertDownloadUrl(url), { redirect: "manual", signal, credentials: "omit", referrerPolicy: "no-referrer" });
+  const response = await fetchImpl(assertDownloadUrl(url, origin), { redirect: "manual", signal, credentials: "omit", referrerPolicy: "no-referrer" });
   if ([301, 302, 303, 307, 308].includes(response.status)) {
     await response.body?.cancel();
     throw new Error("Catalog redirects are not allowed");
@@ -92,13 +93,17 @@ async function fetchBounded(url, limit, fetchImpl = fetch) {
 }
 class PluginCatalogService {
   constructor(options) {
-    this.entries = structuredClone(validateCatalog(options.entries ?? catalog));
+    this.marketSource = assertSource(options.source ?? OFFICIAL_SOURCE);
+    this.origin = this.marketSource.origin;
+    this.entries = structuredClone(validateCatalog(options.entries ?? (this.marketSource.id === "official" ? catalog : []), this.origin));
     this.fetch = options.fetch ?? fetch;
     this.getTempFilePath = options.getTempFilePath ?? getTempFilePath;
     this.manager = options.manager;
+    this.sourceGuard = options.sourceGuard ?? (() => {});
     this.installing = false;
   }
   list() { return structuredClone(this.entries); }
+  artifactSize() { return undefined; }
   get(id) {
     const entry = this.entries.find((item) => item.id === id);
     if (!entry) throw new Error("Plugin is not in the curated catalog");
@@ -111,12 +116,14 @@ class PluginCatalogService {
     this.installing = true;
     let directory;
     try {
-      const bytes = await fetchBounded(entry.artifact.url, 32 * 1024 * 1024, this.fetch);
+      const bytes = await fetchBounded(entry.artifact.url, 32 * 1024 * 1024, this.fetch, this.origin);
+      const expectedSize = this.artifactSize(entry);
+      if (expectedSize !== undefined && bytes.byteLength !== expectedSize) throw new Error("Catalog package size mismatch");
       if (createHash("sha256").update(bytes).digest("hex") !== entry.artifact.sha256) throw new Error("Catalog package SHA-256 mismatch");
       directory = await fs.mkdtemp(this.getTempFilePath("plugin-catalog-"));
       const archive = path.join(directory, "package.ncpkg");
       await fs.writeFile(archive, bytes, { mode: 0o600, flag: "wx" });
-      return await this.manager.install(archive, { enable: false, catalog: entry });
+      return await this.manager.install(archive, { enable: false, catalog: entry, source: this.marketSource, sourceGuard: this.sourceGuard });
     } finally {
       this.installing = false;
       if (directory) await fs.rm(directory, { recursive: true, force: true });

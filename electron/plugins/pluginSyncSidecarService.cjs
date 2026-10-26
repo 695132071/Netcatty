@@ -35,7 +35,7 @@ class PluginSyncSidecarService {
         sync: setting.sync === true,
         scope: setting.scope,
       }));
-      map.set(plugin.id, fields);
+      map.set(this.database.privateOwner?.(plugin.id) ?? plugin.id, fields);
     }
     return map;
   }
@@ -175,7 +175,7 @@ class PluginSyncSidecarService {
       if (typeof this.contributionService?.resetSetting === "function") {
         try {
           await this.contributionService.resetSetting(
-            entry.pluginId,
+            this.database.publicPluginId?.(entry.pluginId) ?? entry.pluginId,
             parsed.settingId,
             parsed.scopeId,
           );
@@ -218,7 +218,7 @@ class PluginSyncSidecarService {
       if (typeof this.contributionService?.updateSetting === "function") {
         try {
           await this.contributionService.updateSetting(
-            entry.pluginId,
+            this.database.publicPluginId?.(entry.pluginId) ?? entry.pluginId,
             parsed.settingId,
             entry.value,
             targetScopeId,
@@ -312,7 +312,7 @@ class PluginSyncSidecarService {
    */
   async hydrateInstalledPluginSettings(pluginId) {
     if (typeof pluginId !== "string" || pluginId.length < 1) return;
-    const declared = this.#declaredSettingsByPlugin().get(pluginId);
+    const declared = this.#declaredSettingsByPlugin().get(this.database.privateOwner?.(pluginId) ?? pluginId);
     if (!declared) return;
     const rows = typeof this.database.listSyncSidecars === "function"
       ? this.database.listSyncSidecars(pluginId)

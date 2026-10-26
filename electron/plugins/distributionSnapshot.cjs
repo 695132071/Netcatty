@@ -14,7 +14,16 @@ const ajv = new Ajv2020({ allErrors: true, strict: false, validateFormats: true 
 addFormats(ajv);
 ajv.addSchema(require("./generated/plugin-contract.schema.json"));
 const validateIndex = ajv.compile(require("./distribution/index.schema.json"));
-const validateDelivery = ajv.compile(require("./distribution/delivery.schema.json"));
+const deliverySchema = require("./distribution/delivery.schema.json");
+const validateDelivery = ajv.compile(deliverySchema);
+const deliveryV2 = structuredClone(deliverySchema);
+deliveryV2.title = "Netcatty static delivery v2 (hash-bound packages)";
+deliveryV2.properties.schemaVersion.const = 2;
+const packageRef = structuredClone(deliveryV2.properties.plugins.items.properties.readme);
+packageRef.properties.path.pattern = "^/assets/[a-f0-9]{64}\\.ncpkg$";
+packageRef.properties.size.maximum = 32 * 1024 * 1024;
+deliveryV2.properties.plugins.items.properties.artifact = { oneOf: [{ type: "null" }, packageRef] };
+const validateDeliveryV2 = ajv.compile(deliveryV2);
 const digest = (bytes) => createHash("sha256").update(bytes).digest("hex");
 const tuple = (entry) => JSON.stringify([entry.id, entry.version, entry.repository, entry.commit]);
 
@@ -51,20 +60,21 @@ function assertAsset(ref, extensions) {
   }
   assertReference(ref, ref.path, 256 * 1024);
 }
-async function fetchVerified(ref, fetchImpl) {
-  const bytes = await fetchBounded(`${DISTRIBUTION_ORIGIN}${ref.path}`, ref.size, fetchImpl);
+async function fetchVerified(ref, fetchImpl, origin = DISTRIBUTION_ORIGIN) {
+  const bytes = await fetchBounded(`${origin}${ref.path}`, ref.size, fetchImpl, origin);
   if (bytes.byteLength !== ref.size || digest(bytes) !== ref.sha256) throw new Error("Static resource size or SHA-256 mismatch");
   return bytes;
 }
-function validateSet(pointer, entries, index, delivery) {
-  validateCatalog(entries);
+function validateSet(pointer, entries, index, delivery, origin = DISTRIBUTION_ORIGIN) {
+  validateCatalog(entries, origin);
   if (!validateIndex(index)) throw new Error(`Invalid distribution index: ${formatValidationErrors(validateIndex.errors)}`);
-  if (!validateDelivery(delivery)) throw new Error(`Invalid static delivery: ${formatValidationErrors(validateDelivery.errors)}`);
+  const validator = delivery.schemaVersion === 2 ? validateDeliveryV2 : validateDelivery;
+  if (!validator(delivery)) throw new Error(`Invalid static delivery: ${formatValidationErrors(validator.errors)}`);
   if (delivery.registryCommit !== pointer.registryCommit || delivery.catalogSha256 !== pointer.catalog.sha256
     || delivery.indexSha256 !== pointer.index.sha256) throw new Error("Static snapshot documents do not match");
   // v1 publishing deliberately refuses packages and avatars. Do not extend this
   // consumer ahead of the reviewed publishing schema or invent installable code.
-  if (entries.some((entry) => entry.artifact)) throw new Error("Static delivery v1 is source-only");
+  if (delivery.schemaVersion === 1 && entries.some((entry) => entry.artifact)) throw new Error("Static delivery v1 is source-only");
   const current = new Map();
   const indexIds = new Set();
   for (const plugin of index.plugins) {
@@ -77,7 +87,7 @@ function validateSet(pointer, entries, index, delivery) {
     }
     if (plugin.current !== null) {
       const version = versions.get(plugin.current);
-      if (!version || version.withdrawal !== null || version.distribution !== "source-only") throw new Error("Current distribution version is missing or withdrawn");
+      if (!version || version.withdrawal !== null || (version.distribution !== (version.entry.artifact ? "release" : "source-only"))) throw new Error("Current distribution version is missing or withdrawn");
       current.set(plugin.id, version.entry);
     }
   }
@@ -91,17 +101,22 @@ function validateSet(pointer, entries, index, delivery) {
     if (!catalogTuples.has(key) || resources.has(key)) throw new Error("Delivery identity does not match catalog tuple");
     assertAsset(plugin.readme, ["md"]);
     for (const icon of [plugin.iconLight, plugin.iconDark]) if (icon !== null) assertAsset(icon, ["png", "webp"]);
+    const entry = entries.find((item) => tuple(item) === key);
+    if (plugin.artifact !== null) {
+      assertReference(plugin.artifact, `/assets/${plugin.artifact.sha256}.ncpkg`, 32 * 1024 * 1024);
+      if (!entry.artifact || entry.artifact.sha256 !== plugin.artifact.sha256 || entry.artifact.url !== `${origin}${plugin.artifact.path}`) throw new Error("Package delivery does not match catalog hash and source");
+    } else if (entry.artifact) throw new Error("Catalog package has no delivery resource");
     resources.set(key, plugin);
   }
   if (resources.size !== entries.length) throw new Error("Missing delivery entry for catalog plugin");
   return resources;
 }
-async function fetchDistribution(fetchImpl) {
-  const pointer = parseJson(await fetchBounded(REGISTRY_URL, 16 * 1024, fetchImpl), "snapshot pointer", 16 * 1024);
+async function fetchDistribution(fetchImpl, origin = DISTRIBUTION_ORIGIN) {
+  const pointer = parseJson(await fetchBounded(`${origin}/v1/snapshot.json`, 16 * 1024, fetchImpl, origin), "snapshot pointer", 16 * 1024);
   assertPointer(pointer);
-  const documents = await Promise.all(["catalog", "index", "delivery"].map(async (name) => parseJson(await fetchVerified(pointer[name], fetchImpl), name)));
+  const documents = await Promise.all(["catalog", "index", "delivery"].map(async (name) => parseJson(await fetchVerified(pointer[name], fetchImpl, origin), name)));
   const [entries, index, delivery] = documents;
-  const resources = validateSet(pointer, entries, index, delivery);
+  const resources = validateSet(pointer, entries, index, delivery, origin);
   return { entries, resources, pointer };
 }
 module.exports = { REGISTRY_URL, fetchDistribution, fetchVerified, tuple, validateSet, assertPointer, assertAsset };
