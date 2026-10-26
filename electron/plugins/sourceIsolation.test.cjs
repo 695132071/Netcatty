@@ -14,6 +14,42 @@ const second = thirdPartySource("Second", "https://second.example.com");
 function install(db, source) {
   db.installVersion({ pluginId: id, version: "1.0.0", manifest: {}, archiveSha256: "a".repeat(64), packageRelativePath: "example.plugin/1.0.0", source });
 }
+test("schema-4 local provenance survives upgrade and uninstall until explicit reset", (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "plugin-source-upgrade-"));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const file = path.join(root, "db.sqlite");
+  let db = new PluginDatabase(file);
+  install(db, LOCAL_SOURCE);
+  db.setSetting(id, "private", "application", "application", "retained");
+  db.db.exec("DROP TABLE plugin_source_bindings; PRAGMA user_version = 4");
+  db.close();
+  db = new PluginDatabase(file);
+  t.after(() => db.close());
+  db.removePlugin(id);
+  assert.equal(db.getRetainedPluginSource(id).id, "local");
+  assert.throws(() => install(db, first), /source differs/);
+  assert.equal(db.getSetting(id, "private", "application", "application"), "retained");
+  db.clearUninstalledSourceData(id, "local");
+  install(db, first);
+  assert.equal(db.getSetting(id, "private", "application", "application"), undefined);
+});
+
+test("failed provenance backfill does not publish the new schema version", (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "plugin-source-upgrade-failure-"));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const file = path.join(root, "db.sqlite");
+  const db = new PluginDatabase(file);
+  t.after(() => db.close());
+  install(db, LOCAL_SOURCE);
+  db.db.exec("DELETE FROM plugin_source_bindings; PRAGMA user_version = 5; CREATE TRIGGER fail_source_backfill BEFORE INSERT ON plugin_source_bindings BEGIN SELECT RAISE(ABORT, 'synthetic backfill failure'); END;");
+  assert.throws(() => new PluginDatabase(file, { database: db.db }), /synthetic backfill failure/);
+  assert.equal(db.db.prepare("PRAGMA user_version").get().user_version, 5);
+  db.db.exec("DROP TRIGGER fail_source_backfill");
+  new PluginDatabase(file, { database: db.db });
+  db.removePlugin(id);
+  assert.equal(db.getRetainedPluginSource(id).id, "local");
+  assert.throws(() => install(db, first), /source differs/);
+});
 test("same ID cannot change source during install, uninstall or database restart without explicit private reset", (t) => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "plugin-source-isolation-"));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));

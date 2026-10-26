@@ -7,7 +7,7 @@ const { DatabaseSync } = require("node:sqlite");
 
 const { LOCAL_SOURCE, assertSource, privateOwner } = require("./sourceIdentity.cjs");
 
-const SCHEMA_VERSION = 5;
+const SCHEMA_VERSION = 6;
 const MAX_SECURITY_AUDIT_DETAILS_BYTES = 16 * 1024;
 const MAX_SECURITY_AUDIT_RECORDS_PER_PLUGIN = 1_000;
 const REQUIRED_SCHEMA_COLUMNS = Object.freeze({
@@ -222,9 +222,25 @@ class PluginDatabase {
     `));
     if (version <= 4) this.transaction(() => this.db.exec(`
       CREATE TABLE IF NOT EXISTS plugin_source_bindings (plugin_id TEXT PRIMARY KEY, source_json TEXT NOT NULL);
-      PRAGMA user_version = 5;
     `));
     this.#assertSchemaLayout();
+    if (version <= 5) this.transaction(() => {
+      // Upgraded installs and retained local private records must keep their
+      // provenance after uninstall. Never infer official ownership from names.
+      const rows = this.db.prepare(`
+        SELECT id AS plugin_id FROM plugins
+        UNION SELECT plugin_id FROM plugin_settings
+        UNION SELECT plugin_id FROM plugin_view_state
+        UNION SELECT plugin_id FROM plugin_permission_grants
+        UNION SELECT plugin_id FROM plugin_secrets
+        UNION SELECT plugin_id FROM plugin_sync_sidecars
+      `).all();
+      const insert = this.db.prepare("INSERT OR IGNORE INTO plugin_source_bindings(plugin_id,source_json) VALUES(?,?)");
+      for (const row of rows) {
+        if (/^[a-z0-9][a-z0-9.-]{1,127}$/u.test(row.plugin_id)) insert.run(row.plugin_id, JSON.stringify(LOCAL_SOURCE));
+      }
+      this.db.exec("PRAGMA user_version = 6");
+    });
     // Legacy-map backfill is deferred until PackageStore.recover() has finished
     // (hostService seeds after package initialize). Running here would promote
     // sole map candidates before recovered manifests are visible, then skip
