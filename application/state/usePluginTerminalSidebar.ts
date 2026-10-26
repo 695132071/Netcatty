@@ -9,6 +9,12 @@ import { OPEN_PLUGIN_VIEW_EVENT, type OpenPluginViewDetail } from './usePluginVi
 
 export const OPEN_PLUGIN_TERMINAL_SIDEBAR_EVENT = 'netcatty:open-plugin-terminal-sidebar';
 export const PLUGIN_TERMINAL_SIDEBAR_CONTEXT = Object.freeze({ 'netcatty.surface': 'terminal-sidebar' });
+/** Required production view-context projection, not a plugin-facing API. */
+export interface PluginSidebarHostActions {
+  getActiveTerminalSessionId(): string | null;
+  handleSwitchSidePanelTab(tool: import('../../domain/sidePanelLayout').SidePanelTool): void;
+  handleWithdrawPluginSidebarPane(tabId: string, paneId: string, expectedTool: import('../../domain/sidePanelLayout').SidePanelTool): void;
+}
 export interface PluginTerminalSidebarPage {
   tool: `plugin-view:${string}`;
   viewId: string;

@@ -50,8 +50,8 @@ test('terminal extension pages use actual split panes, focus and session ownersh
   let split!: () => void;
   function Fixture() {
     const state = useTerminalSidePanelLayoutState(); const latest = useRef(state); latest.current = state;
-    const model = usePluginTerminalSidebar({ layouts: state.sidePanelLayouts, getSession, isTerminalTab: (id) => id === 'workspace-synthetic',
-      select: (tool) => state.selectSidePanelToolForTab('workspace-synthetic', tool),
+    const model = usePluginTerminalSidebar({ layouts: state.sidePanelLayouts, getSession, isTerminalTab: (id) => id === 'workspace-synthetic' || id === 'synthetic-local-terminal',
+      select: (tool) => state.selectSidePanelToolForTab(activeTabStore.getActiveTabId(), tool),
       withdraw: (tabId, paneId, tool) => {
         const layout = state.sidePanelLayoutsRef.current.get(tabId);
         if (layout && collectSidePanelPanes(layout.root).some((pane) => pane.id === paneId && pane.tool === tool)) state.closePane(tabId, paneId);
@@ -61,8 +61,8 @@ test('terminal extension pages use actual split panes, focus and session ownersh
       if ((prior.get(tool) ?? null) === host) return prior;
       const next = new Map(prior); if (host) next.set(tool, host); else next.delete(tool); return next;
     }), []);
-    const focusPane = useCallback((id: string) => latest.current.focusPane('workspace-synthetic', id), []);
-    const closePane = useCallback((id: string) => { latest.current.closePane('workspace-synthetic', id); }, []);
+    const focusPane = useCallback((id: string) => latest.current.focusPane(activeTabStore.getActiveTabId(), id), []);
+    const closePane = useCallback((id: string) => { latest.current.closePane(activeTabStore.getActiveTabId(), id); }, []);
     const resize = useCallback(() => {}, []);
     const layout = model.tabId ? state.sidePanelLayouts.get(model.tabId) : null;
     const panes = layout ? collectSidePanelPanes(layout.root) : [];
@@ -75,7 +75,7 @@ test('terminal extension pages use actual split panes, focus and session ownersh
         const page = model.pages.find((item) => item.tool === pane.tool); const target = hosts.get(pane.tool) ?? parking.current;
         if (!page || !target) return null;
         return <PersistentSidePanelPortal key={`${pane.id}:${model.sessionId}`} portalKey={`plugin-${pane.id}`} target={target}>
-          <PluginTerminalSidebarPageHost page={page} tabId="workspace-synthetic" sessionId={model.sessionId} getSession={getSession} adapter={model.contributions}
+          <PluginTerminalSidebarPageHost page={page} tabId={model.tabId!} sessionId={model.sessionId} getSession={getSession} adapter={model.contributions}
             focusOnReveal={layout?.focusedPaneId === pane.id} focused={() => focusPane(pane.id)} unavailable={() => closePane(pane.id)} />
         </PersistentSidePanelPortal>;
       })}</>;
@@ -115,6 +115,12 @@ test('terminal extension pages use actual split panes, focus and session ownersh
     const last = opens.at(-1)!.instanceId!;
     await act(async () => { activeTabStore.setActiveTabId('vault'); assert.ok(closes.includes(last)); await settle(); });
     assert.equal(document.querySelector('[data-plugin-terminal-sidebar]'), null);
+    await act(async () => { selectedSession = 'synthetic-local-terminal'; activeTabStore.setActiveTabId(selectedSession); await settle(); });
+    await act(async () => { document.querySelector<HTMLButtonElement>('button[aria-label="Extension pages"]')!.click(); await settle(); });
+    const localPage = [...document.querySelectorAll('button')].find((button) => button.textContent?.includes('Second page'))!;
+    await act(async () => { localPage.click(); await settle(); });
+    assert.ok(document.querySelector('[data-plugin-view-slot="terminal-sidebar"]'), 'standalone Local Terminal is a valid navigation owner');
+    assert.deepEqual(opens.at(-1)!.context, { 'netcatty.surface': 'terminal-sidebar' });
   } finally {
     await act(async () => { root.unmount(); await settle(); }); dom.window.close();
     for (const [key, descriptor] of previous) { if (descriptor) Object.defineProperty(globalThis, key, descriptor); else Reflect.deleteProperty(globalThis, key); }
