@@ -4,18 +4,25 @@ import { Button } from '../../ui/button';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from '../../ui/dialog';
 
 /** Uses the existing renderer and host bridge; opening the manager never starts a plugin. */
-export function PluginManagementDialog({ children }: {
+export function PluginManagementDialog({ children, trigger, open: controlledOpen, onOpenChange, restoreFocusTo, fallbackFocusTo }: {
+  trigger?: React.ReactNode | null;
+  open?: boolean;
+  onOpenChange?: (open: boolean) => void;
+  restoreFocusTo?: React.RefObject<HTMLElement | null>;
+  fallbackFocusTo?: React.RefObject<HTMLElement | null>;
   children: React.ReactNode | ((handoff: (action: () => void) => void) => React.ReactNode);
 }) {
   const { t } = useI18n();
-  const [open, setOpen] = useState(false);
+  const [internalOpen, setInternalOpen] = useState(false);
+  const open = controlledOpen ?? internalOpen;
+  const setOpen = (value: boolean) => { setInternalOpen(value); onOpenChange?.(value); };
   const pendingHandoff = useRef<(() => void) | null>(null);
   const handoff = (action: () => void) => { pendingHandoff.current = action; setOpen(false); };
   return (
     <Dialog open={open} onOpenChange={setOpen}>
-      <DialogTrigger asChild>
-        <Button variant="outline">{t('settings.plugins.openManager')}</Button>
-      </DialogTrigger>
+      {trigger !== null && <DialogTrigger asChild>
+        {trigger ?? <Button variant="outline">{t('settings.plugins.openManager')}</Button>}
+      </DialogTrigger>}
       <DialogContent onCloseAutoFocus={(event) => {
         const action = pendingHandoff.current;
         pendingHandoff.current = null;
@@ -24,6 +31,13 @@ export function PluginManagementDialog({ children }: {
           // Wait for Radix to release modal pointer/focus ownership before opening
           // the existing external plugin view host (including exit animations).
           queueMicrotask(action);
+        } else {
+          const previous = restoreFocusTo?.current;
+          const target = previous?.isConnected && !previous.matches(':disabled') ? previous : fallbackFocusTo?.current;
+          if (target?.isConnected) {
+            event.preventDefault();
+            target.focus({ preventScroll: true });
+          }
         }
       }} className="flex h-[min(88dvh,900px)] w-[calc(100vw-2rem)] max-w-[1180px] flex-col gap-0 overflow-hidden p-0">
         <DialogHeader className="shrink-0 border-b px-6 py-4 pr-12 text-left">

@@ -201,8 +201,9 @@ export const SettingCard: React.FC<SettingCardProps> = ({
 );
 
 interface SettingRowProps {
-  label?: string;
-  description?: string;
+  leading?: React.ReactNode;
+  label?: React.ReactNode;
+  description?: React.ReactNode;
   children: React.ReactNode;
   align?: "center" | "start";
   /** Stable catalog id for settings search jump targets. */
@@ -210,6 +211,7 @@ interface SettingRowProps {
 }
 
 export const SettingRow: React.FC<SettingRowProps> = ({
+  leading,
   label,
   description,
   children,
@@ -225,6 +227,7 @@ export const SettingRow: React.FC<SettingRowProps> = ({
       align === "start" ? "items-start" : "items-center",
     )}
   >
+    {leading && <div className="shrink-0">{leading}</div>}
     <div className="flex-1 min-w-0">
       {label && <div className="text-sm font-medium">{label}</div>}
       {description && (

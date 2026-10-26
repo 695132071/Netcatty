@@ -1721,3 +1721,17 @@ test('theme catalog and selection remain trusted app management channels',async(
  for(const channel of [CHANNELS.themeCatalog,CHANNELS.themeApply])await assert.rejects(ipc.handlers.get(channel)({trusted:false},{}),/Untrusted/);
  assert.equal(calls,0);await ipc.handlers.get(CHANNELS.themeCatalog)({trusted:true});await ipc.handlers.get(CHANNELS.themeApply)({trusted:true},{});assert.equal(calls,2);
 });
+
+test("local log management rejects plugin/untrusted senders before touching the sink", async () => {
+  const ipcMain = createIpcMain();
+  const actions = [];
+  const logService = { ready: Promise.resolve() };
+  for (const action of ["status", "configure", "openFolder", "exportLogs", "clear"]) logService[action] = async () => { actions.push(action); return { saveToDisk: false }; };
+  registerPluginBridge(ipcMain, { manager: { async initialize() {} }, logService, isTrustedSender: (event) => event?.trusted === true });
+  for (const channel of [CHANNELS.logStatus, CHANNELS.logConfigure, CHANNELS.logOpen, CHANNELS.logExport, CHANNELS.logClear]) {
+    await assert.rejects(ipcMain.handlers.get(channel)({}, {}), /Untrusted/);
+    assert.equal(actions.length, 0);
+  }
+  for (const channel of [CHANNELS.logStatus, CHANNELS.logConfigure, CHANNELS.logOpen, CHANNELS.logExport, CHANNELS.logClear]) await ipcMain.handlers.get(channel)({ trusted: true }, {});
+  assert.deepEqual(actions, ["status", "configure", "openFolder", "exportLogs", "clear"]);
+});

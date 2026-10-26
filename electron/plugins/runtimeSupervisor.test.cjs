@@ -1002,3 +1002,30 @@ test('data-only themes never create a runtime on startup or explicit start',asyn
  await assert.rejects(fixture.supervisor.start(manifest.id),/no executable runtime/);assert.equal(fixture.runtimeOptions.length,0);
  await fixture.supervisor.shutdown();
 });
+
+test("runtime cleanup closes diagnostic loggers before stale runtime callbacks can write", async (t) => {
+  const { PluginLogger } = require("./pluginLogger.cjs");
+  const loggers = [];
+  const events = [];
+  const fixture = createFixture(t, () => ({
+    async start(config) { return { pluginId: config.pluginId, pluginVersion: config.pluginVersion, apiVersion: config.apiVersion, enabledFeatures: config.enabledFeatures }; },
+    async stop() {},
+  }), { logService: {
+    createLogger(identity) {
+      const logger = new PluginLogger({ identity });
+      loggers.push(logger);
+      return logger;
+    },
+    audit(_identity, event) { events.push(event.operation); },
+  } });
+  t.after(() => fixture.supervisor.shutdown());
+  await fixture.supervisor.start(fixture.manifest.id);
+  assert.equal(loggers[0].closed, false);
+  await fixture.supervisor.stop(fixture.manifest.id);
+  assert.equal(loggers[0].closed, true);
+  assert.deepEqual(events.slice(0, 3), ["runtime.starting", "runtime.running", "runtime.stopped"]);
+  await fixture.runtimeOptions[0].logger.write("info", "synthetic stale callback");
+  await fixture.supervisor.start(fixture.manifest.id);
+  await fixture.supervisor.shutdown();
+  assert.equal(loggers[1].closed, true);
+});
