@@ -1,154 +1,93 @@
 "use strict";
 const assert = require("node:assert/strict");
 const test = require("node:test");
-const { RegistryCatalogService, REGISTRY_URL, MAX_CATALOG_BYTES } = require("./registryCatalogService.cjs");
-const builtin = require("./catalog.json");
+const { RegistryCatalogService, REGISTRY_URL } = require("./registryCatalogService.cjs");
+const { catalog, realFiles, makeFiles, responseFor } = require("./fixtures/staticDistributionFixture.cjs");
 
-test("registry uses a fixed bounded anonymous endpoint and retains only validated snapshots", async () => {
-  let response = () => new Response(JSON.stringify([builtin[0]]));
+test("registry starts at a fixed anonymous pointer and retains only complete validated snapshots", async () => {
+  let files = realFiles();
   const service = new RegistryCatalogService({ fetch: async (url, options) => {
-    assert.equal(url, REGISTRY_URL);
+    assert.equal(new URL(url).origin, "https://plugins.netcatty.app");
     assert.equal(options.credentials, "omit"); assert.equal(options.redirect, "manual");
     assert.equal(options.referrerPolicy, "no-referrer"); assert.ok(options.signal);
-    return response();
+    return responseFor(files, url);
   } });
-  const online = await service.list();
-  assert.equal(online.source, "registry"); assert.equal(online.entries.length, 1);
-  assert.match(online.entries[0].selectionToken, /^[a-f0-9]{64}$/);
-  for (const invalid of ["{", '{}', JSON.stringify([{ ...builtin[0], author: {} }]), JSON.stringify([{ ...builtin[0], commit: "main" }])]) {
-    response = () => new Response(invalid);
+  const good = await service.list();
+  assert.equal(good.source, "registry"); assert.equal(good.entries.length, 2);
+  assert.match(good.entries[0].selectionToken, /^[a-f0-9]{64}$/);
+  for (const invalid of ["{", "{}", JSON.stringify({ schemaVersion: 2 }), '{"schemaVersion":1e999}', " ".repeat(16 * 1024 + 1)]) {
+    files = realFiles(); files.set("/v1/snapshot.json", Buffer.from(invalid));
     const cached = await service.list();
     assert.equal(cached.source, "cached"); assert.ok(cached.error);
-    assert.deepEqual(cached.entries, online.entries);
+    assert.deepEqual(cached.entries, good.entries);
   }
-  response = () => new Response("[]", { headers: { "content-length": String(MAX_CATALOG_BYTES + 1) } });
-  assert.match((await service.list()).error, /size limit/);
-  response = () => new Response(null, { status: 302, headers: { location: "https://raw.githubusercontent.com/other/repo/main/catalog.json" } });
-  assert.match((await service.list()).error, /redirects/);
-  response = () => new Response("[]");
-  const empty = await service.list();
-  assert.equal(empty.error, null); assert.deepEqual(empty.entries, []);
+  files = makeFiles([]);
+  assert.deepEqual((await service.list()).entries, []);
 });
 
-test("offline first launch returns bundled source examples and never mutates installed plugins", async () => {
-  const service = new RegistryCatalogService({ fetch: async () => { throw new Error("offline"); }, manager: {
+test("offline first launch returns bundled source examples with no GitHub README fallback", async () => {
+  let calls = 0;
+  const service = new RegistryCatalogService({ fetch: async (url) => { calls++; assert.equal(url, REGISTRY_URL); throw new Error("offline"); }, manager: {
     install() { assert.fail("offline must not install"); },
   } });
   const snapshot = await service.list();
   assert.equal(snapshot.source, "builtin"); assert.equal(snapshot.entries.length, 2);
-  assert.match(snapshot.error, /offline/);
+  await assert.rejects(service.readme(snapshot.entries[0].id, snapshot.entries[0].selectionToken), /No published README/);
+  assert.equal(calls, 1);
   await assert.rejects(service.install(snapshot.entries[0].id, snapshot.entries[0].selectionToken), /browse-only/);
 });
 
-test("selection binds manifest, README, version and artifact; refresh changes or withdrawal cannot silently install", async () => {
-  let entries = structuredClone(builtin);
-  entries[0].readmeAsset = { url: "https://plugins.netcatty.app/readmes/synthetic.md", sha256: require("node:crypto").createHash("sha256").update("# Pinned README").digest("hex") };
-  let requests = 0;
-  const service = new RegistryCatalogService({ fetch: async (url) => {
-    requests++;
-    if (url === REGISTRY_URL) return new Response(JSON.stringify(entries));
-    return new Response("# Pinned README");
-  }, manager: { install() { assert.fail("changed selection must not install"); } } });
+test("selection binds source and delivery metadata; changes and withdrawal cannot silently install", async () => {
+  let files = realFiles(); const requests = [];
+  const service = new RegistryCatalogService({ fetch: async (url) => { requests.push(url); return responseFor(files, url); }, manager: { install() { assert.fail("source-only must not install"); } } });
   const selected = (await service.list()).entries[0];
-  assert.equal(await service.readme(selected.id, selected.selectionToken), "# Pinned README");
+  assert.match(await service.readme(selected.id, selected.selectionToken), /Starter/);
   await assert.rejects(service.readme(selected.id, "bad"), /changed/);
-  const before = requests;
-  await assert.rejects(service.install(selected.id), /changed/);
-  assert.equal(requests, before);
-  entries[0].description += " updated";
+  const before = requests.length;
+  await assert.rejects(service.install(selected.id), /changed/); assert.equal(requests.length, before);
+  await assert.rejects(service.install(selected.id, selected.selectionToken), /no published package/);
+  const changed = structuredClone(catalog); changed[0].description += " changed";
+  files = makeFiles(changed);
   await assert.rejects(service.install(selected.id, selected.selectionToken), /changed/);
   await assert.rejects(service.readme(selected.id, selected.selectionToken), /changed/);
-  entries = [];
-  const next = (await service.list()).entries;
-  assert.deepEqual(next, []);
+  files = makeFiles([]);
+  assert.deepEqual((await service.list()).entries, []);
   await assert.rejects(service.install(selected.id, selected.selectionToken), /curated catalog/);
 });
 
-test("concurrent list refreshes share one request", async () => {
-  let finish; let calls = 0;
-  const service = new RegistryCatalogService({ fetch: async () => { calls++; return new Promise((resolve) => { finish = resolve; }); } });
+test("concurrent list refreshes share one pointer request and complete document set", async () => {
+  let finish; const requests = []; const files = realFiles();
+  const service = new RegistryCatalogService({ fetch: async (url) => { requests.push(url); if (url === REGISTRY_URL) return new Promise((resolve) => { finish = resolve; }); return responseFor(files, url); } });
   const first = service.list(); const second = service.list();
-  finish(new Response(JSON.stringify(builtin)));
-  assert.deepEqual(await first, await second); assert.equal(calls, 1);
+  finish(responseFor(files, REGISTRY_URL));
+  assert.deepEqual(await first, await second); assert.equal(requests.length, 4);
 });
 
-test("fresh unchanged selection installs only its pinned bytes and stays disabled", async (context) => {
-  const fs = require("node:fs/promises"); const os = require("node:os"); const path = require("node:path");
-  const { createHash } = require("node:crypto");
-  const root = await fs.mkdtemp(path.join(os.tmpdir(), "registry-test-"));
-  context.after(() => fs.rm(root, { recursive: true, force: true }));
-  const bytes = Buffer.from("synthetic validated-by-manager archive");
-  const entry = { ...structuredClone(builtin[0]), artifact: { url: "https://plugins.netcatty.app/packages/synthetic.ncpkg", sha256: createHash("sha256").update(bytes).digest("hex") } };
-  const requests = []; let installs = 0;
-  const service = new RegistryCatalogService({
-    getTempFilePath: (name) => path.join(root, name),
-    fetch: async (url) => { requests.push(url); return new Response(url === REGISTRY_URL ? JSON.stringify([entry]) : bytes); },
-    manager: { async install(archive, options) {
-      installs++; assert.deepEqual(await fs.readFile(archive), bytes); assert.equal(options.enable, false);
-      assert.deepEqual(options.catalog, entry); return { id: entry.id };
-    } },
-  });
-  const selected = (await service.list()).entries[0];
-  await service.install(selected.id, selected.selectionToken);
-  assert.deepEqual(requests, [REGISTRY_URL, REGISTRY_URL, entry.artifact.url]);
-  assert.equal(installs, 1); assert.deepEqual(await fs.readdir(root), []);
-});
-
-
-test("URL-stripped README controls cannot escape a selected commit or replace the good snapshot", async () => {
-  let entries = structuredClone(builtin);
-  const requested = [];
-  const service = new RegistryCatalogService({ fetch: async (url) => {
-    requested.push(url); return new Response(JSON.stringify(entries));
-  } });
+test("invalid sources and unknown JSON fields cannot poison good offline snapshots", async () => {
+  let files = realFiles(); let offline = false;
+  const service = new RegistryCatalogService({ fetch: async (url) => { if (offline) throw new Error("offline"); return responseFor(files, url); } });
   const good = await service.list();
-  for (const readme of ["\t../main/README.md", ".\n./main/README.md", "\r../main/README.md", "a/\t../../main/README.md", "README\u007f.md"]) {
-    entries = [{ ...builtin[0], readme }];
-    const snapshot = await service.list();
-    assert.equal(snapshot.source, "cached"); assert.match(snapshot.error, /unpinned/);
-    assert.deepEqual(snapshot.entries, good.entries);
-  }
-  entries = [{ ...builtin[0], repository: "example/.." }];
-  assert.match((await service.list()).error, /escapes the pinned commit/);
-  assert.ok(requested.every((url) => url === REGISTRY_URL));
-});
-
-test("whole-catalog JSON budgets and unknown fields cannot poison a good offline snapshot", async () => {
-  let response = JSON.stringify(builtin);
-  const service = new RegistryCatalogService({ fetch: async () => {
-    if (response === null) throw new Error("offline");
-    return new Response(response);
-  } });
-  const good = await service.list();
-  let nested = null;
-  for (let depth = 0; depth < 130; depth++) nested = { child: nested };
-  const nonfinite = structuredClone(builtin[0]);
-  nonfinite.manifest.contributes.settings[0].default = "finite-marker";
-  for (const invalid of [
-    JSON.stringify([{ ...builtin[0], unknownNestedField: nested }]),
-    JSON.stringify([{ ...builtin[0], unknownField: true }]),
-    JSON.stringify([nonfinite]).replace('"finite-marker"', '1e999'),
-    JSON.stringify([{ ...builtin[0], artifact: { url: "https://github.com/a/b", sha256: "a".repeat(64), unexpected: true } }]),
-  ]) {
-    response = invalid;
-    const rejected = await service.list();
-    assert.equal(rejected.source, "cached"); assert.ok(rejected.error);
+  let nested = null; for (let i = 0; i < 130; i++) nested = { child: nested };
+  const bad = [
+    { ...catalog[0], readme: "\t../main/README.md" }, { ...catalog[0], repository: "example/.." },
+    { ...catalog[0], unknownNestedField: nested }, { ...catalog[0], unknownField: true },
+    { ...catalog[0], readmeAsset: { url: "https://plugins.netcatty.app/a", sha256: "a".repeat(64) } },
+  ];
+  for (const entry of bad) {
+    files = makeFiles([entry]); offline = false;
+    const rejected = await service.list(); assert.equal(rejected.source, "cached"); assert.ok(rejected.error);
     assert.deepEqual(rejected.entries, good.entries);
-    response = null;
-    const offline = await service.list();
-    assert.deepEqual(offline.entries, good.entries); assert.match(offline.error, /offline/);
+    offline = true; assert.deepEqual((await service.list()).entries, good.entries);
   }
 });
 
-test("snapshot preparation failure leaves both private entries and public tokens unchanged", async () => {
-  const service = new RegistryCatalogService({ fetch: async () => new Response(JSON.stringify(builtin)) });
-  const good = await service.list();
+test("snapshot preparation failure leaves private resources and public tokens unchanged", async () => {
+  const service = new RegistryCatalogService({ fetch: async (url) => responseFor(realFiles(), url) });
+  const good = await service.list(); const resources = service.resources;
   const originalClone = global.structuredClone;
-  try {
-    global.structuredClone = () => { throw new Error("synthetic clone failure"); };
-    assert.equal(await service.refresh(), false);
-  } finally { global.structuredClone = originalClone; }
+  try { global.structuredClone = () => { throw new Error("synthetic clone failure"); }; assert.equal(await service.refresh(), false); }
+  finally { global.structuredClone = originalClone; }
+  assert.equal(service.resources, resources);
   service.fetch = async () => { throw new Error("offline"); };
   assert.deepEqual((await service.list()).entries, good.entries);
-  assert.equal(service.selected(good.entries[0].id, good.entries[0].selectionToken).id, good.entries[0].id);
 });

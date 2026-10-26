@@ -24,23 +24,10 @@ test("curated catalog uses pinned public first-party source and rejects advanced
   assert.throws(() => validateCatalog([{ ...entries[0], commit: "main" }]), /unpinned/);
 });
 
-test("README retrieval uses hash-bound static bytes and never follows a redirect", async () => {
-  const requested = [];
-  const bytes = Buffer.from("# First-party example");
-  const entry = { ...entries[0], readmeAsset: { url: "https://plugins.netcatty.app/readmes/synthetic.md", sha256: createHash("sha256").update(bytes).digest("hex") } };
-  const service = new PluginCatalogService({ entries: [entry], fetch: async (url) => {
-    requested.push(url); return new Response(bytes);
-  } });
-  assert.equal(await service.readme(entry.id), bytes.toString());
-  assert.deepEqual(requested, [entry.readmeAsset.url]);
-  service.fetch = async () => new Response("changed");
-  await assert.rejects(service.readme(entry.id), /README SHA-256 mismatch/);
-  service.fetch = async () => new Response(null, { status: 302, headers: { location: "https://raw.githubusercontent.com/a/b/main/README.md" } });
-  await assert.rejects(service.readme(entry.id), /redirects/);
+test("static downloader is bounded and never follows redirects", async () => {
   await assert.rejects(fetchBounded("https://plugins.netcatty.app/a", 3, async () => new Response("1234")), /size limit/);
   await assert.rejects(fetchBounded("https://127.0.0.1/a", 10), /approved HTTPS/);
-  const sourceOnly = new PluginCatalogService({ entries, fetch: () => assert.fail("missing snapshot cannot fall back to GitHub") });
-  await assert.rejects(sourceOnly.readme(entry.id), /no published README snapshot/);
+  await assert.rejects(fetchBounded("https://plugins.netcatty.app/a", 10, async () => new Response(null, { status: 302, headers: { location: "https://github.com/a" } })), /redirects/);
 });
 
 test("catalog install verifies the digest, shares manager installation, and never auto-enables", async (context) => {

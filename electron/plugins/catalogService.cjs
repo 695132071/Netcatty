@@ -10,7 +10,7 @@ const validateManifest = createDefinitionValidator("PluginManifest");
 const { assertCatalogManifest } = require("./catalogPolicy.cjs");
 const { assertPluginJsonValue } = require("./jsonBoundary.cjs");
 const MAX_CATALOG_BYTES = 2 * 1024 * 1024;
-const CATALOG_FIELDS = new Set(["id", "version", "name", "description", "author", "repository", "commit", "license", "readme", "manifest", "artifact", "readmeAsset"]);
+const CATALOG_FIELDS = new Set(["id", "version", "name", "description", "author", "repository", "commit", "license", "readme", "manifest", "artifact"]);
 
 const DISTRIBUTION_ORIGIN = "https://plugins.netcatty.app";
 function assertDownloadUrl(value) {
@@ -50,7 +50,7 @@ function validateCatalog(entries) {
     if (!validateManifest(entry.manifest)) throw new Error(`Catalog manifest is invalid: ${formatValidationErrors(validateManifest.errors)}`);
     assertCatalogManifest(entry.manifest, entry);
     ids.add(entry.id);
-    for (const field of ["artifact", "readmeAsset"]) {
+    for (const field of ["artifact"]) {
       if (!Object.hasOwn(entry, field)) continue;
       const asset = entry[field];
       if (!asset || typeof asset !== "object" || Array.isArray(asset)
@@ -103,13 +103,6 @@ class PluginCatalogService {
     const entry = this.entries.find((item) => item.id === id);
     if (!entry) throw new Error("Plugin is not in the curated catalog");
     return entry;
-  }
-  async readme(id) {
-    const entry = this.get(id);
-    if (!entry.readmeAsset) throw new Error("This catalog entry has no published README snapshot. Refresh the catalog or open its source link.");
-    const bytes = await fetchBounded(entry.readmeAsset.url, 256 * 1024, this.fetch);
-    if (createHash("sha256").update(bytes).digest("hex") !== entry.readmeAsset.sha256) throw new Error("Catalog README SHA-256 mismatch");
-    return bytes.toString("utf8");
   }
   async install(id) {
     const entry = this.get(id);

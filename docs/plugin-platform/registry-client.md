@@ -1,90 +1,84 @@
-# Official registry client
+# Official static distribution client
 
-The Community page refreshes the fixed endpoint
-`https://plugins.netcatty.app/catalog.json`
-in the main process. The renderer cannot choose a registry URL. This endpoint
-must be published separately; client implementation and synthetic tests do not
-prove the repository or an online artifact is available.
+Community starts at the fixed main-process endpoint
+`https://plugins.netcatty.app/v1/snapshot.json`. The renderer cannot choose an
+endpoint. All automatic catalog, README and potential package reads allow only
+that exact HTTPS origin: no credentials, query, fragment, noncanonical URL or
+redirect. No GitHub API/raw/avatar/release fallback exists. Explicit user-opened
+source links may still open GitHub in an external browser.
 
-## Catalog contract
+## Snapshot contract
 
-`catalog.json` is an array of at most 1,000 current entries. Each entry supplies
-`id`, `version`, `name`, `description`, `author`, `repository` (`owner/repository`),
-`commit` (full 40-character SHA), `license`, `readme` (relative Markdown path),
-and `manifest`. Optional `artifact` and `readmeAsset` each contain `url` and SHA-256 `sha256`.
-`readme` remains source provenance only. `readmeAsset` identifies the reviewed
-Markdown snapshot copied from that repository/commit into the static distribution.
-An entry without it remains browseable, but README retrieval reports that no
-snapshot is published; it never falls back to GitHub.
-Unknown catalog-entry and asset fields are rejected. The whole JSON value,
-including manifest defaults, uses the existing 128-level / 100,000-value budget
-and finite-number validation. The existing manifest schema, browser-only distribution policy, identity/version
-and license checks apply. Source-only entries remain build-and-import examples.
-No download counts, ratings, or timestamps are invented. Brand previews remain
-bundled and reviewed; arbitrary author image URLs are never loaded.
+This client implements the version-1 contract from
+`binaricat/netcatty-plugins@7bfe23e5627e16ba63806de6dded5b2667c02984`.
+The source catalog/index remain unchanged; **no `readmeAsset` field is added**.
 
-All automatic catalog, README and artifact reads use only the exact
-`https://plugins.netcatty.app` origin. Reads are anonymous HTTPS and redirect-free, bounded to 2 MiB,
-and time out after 30 seconds. All entries must validate, safely clone, and generate every selection token before
-atomically replacing the current snapshot. Invalid JSON/schema, network failure, and oversized responses
-leave the previous good snapshot intact. Errors and Retry remain visible. The Community header also has Refresh, including
-when the last refresh succeeded; it is disabled while a request is pending.
-The last good catalog is retained **in memory for this application session**;
-a fresh offline launch uses bundled examples. There is no new disk cache,
-database migration, cloud sync record, or credential requirement.
+The pointer contains `schemaVersion: 1`, `registryCommit`, `snapshotId`, and
+`catalog`, `index`, `delivery` references, each `{path, sha256, size}`. Paths must
+be `/snapshots/<snapshotId>/<name>.json`; `snapshotId` equals the raw delivery
+SHA-256. The host checks the pointer before requesting its three documents,
+then checks raw byte counts/hashes, JSON budgets, schemas and cross-document
+identity. The three documents must all validate before replacing any cache.
 
-## Selection and installation
+Delivery contains `schemaVersion`, `registryCommit`, `catalogSha256`,
+`indexSha256`, `sourceLockSha256`, `builderSha256` and `plugins`. Each item matches
+one exact catalog `id/version/repository/commit` tuple and supplies `readme`,
+`iconLight`, `iconDark`, `avatar`, `artifact`. Asset references are
+`{path, sha256, size}`, with `/assets/<sha256>.md` for README and `.png`/`.webp`
+for brand icons. This v1 publishing schema requires **avatar and artifact to
+be null**. The client rejects unsupported delivery metadata rather than
+inventing installable packages or deriving a GitHub avatar URL.
 
-Each returned entry has a host-generated `selectionToken` covering its complete
-JSON contents. This is a concurrency check, **not a signature or trust proof**.
-README requests must still match that selection and verify the published
-static snapshot SHA-256. A changed entry requires refresh and renewed review.
+Index is validated with its pinned schema. Plugin/version identities must be
+unique; each catalog entry must exactly equal the index's current, non-withdrawn,
+source-only entry. Withdrawal does not disable, uninstall or delete any existing
+plugin: this is catalog admission, not a remote installed-code kill switch.
 
-A manual install must first refresh the official catalog successfully and match
-the selected token again. Failed refresh is browse-only, even if the cached
-entry has an artifact. Withdrawal, version changes, permission changes, README
-changes, or artifact hash changes cannot silently replace the selected package.
-Archive download then uses the existing approved-host, size, exact SHA-256,
-manifest and package validation pipeline. Installation leaves the plugin disabled;
-existing authorization gates still apply on activation/use.
+Schemas are vendored under `electron/plugins/distribution/`, with provenance and
+fixtures described there. All schema references resolve locally; schema validation
+does not fetch GitHub or netcatty.com.
 
-`index.json` release history and withdrawal records are not consumed by this
-first client. Removing an entry does **not** disable, uninstall, update, or delete
-data from an already installed plugin. There are no background code updates.
+## Bounds, cache and selection
 
-## Verification boundary
+Pointer reads are bounded to 16 KiB, each JSON document to 2 MiB, and each README
+to 256 KiB. Reads time out after 30 seconds. Whole JSON values retain the existing
+128-level / 100,000-value / finite-number boundary. Catalogs contain at most 1,000
+entries. Existing manifest identity, license and browser-only policies remain.
 
-Service regressions use synthetic network responses and package bytes; the
-existing package manager tests cover archive admission. No third-party plugin,
-real credential, real sync account, or live registry write is used. Native QA
-must separately verify the visible offline/retry state and eventual real static-distribution availability.
+The host prepares private entries, private delivery resources and all public
+selection tokens before one synchronous cache publication. Parse, integrity,
+schema, clone, tuple or network failures preserve the last complete good snapshot.
+The cache remains **in memory for this app session**; a fresh offline launch lists
+bundled examples. No new disk database, sync record or credential is introduced.
 
+A host-generated selection token binds the complete entry and its delivery item.
+This prevents silent selection changes; it is **not a signature**. README requests
+capture the matched static reference and verify its exact byte count and digest.
+Missing/offline snapshots show an error/Retry; they never synthesize a raw GitHub URL.
+README HTML and remote images remain inert in the existing safe renderer.
 
-## Network path inventory
+The current v1 distribution cannot install packages. A later publishing/client
+schema revision must jointly introduce reviewed package mirroring, keep source
+manifest/hash admission, and recheck the current pointer and fresh root withdrawal
+ledger before any install. A historical snapshot alone cannot establish availability.
+The existing lower-level package downloader accepts only official static URLs and
+exact SHA-256 bytes; it does not relax those future gates or auto-enable code.
+
+## Network inventory
 
 | Path | Automatic source | Failure behavior |
 | --- | --- | --- |
-| Catalog / manual refresh | Fixed official `/catalog.json` | Session last-known-good snapshot, or bundled source-only entries on first offline launch |
-| README details | Entry `readmeAsset.url`, same official origin, 256 KiB limit and exact digest | Visible error/Retry; no GitHub source fallback |
-| Package installation | Entry `artifact.url`, same official origin, 32 MiB limit and exact digest | Abort, retain current installation; no release/latest fallback |
-| Uninstalled brand icons | Reviewed bundled raster previews | Default icon; no remote image request |
-| Installed brand icons | Existing host-owned package resource decoder | Default icon; no activation or network request |
-| Author avatars | Not implemented in this baseline | No GitHub avatar lookup |
-| `index.json` history | Not consumed by this client | No request or automatic installed-plugin disable |
-| Repository / README links | Explicit user-opened HTTPS external links | May open GitHub in the user's browser; not an automatic marketplace dependency |
+| Pointer / manual refresh | Fixed `/v1/snapshot.json` | Complete session cache, or bundled source-only entries |
+| Catalog/index/delivery | Pointer-bound same-origin immutable paths | Reject partial or mixed snapshots |
+| README details | Exact delivery `/assets/<hash>.md` | Visible error/Retry, no upstream fallback |
+| Uninstalled brand icons | Existing reviewed bundled previews | Default icon; delivery icon metadata validated but not fetched by UI |
+| Installed brand icons | Host-owned local package decoder | Default icon; no activation/network request |
+| Author avatars | Not implemented; delivery v1 requires null | Existing local presentation; no avatar lookup |
+| Package artifacts | Not published or admitted by delivery v1 | Source-only; no download action fabricated |
+| Source/README links | Explicit user-opened external HTTPS link | May open GitHub; no background dependency |
 
-The distribution is static, not a GitHub proxy. The publishing pipeline, rather
-than each user's application, prepares reviewed snapshots. An optional future
-avatar/icon asset contract must preserve host-side size/hash/format validation;
-arbitrary remote image fields are currently rejected. README HTML and remote
-images remain inert in the existing renderer.
-
-The static catalog can add `readmeAsset` without changing plugin manifests or SDK
-API versions. Older clients have strict catalog fields and must keep their legacy
-feed unchanged; publish the new metadata only to this distribution endpoint.
-Missing README snapshots are tolerated for bundled/legacy entries so offline
-startup still lists examples. Their source links remain explicit actions.
-
-No successful CDN request, mainland reachability guarantee, real package artifact,
-or new plugin permission is implied by synthetic service tests. Source-only
-examples stay source-only until an actual reviewed package is published.
+The real PR3 bootstrap is retained as a test fixture with its original bytes and
+hashes. Tests also verify its brand-icon asset bytes; this does not claim a new
+remote icon renderer. The static publisher is not a proxy. Client tests do not
+prove deployment, mainland reachability or successful native CDN access. Native
+QA must independently verify the published endpoint and visible failure state.

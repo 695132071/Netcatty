@@ -353,7 +353,6 @@ declare global {
     readme: string;
     manifest: import("@netcatty/plugin-contract").PluginManifest;
     artifact?: { url: string; sha256: string };
-    readmeAsset?: { url: string; sha256: string };
   }
 
   interface NetcattyInstalledPlugin {
