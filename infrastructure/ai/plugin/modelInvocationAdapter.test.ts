@@ -42,6 +42,10 @@ test('broker -> existing model factory -> existing host HTTP transport -> loopba
     assert.equal(payload.messages.some((message: { role: string }) => message.role === 'system'), false);
     assert.match(JSON.stringify(payload.messages), /Synthetic retry plan/);
     response.writeHead(200, { 'content-type': 'text/event-stream' });
+    if (payload.messages.at(-1).content === 'Large fixture') {
+      response.end(`data: ${'X'.repeat(140_000)}\n\n`);
+      return;
+    }
     const send = (delta: Record<string, unknown>, finish: string | null = null) => response.write(`data: ${JSON.stringify({
       id: 'fixture', object: 'chat.completion.chunk', created: 1, model: 'deterministic-fixture',
       choices: [{ index: 0, delta, finish_reason: finish }],
@@ -161,6 +165,31 @@ test('broker -> existing model factory -> existing host HTTP transport -> loopba
   assert.equal((element('send') as HTMLButtonElement).disabled, false);
   await new Promise((resolve) => setTimeout(resolve, 30));
   assert.equal(element('response').textContent, 'Synthetic plan: ');
+  assert.equal(aiBridge._getActiveStreamCountForTests(), 0);
+  const dummyBody = (prompt: string) => JSON.stringify({ model: 'deterministic-fixture', stream: true,
+    messages: [{ role: 'user', content: 'Synthetic retry plan' }, { role: 'user', content: prompt }] });
+  const sender = { isDestroyed: () => false, send: () => {} };
+  const streamOptions = { headers: { authorization: 'Bearer __IPC_SECURED__', 'content-type': 'application/json' }, body: dummyBody('Stop fixture') };
+  await aiBridge._streamRequestForTests(`${baseURL}/chat/completions`, streamOptions, { sender }, 'plugin-model_runtime-a_one', false);
+  await aiBridge._streamRequestForTests(`${baseURL}/chat/completions`, streamOptions, { sender }, 'plugin-model_runtime-b_two', false);
+  await aiBridge._streamRequestForTests(`${baseURL}/chat/completions`, streamOptions, { sender }, 'sdk_agent_synthetic', false);
+  assert.equal(aiBridge._getActiveStreamCountForTests(), 3);
+  assert.equal(aiBridge.cancelPluginAIStreamsForSender({}, 'runtime-a'), 0);
+  assert.equal(aiBridge.cancelPluginAIStreamsForSender(sender, 'runtime-a'), 1);
+  assert.equal(aiBridge._getActiveStreamCountForTests(), 2);
+  assert.equal(aiBridge.cancelPluginAIStreamsForSender(sender), 1);
+  assert.equal(aiBridge._getActiveStreamCountForTests(), 1); // Ordinary synthetic Agent request survives.
+  aiBridge.cleanup();
+  let oversizedError: string | undefined;
+  const oversizedEnded = new Promise<void>((resolve) => {
+    const capture = { isDestroyed: () => false, send: (channel: string, payload: { error?: string }) => {
+      if (channel.endsWith(':error')) { oversizedError = payload.error; resolve(); }
+    } };
+    void aiBridge._streamRequestForTests(`${baseURL}/chat/completions`, { ...streamOptions, body: dummyBody('Large fixture') },
+      { sender: capture }, 'plugin-model_runtime-a_oversized', false).catch(() => resolve());
+  });
+  await oversizedEnded;
+  assert.match(oversizedError!, /Plugin model stream byte budget exceeded/);
   assert.equal(aiBridge._getActiveStreamCountForTests(), 0);
 
 });

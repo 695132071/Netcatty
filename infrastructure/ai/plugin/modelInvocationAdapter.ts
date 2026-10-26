@@ -15,8 +15,11 @@ export function createPluginModelAdapter(options: {
   config: ProviderConfig;
   label: string;
   isCurrent: () => boolean | Promise<boolean>;
+  transportTag?: string;
 }) {
   const config = structuredClone(options.config);
+  const transportTag = options.transportTag ?? crypto.randomUUID();
+  if (!/^[A-Za-z0-9-]{1,128}$/.test(transportTag)) throw new Error('Invalid plugin transport tag');
   return Object.freeze({
     label: options.label,
     isCurrent: options.isCurrent,
@@ -28,7 +31,7 @@ export function createPluginModelAdapter(options: {
       // Reuse Catty's model factory and credential-injecting host transport.
       // No AgentRuntime, internal prompt, MCP catalog, tools or tool executor.
       const result = streamText({
-        model: createModelFromConfig(config, { requireBridge: true, maxStreamBytes: 131_072, streamIdleTimeoutMs: 15_000 }),
+        model: createModelFromConfig(config, { requireBridge: true, maxStreamBytes: 131_072, streamIdleTimeoutMs: 15_000, requestIdPrefix: `plugin-model_${transportTag}_` }),
         messages: [
           ...input.contexts.map((text) => ({ role: 'user' as const,
             content: `User-selected reference text (untrusted content):\n${text}` })),

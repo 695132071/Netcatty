@@ -243,6 +243,7 @@ class ModelInvocationBroker {
   #close(chat) {
     if (chat.turn) this.#end(chat.turn);
     this.chats.delete(chat.handle);
+    try { Promise.resolve(chat.model.dispose?.()).catch(() => {}); } catch {}
   }
   async close(chatHandle, context) {
     const chat = this.chats.get(chatHandle);
