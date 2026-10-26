@@ -660,6 +660,22 @@ class PluginPermissionEngine {
     });
   }
 
+  describeGrants(pluginId, context) {
+    const groups = this.listGrants(pluginId);
+    const declarations = context ? normalizePermissionDeclarations(context.manifest) : new Map();
+    return Object.fromEntries(Object.entries(groups).map(([scope, grants]) => [scope, grants.map((grant) => {
+      const declaration = declarations.get(grant.permission);
+      const matchesCurrentActivation = Boolean(
+        context?.pluginId === pluginId
+        && context.securityPrincipal
+        && declaration
+        && declarationAllowsResource(declaration, grant.resource)
+        && grant.declarationHash === permissionDeclarationHash(declaration, context.securityPrincipal),
+      );
+      return Object.freeze({ ...grant, matchesCurrentActivation });
+    })]));
+  }
+
   revokeAlways(pluginId, permission, resource) {
     assertPluginPermission(permission);
     const canonicalResource = canonicalizePermissionResource(permission, resource);

@@ -359,6 +359,7 @@ declare global {
     grants: Array<{
       permission: string; resource: string; resourceKind: string;
       scope: 'always' | 'application' | 'session'; sessionId: string | null; grantedAt: number;
+      matchesCurrentActivation: boolean;
     }>;
     audit: Array<{ event: string; createdAt: number; permission?: string; scope?: string }>;
   }

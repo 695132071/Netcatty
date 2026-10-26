@@ -218,6 +218,7 @@ function createBridgeRegistrar(context) {
     registerPluginBridge(ipcMain, {
       manager: pluginHostService?.manager,
       permissionEngine: pluginHostService?.permissionEngine,
+      runtimeSupervisor: pluginHostService?.runtimeSupervisor,
       database: pluginHostService?.database,
       catalogService: pluginHostService?.catalogService,
       contributionService: pluginHostService?.contributionService,

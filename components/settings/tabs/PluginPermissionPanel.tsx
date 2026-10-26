@@ -58,6 +58,7 @@ export function PluginPermissionPanel({ pluginId, onChanged }: {
       {snapshot.grants.map((grant, index) => <div key={index} className="rounded-md bg-muted/40 p-3 text-xs">
         <p className="font-medium">{describePluginPermission(grant.permission, resolvedLocale).label}</p>
         <p className="whitespace-pre-wrap break-all font-mono">{grant.resource}</p>
+        <p>{t(grant.matchesCurrentActivation ? 'settings.plugins.permissions.current' : 'settings.plugins.permissions.inactive')}</p>
         <p>{t(`settings.plugins.permissions.${grant.scope}`)}{grant.sessionId ? ` · ${grant.sessionId}` : ''}</p>
         <time dateTime={new Date(grant.grantedAt).toISOString()}>{new Date(grant.grantedAt).toLocaleString(resolvedLocale)}</time>
       </div>)}

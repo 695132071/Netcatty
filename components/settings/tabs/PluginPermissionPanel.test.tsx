@@ -19,7 +19,7 @@ test('permission panel refreshes real grants, revokes once, and keeps stale read
   const { PluginPermissionPanel } = await import('./PluginPermissionPanel');
   const root = createRoot(document.getElementById('root')!);
   const initial = {
-    grants: [{ permission: 'network', resource: 'https://synthetic.invalid/<text>', resourceKind: 'exact', scope: 'always' as const, sessionId: null, grantedAt: 1 }],
+    grants: [{ permission: 'network', resource: 'https://synthetic.invalid/<text>', resourceKind: 'exact', scope: 'always' as const, sessionId: null, grantedAt: 1, matchesCurrentActivation: false }],
     audit: [{ event: 'permission.used', createdAt: 2, permission: 'network' }],
   };
   let reads = 0;
@@ -43,6 +43,7 @@ test('permission panel refreshes real grants, revokes once, and keeps stale read
     assert.match(document.body.textContent!, /synthetic.invalid/);
     assert.equal(document.querySelector('text'), null, 'resource is rendered as plain text');
     assert.match(document.body.textContent!, /Until revoked/);
+    assert.match(document.body.textContent!, /Inactive for the current activation/);
     await act(async () => { button('Refresh').click(); });
     await act(async () => {
       button('Disable and revoke all grants').click();
@@ -52,7 +53,7 @@ test('permission panel refreshes real grants, revokes once, and keeps stale read
     assert.equal(button('Refresh').disabled, true);
     await act(async () => { releaseRevoke(); });
     assert.equal(changed, 1);
-    assert.match(document.body.textContent!, /No active grants/);
+    assert.match(document.body.textContent!, /No saved grants/);
     await act(async () => { staleRead(initial); });
     assert.doesNotMatch(document.body.textContent!, /synthetic.invalid/);
     Object.assign(dom.window, { netcatty: { async getPluginPermissions() { throw new Error('synthetic read failed'); } } });

@@ -18,7 +18,7 @@ permissions, and enable it. The command palette contains **Synthetic credential
 lease request**. Reject a permission prompt to verify that the request stops.
 OS secret storage must be available to proceed past `secrets.set`.
 
-The package detail's **Active grants** panel shows retained decisions. One-use
+The package detail's **Saved grants** panel shows retained decisions. One-use
 decisions are not retained. **Disable and revoke all grants** disables the
 plugin and waits for its runtime cleanup. Re-enable it to request access again.
 Recent events show event type and permission without terminal or secret data.

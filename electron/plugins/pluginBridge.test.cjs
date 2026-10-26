@@ -1643,12 +1643,13 @@ test("permission management is trusted-host-only and projects bounded audit summ
   registerPluginBridge(ipcMain, {
     manager: { async initialize() {}, async revokePermissions(id) { revoked.push(id); return { enabled: false }; } },
     isTrustedSender: (event) => event?.trusted === true,
-    permissionEngine: { listGrants(id) {
+    permissionEngine: { describeGrants(id, context) {
+      assert.equal(context, null);
       reads++;
       assert.equal(id, "com.example.synthetic");
-      return { always: [{ permission: "network", resource: "https://example.invalid", resourceKind: "exact", grantedAt: 12, declarationHash: "private" }], application: [], session: [] };
+      return { always: [{ permission: "network", resource: "https://example.invalid", resourceKind: "exact", grantedAt: 12, matchesCurrentActivation: false, declarationHash: "private" }], application: [], session: [] };
     } },
-    database: { listSecurityAudit(id, limit) {
+    database: { getActivePlugin() { return null; }, listSecurityAudit(id, limit) {
       assert.equal(id, "com.example.synthetic");
       assert.equal(limit, 100);
       return [{ event: "permission.used", createdAt: 13, details: { permission: "network", scope: "always", operationId: "hidden", secret: "synthetic-private" } }];
@@ -1661,9 +1662,35 @@ test("permission management is trusted-host-only and projects bounded audit summ
   }
   assert.equal(reads, 0);
   assert.deepEqual(await ipcMain.handlers.get(CHANNELS.permissions)({ trusted: true }, payload), {
-    grants: [{ permission: "network", resource: "https://example.invalid", resourceKind: "exact", scope: "always", sessionId: null, grantedAt: 12 }],
+    grants: [{ permission: "network", resource: "https://example.invalid", resourceKind: "exact", scope: "always", sessionId: null, grantedAt: 12, matchesCurrentActivation: false }],
     audit: [{ event: "permission.used", createdAt: 13, permission: "network", scope: "always" }],
   });
   assert.deepEqual(await ipcMain.handlers.get(CHANNELS.revokePermissions)({ trusted: true }, payload), { enabled: false });
   assert.deepEqual(revoked, [payload.pluginId]);
+});
+
+test("grant classification uses only the current host activation and stops matching after disable or upgrade", async () => {
+  const ipcMain = createIpcMain();
+  let plugin = { enabled: true, activeVersion: "1.0.0", manifest: { id: "com.example.synthetic" } };
+  let identity = { pluginId: "com.example.synthetic", pluginVersion: "1.0.0", runtimeId: "runtime-host", securityPrincipal: "host-owned-principal" };
+  const contexts = [];
+  registerPluginBridge(ipcMain, {
+    manager: { async initialize() {} }, isTrustedSender: () => true,
+    runtimeSupervisor: { getRuntimeIdentity: () => identity },
+    permissionEngine: { describeGrants(_id, context) { contexts.push(context); return { always: [], application: [], session: [] }; } },
+    database: { getActivePlugin: () => plugin, listSecurityAudit: () => [] },
+  });
+  const payload = { pluginId: "com.example.synthetic", securityPrincipal: "plugin-forgery", manifest: {} };
+  const read = ipcMain.handlers.get(CHANNELS.permissions);
+  await read({}, payload);
+  assert.deepEqual(contexts[0], { ...identity, manifest: plugin.manifest });
+  plugin = { ...plugin, enabled: false };
+  await read({}, payload);
+  assert.equal(contexts[1], null);
+  plugin = { ...plugin, enabled: true, activeVersion: "2.0.0" };
+  await read({}, payload);
+  assert.equal(contexts[2], null, "old activation cannot label upgraded package grants as current");
+  identity = null;
+  await read({}, payload);
+  assert.equal(contexts[3], null, "stopped and lazy plugins show saved grants as inactive");
 });

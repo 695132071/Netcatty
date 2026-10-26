@@ -136,10 +136,15 @@ class PluginManager {
       if (!this.database.getActivePlugin(pluginId)) throw new Error("Plugin is not installed");
       // Disable before revoking. Lazy activation cannot re-create authority while
       // runtime shutdown cancels pending RPC, streams, leases and provider work.
-      this.database.setEnabled(pluginId, false);
-      this.permissionEngine.revokeAll(pluginId);
-      this.contributionService.onPluginDisabled(pluginId);
-      await this.runtimeSupervisor.stop(pluginId);
+      const errors = [];
+      // Every containment stage must be attempted even when persistence,
+      // revocation audit, or contribution invalidation fails.
+      try { this.database.setEnabled(pluginId, false); } catch (error) { errors.push(error); }
+      try { this.permissionEngine.revokeAll(pluginId); } catch (error) { errors.push(error); }
+      try { this.contributionService.onPluginDisabled(pluginId); } catch (error) { errors.push(error); }
+      try { await this.runtimeSupervisor.stop(pluginId); } catch (error) { errors.push(error); }
+      if (errors.length === 1) throw errors[0];
+      if (errors.length > 1) throw new AggregateError(errors, "Plugin grant revocation or cleanup failed");
       return this.database.getActivePlugin(pluginId);
     });
   }

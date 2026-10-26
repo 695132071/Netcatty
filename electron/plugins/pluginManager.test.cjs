@@ -556,3 +556,30 @@ test("failed runtime containment leaves the revoked plugin disabled and reports 
   assert.equal(enabled, false);
   assert.equal(revoked, true);
 });
+
+test("revocation attempts every cleanup stage and aggregates independent failures", async () => {
+  for (const failedStages of [["revoke"], ["contributions"], ["disable"], ["stop"], ["disable", "revoke", "contributions", "stop"]]) {
+    const calls = [];
+    const fail = (stage) => {
+      calls.push(stage);
+      if (failedStages.includes(stage)) throw new Error(`${stage} failed`);
+    };
+    const manager = new PluginManager({
+      database: {
+        getActivePlugin: () => ({ id: "com.example.revoke", enabled: false }),
+        setEnabled() { fail("disable"); },
+      },
+      packageStore: { async initialize() {} },
+      contributionService: { async initialize() {}, onPluginDisabled() { fail("contributions"); } },
+      permissionEngine: { revokeAll() { fail("revoke"); } },
+      runtimeSupervisor: { async stop() { fail("stop"); } },
+    });
+    await assert.rejects(manager.revokePermissions("com.example.revoke"), (error) => {
+      if (failedStages.length === 1) return error.message === `${failedStages[0]} failed`;
+      assert.ok(error instanceof AggregateError);
+      assert.deepEqual(error.errors.map((entry) => entry.message), failedStages.map((stage) => `${stage} failed`));
+      return true;
+    });
+    assert.deepEqual(calls, ["disable", "revoke", "contributions", "stop"]);
+  }
+});

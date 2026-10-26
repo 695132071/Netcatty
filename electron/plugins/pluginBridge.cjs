@@ -672,7 +672,15 @@ function registerPluginBridge(ipcMain, options) {
   handle(CHANNELS.permissions, async (_manager, payload) => {
     const pluginId = assertManagedPluginId(payload);
     if (!options.permissionEngine || !options.database) throw new Error("Plugin permissions are unavailable");
-    const groups = options.permissionEngine.listGrants(pluginId);
+    const plugin = options.database.getActivePlugin(pluginId);
+    const identity = options.runtimeSupervisor?.getRuntimeIdentity(pluginId);
+    // A stored grant is effective only for its matching host-owned activation.
+    // Disabled/lazy/stopped plugins retain saved grants without claiming they
+    // currently apply. Never infer a principal from plugin-provided metadata.
+    const context = plugin?.enabled && identity?.pluginVersion === plugin.activeVersion
+      ? { ...identity, manifest: plugin.manifest }
+      : null;
+    const groups = options.permissionEngine.describeGrants(pluginId, context);
     // Host-only summaries: never return arbitrary audit details, reasons,
     // operation IDs, credentials, terminal content or future database columns.
     const grants = ["always", "application", "session"].flatMap((scope) => (
@@ -680,6 +688,7 @@ function registerPluginBridge(ipcMain, options) {
         permission: grant.permission, resource: grant.resource,
         resourceKind: grant.resourceKind, scope,
         sessionId: grant.sessionId ?? null, grantedAt: grant.grantedAt,
+        matchesCurrentActivation: grant.matchesCurrentActivation,
       }))
     ));
     const audit = options.database.listSecurityAudit(pluginId, 100).map((entry) => ({
