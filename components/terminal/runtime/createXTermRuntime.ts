@@ -252,6 +252,17 @@ type TerminalBackendApi = {
 // renderer hibernation. Weak ownership keeps negotiated keyboard state alive
 // for that session without introducing a process-wide session registry.
 const kittyKeyboardStates = createKittyKeyboardSessionStateStore();
+// The same session-owned ref also keeps the connection's input choice alive
+// when hibernation destroys xterm. Only a real reconnect refreshes this choice.
+const inputCompatibilityStates = new WeakMap<object, boolean>();
+
+// The stable session owner survives xterm disposal while its home renderer sleeps.
+export const getTerminalPerCharacterInput = (owner: object): boolean | undefined =>
+  inputCompatibilityStates.get(owner);
+
+export const restoreTerminalPerCharacterInput = (owner: object, enabled: boolean): void => {
+  inputCompatibilityStates.set(owner, enabled);
+};
 
 const resolveKittyKeyboardModeState = (
   ctx: Pick<
@@ -307,8 +318,10 @@ export type XTermRuntime = {
    * terminal reset or FIFO eviction.
    */
   hasInlineImages: () => boolean;
-  /** Clear local/per-target keyboard state before reusing this runtime. */
-  resetKittyConnectionInputState: () => void;
+  /** Reset keyboard state and snapshot endpoint settings for a fresh connection. */
+  resetConnectionInputState: (host: Host) => void;
+  getPerCharacterInput: () => boolean;
+  restorePerCharacterInput: (enabled: boolean) => void;
   /** Emit any owed releases before detaching or closing this renderer. */
   flushKittyKeyboardReleases: () => void;
   /** Transfer negotiated keyboard state across renderer attach handoffs. */
@@ -515,6 +528,13 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
   const rendererType = settings?.rendererType ?? "auto";
   const bridge = netcattyBridge.get();
   const isLocalTerminalHost = ctx.host.protocol === "local";
+  // Capture the terminal endpoint's choice for this connection, never a chain hop.
+  const usesPerCharacterInput = (host: Host) =>
+    (host.protocol !== undefined && host.protocol !== "ssh") || host.moshEnabled === true
+    || host.etEnabled === true || host.sshInputCompatibility === true;
+  let usePerCharacterInput = inputCompatibilityStates.get(ctx.terminalSettingsRef)
+    ?? usesPerCharacterInput(ctx.host);
+  inputCompatibilityStates.set(ctx.terminalSettingsRef, usePerCharacterInput);
   const windowsPty =
     platform === "win32" && isLocalTerminalHost
       ? bridge?.getWindowsPtyInfo?.() ?? { backend: "conpty" as const }
@@ -1325,10 +1345,9 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
       lineDelayMs?: number;
       pasteRequestId?: string;
       /**
-       * Send plain text as one write per character. Strict bastion prompts
-       * (QAX) treat one channel write as a keystroke and drop multi-character
-       * chunks, so IME commits and short raw pastes must go out per
-       * character (#3077). Bookkeeping still sees the whole payload once.
+       * Request the legacy IME/short-paste workaround reported in #3077.
+       * The SSH host's compatibility choice gates the final writes below.
+       * Bookkeeping still sees the whole payload once.
        */
       perCharacterWrites?: boolean;
     },
@@ -1550,7 +1569,7 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
         }
 
         ctx.onOutputTriggerUserInputRef?.current?.(outData);
-        for (const chunk of getTextInputWireChunks(outData, options?.perCharacterWrites === true)) {
+        for (const chunk of getTextInputWireChunks(outData, usePerCharacterInput && options?.perCharacterWrites === true, (ctx.host.protocol === undefined || ctx.host.protocol === "ssh") && !ctx.host.moshEnabled && !ctx.host.etEnabled)) {
           ctx.terminalBackend.writeToSession(id, chunk, {
             sensitive,
             serialEraseChar,
@@ -3140,7 +3159,7 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
       broadcastLegacyDataPending = null;
     }
     // Raw multi-character onData is an unbracketed paste (or a committed
-    // composition): short plain text must reach strict bastions per character.
+    // composition): selected short plain text can use compatibility writes.
     // Decide on the sanitized payload so removed zero-width characters cannot
     // keep a qualifying paste above the split cap (#3138).
     const sanitizedRawData = sanitizeTerminalInput(data);
@@ -3479,8 +3498,17 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
       ligatures.apply(enabled);
     },
     hasInlineImages,
-    resetKittyConnectionInputState: clearKittyConnectionInputState,
+    resetConnectionInputState: (host) => {
+      usePerCharacterInput = usesPerCharacterInput(host);
+      inputCompatibilityStates.set(ctx.terminalSettingsRef, usePerCharacterInput);
+      clearKittyConnectionInputState();
+    },
     flushKittyKeyboardReleases: clearKittyTransientInputState,
+    getPerCharacterInput: () => usePerCharacterInput,
+    restorePerCharacterInput: (enabled) => {
+      usePerCharacterInput = enabled;
+      restoreTerminalPerCharacterInput(ctx.terminalSettingsRef, enabled);
+    },
     getKittyKeyboardModeState: () => snapshotKittyKeyboardModeState(kittyKeyboardMode),
     restoreKittyKeyboardModeState: (state) => restoreKittyKeyboardModeState(
       kittyKeyboardMode,

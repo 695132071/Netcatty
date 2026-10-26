@@ -2474,16 +2474,68 @@ async function acquireSessionFastDownloadSlot(client, transfer) {
   }
 }
 
-// TERM-SSHD compatibility requires one file handle per channel. Per-file request
-// concurrency is not enough: pooled SFTP aliases share that physical channel,
-// and a second body or verification OPEN would fail even for tiny files.
-// Reuse the cancelable one-slot queue, keyed by the stream rather than its
-// wrapper client, across both directions and the complete verification phase.
+function isSingleChannelSftpClient(client) {
+  return Boolean(
+    client?.__netcattySingleChannelSsh
+    || client?.client?.__netcattySingleChannelSsh,
+  );
+}
+
+function requiresExclusiveSftpTransferChannel(client, channel) {
+  // Aliases stay on one authenticated/elevated channel, even on ordinary SSH
+  // servers. Only the owning peer's restriction requires serial transfers.
+  const peer = client?.__netcattySharedChannelAlias
+    ? sftpClients?.get(client.__netcattySharedChannelOwnerId) || client
+    : client;
+  return isSingleChannelSftpClient(peer)
+    || getSftpTransferConcurrency(channel, DOWNLOAD_TRANSFER_CONCURRENCY) === 1;
+}
+
+/**
+ * Some single-channel gateways cannot safely interleave SFTP metadata and
+ * write requests from different files. Serialize the complete upload
+ * transaction per raw SFTP stream while leaving independent connections free.
+ */
+async function acquireExclusiveSftpTransferTransaction(client, transfer) {
+  if (isScpModeClient(client)) return null;
+  // Preserve the normal lazy SFTP-open path. Only known single-channel peers
+  // acquire the transaction slot before the upload itself opens a handle.
+  const knownChannel = client?.sftp || { _client: client?.client };
+  if (!requiresExclusiveSftpTransferChannel(client, knownChannel)) return null;
+  await requireSftpChannel(client);
+  const channel = client.sftp;
+  if (transfer?._exclusiveSftpTransactionChannel === channel) return null;
+
+  await acquireSessionFastDownloadSlot(channel, transfer);
+  transfer._exclusiveSftpTransactionChannel = channel;
+  let released = false;
+  return {
+    client,
+    channel,
+    release() {
+      if (released) return;
+      released = true;
+      if (transfer._exclusiveSftpTransactionChannel === channel) {
+        transfer._exclusiveSftpTransactionChannel = null;
+      }
+      releaseSessionFastDownloadSlot(channel);
+    },
+  };
+}
+
+// Single-channel compatibility permits only one transfer operation per raw
+// SFTP stream. A per-file request limit is insufficient because pooled aliases
+// share the physical channel, and even a tiny file's second OPEN or verification
+// read can fail. Reuse the cancelable one-slot queue keyed by stream rather
+// than wrapper client across both directions and complete verification.
 async function withSequentialSftpTransferSlot(client, transfer, operation) {
   if (isScpModeClient(client)) return operation();
   await requireSftpChannel(client);
   const channel = client.sftp;
-  if (getSftpTransferConcurrency(channel, DOWNLOAD_TRANSFER_CONCURRENCY) !== 1) {
+  if (transfer?._exclusiveSftpTransactionChannel === channel) {
+    return operation();
+  }
+  if (!requiresExclusiveSftpTransferChannel(client, channel)) {
     return operation();
   }
   await acquireSessionFastDownloadSlot(channel, transfer);
@@ -6625,6 +6677,7 @@ async function startTransferNow(event, payload, onProgress) {
     });
   };
 
+  let exclusiveSftpUploadTransaction = null;
   try {
     // Explicit 0 is a valid empty-snapshot plan (e.g. download of an empty log
     // that may grow later). Do not treat it as "size unknown" and re-stat into
@@ -6750,6 +6803,16 @@ async function startTransferNow(event, payload, onProgress) {
       // soft-resume paths can already own the channel.
       if (sourceClient) await withSequentialSftpTransferSlot(sourceClient, transfer, verify);
       else await verify();
+    }
+
+    // A single-channel upload holds the raw SFTP stream from directory setup
+    // through stage verification, destination safety checks, promotion, and
+    // timestamp restoration so directory children cannot interleave requests.
+    if (sourceType === "local" && targetType === "sftp" && targetClient) {
+      exclusiveSftpUploadTransaction = await acquireExclusiveSftpTransferTransaction(
+        targetClient,
+        transfer,
+      );
     }
 
     sendProgress(transfer.checkpointBytes, fileSize, { force: true });
@@ -7380,6 +7443,13 @@ async function startTransferNow(event, payload, onProgress) {
 
     return { transferId, totalBytes: fileSize, ...(transfer.warning ? { warning: transfer.warning } : {}) };
   } catch (err) {
+    if (
+      exclusiveSftpUploadTransaction
+      && err?.uncleanSftpChannel
+      && exclusiveSftpUploadTransaction.client.sftp === exclusiveSftpUploadTransaction.channel
+    ) {
+      abandonWedgedVerificationSftpChannel(exclusiveSftpUploadTransaction.client);
+    }
     const failureMessage = err?.message || String(err);
     if (
       sourceType === "local"
@@ -7465,6 +7535,8 @@ async function startTransferNow(event, payload, onProgress) {
       sendError(err);
     }
     return { transferId, error: err.message };
+  } finally {
+    exclusiveSftpUploadTransaction?.release();
   }
 }
 

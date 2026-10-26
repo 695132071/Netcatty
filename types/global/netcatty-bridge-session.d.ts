@@ -428,6 +428,8 @@ declare global {
     requestTerminalSessionSnapshot?(sessionId: string, authorization: string): Promise<{
       success: boolean;
       snapshot?: string;
+      /** Captured input policy for the existing backend connection. */
+      perCharacterInput?: boolean;
       kittyKeyboardModeState?: NetcattyKittyKeyboardModeState;
       kittyKeyboardProtocolEnabled?: boolean;
       passwordPromptActive?: boolean;
@@ -448,6 +450,7 @@ declare global {
       passwordPromptActive?: boolean,
       cwd?: string | null,
       title?: string | null,
+      perCharacterInput?: boolean,
     ): void;
     /** Observe popup: push current state back to the home renderer before restore. */
     applyTerminalSessionSnapshot?(
@@ -458,6 +461,7 @@ declare global {
         contextViewportSnapshot: string;
         contextScrollbackSnapshot: string;
         alternateScreen: boolean;
+        perCharacterInput?: boolean;
         kittyKeyboardModeState?: NetcattyKittyKeyboardModeState;
         kittyKeyboardProtocolEnabled?: boolean;
         passwordPromptActive?: boolean;
@@ -480,6 +484,7 @@ declare global {
         contextViewportSnapshot: string;
         contextScrollbackSnapshot: string;
         alternateScreen: boolean;
+        perCharacterInput?: boolean;
         kittyKeyboardModeState?: NetcattyKittyKeyboardModeState;
         kittyKeyboardProtocolEnabled?: boolean;
         passwordPromptActive?: boolean;
