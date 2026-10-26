@@ -337,7 +337,8 @@ declare global {
     id: string;
     enabled: boolean;
     activeVersion: string | null;
-    manifest: unknown;
+    manifest: import("@netcatty/plugin-contract").PluginManifest | null;
+    archiveSha256?: string | null;
     runtime: {
       status: string;
       kind: 'browser' | 'utility' | null;

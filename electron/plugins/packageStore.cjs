@@ -216,7 +216,9 @@ class PackageStore {
       const version = assertPluginStorageSegment(manifest.version, "version");
       const targetDirectory = resolveInstalledVersionDirectory(this.paths, pluginId, version);
       const previousPlugin = this.database.getActivePlugin(pluginId);
-      const enableAfterActivation = options.enable === true || previousPlugin?.enabled === true;
+      const enableAfterActivation = options.enable === false
+        ? false
+        : options.enable === true || previousPlugin?.enabled === true;
       let activationPrepared = false;
       const prepareActivation = async (reason) => {
         if (activationPrepared) return;
@@ -243,7 +245,7 @@ class PackageStore {
           await rm(targetDirectory, { recursive: true, force: true });
         }
         if (existingValidation) {
-          if (previousPlugin?.activeVersion !== version) await prepareActivation("switch-active-version");
+          if (previousPlugin?.activeVersion !== version || options.enable === false) await prepareActivation("switch-active-version");
           const existingPackage = path.join(targetDirectory, PACKAGE_DIRECTORY);
           this.database.installVersion({
             pluginId,
@@ -251,7 +253,7 @@ class PackageStore {
             manifest: existingValidation.manifest,
             archiveSha256: existing.archiveSha256,
             packageRelativePath: path.relative(this.paths.packages, existingPackage),
-          }, { enable: enableAfterActivation });
+          }, { enable: enableAfterActivation, forceDisabled: options.enable === false });
           return this.database.getActivePlugin(pluginId);
         }
       }
@@ -270,7 +272,7 @@ class PackageStore {
       await writeDurableMetadata(path.join(stagingDirectory, INSTALL_METADATA_FILE), metadata);
       await this.syncDirectory(stagingDirectory);
       await mkdir(path.dirname(targetDirectory), { recursive: true, mode: 0o700 });
-      if (previousPlugin?.activeVersion !== version) await prepareActivation("switch-active-version");
+      if (previousPlugin?.activeVersion !== version || options.enable === false) await prepareActivation("switch-active-version");
       await rename(stagingDirectory, targetDirectory);
       await this.syncDirectory(path.dirname(targetDirectory));
       const packageRelativePath = path.relative(
@@ -284,7 +286,7 @@ class PackageStore {
           manifest,
           archiveSha256: snapshot.sha256,
           packageRelativePath,
-        }, { enable: enableAfterActivation });
+        }, { enable: enableAfterActivation, forceDisabled: options.enable === false });
       } catch (error) {
         this.verifiedArchives.delete(this.#versionKey(pluginId, version));
         await rm(targetDirectory, { recursive: true, force: true });

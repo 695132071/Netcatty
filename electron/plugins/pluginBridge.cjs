@@ -646,7 +646,7 @@ function registerPluginBridge(ipcMain, options) {
   handle(CHANNELS.list, async (activeManager) => activeManager.list());
   handle(CHANNELS.install, async (activeManager, payload) => activeManager.install(
     payload?.archivePath,
-    { enable: payload?.enable === true },
+    { enable: typeof payload?.enable === "boolean" ? payload.enable : undefined },
   ));
   handle(CHANNELS.setEnabled, async (activeManager, payload) => activeManager.setEnabled(
     payload?.pluginId,

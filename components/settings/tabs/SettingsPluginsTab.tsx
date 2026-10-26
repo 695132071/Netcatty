@@ -1,3 +1,4 @@
+import { PluginPackageManager } from './PluginPackageManager';
 import { FolderOpen } from 'lucide-react';
 import React, { useEffect, useMemo, useState } from 'react';
 
@@ -307,6 +308,7 @@ export default function SettingsPluginsTab() {
           <h2 className="text-xl font-semibold">{t('settings.plugins.title')}</h2>
           <p className="mt-1 text-sm text-muted-foreground">{t('settings.plugins.description')}</p>
         </div>
+        <PluginPackageManager />
         {contextualScopes.size > 0 && (
           <section className="grid gap-3 rounded-lg border border-border/70 bg-muted/10 p-4 sm:grid-cols-2" aria-label={t('settings.plugins.scopeTargets')}>
             {[...contextualScopes].map((kind) => (

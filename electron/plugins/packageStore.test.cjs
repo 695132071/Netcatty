@@ -410,3 +410,14 @@ for (const target of [
     assert.equal(fixture.database.getActivePlugin(installed.id).enabled, false);
   });
 }
+
+test("explicit disabled import never auto-enables an update of an enabled plugin", async (context) => {
+  const fixture = createStore(context);
+  await fixture.store.initialize();
+  const first = await createPackage(fixture.root);
+  await fixture.store.install(first.archive, { enable: true });
+  const update = await createPackage(fixture.root, { manifest: { version: "1.1.0" } });
+  const installed = await fixture.store.install(update.archive, { enable: false });
+  assert.equal(installed.activeVersion, "1.1.0");
+  assert.equal(installed.enabled, false);
+});

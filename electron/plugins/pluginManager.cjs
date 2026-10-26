@@ -52,7 +52,7 @@ class PluginManager {
       let plugin;
       try {
         plugin = await this.packageStore.install(archivePath, {
-          enable: options?.enable === true,
+          enable: options?.enable,
           beforeActivate: async ({ pluginId, previousPlugin }) => {
             if (!previousPlugin?.enabled) return;
             this.database.setEnabled(pluginId, false);
