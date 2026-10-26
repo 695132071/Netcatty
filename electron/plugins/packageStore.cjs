@@ -1,5 +1,7 @@
 "use strict";
 
+const { LOCAL_SOURCE, assertSource } = require("./sourceIdentity.cjs");
+
 const { createHash, randomUUID } = require("node:crypto");
 const fs = require("node:fs");
 const { constants } = fs;
@@ -127,6 +129,7 @@ function validateInstallMetadata(value) {
     version,
     archiveSha256: value.archiveSha256,
     contentSha256: value.contentSha256,
+    source: assertSource(value.source ?? LOCAL_SOURCE),
   };
 }
 
@@ -226,6 +229,7 @@ class PackageStore {
       const pluginId = assertPluginStorageSegment(manifest.id, "ID");
       const version = assertPluginStorageSegment(manifest.version, "version");
       const targetDirectory = resolveInstalledVersionDirectory(this.paths, pluginId, version);
+      const source = this.database.assertInstallSource(pluginId, options.source ?? LOCAL_SOURCE);
       const previousPlugin = this.database.getActivePlugin(pluginId);
       if (options.catalog) {
         if (snapshot.sha256 !== options.catalog.artifact.sha256) throw new Error("Catalog package SHA-256 mismatch");
@@ -266,6 +270,7 @@ class PackageStore {
           if (previousPlugin?.activeVersion !== version || options.enable === false) await prepareActivation("switch-active-version");
           const existingPackage = path.join(targetDirectory, PACKAGE_DIRECTORY);
           this.database.installVersion({
+            source,
             pluginId,
             version,
             manifest: existingValidation.manifest,
@@ -282,6 +287,7 @@ class PackageStore {
         if (!(error && error.code === "ENOENT")) throw error;
       }
       const metadata = {
+        source,
         pluginId,
         version,
         archiveSha256: snapshot.sha256,
@@ -299,6 +305,7 @@ class PackageStore {
       );
       try {
         this.database.installVersion({
+          source,
           pluginId,
           version,
           manifest,
@@ -391,6 +398,7 @@ class PackageStore {
           if (metadata.pluginId !== pluginEntry.name || metadata.version !== versionEntry.name) {
             throw new Error("Plugin install metadata does not match its directory");
           }
+          this.database.assertInstallSource(metadata.pluginId, metadata.source);
           if (committedVersion && committedVersion.archiveSha256 !== metadata.archiveSha256) {
             throw new Error("Plugin install archive hash does not match its database record");
           }
@@ -406,6 +414,7 @@ class PackageStore {
           if (!committedVersion) {
             const packageDirectory = path.join(versionDirectory, PACKAGE_DIRECTORY);
             this.database.installVersion({
+              source: metadata.source,
               pluginId: metadata.pluginId,
               version: metadata.version,
               manifest: validation.manifest,
@@ -577,6 +586,12 @@ class PackageStore {
       }
       throw error;
     }
+  }
+
+  async clearUninstalledPrivateFiles(pluginId) {
+    assertPluginStorageSegment(pluginId, "ID");
+    if (this.database.getActivePlugin(pluginId)) throw new Error("Plugin is still installed");
+    await rm(path.join(this.paths.data, pluginId), { recursive: true, force: true });
   }
 
   async uninstall(pluginId) {

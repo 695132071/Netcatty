@@ -1,0 +1,20 @@
+{
+  "catalog": {
+    "path": "/snapshots/53e5189d2cb58a02826931d5d6321ad3e556b924ef80d38636dc9e66a7df8c55/catalog.json",
+    "sha256": "47e967516437996e00eac8fbe97699baa72439ba1bf7ae791731e4964bb13774",
+    "size": 5739
+  },
+  "delivery": {
+    "path": "/snapshots/53e5189d2cb58a02826931d5d6321ad3e556b924ef80d38636dc9e66a7df8c55/delivery.json",
+    "sha256": "53e5189d2cb58a02826931d5d6321ad3e556b924ef80d38636dc9e66a7df8c55",
+    "size": 1869
+  },
+  "index": {
+    "path": "/snapshots/53e5189d2cb58a02826931d5d6321ad3e556b924ef80d38636dc9e66a7df8c55/index.json",
+    "sha256": "af2e953e3c631b36a0e712806d0dcfb0a058fd02f2051025eddded8cc115d461",
+    "size": 7726
+  },
+  "registryCommit": "32578ae27ff86f0151511478d698a1cdc12fb2e0",
+  "schemaVersion": 1,
+  "snapshotId": "53e5189d2cb58a02826931d5d6321ad3e556b924ef80d38636dc9e66a7df8c55"
+}

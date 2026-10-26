@@ -77,8 +77,8 @@ test('offline snapshot stays browsable, retry clears warning, and operations bin
   offline = false;
   await act(async () => state.retryList());
   assert.equal(state.listError, null); assert.equal(state.source, 'registry');
-  assert.deepEqual(reads.at(-1), [entry.id, 'second']);
+  assert.deepEqual(reads.at(-1), [entry.id, 'second', 'official']);
   await act(async () => state.install(entry.id));
-  assert.deepEqual(installs, [[entry.id, 'second']]);
+  assert.deepEqual(installs, [[entry.id, 'second', 'official', undefined]]);
   await act(async () => renderer.unmount());
 });

@@ -58,7 +58,7 @@ test("stream endpoint canonicalization requires one exact host, transport and po
   for (const value of ["*", "tcp://*:3306", "tcp://x:0", "tcp://x:01", "tcp://x:65536", "udp://x:22",
     "tcp://x", "tcp://x:22/", "tcp://user@x:22", "tcp://127.1:22", "tcp://x:22?x", "tcp://x.:22",
     "tcp://[::1%25lo]:22", "tcp://x:22#x", "tcp://-x:22"]) {
-    assert.throws(() => canonicalizeStreamEndpoint(value), { code: RPC_ERRORS.invalidArgument }, value);
+    assert.throws(() => canonicalizeStreamEndpoint(value), TypeError, value);
   }
 });
 
@@ -105,6 +105,27 @@ test("remote EOF returns the final bytes and releases the connection", async (t)
   }
   assert.equal(Buffer.concat(chunks).toString(), "synthetic final bytes");
   assert.equal(instance.connections.size, 0);
+});
+
+test("a delayed consumer can observe EOF after the real socket has closed", async (t) => {
+  const peer = await server(t, (socket) => socket.end("final"));
+  const endpoint = `tcp://127.0.0.1:${peer.address().port}`;
+  const { instance, revoke } = broker(t, endpoint);
+  const ctx = context();
+  const { handleId } = await instance.connect(endpoint, ctx);
+  const socket = instance.connections.get(handleId).socket;
+  const closed = once(socket, "close");
+  assert.equal(Buffer.from(await instance.read(handleId, ctx)).toString(), "final");
+  await closed;
+  await assert.rejects(instance.read(handleId, context("other-runtime")), { code: RPC_ERRORS.permissionDenied });
+  assert.equal(await instance.read(handleId, ctx), null);
+  assert.equal(instance.connections.size, 0);
+  const second = await instance.connect(endpoint, ctx);
+  const secondClosed = once(instance.connections.get(second.handleId).socket, "close");
+  await instance.read(second.handleId, ctx);
+  await secondClosed;
+  revoke({ pluginId: ctx.pluginId, permission: "network.stream", resource: endpoint });
+  await assert.rejects(instance.read(second.handleId, ctx), { code: RPC_ERRORS.permissionDenied });
 });
 
 test("denial happens before DNS or a socket is created", async (t) => {
@@ -175,6 +196,28 @@ test("cancellation during DNS rejects promptly and ignores late resolution", asy
   await assert.rejects(pending, { code: RPC_ERRORS.cancelled });
   resolveDns([{ address: "203.0.113.1", family: 4 }]);
   await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(dialed, false);
+  assert.equal(instance.connections.size, 0);
+});
+
+test("cancellation after the last async guard cannot create a late real socket", async (t) => {
+  const peer = await server(t, () => {});
+  const endpoint = `tcp://127.0.0.1:${peer.address().port}`;
+  let dialed = false;
+  const { instance } = broker(t, endpoint, { connectSocket(options) {
+    dialed = true;
+    const socket = net.createConnection(options);
+    t.after(() => socket.destroy());
+    return socket;
+  } });
+  const controller = new AbortController();
+  let guards = 0;
+  const ctx = context("runtime-a", controller);
+  ctx.assertActive = async () => {
+    controller.signal.throwIfAborted();
+    if (++guards === 3) queueMicrotask(() => queueMicrotask(() => controller.abort()));
+  };
+  await assert.rejects(instance.connect(endpoint, ctx), { code: RPC_ERRORS.cancelled });
   assert.equal(dialed, false);
   assert.equal(instance.connections.size, 0);
 });

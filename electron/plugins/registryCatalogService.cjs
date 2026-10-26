@@ -1,20 +1,21 @@
 "use strict";
 
 const { createHash } = require("node:crypto");
-const { PluginCatalogService, fetchBounded, validateCatalog, MAX_CATALOG_BYTES } = require("./catalogService.cjs");
-const REGISTRY_URL = "https://raw.githubusercontent.com/binaricat/netcatty-plugins/main/catalog.json";
+const { PluginCatalogService, validateCatalog, MAX_CATALOG_BYTES } = require("./catalogService.cjs");
+const { REGISTRY_URL, fetchDistribution, fetchVerified, tuple } = require("./distributionSnapshot.cjs");
 const tokenFor = (entry) => createHash("sha256").update(JSON.stringify(entry)).digest("hex");
 
-function prepareSnapshot(value) {
-  const entries = structuredClone(validateCatalog(value));
-  const publicEntries = structuredClone(entries).map((entry) => ({ ...entry, selectionToken: tokenFor(entry) }));
-  return { entries, publicEntries };
+function prepareSnapshot(value, resources = new Map(), source) {
+  const entries = structuredClone(validateCatalog(value, source?.origin));
+  const publicEntries = structuredClone(entries).map((entry) => ({ ...entry, selectionToken: tokenFor([source?.id ?? "official", entry, resources.get(tuple(entry)) ?? null]) }));
+  return { entries, publicEntries, resources: structuredClone(resources) };
 }
 
 class RegistryCatalogService extends PluginCatalogService {
   constructor(options) {
     super(options);
-    this.publicEntries = prepareSnapshot(this.entries).publicEntries;
+    this.publicEntries = prepareSnapshot(this.entries, new Map(), this.marketSource).publicEntries;
+    this.resources = new Map();
     this.source = "builtin";
     this.error = null;
     this.refreshing = null;
@@ -24,11 +25,12 @@ class RegistryCatalogService extends PluginCatalogService {
     this.refreshing = (async () => {
       try {
         // No redirects: only this exact registry endpoint can replace the catalog.
-        const bytes = await fetchBounded(REGISTRY_URL, MAX_CATALOG_BYTES, this.fetch, 0);
-        const next = prepareSnapshot(JSON.parse(bytes.toString("utf8")));
+        const distribution = await fetchDistribution(this.fetch, this.origin);
+        const next = prepareSnapshot(distribution.entries, distribution.resources, this.marketSource);
         // Publish only after full validation, clones and every token succeeded.
         this.entries = next.entries;
         this.publicEntries = next.publicEntries;
+        this.resources = next.resources;
         this.source = "registry";
         this.error = null;
         return true;
@@ -50,15 +52,17 @@ class RegistryCatalogService extends PluginCatalogService {
   }
   selected(id, token) {
     const entry = this.get(id);
-    if (typeof token !== "string" || token !== tokenFor(entry)) {
+    if (typeof token !== "string" || token !== this.publicEntries.find((item) => item.id === id)?.selectionToken) {
       throw new Error("Catalog entry changed. Refresh and review this version before continuing.");
     }
     return entry;
   }
+  artifactSize(entry) { return this.resources.get(tuple(entry))?.artifact?.size; }
   async readme(id, token) {
-    this.selected(id, token);
-    // Base method captures the pinned entry synchronously before its first await.
-    return super.readme(id);
+    const entry = this.selected(id, token);
+    const resource = this.resources.get(tuple(entry))?.readme;
+    if (!resource) throw new Error("No published README snapshot is available. Refresh the catalog or open its source link.");
+    return (await fetchVerified(resource, this.fetch, this.origin)).toString("utf8");
   }
   async install(id, token) {
     this.selected(id, token);

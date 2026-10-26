@@ -369,6 +369,9 @@ function validateSemantics(manifest: PluginManifest): string[] {
   }
 
   const requiredFeatures = new Set(manifest.features?.required ?? []);
+  const hasByteStreams = [...(manifest.permissions?.required ?? []), ...(manifest.permissions?.optional ?? [])]
+    .some((declaration) => permissionName(declaration) === "network.stream");
+  if (hasByteStreams && !requiredFeatures.has("network.byte-streams")) errors.push("Byte streams require network.byte-streams");
   if ((manifest.main.data || manifest.contributes?.themes?.length) && !requiredFeatures.has('appearance.theme-packs')) errors.push('Theme packs require appearance.theme-packs');
   for (const theme of manifest.contributes?.themes ?? []) if (!theme.entry.endsWith('.json')) errors.push('Theme palette entry must be JSON');
   if (manifest.contributes?.views?.some((view) => view.location === 'terminal-sidebar')

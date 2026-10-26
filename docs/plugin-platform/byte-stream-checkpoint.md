@@ -1,134 +1,111 @@
-# Byte stream implementation checkpoint
+# Byte stream integration checkpoint
 
-This branch starts at plugin stack #3978, commit
-`91b8927c56314e68c06e2c008e84559ddfb96d78`. It contains an unregistered,
-host-only transport core and a limited example protocol. It does not yet expose
-a capability to installed plugins. Shared contract changes await parent
-coordination with the market/source-identity task.
+The branch starts at #3978 `91b8927c56314e68c06e2c008e84559ddfb96d78`.
+It integrates source APIs from #3981 `ab8764a31752fd2d226c9d029c4d65498ba7b063`
+and AI service/adapters from #3986 `264f1d983cd1ed83fe4873974a614fff2f47f989`.
+No source database or sync implementation is changed by the transport delta.
 
-## Implemented scope
+## Registered transport
 
-`electron/plugins/byteStreamBroker.cjs` opens outgoing TCP or validated TLS.
-The broker requires a host runtime context. Handles bind to both plugin ID and
-runtime ID. No identity is accepted from plugin request parameters.
+Canonical definitions are in `packages/plugin-contract/schema/plugin-contract.schema.json`.
+`network.byte-streams` negotiates the capability. The separate `network.stream`
+permission requires explicit `tcp://host:port` or `tls://host:port` resources.
+Wildcard declarations and grants cannot authorize raw streams. HTTP grants and
+payload limits are unchanged.
 
-Endpoints have one canonical form: `tcp://host:port` or `tls://host:port`.
-The proposed permission is `network.stream`, separate from existing HTTP
-`network` grants. Authorization precedes DNS and socket creation. The broker
-checks every DNS answer, pins one literal IP, and performs no second lookup,
-redirect, proxy discovery, or reconnect.
+The SDK exposes `context.network.connect({ endpoint }, cancellationToken?)`.
+The returned connection has `endpoint`, `readable`, `writable`, `close()`, and
+`dispose()`. The control methods are `network.stream.connect`,
+`network.stream.attach`, and `network.stream.close`. Descriptors, request
+shapes, feature names, limits, generated SDK types, and host validators share
+the canonical schema. Unknown request properties are rejected.
 
-Production defaults reject loopback, link-local, unspecified, multicast,
-IPv4-mapped local addresses, and selected IPv6 tunnel address forms. A host
-callback can reject additional application control endpoints. An explicit
-host-only fixture option admits an exact local endpoint for transport tests.
-No plugin request can supply that option. The real database test uses a private
-address on its disposable internal Docker network and needs no such override.
+The registered service authenticates the host runtime before source lookup.
+Runtime startup captures the existing opaque source owner. Every asynchronous
+commit revalidates the runtime, active and retained source, and opaque owner
+through the source task's APIs. Caller-supplied owner/source parameters are
+rejected. Audit commits also verify the source binding.
 
-Limits are four connections per runtime, 64 total connections, 64 KiB chunks
-and socket buffer thresholds, and 8 MiB combined bytes per connection.
-Existing runtime byte quotas also apply. There is one pending read and one
-pending write per connection. Writes wait for the socket callback. Reads leave
-the socket paused and consume bounded chunks.
+Connection and stream IDs are host-issued and bound to that runtime and owner.
+The SDK prepares its incoming waiter before attach starts the host producer.
+Both directions reuse the existing binary stream router and credit windows.
+Input credit returns after the socket write callback. Output backpressure
+bounds the producer. The router has one optional producer `onClose` hook;
+peer cancellation releases the socket even while it is idle.
 
-Connection, idle, and lifetime limits are 10, 30, and 120 seconds respectively.
-The connection timer includes DNS after permission approval. Revocation,
-runtime release, shutdown, cancellation, EOF, and transport failure release the
-socket and reservation. Late DNS results cannot create a socket.
+The host validates all DNS answers and pins a literal IP. Production rejects
+loopback, link-local, unspecified, multicast, mapped local addresses, selected
+IPv6 tunnel forms, and the machine's own interface addresses. The production
+host constructor never forwards the core's explicit local-test override.
+There is no proxy discovery, reconnect, UDP, listen, generic IPC, shell, Node
+plugin runtime, or filesystem escape.
 
-TLS requires certificate trust, the original requested hostname, and TLS 1.2
-or later. Plugins cannot supply a CA, disable validation, or change SNI. Tests
-inject a fixture CA through a host test adapter. STARTTLS is not implemented.
+Limits are four connections per runtime, 64 globally, 64 KiB chunks and socket
+buffer thresholds, and 8 MiB combined bytes per connection, plus the existing
+runtime byte quota. Connect, idle, and lifetime deadlines are 10, 30, and 120
+seconds. Close tombstones are capped at 256 small identity records. Revocation,
+runtime stop, disable, shutdown, and stream cancellation release resources.
 
-Audit hooks record generic open/close operations, endpoint, runtime, handle,
-and byte counts. They do not record payloads, credentials, or SQL semantics.
-This branch does not modify the logging task's audit sink or retention UI.
+TLS requires trust and original-hostname validation with TLS 1.2 or later.
+Plugins cannot set custom CAs, SNI, or validation exceptions. STARTTLS is not
+implemented. Generic audit records contain endpoint, runtime, handle, and byte
+counts. The host does not inspect SQL or record payloads or credentials.
 
-## Shared interface requested from the parent
+## Additive AI interface for the parallel owner
 
-The following changes are proposed, not implemented:
+The same canonical schema defines the relayed `AI_CONTEXT_ROUTES` types.
+The SDK/runtime expose `context.ai.openChat/startTurn/readTurn/stopTurn/closeChat`
+and `context.selectedContext.list/read`. Host registration advertises
+`ai.model-invocation` and `context.selected-read`, and wires runtime cleanup,
+plugin disable, revocation through the service, and shutdown.
 
-- Add canonical `network.byte-streams` feature and `network.stream` permission.
-  Reject wildcard stream resources in both required and optional declarations,
-  grant decisions, and coverage checks. Existing HTTP grants confer no stream
-  authority.
-- Add `network.connect({ endpoint })` to the SDK. Return a host-owned
-  connection with readable/writable byte streams and an idempotent close
-  method. Define every control descriptor in the canonical schema.
-- Use host-issued connection and stream IDs. After connect, the SDK prepares
-  its readable waiter and writable stream, then an attach request starts the
-  host producer. This avoids sending stream-open before the browser has a
-  consumer. Do not send bulk bytes through JSON RPC or raise HTTP limits.
-- Reuse `PluginStreamRouter` credit and transfer frames. The producer needs a
-  close/cancel observation hook so cancellation closes the socket even when
-  no read or write is pending. Release input credit only after the socket
-  write completes. Await output credit before reading another socket chunk.
-- Keep host-provided runtime identity and `securityPrincipal` unchanged.
-  Confirm the market task's source-principal propagation and revoke semantics
-  before wiring authorization. Do not add a parallel provenance format.
-- Register runtime cleanup and host shutdown with the existing lifecycle.
-  Production wiring must never pass the fixture local-endpoint override.
+The trusted host adapter constructor option is `pluginAIHostAdapter`. It has
+the service owner's `assertActive`, `selectModel`, `listSelected`, `reviewText`,
+and optional lifecycle callbacks. These callbacks are never exposed to plugin
+views. The default adapter rejects model invocation, returns no selected
+resources, and refuses text review. The AI owner still owns real renderer
+wiring and model/context UX. A registered synthetic adapter test is not proof
+of that remaining production wiring.
 
-Requested shared-file scope: canonical schema and generated files,
-`packages/plugin-contract/src/index.ts`, SDK `index.ts`, `runtimePeer.mjs`,
-`permissionResources.cjs`, `hostService.cjs`, and the stream producer close
-hook in `streamRouter.cjs` and its runtime adapters. This branch has not edited
-those files. It does not require changes to installer DB, source namespaces,
-secret storage, credential resolution, or AI brokers.
+## Database example
 
-## Minimal database example
+`examples/plugins/database-minimal` is an ordinary browser plugin. Its developer
+preparation tool creates an `.ncpkg` for one exact disposable private IPv4
+endpoint. The output contains a browser bundle, a normal manifest, and view
+assets. The preparation tool and its Node dependencies are not in the plugin.
 
-`examples/plugins/database-minimal/protocol.mjs` is browser-bundleable code.
-It supports only the common protocol 4.1 handshake, `mysql_native_password`,
-and one fixed query with one bounded text result. It rejects unsupported
-authentication, sequence errors, oversized packets, extra result shapes, and
-peer errors without displaying the peer's error text.
+Only the example contains the database protocol: common protocol 4.1,
+`mysql_native_password`, and
+`SELECT value FROM plugin_demo.example_result LIMIT 1`.
+The view accepts session-only fixture credentials and clears its password
+field before dispatch. It does not save view state, settings, logs, or secrets.
+The host never exposes SSH or AI credentials. JavaScript does not promise
+memory zeroization. The account's server-side SELECT grant enforces read-only
+access. The fixed query is not a SQL security classifier.
 
-The query is `SELECT value FROM plugin_demo.example_result LIMIT 1`.
-It has no query editor, SQL classifier, schema browser, pool, importer, file
-access, host credential access, or persistent credential store. Passwords
-belong to the disposable example session. Authentication uses browser Web
-Crypto and the password challenge. Clearing local variables does not promise
-JavaScript memory zeroization.
+The example has no query editor, schema browser, pool, arbitrary SQL, or host
+connection-management subsystem. See the example README for native setup.
 
-The fixed query is a demo constraint. Server-side grants enforce the fixture
-account's read-only access. The host neither interprets SQL nor trusts an
-example's claim that a query is read-only.
+## Evidence and limits
 
-The normal manifest, SDK adapter, example view, and `.ncpkg` are still pending
-the agreed public interface. This protocol module is not a finished installed
-plugin. Native screenshots/video and exact-head independent review are also
-pending parent assignment.
+- Both source-reviewed races have executable real-loopback regressions here.
+  Delayed final-byte consumption previously lost EOF after the socket closed.
+  Double-microtask cancellation previously created an untracked late socket.
+  Each regression failed before its respective fix and passed afterward.
+- The broker tests use real TCP/TLS sockets, including trusted fixture CA,
+  untrusted certificate and wrong-hostname denial. Connect and idle deadline
+  cases use mock clocks around real sockets or delayed DNS.
+- The installed entrypoint test builds and installs a normal package, executes
+  its actual browser entry module through SDK/RPC/binary streams, and exercises
+  grant denial, exact resources, unknown-field rejection, close, revoke, and
+  disable. It also exercises registered AI/context SDK routes with a synthetic
+  trusted adapter. Its runtime harness is Node and is explicitly not a browser
+  sandbox or OS sandbox test.
+- The disposable MariaDB test checks a synthetic SELECT result and server-side
+  INSERT denial. It creates an internal network, publishes no host ports, and
+  removes the container and network. Database transport is plain TCP inside
+  that disposable network, not database TLS.
 
-Driver investigation: mysql2 supports custom streams, but its documented
-module dependencies include Node `net`, `events`, `stream`, and `tls`.
-The limited browser implementation avoids introducing those host powers or
-a general SQL subsystem. Sources: [mysql2 TypeScript documentation](https://sidorares.github.io/node-mysql2/docs/documentation/typescript-examples),
-[MariaDB handshake protocol](https://mariadb.com/docs/server/reference/clientserver-protocol/1-connecting/connection),
-and [MariaDB protocol differences](https://mariadb.com/docs/server/reference/clientserver-protocol/mariadb-protocol-differences-with-mysql).
-
-## Evidence
-
-On Node 24.19.0 in the delegated Linux workspace:
-
-- `node --test electron/plugins/byteStreamBroker.test.cjs`: 14 passed.
-  TCP and TLS sockets are real. Tests cover trust and hostname rejection,
-  handle isolation, authorization denial, local/control targets, mixed DNS,
-  revocation, runtime release, EOF, bounded receive buffering, byte quota,
-  concurrent operation limits, and late DNS after cancellation. Connect and
-  idle timeout tests use mock clocks around real sockets or pending DNS.
-- `NETCATTY_BYTE_STREAM_DATABASE_TEST=1 node --test electron/plugins/byteStreamDatabase.live.test.cjs`:
-  one passed. It creates a disposable internal network and MariaDB container,
-  a random session password, a SELECT-only account, and one synthetic row.
-  The real broker returns that row. The same account's INSERT is rejected by
-  the server. The test publishes no host ports and removes its container and
-  network. The image is pinned in the test by digest.
-- Changed-source ESLint and `npm run check:plugin-contract` passed before
-  this checkpoint. Generated schema files remain unchanged.
-- `esbuild examples/plugins/database-minimal/protocol.mjs --bundle --platform=browser --format=esm`
-  produced a 6.2 KiB browser bundle without Node polyfills or dependencies.
-
-The database test uses plain TCP inside its disposable network. It is not a
-database TLS test, a native BrowserWindow test, device testing, a full app
-build, or a packaged app acceptance result. Full production checks remain
-pending integration.
+Normal native BrowserWindow, full app/package checks, exact-head independent
+review, and screenshot/video acceptance remain separate required evidence.
+Do not disable the Chromium sandbox to obtain that evidence.

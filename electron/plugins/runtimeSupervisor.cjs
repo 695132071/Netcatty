@@ -239,6 +239,10 @@ class RuntimeSupervisor {
     signal.throwIfAborted();
     const plugin = this.database.getActivePlugin(pluginId);
     if (!plugin?.manifest || !plugin.packageRelativePath) throw new Error(`Plugin is not installed: ${pluginId}`);
+    // Capture the host's opaque source owner before async package/placement work.
+    // Test doubles without provenance APIs cannot use source-bound capabilities.
+    const sourceOwner = plugin.source && typeof this.database.privateOwner === "function"
+      ? this.database.privateOwner(pluginId) : null;
     if (!plugin.enabled) throw new Error(`Plugin is disabled: ${pluginId}`);
     if (plugin.manifest.main.data) throw new Error("Static theme packs have no executable runtime");
     if (plugin.runtime.quarantinedAt != null) throw new Error(`Plugin is quarantined: ${pluginId}`);
@@ -273,6 +277,8 @@ class RuntimeSupervisor {
     const currentPlugin = this.database.getActivePlugin(pluginId);
     if (
       !currentPlugin?.enabled
+      || (sourceOwner !== null && this.database.privateOwner(pluginId) !== sourceOwner)
+      || (plugin.source && currentPlugin.source?.id !== plugin.source.id)
       || currentPlugin.activeVersion !== plugin.activeVersion
       || currentPlugin.runtime.quarantinedAt != null
     ) {
@@ -286,6 +292,7 @@ class RuntimeSupervisor {
       runtimeId: randomUUID(),
       runtimeKind: kind,
       securityPrincipal,
+      ...(sourceOwner === null ? {} : { sourceOwner, sourceId: plugin.source.id }),
       manifest: freezeJson(structuredClone(plugin.manifest)),
       packageRoot,
       logger,
@@ -294,6 +301,8 @@ class RuntimeSupervisor {
         if (
           this.runtimes.get(pluginId) !== runtime
           || !active?.enabled
+          || (sourceOwner !== null && this.database.privateOwner(pluginId) !== sourceOwner)
+          || (plugin.source && active.source?.id !== plugin.source.id)
           || active.activeVersion !== plugin.activeVersion
           || (active.runtime.status !== "starting" && active.runtime.status !== "running")
         ) {
@@ -543,6 +552,7 @@ class RuntimeSupervisor {
   async #cleanupRuntime(identity) {
     if (!identity || !this.runtimeCleanup) return;
     await this.runtimeCleanup(Object.freeze({
+      ...(identity.sourceOwner ? { sourceOwner: identity.sourceOwner, sourceId: identity.sourceId } : {}),
       pluginId: identity.pluginId,
       pluginVersion: identity.pluginVersion,
       runtimeId: identity.runtimeId,
@@ -575,6 +585,7 @@ class RuntimeSupervisor {
       runtimeId: identity.runtimeId,
       runtimeKind: identity.runtimeKind,
       securityPrincipal: identity.securityPrincipal,
+      ...(identity.sourceOwner ? { sourceOwner: identity.sourceOwner, sourceId: identity.sourceId } : {}),
     });
   }
 
@@ -651,7 +662,7 @@ class RuntimeSupervisor {
     if (typeof runtime.openStream !== "function") {
       throw new PluginRpcError(RPC_ERRORS.unavailable, `Plugin runtime cannot receive streams: ${pluginId}`);
     }
-    const stream = await runtime.openStream(streamId, windowBytes);
+    const stream = await runtime.openStream(streamId, windowBytes, { onClose: options?.onClose });
     try {
       const current = await this.#getRunningRuntime(pluginId);
       if (current.runtime !== runtime || current.identity.runtimeId !== identity.runtimeId) {

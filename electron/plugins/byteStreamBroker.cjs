@@ -1,71 +1,17 @@
 "use strict";
 
-// Host-only transport core. Public RPC/SDK wiring awaits the shared contract
-// checkpoint. No protocol, credential lookup, or plugin-supplied Node runs here.
+// Host-only transport core. No protocol, credential lookup, or plugin-supplied
+// Node runs here. The registered service authenticates source-bound runtimes.
 const net = require("node:net");
 const tls = require("node:tls");
 const dns = require("node:dns/promises");
 const { randomUUID } = require("node:crypto");
 const { PluginRpcError, RPC_ERRORS, raceWithAbort } = require("./rpcRouter.cjs");
 
-const LIMITS = Object.freeze({
-  connectionsPerRuntime: 4,
-  connectionsTotal: 64,
-  chunkBytes: 64 * 1024,
-  bufferBytes: 64 * 1024,
-  connectionBytes: 8 * 1024 * 1024,
-  connectMs: 10_000,
-  idleMs: 30_000,
-  lifetimeMs: 120_000,
-});
+const LIMITS = Object.freeze(require("./generated/plugin-contract.schema.json").$defs.ByteStreamLimits.const);
+const { canonicalizeStreamEndpoint, isLocalControlAddress } = require("./byteStreamEndpoint.cjs");
 
 function failure(code, message) { return new PluginRpcError(RPC_ERRORS[code], message); }
-
-function canonicalizeStreamEndpoint(value) {
-  if (typeof value !== "string" || value.length > 512) {
-    throw failure("invalidArgument", "Byte stream endpoint is invalid");
-  }
-  // URL's permissive non-special scheme parser accepts paths, userinfo, and
-  // alternate IPv4 spellings. Require a complete unambiguous authority instead.
-  const match = /^(tcp|tls):\/\/(\[[0-9a-fA-F:.]+\]|[A-Za-z0-9.-]+):([0-9]{1,5})$/u.exec(value);
-  if (!match) throw failure("invalidArgument", "Byte streams require an exact TCP or TLS host and port");
-  let host = match[2].toLowerCase();
-  const port = Number(match[3]);
-  if (port < 1 || port > 65535 || String(port) !== match[3]) {
-    throw failure("invalidArgument", "Byte stream port is invalid");
-  }
-  if (host.startsWith("[")) {
-    host = host.slice(1, -1);
-    if (net.isIP(host) !== 6) throw failure("invalidArgument", "Byte stream IPv6 address is invalid");
-    host = new URL(`http://[${host}]`).hostname.slice(1, -1);
-  } else if (!net.isIP(host)) {
-    if (host.length > 253 || /^[0-9.]+$/u.test(host) || host.split(".").some((label) => (
-      !/^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/u.test(label)
-    ))) throw failure("invalidArgument", "Byte stream hostname is invalid");
-  }
-  return Object.freeze({
-    endpoint: `${match[1]}://${net.isIP(host) === 6 ? `[${host}]` : host}:${port}`,
-    transport: match[1], host, port,
-  });
-}
-
-function isLocalControlAddress(address) {
-  if (net.isIP(address) === 4) {
-    const [a, b] = address.split(".").map(Number);
-    return a === 0 || a === 127 || a >= 224 || (a === 169 && b === 254);
-  }
-  if (net.isIP(address) !== 6) return true;
-  const canonical = new URL(`http://[${address}]`).hostname.slice(1, -1);
-  if (canonical.startsWith("::ffff:")) {
-    const words = canonical.slice(7).split(":");
-    const n = (parseInt(words[0], 16) * 65536) + parseInt(words[1], 16);
-    return isLocalControlAddress([n >>> 24, (n >>> 16) & 255, (n >>> 8) & 255, n & 255].join("."));
-  }
-  // Also exclude compatible/tunnel addresses that can obscure a local IPv4 peer.
-  return canonical.startsWith("::") || canonical.startsWith("ff")
-    || /^fe[89ab]/u.test(canonical) || canonical.startsWith("2002:")
-    || canonical.startsWith("2001:0:");
-}
 
 class PluginByteStreamBroker {
   constructor(options) {
@@ -80,6 +26,7 @@ class PluginByteStreamBroker {
     this.testLocalEndpoints = new Set(options.testLocalEndpoints ?? []);
     this.isControlEndpoint = options.isControlEndpoint ?? (() => false);
     this.connections = new Map();
+    this.closeListeners = new Set();
     this.closed = false;
     this.revocation = this.permissionEngine.onDidRevoke((event) => {
       for (const state of this.connections.values()) {
@@ -97,7 +44,7 @@ class PluginByteStreamBroker {
     try { this.audit(state.pluginId, `network.stream.${operation}`, {
       runtimeId: state.runtimeId, endpoint: state.endpoint,
       handleId: state.id, bytesRead: state.bytesRead, bytesWritten: state.bytesWritten,
-    }); } catch { /* An audit sink cannot keep a revoked socket alive. */ }
+    }, state); } catch { /* An audit sink cannot keep a revoked socket alive. */ }
   }
 
   finish(state, reason) {
@@ -111,6 +58,14 @@ class PluginByteStreamBroker {
     state.controller.abort(reason ?? failure("cancelled", "Byte stream closed"));
     state.socket?.destroy();
     this.record(state, "close");
+    for (const listener of this.closeListeners) {
+      try { listener(state, reason); } catch {}
+    }
+  }
+
+  onDidClose(listener) {
+    this.closeListeners.add(listener);
+    return { dispose: () => this.closeListeners.delete(listener) };
   }
 
   touch(state) {
@@ -121,16 +76,24 @@ class PluginByteStreamBroker {
   }
 
   async active(state, context) {
+    this.assertCommit(state, context);
+    await context.assertActive();
+    this.assertCommit(state, context);
+  }
+
+  assertCommit(state, context) {
     if (this.closed || state.closed || this.connections.get(state.id) !== state) {
       throw state.error ?? failure("unavailable", "Byte stream is closed");
     }
-    await context.assertActive();
-    if (state.closed) throw state.error ?? failure("unavailable", "Byte stream is closed");
     state.controller.signal.throwIfAborted();
+    context.signal?.throwIfAborted();
+    context.assertCommit?.();
   }
 
   async connect(endpoint, context) {
-    const target = canonicalizeStreamEndpoint(endpoint);
+    let target;
+    try { target = canonicalizeStreamEndpoint(endpoint); }
+    catch { throw failure("invalidArgument", "Byte stream endpoint is invalid"); }
     if (this.closed) throw failure("unavailable", "Byte stream broker stopped");
     if (!context.runtimeId || !context.pluginId || typeof context.assertActive !== "function") {
       throw failure("unauthenticated", "Byte streams require a host runtime identity");
@@ -142,6 +105,7 @@ class PluginByteStreamBroker {
     const state = {
       ...target, id: randomUUID(), pluginId: context.pluginId, runtimeId: context.runtimeId,
       controller: new AbortController(), bytesRead: 0, bytesWritten: 0,
+      sourceOwner: context.sourceOwner, sourceId: context.sourceId,
       closed: false, reading: false, writing: false, socket: null,
     };
     this.connections.set(state.id, state);
@@ -149,10 +113,12 @@ class PluginByteStreamBroker {
     context.signal?.addEventListener("abort", onAbort, { once: true });
     try {
       await this.active(state, context);
-      await raceWithAbort(Promise.resolve(this.permissionEngine.authorize(context, {
+      this.assertCommit(state, context);
+      await raceWithAbort(Promise.resolve(this.permissionEngine.authorize({ ...context, signal: state.controller.signal }, {
         permission: "network.stream", resources: [target.endpoint],
         reason: `Open byte stream to ${target.endpoint}`,
         operationId: `network.stream:${target.endpoint}`,
+        validateBeforeGrant: () => this.assertCommit(state, context),
       })), state.controller.signal);
       await this.active(state, context);
       state.connectTimer = setTimeout(() => this.finish(state,
@@ -189,11 +155,16 @@ class PluginByteStreamBroker {
           checkServerIdentity: (_name, certificate) => tls.checkServerIdentity(target.host, certificate),
         });
       }
+      this.assertCommit(state, context);
       const socket = target.transport === "tls" ? this.connectTls(params) : this.connectSocket(params);
       state.socket = socket;
+      if (state.closed) { socket.destroy(); throw state.error ?? failure("cancelled", "Byte stream connection cancelled"); }
       socket.on("error", () => this.finish(state, failure("unavailable", "Byte stream transport failed")));
-      socket.on("close", () => this.finish(state,
-        state.eof ? undefined : failure("unavailable", "Byte stream transport closed")));
+      // Preserve one EOF observation for a delayed consumer. This reservation
+      // still counts toward quotas and expires on the existing idle/life timer.
+      socket.on("close", () => {
+        if (!state.eof) this.finish(state, failure("unavailable", "Byte stream transport closed"));
+      });
       socket.on("end", () => { state.eof = true; });
       socket.pause();
       await raceWithAbort(new Promise((resolve) => socket.once(
@@ -208,6 +179,7 @@ class PluginByteStreamBroker {
         failure("deadlineExceeded", "Byte stream lifetime exceeded")), LIMITS.lifetimeMs);
       state.lifetimeTimer.unref?.();
       this.touch(state);
+      this.assertCommit(state, context);
       this.record(state, "open");
       return Object.freeze({ handleId: state.id, endpoint: state.endpoint });
     } catch (error) {
@@ -220,7 +192,8 @@ class PluginByteStreamBroker {
 
   get(id, context) {
     const state = this.connections.get(id);
-    if (!state || state.pluginId !== context.pluginId || state.runtimeId !== context.runtimeId) {
+    if (!state || state.pluginId !== context.pluginId || state.runtimeId !== context.runtimeId
+      || state.sourceOwner !== context.sourceOwner || state.sourceId !== context.sourceId) {
       throw failure("permissionDenied", "Byte stream handle does not belong to this runtime");
     }
     return state;
@@ -244,11 +217,13 @@ class PluginByteStreamBroker {
     try {
       await this.active(state, context);
       while (true) {
+        this.assertCommit(state, context);
         const available = state.socket.readableLength;
         const bytes = state.socket.read(Math.min(available || LIMITS.chunkBytes, LIMITS.chunkBytes));
         if (bytes !== null) {
           this.charge(state, "bytesRead", bytes.byteLength);
           await this.active(state, context);
+          this.assertCommit(state, context);
           return new Uint8Array(bytes);
         }
         if (state.eof || state.socket.readableEnded) { this.finish(state); return null; }
@@ -286,6 +261,7 @@ class PluginByteStreamBroker {
     context.signal?.addEventListener("abort", onAbort, { once: true });
     try {
       await this.active(state, context);
+      this.assertCommit(state, context);
       this.charge(state, "bytesWritten", bytes.byteLength);
       const owned = Buffer.from(bytes);
       await raceWithAbort(new Promise((resolve, reject) => {

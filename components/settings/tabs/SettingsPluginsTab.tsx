@@ -1,3 +1,4 @@
+import { PluginThirdPartyMarket } from './PluginThirdPartyMarket';
 import { usePluginManager } from '../../../application/state/usePluginManager';
 import { PluginManagementDialog } from './PluginManagementDialog';
 import { PluginMarketplace } from './PluginMarketplace';
@@ -289,7 +290,7 @@ function PluginManagementContent({ handoff }: { handoff: (action: () => void) =>
   const manager = usePluginManager();
   const [catalogToolbar, setCatalogToolbar] = useState<HTMLDivElement | null>(null);
   const [selectedInstalled, setSelectedInstalled] = useState<string | null>(null);
-  const [pluginView, setPluginView] = useState<'installed' | 'marketplace'>('installed');
+  const [pluginView, setPluginView] = useState<'installed' | 'marketplace' | 'thirdparty'>('installed');
   const availableFonts = useAvailableFonts();
   const scopeCatalog = usePluginSettingScopeCatalog();
   const [scopeIds, setScopeIds] = useState<Partial<Record<NetcattyPluginSettingScopeKind, string>>>({});
@@ -310,11 +311,12 @@ function PluginManagementContent({ handoff }: { handoff: (action: () => void) =>
 
   return (
     <div className="space-y-5">
-        <Tabs value={pluginView} onValueChange={(value) => { setSelectedInstalled(null); setPluginView(value as 'installed' | 'marketplace'); }} className="space-y-5">
+        <Tabs value={pluginView} onValueChange={(value) => { setSelectedInstalled(null); setPluginView(value as 'installed' | 'marketplace' | 'thirdparty'); }} className="space-y-5">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <TabsList className="h-auto flex-wrap justify-start bg-muted/50">
             <TabsTrigger value="installed">{t('settings.plugins.manager.installed')} <span className="ml-2 text-muted-foreground">{manager.plugins.length}</span></TabsTrigger>
-            <TabsTrigger value="marketplace">{t('settings.plugins.market.title')}</TabsTrigger>
+            <TabsTrigger value="marketplace">{t('settings.plugins.sources.official')}</TabsTrigger>
+            <TabsTrigger value="thirdparty">{t('settings.plugins.sources.thirdparty')}</TabsTrigger>
           </TabsList>
           <div className="flex items-center gap-2">
           {pluginView === 'installed' && <PluginStatus noVault={manager.credentialStorageAvailable === false} />}
@@ -322,7 +324,8 @@ function PluginManagementContent({ handoff }: { handoff: (action: () => void) =>
           <Button variant="outline" size="sm" disabled={!manager.available || manager.busy} onClick={() => { setPluginView('installed'); void manager.importPackage(); }}><FolderOpen size={14} className="mr-2" />{t('settings.plugins.manager.import')}</Button>
           </div>
         </div>
-        <TabsContent value="marketplace" className="m-0 space-y-6"><PluginMarketplace installed={manager.plugins} toolbarContainer={catalogToolbar} noVault={manager.credentialStorageAvailable === false} /></TabsContent>
+        <TabsContent forceMount hidden={pluginView !== 'marketplace'} value="marketplace" className="m-0 space-y-6"><PluginMarketplace installed={manager.plugins} toolbarContainer={pluginView === 'marketplace' ? catalogToolbar : undefined} noVault={manager.credentialStorageAvailable === false} /></TabsContent>
+        <TabsContent forceMount hidden={pluginView !== 'thirdparty'} value="thirdparty" className="m-0 space-y-6"><PluginThirdPartyMarket installed={manager.plugins} toolbarContainer={pluginView === 'thirdparty' ? catalogToolbar : undefined} noVault={manager.credentialStorageAvailable === false} /></TabsContent>
         <TabsContent value="installed" className="m-0 space-y-6">
         <PluginPackageManager manager={manager} onSelectionChange={setSelectedInstalled} />
         {contextualScopes.size > 0 && (

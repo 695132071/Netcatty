@@ -73,6 +73,32 @@ export type AuthenticationResult = ({
 
 export type BoundedPermissionResource = string;
 
+export type ByteStreamAttachResult = {
+  attached: true;
+};
+
+export type ByteStreamConnectionDescriptor = {
+  handleId: string;
+  endpoint: ByteStreamEndpoint;
+  inputStreamId: StreamId;
+  outputStreamId: StreamId;
+  windowBytes: 65536;
+};
+
+export type ByteStreamConnectRequest = {
+  endpoint: ByteStreamEndpoint;
+};
+
+export type ByteStreamEndpoint = string;
+
+export type ByteStreamFeature = "network.byte-streams";
+
+export type ByteStreamHandleRequest = {
+  handleId: string;
+};
+
+export type ByteStreamLimits = {"connectionsPerRuntime":4,"connectionsTotal":64,"chunkBytes":65536,"bufferBytes":65536,"connectionBytes":8388608,"connectMs":10000,"idleMs":30000,"lifetimeMs":120000};
+
 export type CommandContribution = {
   id: ContributionId;
   title: LocalizedText;
@@ -431,7 +457,7 @@ export type MenuLocation = "commandPalette" | "application" | "host/context" | "
 
 export type NetworkCredentialLeaseFeature = "network.credential-lease";
 
-export type NonResourceScopedPermission = "storage" | "runtime.advanced" | "settings.read" | "settings.write" | "commands" | "menus" | "views" | "ui.interact" | "clipboard.read" | "clipboard.write" | "terminal.metadata" | "terminal.output" | "terminal.input" | "terminal.decorate" | "terminal.complete" | "terminal.intercept.input" | "terminal.intercept.output" | "vault.metadata" | "vault.write" | "vault.credentials" | "sftp.read" | "sftp.write" | "secrets" | "provider.terminal" | "provider.connection" | "provider.authentication" | "provider.sync" | "provider.importer";
+export type NonResourceScopedPermission = "storage" | "ai.invoke" | "context.selected.list" | "context.selected.read" | "runtime.advanced" | "settings.read" | "settings.write" | "commands" | "menus" | "views" | "ui.interact" | "clipboard.read" | "clipboard.write" | "terminal.metadata" | "terminal.output" | "terminal.input" | "terminal.decorate" | "terminal.complete" | "terminal.intercept.input" | "terminal.intercept.output" | "vault.metadata" | "vault.write" | "vault.credentials" | "sftp.read" | "sftp.write" | "secrets" | "provider.terminal" | "provider.connection" | "provider.authentication" | "provider.sync" | "provider.importer";
 
 export type NullableRpcId = (RpcId) | (null);
 
@@ -451,7 +477,7 @@ export type PermissionDecision = ({
   decision: "deny" | "cancel";
 });
 
-export type PermissionDeclaration = (PluginPermission) | (PermissionResourceDeclaration);
+export type PermissionDeclaration = Exclude<PluginPermission, "network.stream"> | PermissionResourceDeclaration;
 
 export type PermissionGrantScope = "once" | "session" | "application" | "always";
 
@@ -485,6 +511,57 @@ export type PermissionResourceKind = "exact" | "directory";
 export type PermissionSet = {
   required?: Array<RequiredPermissionDeclaration>;
   optional?: Array<PermissionDeclaration>;
+};
+
+export type PluginAIBooleanResult = {
+  ok: boolean;
+};
+
+export type PluginAIChatRef = {
+  chatHandle: string;
+};
+
+export type PluginAIChatResult = {
+  chatHandle: string;
+  model: string;
+  expiresAt: number;
+};
+
+export type PluginAIContextLimits = {"contexts":4,"inputBytes":16384,"chunkBytes":4096,"outputBytes":32768,"outputTokens":2048,"turnMs":60000};
+
+export type PluginAIEmptyParams = Record<string, never>;
+
+export type PluginAIModelInvocationFeature = "ai.model-invocation";
+
+export type PluginAIStartTurnParams = {
+  chatHandle: string;
+  prompt: string;
+  contexts?: Array<PluginSelectedContextRef>;
+};
+
+export type PluginAIStreamEvent = ({
+  kind: "text";
+  sequence: number;
+  text: string;
+}) | ({
+  kind: "usage";
+  sequence: number;
+  inputTokens?: number;
+  outputTokens?: number;
+  totalTokens?: number;
+}) | ({
+  kind: "end";
+  sequence: number;
+});
+
+export type PluginAITurnRef = {
+  turnHandle: string;
+};
+
+export type PluginAITurnResult = {
+  turnHandle: string;
+  maxOutputTokens: 2048;
+  reservedTokens: number;
 };
 
 export type PluginContributions = {
@@ -587,7 +664,35 @@ export type PluginNetworkResponse = {
   };
 };
 
-export type PluginPermission = "storage" | "runtime.advanced" | "settings.read" | "settings.write" | "commands" | "menus" | "views" | "ui.interact" | "clipboard.read" | "clipboard.write" | "terminal.metadata" | "terminal.output" | "terminal.input" | "terminal.decorate" | "terminal.complete" | "terminal.intercept.input" | "terminal.intercept.output" | "vault.metadata" | "vault.write" | "vault.credentials" | "sftp.read" | "sftp.write" | "network" | "filesystem.read" | "filesystem.write" | "secrets" | "companion.execute" | "provider.terminal" | "provider.connection" | "provider.authentication" | "provider.sync" | "provider.importer";
+export type PluginPermission = "storage" | "ai.invoke" | "context.selected.list" | "context.selected.read" | "runtime.advanced" | "settings.read" | "settings.write" | "commands" | "menus" | "views" | "ui.interact" | "clipboard.read" | "clipboard.write" | "terminal.metadata" | "terminal.output" | "terminal.input" | "terminal.decorate" | "terminal.complete" | "terminal.intercept.input" | "terminal.intercept.output" | "vault.metadata" | "vault.write" | "vault.credentials" | "sftp.read" | "sftp.write" | "network" | "network.stream" | "filesystem.read" | "filesystem.write" | "secrets" | "companion.execute" | "provider.terminal" | "provider.connection" | "provider.authentication" | "provider.sync" | "provider.importer";
+
+export type PluginSelectedContextContent = {
+  handle: string;
+  scope: "workspace" | "tab" | "session" | "host" | "note";
+  title: string;
+  version: string;
+  expiresAt: number;
+  text: string;
+};
+
+export type PluginSelectedContextFeature = "context.selected-read";
+
+export type PluginSelectedContextListResult = {
+  items: Array<PluginSelectedContextSummary>;
+};
+
+export type PluginSelectedContextRef = {
+  handle: string;
+  version: string;
+};
+
+export type PluginSelectedContextSummary = {
+  handle: string;
+  scope: "workspace" | "tab" | "session" | "host" | "note";
+  title: string;
+  version: string;
+  expiresAt: number;
+};
 
 export type PluginViewFocusEvent = {
   instanceId: string;
@@ -670,7 +775,7 @@ export type RequiredPermissionResourceDeclaration = {
   reason?: string;
 };
 
-export type ResourceScopedPermission = "network" | "filesystem.read" | "filesystem.write" | "companion.execute";
+export type ResourceScopedPermission = "network" | "network.stream" | "filesystem.read" | "filesystem.write" | "companion.execute";
 
 export type RpcCancel = {
   jsonrpc: "2.0";
