@@ -57,6 +57,10 @@ export function PluginPackageManager({ manager, onSelectionChange }: { manager: 
   const lastSelection = useRef<string | null>(null);
   const selectedPlugin = manager.plugins.find((plugin) => plugin.id === selected);
   const nameOf = (plugin: NetcattyInstalledPlugin) => typeof plugin.manifest?.displayName === 'string' ? plugin.manifest.displayName : plugin.manifest?.displayName?.[resolvedLocale] ?? plugin.manifest?.displayName?.en ?? plugin.manifest?.name ?? plugin.id;
+  const descriptionOf = (plugin: NetcattyInstalledPlugin) => {
+    const value = plugin.manifest?.description;
+    return typeof value === 'string' ? value : value?.[resolvedLocale] ?? value?.en ?? '';
+  };
   const choose = (id: string | null) => {
     const pane = rootRef.current?.closest<HTMLElement>('[data-settings-scroll-pane]');
     if (id) { scrollTop.current = pane?.scrollTop ?? 0; lastSelection.current = id; }
@@ -78,12 +82,12 @@ export function PluginPackageManager({ manager, onSelectionChange }: { manager: 
     {manager.error && <p role="alert" className="text-sm text-destructive">{manager.error}</p>}
     {!manager.plugins.length && <div className="rounded-xl border border-dashed border-border p-8 text-center text-sm text-muted-foreground">{t('settings.plugins.manager.empty')}</div>}
     <div className={selectedPlugin ? 'space-y-4' : 'grid grid-cols-[repeat(auto-fill,minmax(min(100%,280px),1fr))] gap-3'}>
-    {visible.map((plugin) => <article key={plugin.id} data-plugin-detail={selectedPlugin ? true : undefined} tabIndex={selectedPlugin ? -1 : undefined} aria-label={nameOf(plugin)} className="min-w-0 space-y-4 rounded-lg border bg-card p-4 focus:outline-none">
+    {visible.map((plugin) => <article key={plugin.id} data-plugin-detail={selectedPlugin ? true : undefined} tabIndex={selectedPlugin ? -1 : undefined} aria-label={nameOf(plugin)} className={`min-w-0 rounded-lg border bg-card p-4 focus:outline-none ${selectedPlugin ? 'space-y-4' : 'flex min-h-[200px] flex-col gap-3'}`}>
       <div className="flex flex-wrap items-center gap-3">
         <div className="flex h-12 w-12 shrink-0 items-center justify-center"><PluginBrandIcon plugin={plugin} size={32} /></div>
         <button type="button" data-plugin-card={plugin.id} className="min-w-0 flex-1 rounded text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" aria-expanded={selected === plugin.id} onClick={() => choose(selected === plugin.id ? null : plugin.id)}>
           <div className="break-words text-sm font-medium">{nameOf(plugin)}</div>
-          <div className="break-words text-xs text-muted-foreground">{plugin.manifest?.publisher} · {plugin.activeVersion}</div>
+
         </button>
         <Button variant="ghost" size="sm" type="button"
           className={`h-7 shrink-0 rounded-full border-0 px-3 text-xs focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background ${plugin.enabled ? 'bg-primary/10 hover:bg-primary/15' : 'bg-muted/60 text-muted-foreground hover:bg-muted hover:text-foreground'}`}
@@ -95,6 +99,12 @@ export function PluginPackageManager({ manager, onSelectionChange }: { manager: 
           {t(plugin.enabled ? 'settings.plugins.manager.enabled' : 'settings.plugins.manager.disabled')}
         </Button>
       </div>
+      {plugin.manifest?.publisher && <p className="break-words text-xs text-muted-foreground">{plugin.manifest.publisher}</p>}
+      <p className={`break-words text-sm leading-5 text-muted-foreground ${selectedPlugin ? 'whitespace-pre-wrap' : 'line-clamp-3'}`}>{descriptionOf(plugin) || t('settings.plugins.manager.noDescription')}</p>
+      {!selectedPlugin ? <div className="mt-auto flex flex-wrap items-center justify-between gap-2 pt-1">
+        <p className="break-words text-xs text-muted-foreground">{plugin.activeVersion}{plugin.manifest?.license ? ` · ${plugin.manifest.license}` : ''}</p>
+        <Button variant="ghost" size="sm" className="h-7 px-2 text-xs" onClick={() => choose(plugin.id)} aria-label={`${t('settings.plugins.manager.details')} ${nameOf(plugin)}`}>{t('settings.plugins.manager.details')}</Button>
+      </div> : <p className="text-xs text-muted-foreground">{plugin.activeVersion}{plugin.manifest?.license ? ` · ${plugin.manifest.license}` : ''}</p>}
       {plugin.runtime.lastError && <p role="status" className="break-words text-xs text-destructive">{t('settings.plugins.manager.lastError')}: {plugin.runtime.lastError}</p>}
       {selected === plugin.id && <>
         <PluginPackageDetails plugin={plugin} />

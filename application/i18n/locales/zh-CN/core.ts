@@ -1171,6 +1171,8 @@ Vaults 标签保持扁平，不使用这块背景。
   "settings.plugins.market.results": "{count} 个插件",
   "settings.plugins.manager.lastError": "上次记录的错误",
   "settings.plugins.market.offline": "官方目录暂时不可用，正在显示上次有效目录或内置示例。刷新成功前不能从市场安装。",
+  "settings.plugins.manager.details": "查看详情",
+  "settings.plugins.manager.noDescription": "作者暂未提供功能简介。",
   "settings.plugins.market.installed": "已安装",
   "settings.plugins.market.sourceBadge": "源码示例",
   "settings.plugins.market.title": "插件市场",

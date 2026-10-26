@@ -1256,6 +1256,8 @@ Resalta el panel dividido enfocado:
   "settings.plugins.market.results": "{count} plugins",
   "settings.plugins.manager.lastError": "Último error registrado",
   "settings.plugins.market.offline": "El registro no está disponible. Se muestra el último catálogo válido o los ejemplos incluidos. La instalación requiere una actualización correcta.",
+  "settings.plugins.manager.details": "Ver detalles",
+  "settings.plugins.manager.noDescription": "No se proporcionó una descripción.",
   "settings.plugins.market.installed": "Instalado",
   "settings.plugins.market.sourceBadge": "Ejemplo de código",
   "settings.plugins.market.title": "Catálogo",

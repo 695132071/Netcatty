@@ -1151,6 +1151,8 @@ export const ruCoreMessages: Messages = {
   "settings.plugins.market.results": "Плагинов: {count}",
   "settings.plugins.manager.lastError": "Последняя записанная ошибка",
   "settings.plugins.market.offline": "Реестр недоступен. Показан последний корректный каталог или встроенные примеры. Для установки необходимо успешно обновить каталог.",
+  "settings.plugins.manager.details": "Подробнее",
+  "settings.plugins.manager.noDescription": "Описание не предоставлено.",
   "settings.plugins.market.installed": "Установлен",
   "settings.plugins.market.sourceBadge": "Пример исходного кода",
   "settings.plugins.market.title": "Каталог",

@@ -1256,6 +1256,8 @@ Highlight the focused split pane:
   "settings.plugins.market.results": "{count} plugins",
   "settings.plugins.manager.lastError": "Last recorded error",
   "settings.plugins.market.offline": "Registry unavailable. Showing the last valid catalog or bundled examples. Installation is unavailable until refresh succeeds.",
+  "settings.plugins.manager.details": "View details",
+  "settings.plugins.manager.noDescription": "No description provided.",
   "settings.plugins.market.installed": "Installed",
   "settings.plugins.market.sourceBadge": "Source example",
   "settings.plugins.market.title": "Marketplace",

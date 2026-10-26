@@ -1180,6 +1180,8 @@ Vaults 分頁維持扁平，不使用這塊背景。
   "settings.plugins.market.results": "{count} 個插件",
   "settings.plugins.manager.lastError": "上次記錄的錯誤",
   "settings.plugins.market.offline": "官方目錄暫時無法使用，正在顯示上次有效目錄或內建範例。重新整理成功前無法從市場安裝。",
+  "settings.plugins.manager.details": "查看詳情",
+  "settings.plugins.manager.noDescription": "作者尚未提供功能簡介。",
   "settings.plugins.market.installed": "已安裝",
   "settings.plugins.market.sourceBadge": "原始碼範例",
   "settings.plugins.market.title": "插件市場",
