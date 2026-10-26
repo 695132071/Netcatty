@@ -50,6 +50,37 @@ test("normal input and quick pick return only an approved bounded value", async 
   assert.equal(f.reads, 0); assert.deepEqual(f.writes, []);
 });
 
+test("ending a host command cancels pending native actions without resetting its quota", async (t) => {
+  const f = fixture(t);
+  const request = await f.begin({ kind: "clipboard.write", title: "Synthetic", text: "must not copy" });
+  const count = f.service.rates.get(f.context.runtimeId).count;
+  f.service.cancelRuntimeRequests(f.context.runtimeId);
+  await assert.rejects(request.promise, /command finished/);
+  assert.equal(await f.respond(request.prompt, "submit"), false);
+  assert.deepEqual(f.writes, []);
+  assert.equal(f.service.rates.get(f.context.runtimeId).count, count);
+});
+
+test("old command completion cannot invalidate a replacement runtime's host-owned admission", async (t) => {
+  const f = fixture(t);
+  let authorize;
+  f.service.registerRpcCapabilities({ registerRequest(_name, _handler, options) { authorize = options.authorization; } });
+  const old = assertInteractionRequest({ kind: "input", title: "Old" });
+  authorize(old, f.context);
+  f.service.cancelRuntimeRequests(f.context.runtimeId);
+  await assert.rejects(f.service.request(old, f.context), /revoked/);
+  const nextContext = { ...f.context, runtimeId: "runtime-replacement" };
+  const next = assertInteractionRequest({ kind: "input", title: "New" });
+  authorize(next, nextContext);
+  f.service.cancelRuntimeRequests(f.context.runtimeId);
+  const request = f.service.request(next, nextContext);
+  await new Promise((resolve) => setImmediate(resolve));
+  const prompt = f.messages.find((message) => !message.closed);
+  assert.ok(prompt);
+  await f.respond(prompt, "submit", "synthetic new input");
+  assert.deepEqual(await request, { cancelled: false, value: "synthetic new input" });
+});
+
 test("Once permission dialog may restore the same owner's focus after its decision resolves", async (t) => {
   const { PluginHostRpcRegistry } = require("./hostRpcRegistry.cjs");
   const { PluginPermissionEngine } = require("./permissionEngine.cjs");

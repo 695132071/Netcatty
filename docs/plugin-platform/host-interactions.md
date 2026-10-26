@@ -86,6 +86,22 @@ host UI. Runtime teardown clears rate accounting. The broker checks runtime
 activity, owner readiness/focus, and app lock again immediately before native
 read/write or disclosure. A revoked operation cannot resume from a late reply.
 
+Commands normally retain the existing 30-second RPC deadline. A command that
+declares `interactive: true` must require `commands.interactive`; the host gives
+only that command a fixed 180-second total budget. This is not a global timeout
+increase or a UI/clipboard permission. Each individual host interaction still
+has its own 60-second deadline, including permission approval time.
+
+When an outer command fails, times out or is cancelled, the host cancels pending
+interactions and pre-prompt admissions for its captured runtime. On successful
+completion it closes orphan interactions once the last concurrent command ends.
+This cleanup does not reset rate/byte quotas and cannot affect a replacement
+runtime. A failure conservatively closes that runtime's single shared pending
+dialog even if another command is active. Late action tokens cannot commit a
+clipboard effect. Cancellation does not forcibly terminate arbitrary plugin
+JavaScript; ignored errors remain subject to permission, focus, rate and runtime
+limits. Do not start independent interactive workflows concurrently.
+
 Audit records contain only fixed event/action/kind fields. They contain no
 prompt, choices, user text, clipboard bytes, action tokens, or hashes derived
 from those values. A failed consent-audit write prevents the native action;

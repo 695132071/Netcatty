@@ -80,6 +80,7 @@ export type CommandContribution = {
   description?: LocalizedText;
   icon?: IconReference;
   enablement?: ContextKeyExpression;
+  interactive?: boolean;
 };
 
 export type CompanionExecutable = {
@@ -387,6 +388,10 @@ export type ImporterSnippetDraft = {
   kind?: "snippet" | "script";
   description?: string;
 };
+
+export type InteractiveCommandFeature = "commands.interactive";
+
+export type InteractiveCommandLimits = {"timeoutMs":180000};
 
 export type JsonPrimitive = (string) | (number) | (boolean) | (null);
 
