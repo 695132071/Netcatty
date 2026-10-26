@@ -24,6 +24,33 @@ const testSecretRef: SecretRef = {
   key: "token",
 };
 
+test("byte streams and AI/context clients expose only canonical requests", () => {
+  assertSdkTypeChecks(`
+    import type { PluginContext } from "./index.ts";
+    declare const context: PluginContext;
+    async function useCapabilities() {
+      const connection = await context.network.connect({ endpoint: "tls://example.test:443" });
+      await connection.writable.write(new Uint8Array([1]));
+      await connection.readable.read();
+      await connection.close();
+      const chat = await context.ai.openChat({});
+      const turn = await context.ai.startTurn({ chatHandle: chat.chatHandle, prompt: "synthetic" });
+      await context.ai.readTurn({ turnHandle: turn.turnHandle });
+      const selected = await context.selectedContext.list({});
+      await context.selectedContext.read({ handle: selected.items[0].handle, version: selected.items[0].version });
+      // @ts-expect-error source identity is host-owned
+      await context.network.connect({ endpoint: "tcp://example.test:22", sourceOwner: "spoofed" });
+      // @ts-expect-error TLS validation cannot be disabled
+      await context.network.connect({ endpoint: "tls://example.test:443", rejectUnauthorized: false });
+      // @ts-expect-error model selection belongs to the host
+      await context.ai.openChat({ model: "plugin-chosen" });
+      // @ts-expect-error selected context requires a version
+      await context.selectedContext.read({ handle: "opaque" });
+    }
+    void useCapabilities;
+  `);
+});
+
 const testSecretStore: PluginSecretStore = {
   async get() {
     return testSecretRef;

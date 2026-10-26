@@ -27,7 +27,7 @@ disposable password, and removes its container and network. On a prepared Linux
 executor with that recognized image, run:
 
 ```sh
-NETCATTY_BYTE_STREAM_DATABASE_TEST=1 node --test electron/plugins/byteStreamDatabase.live.test.cjs
+NETCATTY_BYTE_STREAM_DATABASE_TEST=1 node --test examples/plugins/database-minimal/protocol.live.test.cjs
 ```
 
 That test exercises the protocol and broker. It does not install the plugin or
@@ -142,8 +142,12 @@ The integration executor completed these checks in order on 2026-10-26:
 | `npm run build` | Passed, Vite production build completed in 32 seconds |
 | Database repeat packaging and both package validations | Passed |
 
-The skipped runtime tests are the opt-in Docker database fixture and native
-Electron runtime suite. This executor has Docker, but the pinned MariaDB image
+These totals describe the original integrated head `6a4fb178`. The late
+transport merge moves the opt-in database test into the example directory.
+Run its panel and protocol tests explicitly with
+`node --test examples/plugins/database-minimal/*.test.cjs`. The database test
+still requires explicit opt-in and the native Electron suite remains separate.
+This executor has Docker, but the pinned MariaDB image
 is not cached. No image was installed and no new live database run is claimed.
 Native GUI acceptance remains pending on the occupied desktop. Full repository
 tests and platform packages run in the integration PR's exact-head CI. Record

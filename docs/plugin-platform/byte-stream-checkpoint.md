@@ -7,6 +7,10 @@ merges source identity #3981 `4213d8e6726c44e7a479418ece3adf16ea494782`
 and connected AI #3986 `173ef5abbb1f8cea4e2c409c5791186926b778e1`.
 The original transport branch remains untouched. Follow the
 [current native handoff](byte-stream-native-qa.md) for the integrated package.
+The late transport checkpoint `f1410f8` is subsequently preserved through an
+ordinary merge. [The comparison record](late-transport-integration.md) lists its
+remaining changes and the conflict resolutions that preserve the two P2 fixes
+and newer connected AI files.
 
 ## Registered transport
 

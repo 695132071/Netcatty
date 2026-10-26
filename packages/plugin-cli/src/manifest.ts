@@ -372,6 +372,10 @@ function validateSemantics(manifest: PluginManifest): string[] {
   const hasByteStreams = [...(manifest.permissions?.required ?? []), ...(manifest.permissions?.optional ?? [])]
     .some((declaration) => permissionName(declaration) === "network.stream");
   if (hasByteStreams && !requiredFeatures.has("network.byte-streams")) errors.push("Byte streams require network.byte-streams");
+  const declaredCapabilityNames = new Set([...(manifest.permissions?.required ?? []), ...(manifest.permissions?.optional ?? [])].map(permissionName));
+  if (declaredCapabilityNames.has("ai.invoke") && !requiredFeatures.has("ai.model-invocation")) errors.push("AI invocation requires ai.model-invocation");
+  if ((declaredCapabilityNames.has("context.selected.list") || declaredCapabilityNames.has("context.selected.read"))
+    && !requiredFeatures.has("context.selected-read")) errors.push("Selected context requires context.selected-read");
   if ((manifest.main.data || manifest.contributes?.themes?.length) && !requiredFeatures.has('appearance.theme-packs')) errors.push('Theme packs require appearance.theme-packs');
   for (const theme of manifest.contributes?.themes ?? []) if (!theme.entry.endsWith('.json')) errors.push('Theme palette entry must be JSON');
   if (manifest.contributes?.views?.some((view) => view.location === 'terminal-sidebar')

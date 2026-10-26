@@ -109,14 +109,15 @@ class PluginByteStreamService {
           onClose: (reason) => { if (reason !== "end") this.closeRecord(record); },
         });
         context.assertCommit();
-        if (record.closing) { record.output.cancel(); throw new PluginRpcError(RPC_ERRORS.cancelled, "Byte stream attachment cancelled"); }
+        if (record.closing) throw new PluginRpcError(RPC_ERRORS.cancelled, "Byte stream attachment cancelled");
         context.signal?.addEventListener("abort", record.abort, { once: true });
         // A cancelled attachment cannot leave a producer running after its RPC.
         void this.pump(record).finally(() => context.signal?.removeEventListener("abort", record.abort));
         return { attached: true };
       } catch (error) {
-        try { record.output?.cancel(); } catch {}
+        const alreadyClosing = record.closing;
         this.closeRecord(record, error);
+        if (alreadyClosing) { try { record.output?.cancel(); } catch {} }
         throw error;
       }
     }, { validateParams: validator("ByteStreamHandleRequest"), metadata: { capability: "network.stream", mutating: true, public: true } });

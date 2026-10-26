@@ -5,6 +5,17 @@ const test = require("node:test");
 
 const { PluginStreamRouter } = require("./streamRouter.cjs");
 
+test("outgoing close hook observes idle peer cancellation exactly once", async () => {
+  const closed = [];
+  const router = new PluginStreamRouter({ send() {} });
+  const stream = await router.openOutgoing("idle-close-hook", 1024, { onClose: (reason) => closed.push(reason) });
+  await router.accept({ frame: { streamId: "idle-close-hook", sequence: 1, kind: "cancel" } });
+  stream.cancel();
+  router.close();
+  assert.deepEqual(closed, ["cancel"]);
+  assert.equal(router.outgoing.size, 0);
+});
+
 test("incoming stream credit is returned only after the consumer releases a chunk", async () => {
   const sent = [];
   const received = [];
