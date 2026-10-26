@@ -3,7 +3,7 @@
     "id": "com.netcatty.starter",
     "version": "0.1.2",
     "repository": "binaricat/Netcatty",
-    "commit": "3efabf2b0f347e5f8f1ea5c148ab0716c36d3be1",
+    "commit": "f4a6b205adca486d4e9cda0270e13a9ff0afd7be",
     "icon": {
       "kind": "package",
       "light": "assets/logo-light.png",

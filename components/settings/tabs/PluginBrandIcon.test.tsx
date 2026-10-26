@@ -14,6 +14,8 @@ const preview = previews[0];
 const entry = { ...preview, manifest: { icon: preview.icon } } as unknown as NetcattyPluginCatalogEntry;
 test('reviewed catalog brand previews bind version, source and declaration, never arbitrary URLs', () => {
   assert.ok(resolveCatalogBrandIcon(entry));
+  const catalog = JSON.parse(readFileSync(new URL('../../../electron/plugins/catalog.json', import.meta.url), 'utf8')) as NetcattyPluginCatalogEntry[];
+  assert.ok(resolveCatalogBrandIcon(catalog.find((item) => item.id === preview.id)!));
   for (const replacement of [{ version: '9.0.0' }, { commit: '0'.repeat(40) }, { repository: 'untrusted/plugin' }, { manifest: { icon: { kind: 'package', light: 'https://attacker.invalid/a.png' } } }]) {
     assert.equal(resolveCatalogBrandIcon({ ...entry, ...replacement } as NetcattyPluginCatalogEntry), null);
   }
