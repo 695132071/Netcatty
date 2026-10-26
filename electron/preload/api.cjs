@@ -140,6 +140,7 @@ function createPreloadApi(ctx) {
   openPluginLogFolder: () => ipcRenderer.invoke("netcatty:plugins:log-open"),
   exportPluginLogs: () => ipcRenderer.invoke("netcatty:plugins:log-export"),
   clearPluginLogs: () => ipcRenderer.invoke("netcatty:plugins:log-clear"),
+  setPluginTerminalTarget: (target) => ipcRenderer.invoke("netcatty:plugins:terminal-target", target),
   getPluginThemes: () => ipcRenderer.invoke("netcatty:plugins:theme-catalog"),
   applyPluginTheme: (request) => ipcRenderer.invoke("netcatty:plugins:theme-apply", request),
   onPluginThemesChanged: (callback) => {

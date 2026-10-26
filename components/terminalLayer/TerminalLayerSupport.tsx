@@ -43,6 +43,7 @@ import type { TerminalContextReader } from '../../domain/terminalContextRead';
 import {
   getTerminalPaneRenderSnapshot,
   parseTerminalPaneRenderSnapshot,
+  resolveTerminalPaneInputProps,
   resolveInactiveTerminalPaneStyle,
   shouldUseTerminalPaneSplitLayout,
   type TerminalPaneHiddenSize,
@@ -1296,7 +1297,9 @@ const TerminalPane: React.FC<TerminalPaneProps> = memo(({
     [isTerminalLayerVisible, session.id, session.workspaceId, workspaceById],
   );
   const renderSnapshot = useSyncExternalStore(activeTabStore.subscribe, getRenderSnapshot, getRenderSnapshot);
-  const { paneState, isFocusedPane } = parseTerminalPaneRenderSnapshot(renderSnapshot);
+  const parsedPane = parseTerminalPaneRenderSnapshot(renderSnapshot);
+  const { paneState, isFocusedPane } = parsedPane;
+  const terminalInputProps = resolveTerminalPaneInputProps(parsedPane);
   // Live titles/icons are store-driven; per-session snapshot so other panes do
   // not re-render when only a sibling title changes.
   const presentedSession = usePresentedSession(session);
@@ -1590,14 +1593,12 @@ const TerminalPane: React.FC<TerminalPaneProps> = memo(({
         chainHosts={chainHosts}
         appearanceTheme={sessionAppearanceTheme}
         knownHosts={knownHosts}
-        isVisible={isVisible}
+        {...terminalInputProps}
         paneLayoutKey={paneLayoutKey}
         inWorkspace={keepsWorkspacePresentation}
         isResizing={isResizing}
         isFocusMode={layoutWorkspace?.viewMode === 'focus'}
         isPaneMagnified={isMagnified}
-        isFocused={isFocusedPane}
-        isFocusedPane={isSplitViewVisible ? isFocusedPane : undefined}
         fontFamilyId={terminalFontFamilyId}
         fontSize={fontSize}
         terminalTheme={terminalTheme}

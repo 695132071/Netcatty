@@ -486,6 +486,7 @@ declare global {
     setPluginEnabled?(pluginId: string, enabled: boolean): Promise<NetcattyInstalledPlugin>;
     restartPlugin?(pluginId: string): Promise<NetcattyInstalledPlugin>;
     uninstallPlugin?(pluginId: string): Promise<boolean>;
+    setPluginTerminalTarget?(target: import("@netcatty/plugin-contract").HostTerminalTarget): Promise<boolean>;
     getPluginThemes?(): Promise<import("@netcatty/plugin-contract").ThemePackCatalog>;
     applyPluginTheme?(request: import("@netcatty/plugin-contract").ThemePackApplyRequest): Promise<import("@netcatty/plugin-contract").ThemePackCatalog>;
     onPluginThemesChanged?(callback: () => void): () => void;

@@ -25,6 +25,7 @@ const CHANNELS = Object.freeze({
   logOpen: "netcatty:plugins:log-open",
   logExport: "netcatty:plugins:log-export",
   logClear: "netcatty:plugins:log-clear",
+  terminalTarget: "netcatty:plugins:terminal-target",
   interactionReady: "netcatty:plugins:interaction-ready",
   interactionResponse: "netcatty:plugins:interaction-response",
   list: "netcatty:plugins:list",
@@ -751,6 +752,10 @@ function registerPluginBridge(ipcMain, options) {
   ));
   handle(CHANNELS.restart, async (activeManager, payload) => activeManager.restart(payload?.pluginId));
   handle(CHANNELS.uninstall, async (activeManager, payload) => activeManager.uninstall(payload?.pluginId));
+  handle(CHANNELS.terminalTarget, async (_manager, target, event) => {
+    if (!options.interactionService) throw new Error("Host interactions unavailable");
+    return options.interactionService.setTerminalTarget(event.sender, target);
+  });
   handle(CHANNELS.themeCatalog, async () => {
     if (!options.themeService) throw new Error("Plugin themes are unavailable");
     return options.themeService.catalog();

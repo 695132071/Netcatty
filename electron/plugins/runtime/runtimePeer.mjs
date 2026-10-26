@@ -539,6 +539,14 @@ function createPluginContext(config, client, runtimeApi) {
     },
   };
   const terminals = {
+    shareSelection: (title) => {
+      if (!config.enabledFeatures?.includes("terminal.selection-sharing")) return Promise.reject(new Error("Terminal selection sharing is unsupported"));
+      return interact({ kind: "terminal.selection.read", title }).then((value) => value === undefined ? undefined : Object.freeze(value));
+    },
+    proposeInput: (handle, text, title) => {
+      if (!config.enabledFeatures?.includes("terminal.input-drafts")) return Promise.reject(new Error("Terminal input drafts are unsupported"));
+      return interact({ kind: "terminal.input.propose", handle, text, title }).then((value) => value === true);
+    },
     onDidChange: runtimeApi.terminalEvents.event,
   };
   const environment = {

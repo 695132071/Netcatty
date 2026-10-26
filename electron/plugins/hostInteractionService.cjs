@@ -2,6 +2,7 @@
 
 const { createHmac, randomBytes, randomUUID, timingSafeEqual } = require("node:crypto");
 const { createDefinitionValidator } = require("./contractValidator.cjs");
+const { TerminalSelectionAuthority } = require("./terminalSelectionAuthority.cjs");
 const { PluginRpcError, RPC_ERRORS } = require("./rpcRouter.cjs");
 const schema = require("./generated/plugin-contract.schema.json");
 const LIMITS = schema.$defs.HostInteractionLimits.const;
@@ -26,12 +27,18 @@ function assertInteractionRequest(params) {
   }
   if (params.kind === "input") assertTextBytes(params.initialValue ?? "");
   if (params.kind === "clipboard.write") assertTextBytes(params.text);
+  if (params.kind === "terminal.input.propose" && Buffer.byteLength(params.text, "utf8") > LIMITS.textBytes) throw fail("resourceExhausted", "Terminal input draft exceeds its limit");
   if (params.kind === "quickPick" && new Set(params.items.map((item) => item.id)).size !== params.items.length) {
     throw fail("invalidArgument", "Host interaction choice IDs must be unique");
   }
   return Object.freeze(structuredClone(params));
 }
-function interactionAuthorization(params) {
+function interactionAuthorization(params, terminalTarget) {
+  if (params.kind === "terminal.selection.read" || params.kind === "terminal.input.propose") {
+    if (!terminalTarget) throw fail("failedPrecondition", "A host-selected terminal is required");
+    return { permission: params.kind, resources: [terminalTarget.resource],
+      reason: params.kind === "terminal.selection.read" ? "Preview and explicitly share the selected terminal text" : "Open an editable host draft without sending terminal input", operationId: params.kind, allowedScopes: ["once"] };
+  }
   const permission = params.kind === "clipboard.read" ? "clipboard.read"
     : params.kind === "clipboard.write" ? "clipboard.write" : "ui.interact";
   return {
@@ -55,6 +62,12 @@ class PluginHostInteractionService {
     this.timeoutMs = Math.min(options.timeoutMs ?? LIMITS.timeoutMs, LIMITS.timeoutMs);
     this.key = randomBytes(32);
     this.pending = new Map();
+    this.terminalSelection = new TerminalSelectionAuthority({database: this.database, getWindow: this.getWindow, getManager: options.getTerminalWorkerManager, clock: this.clock});
+    this.terminalInvalidation = this.terminalSelection.onDidInvalidate(() => {
+      for (const entry of [...this.pending.values()]) if (entry.terminalTarget && !this.#terminalCurrent(entry)) {
+        this.#finish(entry, null, fail("cancelled", "Selected terminal connection changed"));
+      }
+    });
     this.rates = new Map();
     this.admissions = new WeakMap();
     this.admissionGuards = new Map();
@@ -68,13 +81,21 @@ class PluginHostInteractionService {
     this.unsubscribeLock = options.subscribeLock?.((state) => { if (state.locked) this.cancelAll(); });
   }
 
+  #terminalCurrent(entry) {
+    if (!this.terminalSelection.isCurrent(entry.terminalTarget)) return false;
+    if (entry.params.kind === "terminal.input.propose") {
+      try { this.terminalSelection.resolve(entry.params.handle, entry.context); } catch { return false; }
+    }
+    return true;
+  }
+
   registerRpcCapabilities(registry) {
     registry.registerRequest("ui.interact", (params, context) => this.request(params, context), {
       metadata: { capability: "ui", mutating: true },
       validateParams: assertInteractionRequest,
       authorization: (params, context) => {
-        this.admitRequest(params, context);
-        return interactionAuthorization(params);
+        const admission = this.admitRequest(params, context);
+        return interactionAuthorization(params, admission.terminalTarget);
       },
     });
   }
@@ -83,7 +104,11 @@ class PluginHostInteractionService {
     const sender = this.#admit(params, context);
     let guard = this.admissionGuards.get(context.runtimeId);
     if (!guard) { guard = { active: true }; this.admissionGuards.set(context.runtimeId, guard); }
-    this.admissions.set(params, { sender, runtimeId: context.runtimeId, revision: this.admissionRevision, guard });
+    const terminalTarget = params.kind === "terminal.selection.read" ? this.terminalSelection.capture(sender, context)
+      : params.kind === "terminal.input.propose" ? this.terminalSelection.resolve(params.handle, context) : undefined;
+    const admission = { sender, runtimeId: context.runtimeId, revision: this.admissionRevision, guard, terminalTarget };
+    this.admissions.set(params, admission);
+    return admission;
   }
 
   setReady(sender, ready) {
@@ -138,7 +163,7 @@ class PluginHostInteractionService {
     const nonce = randomBytes(24).toString("base64url");
     const binding = JSON.stringify([
       nonce, entry.id, entry.context.pluginId, entry.context.pluginVersion,
-      entry.context.runtimeId, entry.sender.id, entry.params.kind, entry.phase, entry.expiresAt,
+      entry.context.runtimeId, entry.sender.id, entry.params.kind, entry.phase, entry.expiresAt, entry.terminalTarget?.resource ?? null,
     ]);
     return `${nonce}.${createHmac("sha256", this.key).update(binding).digest("base64url")}`;
   }
@@ -149,6 +174,7 @@ class PluginHostInteractionService {
       requestId: entry.id, actionToken: entry.actionToken,
       pluginId: entry.context.pluginId, pluginVersion: entry.context.pluginVersion,
       expiresAt: entry.expiresAt, phase: entry.phase, request: entry.params,
+      ...(entry.terminalTarget ? { terminalSessionId: entry.terminalTarget.sessionId, terminalRendererId: entry.terminalTarget.rendererId, terminalLabel: entry.terminalTarget.label } : {}),
       ...(entry.previewText === undefined ? {} : { previewText: entry.previewText }),
       ...(this.vaultService?.isRequest(entry.params) ? this.vaultService.describePrompt(entry) : {}),
       ...(entry.reviewedDraft === undefined ? {} : { reviewedDraft: entry.reviewedDraft }),
@@ -230,10 +256,15 @@ class PluginHostInteractionService {
     if (this.pending.size >= LIMITS.pendingTotal || [...this.pending.values()].some((entry) => entry.context.runtimeId === context.runtimeId || entry.sender === sender)) {
       throw fail("resourceExhausted", "Host interaction limit reached");
     }
+    const terminalTarget = admission?.terminalTarget ?? (params.kind === "terminal.selection.read"
+      ? this.terminalSelection.capture(sender, context) : params.kind === "terminal.input.propose"
+        ? this.terminalSelection.resolve(params.handle, context) : undefined);
+    if (terminalTarget) this.terminalSelection.assertCurrent(terminalTarget);
+    if (params.kind === "terminal.input.propose") this.terminalSelection.resolve(params.handle, context);
     const now = this.clock();
     return new Promise((resolve, reject) => {
       const entry = {
-        id: randomUUID(), context, params, sender, resolve, reject,
+        id: randomUUID(), context, params, sender, resolve, reject, terminalTarget,
         expiresAt: now + this.timeoutMs, phase: "request", actionToken: null,
       };
       entry.onAbort = () => this.#finish(entry, null, fail("cancelled", "Host interaction was cancelled"));
@@ -262,6 +293,8 @@ class PluginHostInteractionService {
       await entry.context.assertActive();
       this.#assertWindow(sender);
       if (this.pending.get(entry.id) !== entry) return false;
+      if (entry.terminalTarget) this.terminalSelection.assertCurrent(entry.terminalTarget);
+      if (entry.params.kind === "terminal.input.propose") this.terminalSelection.resolve(entry.params.handle, entry.context);
       if (response.action === "cancel") {
         this.#audit(entry, "cancelled");
         return this.#finish(entry, { cancelled: true });
@@ -284,6 +317,14 @@ class PluginHostInteractionService {
         }
         this.#present(entry);
         return true;
+      }
+      if (entry.params.kind === "terminal.selection.read" && entry.phase === "request") {
+        if (response.action !== "preview") throw fail("invalidArgument", "Terminal sharing requires a preview action");
+        const text = assertTextBytes(response.value);
+        if (!text.length) throw fail("failedPrecondition", "Select terminal text before requesting a share");
+        this.#audit(entry, "preview-confirmed");
+        this.quotaManager.chargeBytes(entry.context.runtimeId, "terminal", Buffer.byteLength(text));
+        entry.previewText = text; entry.phase = "preview"; this.#present(entry); return true;
       }
       if (entry.params.kind === "clipboard.read" && entry.phase === "request") {
         if (response.action !== "preview") throw fail("invalidArgument", "Clipboard sharing requires a preview action");
@@ -308,9 +349,14 @@ class PluginHostInteractionService {
       else if (entry.params.kind === "quickPick") {
         if (!entry.params.items.some((item) => item.id === response.value)) throw fail("invalidArgument", "Host interaction choice is invalid");
         value = response.value;
+      } else if (entry.params.kind === "terminal.selection.read") {
+        if (entry.phase !== "preview" || typeof entry.previewText !== "string") throw fail("failedPrecondition", "Terminal selection was not previewed");
       } else if (entry.params.kind === "clipboard.read") value = entry.previewText;
       else value = true;
-      this.#audit(entry, entry.params.kind === "clipboard.write" ? "copy-confirmed" : "share-confirmed");
+      this.#audit(entry, entry.params.kind === "terminal.input.propose" ? "draft-reviewed" : entry.params.kind === "clipboard.write" ? "copy-confirmed" : "share-confirmed");
+      if (entry.params.kind === "terminal.selection.read") {
+        value = Object.freeze({ text: entry.previewText, ...this.terminalSelection.issue(entry.terminalTarget, entry.context) });
+      }
       if (entry.params.kind === "clipboard.write") {
         try { this.clipboard.writeText(entry.params.text); }
         catch { throw fail("unavailable", "Host clipboard write failed"); }
@@ -322,8 +368,11 @@ class PluginHostInteractionService {
     }
   }
 
+  setTerminalTarget(sender, target) { return this.terminalSelection.setTarget(sender, target); }
+
   releaseWindow(sender) {
     if (this.owner !== sender) return;
+    this.terminalSelection.releaseWindow(sender);
     this.admissionRevision++;
     this.ownerGeneration++;
     this.vaultService?.clearSelections();
@@ -334,6 +383,7 @@ class PluginHostInteractionService {
     }
   }
   releasePlugin(pluginId) {
+    this.terminalSelection.releasePlugin(pluginId);
     this.admissionRevision++;
     this.vaultService?.releasePlugin(pluginId);
     for (const entry of [...this.pending.values()]) {
@@ -341,6 +391,7 @@ class PluginHostInteractionService {
     }
   }
   releaseRuntime(runtimeId) {
+    this.terminalSelection.releaseRuntime(runtimeId);
     this.cancelRuntimeRequests(runtimeId, "Plugin runtime stopped");
     this.rates.delete(runtimeId);
     this.vaultService?.releaseRuntime(runtimeId);
@@ -354,8 +405,11 @@ class PluginHostInteractionService {
     }
   }
   cancelAll(invalidateAdmission = true) {
-    if (invalidateAdmission) this.admissionRevision++;
-    if (invalidateAdmission) this.vaultService?.clearSelections();
+    if (invalidateAdmission) {
+      this.admissionRevision++;
+      this.terminalSelection.clearHandles();
+      this.vaultService?.clearSelections();
+    }
     for (const entry of [...this.pending.values()]) this.#finish(entry, null, fail("cancelled", "Host interaction was cancelled"));
   }
   shutdown() {
@@ -364,6 +418,7 @@ class PluginHostInteractionService {
     if (this.owner) this.releaseWindow(this.owner);
     this.cancelAll(); this.rates.clear(); this.admissionGuards.clear();
     this.revocation.dispose(); this.unsubscribeLock?.();
+    this.terminalInvalidation.dispose(); this.terminalSelection.shutdown();
     this.key.fill(0);
     this.vaultService?.shutdown();
   }
