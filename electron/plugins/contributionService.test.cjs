@@ -117,7 +117,8 @@ test("only explicitly declared interactive commands receive the fixed budget and
   });
   await service.executeCommand(`${pluginManifest.id}.hello`);
   await service.executeCommand(`${pluginManifest.id}.interactive`);
-  assert.equal(optionsSeen[0], undefined, "ordinary commands retain the existing router deadline");
+  assert.equal(Object.hasOwn(optionsSeen[0], "timeoutMs"), false, "ordinary commands retain the existing router deadline");
+  assert.equal(optionsSeen[0].expectedIdentity.runtimeId, runtimeId);
   assert.equal(optionsSeen[1].timeoutMs, 180_000);
   assert.equal(optionsSeen[1].expectedIdentity.runtimeId, runtimeId);
   assert.deepEqual(finished, [runtimeId, runtimeId]);
