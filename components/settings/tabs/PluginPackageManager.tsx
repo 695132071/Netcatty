@@ -1,11 +1,12 @@
 import { describePluginPermission } from '@/domain/pluginPermissionDescriptions.cjs';
 import { describePluginRuntime } from '@/domain/pluginRuntimePolicy.cjs';
-import React, { useState } from 'react';
+import React, { useRef, useState } from 'react';
 import { PluginBrandIcon } from '../../plugins/PluginBrandIcon';
 import { ArrowLeft } from 'lucide-react';
 import { usePluginManager } from '../../../application/state/usePluginManager';
 import { useI18n } from '../../../application/i18n/I18nProvider';
 import { Button } from '../../ui/button';
+import { Input } from '../../ui/input';
 
 export function PluginPackageDetails({ plugin }: { plugin: NetcattyInstalledPlugin }) {
   const { t, resolvedLocale } = useI18n();
@@ -47,25 +48,45 @@ export function PluginPackageDetails({ plugin }: { plugin: NetcattyInstalledPlug
   </div>;
 }
 
-export function PluginPackageManager({ manager }: { manager: ReturnType<typeof usePluginManager> }) {
+export function PluginPackageManager({ manager, onSelectionChange }: { manager: ReturnType<typeof usePluginManager>; onSelectionChange?: (id: string | null) => void }) {
   const { t, resolvedLocale } = useI18n();
   const [selected, setSelected] = useState<string | null>(null);
+  const [search, setSearch] = useState('');
+  const rootRef = useRef<HTMLElement>(null);
+  const scrollTop = useRef(0);
+  const lastSelection = useRef<string | null>(null);
+  const selectedPlugin = manager.plugins.find((plugin) => plugin.id === selected);
+  const nameOf = (plugin: NetcattyInstalledPlugin) => typeof plugin.manifest?.displayName === 'string' ? plugin.manifest.displayName : plugin.manifest?.displayName?.[resolvedLocale] ?? plugin.manifest?.displayName?.en ?? plugin.manifest?.name ?? plugin.id;
+  const choose = (id: string | null) => {
+    const pane = rootRef.current?.closest<HTMLElement>('[data-settings-scroll-pane]');
+    if (id) { scrollTop.current = pane?.scrollTop ?? 0; lastSelection.current = id; }
+    setSelected(id); setRemoving(null); onSelectionChange?.(id);
+    requestAnimationFrame(() => {
+      if (pane) pane.scrollTop = id ? 0 : scrollTop.current;
+      if (id) rootRef.current?.querySelector<HTMLElement>('[data-plugin-detail]')?.focus({ preventScroll: true });
+      else Array.from(rootRef.current?.querySelectorAll<HTMLButtonElement>('[data-plugin-card]') ?? []).find((button) => button.dataset.pluginCard === lastSelection.current)?.focus({ preventScroll: true });
+    });
+  };
+  const visible = selectedPlugin ? [selectedPlugin] : manager.plugins.filter((plugin) => [nameOf(plugin), plugin.manifest?.publisher, plugin.manifest?.description, plugin.id].some((value) => JSON.stringify(value ?? '').toLocaleLowerCase().includes(search.trim().toLocaleLowerCase())));
   const [removing, setRemoving] = useState<string | null>(null);
   if (!manager.available) return null;
-  return <section className="space-y-4" aria-label={t('settings.plugins.manager.installed')}>
+  return <section ref={rootRef} className="space-y-4" aria-label={t('settings.plugins.manager.installed')}>
     <p className="text-xs text-muted-foreground">{t('settings.plugins.manager.preview')}</p>
-    {selected && <Button variant="ghost" size="sm" onClick={() => { setSelected(null); setRemoving(null); }}><ArrowLeft size={14} className="mr-2" />{t('settings.plugins.manager.installed')}</Button>}
+    {selectedPlugin && <Button variant="ghost" size="sm" onClick={() => choose(null)}><ArrowLeft size={14} className="mr-2" />{t('settings.plugins.manager.installed')}</Button>}
+    {!selectedPlugin && manager.plugins.length > 0 && <Input value={search} onChange={(event) => setSearch(event.target.value)} placeholder={t('settings.plugins.market.search')} aria-label={t('settings.plugins.market.search')} />}
+    {!selectedPlugin && manager.plugins.length > 0 && visible.length === 0 && <p className="p-6 text-center text-sm text-muted-foreground">{t('settings.plugins.market.noResults')}</p>}
     {manager.error && <p role="alert" className="text-sm text-destructive">{manager.error}</p>}
     {!manager.plugins.length && <div className="rounded-xl border border-dashed border-border p-8 text-center text-sm text-muted-foreground">{t('settings.plugins.manager.empty')}</div>}
-    {manager.plugins.filter((plugin) => !selected || plugin.id === selected).map((plugin) => <article key={plugin.id} className="space-y-4 rounded-xl border border-border/70 bg-background p-4">
-      <div className="flex items-center gap-3">
+    <div className={selectedPlugin ? 'space-y-4' : 'grid grid-cols-[repeat(auto-fit,minmax(min(100%,280px),1fr))] gap-3'}>
+    {visible.map((plugin) => <article key={plugin.id} data-plugin-detail={selectedPlugin ? true : undefined} tabIndex={selectedPlugin ? -1 : undefined} aria-label={nameOf(plugin)} className="min-w-0 space-y-4 rounded-lg border bg-card p-4 focus:outline-none">
+      <div className="flex flex-wrap items-center gap-3">
         <div className="flex h-12 w-12 shrink-0 items-center justify-center"><PluginBrandIcon plugin={plugin} size={32} /></div>
-        <button type="button" className="min-w-0 flex-1 text-left" aria-expanded={selected === plugin.id} onClick={() => setSelected(selected === plugin.id ? null : plugin.id)}>
-          <div className="truncate text-sm font-medium">{typeof plugin.manifest?.displayName === 'string' ? plugin.manifest.displayName : plugin.manifest?.displayName?.[resolvedLocale] ?? plugin.manifest?.displayName?.en ?? plugin.manifest?.name ?? plugin.id}</div>
-          <div className="text-xs text-muted-foreground">{plugin.manifest?.publisher} · {plugin.activeVersion}</div>
+        <button type="button" data-plugin-card={plugin.id} className="min-w-0 flex-1 rounded text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" aria-expanded={selected === plugin.id} onClick={() => choose(selected === plugin.id ? null : plugin.id)}>
+          <div className="break-words text-sm font-medium">{nameOf(plugin)}</div>
+          <div className="break-words text-xs text-muted-foreground">{plugin.manifest?.publisher} · {plugin.activeVersion}</div>
         </button>
-        <Button variant="outline" size="sm" type="button"
-          className={`h-7 rounded-full border px-3 text-xs focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background ${plugin.enabled ? 'border-primary/40 bg-primary/10 hover:bg-primary/15' : 'border-border bg-muted/60 text-muted-foreground hover:bg-muted hover:text-foreground'}`}
+        <Button variant="ghost" size="sm" type="button"
+          className={`h-7 shrink-0 rounded-full border-0 px-3 text-xs focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background ${plugin.enabled ? 'bg-primary/10 hover:bg-primary/15' : 'bg-muted/60 text-muted-foreground hover:bg-muted hover:text-foreground'}`}
           style={plugin.enabled ? { color: 'color-mix(in srgb, hsl(var(--primary)) 40%, hsl(var(--foreground)))' } : undefined}
           aria-pressed={plugin.enabled} aria-busy={manager.busy}
           aria-label={`${t(plugin.enabled ? 'settings.plugins.manager.disable' : 'settings.plugins.manager.enable')} ${plugin.manifest?.name ?? plugin.id}`}
@@ -84,5 +105,6 @@ export function PluginPackageManager({ manager }: { manager: ReturnType<typeof u
         </div> : <Button variant="ghost" size="sm" disabled={manager.busy} onClick={() => setRemoving(plugin.id)}>{t('settings.plugins.manager.remove')}</Button>}
       </>}
     </article>)}
+    </div>
   </section>;
 }

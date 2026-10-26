@@ -286,6 +286,7 @@ export function PluginSettingField({
 function PluginManagementContent({ handoff }: { handoff: (action: () => void) => void }) {
   const { t } = useI18n();
   const manager = usePluginManager();
+  const [selectedInstalled, setSelectedInstalled] = useState<string | null>(null);
   const [pluginView, setPluginView] = useState<'installed' | 'marketplace'>('installed');
   const availableFonts = useAvailableFonts();
   const scopeCatalog = usePluginSettingScopeCatalog();
@@ -299,14 +300,15 @@ function PluginManagementContent({ handoff }: { handoff: (action: () => void) =>
   }), [scopeIds]);
   const contributions = usePluginContributions(query);
   const contextualScopes = useMemo(() => new Set(contributions.snapshot.plugins
+    .filter((plugin) => plugin.id === selectedInstalled)
     .flatMap((plugin) => plugin.settings.map((setting) => setting.scope))
     .filter((scope): scope is NetcattyPluginSettingScopeKind => scope !== 'application')),
-  [contributions.snapshot.plugins]);
+  [contributions.snapshot.plugins, selectedInstalled]);
 
 
   return (
     <div className="space-y-5">
-        <Tabs value={pluginView} onValueChange={(value) => setPluginView(value as 'installed' | 'marketplace')} className="space-y-5">
+        <Tabs value={pluginView} onValueChange={(value) => { setSelectedInstalled(null); setPluginView(value as 'installed' | 'marketplace'); }} className="space-y-5">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <TabsList className="h-auto flex-wrap justify-start bg-muted/50">
             <TabsTrigger value="installed">{t('settings.plugins.manager.installed')} <span className="ml-2 text-muted-foreground">{manager.plugins.length}</span></TabsTrigger>
@@ -317,7 +319,7 @@ function PluginManagementContent({ handoff }: { handoff: (action: () => void) =>
         {manager.credentialStorageAvailable === false && <p role="status" className="text-xs text-muted-foreground">{t('settings.plugins.manager.noVault')}</p>}
         <TabsContent value="marketplace" className="m-0 space-y-6"><PluginMarketplace installed={manager.plugins} /></TabsContent>
         <TabsContent value="installed" className="m-0 space-y-6">
-        <PluginPackageManager manager={manager} />
+        <PluginPackageManager manager={manager} onSelectionChange={setSelectedInstalled} />
         {contextualScopes.size > 0 && (
           <section className="grid gap-3 rounded-lg border border-border/70 bg-muted/10 p-4 sm:grid-cols-2" aria-label={t('settings.plugins.scopeTargets')}>
             {[...contextualScopes].map((kind) => (
@@ -337,7 +339,7 @@ function PluginManagementContent({ handoff }: { handoff: (action: () => void) =>
         )}
         {contributions.loading && <p className="text-sm text-muted-foreground">{t('settings.plugins.loading')}</p>}
         {contributions.error && <p role="alert" className="text-sm text-destructive">{contributions.error.message}</p>}
-        {contributions.snapshot.plugins.map((plugin) => {
+        {contributions.snapshot.plugins.filter((plugin) => plugin.id === selectedInstalled).map((plugin) => {
           const settings = plugin.settings.filter((setting) => setting.visible);
           const views = plugin.views.filter((view) => view.visible && view.location === 'settings');
           if (!settings.length && !views.length) return null;
