@@ -8,6 +8,9 @@ const { getTempFilePath } = require("../bridges/tempDirBridge.cjs");
 const { createDefinitionValidator, formatValidationErrors } = require("./contractValidator.cjs");
 const validateManifest = createDefinitionValidator("PluginManifest");
 const { assertCatalogManifest } = require("./catalogPolicy.cjs");
+const { assertPluginJsonValue } = require("./jsonBoundary.cjs");
+const MAX_CATALOG_BYTES = 2 * 1024 * 1024;
+const CATALOG_FIELDS = new Set(["id", "version", "name", "description", "author", "repository", "commit", "license", "readme", "manifest", "artifact"]);
 
 const DOWNLOAD_HOSTS = new Set(["github.com", "raw.githubusercontent.com", "release-assets.githubusercontent.com", "objects.githubusercontent.com"]);
 function assertDownloadUrl(value) {
@@ -28,10 +31,11 @@ function pinnedReadmeUrl(entry) {
   return url.href;
 }
 function validateCatalog(entries) {
+  assertPluginJsonValue(entries, { maxBytes: MAX_CATALOG_BYTES });
   if (!Array.isArray(entries) || entries.length > 1000) throw new Error("Invalid plugin catalog");
   const ids = new Set();
   for (const entry of entries) {
-    if (!entry || ["id", "version", "name", "description", "author", "repository", "commit", "license", "readme"].some((key) => typeof entry[key] !== "string" || entry[key].length > 4096) || !/^[a-z0-9][a-z0-9.-]+$/u.test(entry.id) || ids.has(entry.id)
+    if (!entry || Object.keys(entry).some((key) => !CATALOG_FIELDS.has(key)) || ["id", "version", "name", "description", "author", "repository", "commit", "license", "readme"].some((key) => typeof entry[key] !== "string" || entry[key].length > 4096) || !/^[a-z0-9][a-z0-9.-]+$/u.test(entry.id) || ids.has(entry.id)
       || !/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/u.test(entry.repository)
       || !/^[a-f0-9]{40}$/u.test(entry.commit)
       || !entry.license || !entry.author || !entry.name
@@ -43,7 +47,12 @@ function validateCatalog(entries) {
     if (!validateManifest(entry.manifest)) throw new Error(`Catalog manifest is invalid: ${formatValidationErrors(validateManifest.errors)}`);
     assertCatalogManifest(entry.manifest, entry);
     ids.add(entry.id);
-    if (entry.artifact) {
+    if (Object.hasOwn(entry, "artifact")) {
+      if (!entry.artifact || typeof entry.artifact !== "object" || Array.isArray(entry.artifact)
+        || Object.keys(entry.artifact).some((key) => key !== "url" && key !== "sha256")
+        || typeof entry.artifact.url !== "string" || typeof entry.artifact.sha256 !== "string") {
+        throw new Error("Invalid catalog artifact metadata");
+      }
       assertDownloadUrl(entry.artifact.url);
       if (!/^[a-f0-9]{64}$/u.test(entry.artifact.sha256)) throw new Error("Catalog artifact requires SHA-256");
     }
@@ -82,7 +91,7 @@ async function fetchBounded(url, limit, fetchImpl = fetch, maxRedirects = 4) {
 }
 class PluginCatalogService {
   constructor(options) {
-    this.entries = validateCatalog(structuredClone(options.entries ?? catalog));
+    this.entries = structuredClone(validateCatalog(options.entries ?? catalog));
     this.fetch = options.fetch ?? fetch;
     this.getTempFilePath = options.getTempFilePath ?? getTempFilePath;
     this.manager = options.manager;
@@ -118,4 +127,4 @@ class PluginCatalogService {
     }
   }
 }
-module.exports = { PluginCatalogService, assertDownloadUrl, fetchBounded, validateCatalog, pinnedReadmeUrl };
+module.exports = { PluginCatalogService, assertDownloadUrl, fetchBounded, validateCatalog, pinnedReadmeUrl, MAX_CATALOG_BYTES };

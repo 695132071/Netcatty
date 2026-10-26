@@ -1,14 +1,20 @@
 "use strict";
 
 const { createHash } = require("node:crypto");
-const { PluginCatalogService, fetchBounded, validateCatalog } = require("./catalogService.cjs");
+const { PluginCatalogService, fetchBounded, validateCatalog, MAX_CATALOG_BYTES } = require("./catalogService.cjs");
 const REGISTRY_URL = "https://raw.githubusercontent.com/binaricat/netcatty-plugins/main/catalog.json";
-const MAX_CATALOG_BYTES = 2 * 1024 * 1024;
 const tokenFor = (entry) => createHash("sha256").update(JSON.stringify(entry)).digest("hex");
+
+function prepareSnapshot(value) {
+  const entries = structuredClone(validateCatalog(value));
+  const publicEntries = structuredClone(entries).map((entry) => ({ ...entry, selectionToken: tokenFor(entry) }));
+  return { entries, publicEntries };
+}
 
 class RegistryCatalogService extends PluginCatalogService {
   constructor(options) {
     super(options);
+    this.publicEntries = prepareSnapshot(this.entries).publicEntries;
     this.source = "builtin";
     this.error = null;
     this.refreshing = null;
@@ -19,8 +25,10 @@ class RegistryCatalogService extends PluginCatalogService {
       try {
         // No redirects: only this exact registry endpoint can replace the catalog.
         const bytes = await fetchBounded(REGISTRY_URL, MAX_CATALOG_BYTES, this.fetch, 0);
-        const next = validateCatalog(JSON.parse(bytes.toString("utf8")));
-        this.entries = next;
+        const next = prepareSnapshot(JSON.parse(bytes.toString("utf8")));
+        // Publish only after full validation, clones and every token succeeded.
+        this.entries = next.entries;
+        this.publicEntries = next.publicEntries;
         this.source = "registry";
         this.error = null;
         return true;
@@ -35,7 +43,7 @@ class RegistryCatalogService extends PluginCatalogService {
   async list() {
     await this.refresh();
     return {
-      entries: this.entries.map((entry) => ({ ...structuredClone(entry), selectionToken: tokenFor(entry) })),
+      entries: structuredClone(this.publicEntries),
       source: this.source,
       error: this.error,
     };

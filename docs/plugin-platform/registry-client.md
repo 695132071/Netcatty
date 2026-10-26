@@ -12,14 +12,16 @@ prove the repository or an online artifact is available.
 `id`, `version`, `name`, `description`, `author`, `repository` (`owner/repository`),
 `commit` (full 40-character SHA), `license`, `readme` (relative Markdown path),
 and `manifest`. Optional `artifact` contains `url` and SHA-256 `sha256`.
-The existing manifest schema, browser-only distribution policy, identity/version
+Unknown catalog-entry and artifact fields are rejected. The whole JSON value,
+including manifest defaults, uses the existing 128-level / 100,000-value budget
+and finite-number validation. The existing manifest schema, browser-only distribution policy, identity/version
 and license checks apply. Source-only entries remain build-and-import examples.
 No download counts, ratings, or timestamps are invented. Brand previews remain
 bundled and reviewed; arbitrary author image URLs are never loaded.
 
 Reads are anonymous HTTPS, redirect-free for the registry, bounded to 2 MiB,
-and time out after 30 seconds. All entries must validate before replacing the
-current snapshot. Invalid JSON/schema, network failure, and oversized responses
+and time out after 30 seconds. All entries must validate, safely clone, and generate every selection token before
+atomically replacing the current snapshot. Invalid JSON/schema, network failure, and oversized responses
 leave the previous good snapshot intact. Errors and Retry remain visible. The Community header also has Refresh, including
 when the last refresh succeeded; it is disabled while a request is pending.
 The last good catalog is retained **in memory for this application session**;

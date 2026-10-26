@@ -111,3 +111,43 @@ test("URL-stripped README controls cannot escape a selected commit or replace th
   assert.match((await service.list()).error, /escapes the pinned commit/);
   assert.ok(requested.every((url) => url === REGISTRY_URL));
 });
+
+test("whole-catalog JSON budgets and unknown fields cannot poison a good offline snapshot", async () => {
+  let response = JSON.stringify(builtin);
+  const service = new RegistryCatalogService({ fetch: async () => {
+    if (response === null) throw new Error("offline");
+    return new Response(response);
+  } });
+  const good = await service.list();
+  let nested = null;
+  for (let depth = 0; depth < 130; depth++) nested = { child: nested };
+  const nonfinite = structuredClone(builtin[0]);
+  nonfinite.manifest.contributes.settings[0].default = "finite-marker";
+  for (const invalid of [
+    JSON.stringify([{ ...builtin[0], unknownNestedField: nested }]),
+    JSON.stringify([{ ...builtin[0], unknownField: true }]),
+    JSON.stringify([nonfinite]).replace('"finite-marker"', '1e999'),
+    JSON.stringify([{ ...builtin[0], artifact: { url: "https://github.com/a/b", sha256: "a".repeat(64), unexpected: true } }]),
+  ]) {
+    response = invalid;
+    const rejected = await service.list();
+    assert.equal(rejected.source, "cached"); assert.ok(rejected.error);
+    assert.deepEqual(rejected.entries, good.entries);
+    response = null;
+    const offline = await service.list();
+    assert.deepEqual(offline.entries, good.entries); assert.match(offline.error, /offline/);
+  }
+});
+
+test("snapshot preparation failure leaves both private entries and public tokens unchanged", async () => {
+  const service = new RegistryCatalogService({ fetch: async () => new Response(JSON.stringify(builtin)) });
+  const good = await service.list();
+  const originalClone = global.structuredClone;
+  try {
+    global.structuredClone = () => { throw new Error("synthetic clone failure"); };
+    assert.equal(await service.refresh(), false);
+  } finally { global.structuredClone = originalClone; }
+  service.fetch = async () => { throw new Error("offline"); };
+  assert.deepEqual((await service.list()).entries, good.entries);
+  assert.equal(service.selected(good.entries[0].id, good.entries[0].selectionToken).id, good.entries[0].id);
+});
