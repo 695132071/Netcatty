@@ -16,7 +16,8 @@ form { margin:22px 0; }
 .actions { display:flex; flex-wrap:wrap; align-items:center; gap:10px; margin-top:12px; }
 button { border:1px solid #4e8bdf; border-radius:7px; background:#3274c6; color:white; padding:9px 24px; font:inherit; font-weight:600; cursor:pointer; }
 button:disabled { opacity:.42; cursor:default; }
-#stop,#refresh { background:transparent; border-color:#56657b; }
+#stop,#refresh,#choose-reference { background:transparent; border-color:#56657b; }
+#choose-reference { margin-top:10px; }
 #status { margin-left:4px; color:#b6c6dc; font-size:12px; }
 .response { min-height:160px; }
 pre { white-space:pre-wrap; overflow-wrap:anywhere; font:16px/1.7 system-ui,sans-serif; margin:0 0 12px; }

@@ -11,6 +11,7 @@ function busy(value) {
   element('send').disabled = value || !chat;
   element('stop').disabled = !value;
   element('refresh').disabled = value;
+  element('choose-reference').disabled = value;
   element('context').disabled = value;
   element('prompt').disabled = value;
 }
@@ -27,20 +28,28 @@ async function replaceChat(run) {
   element('model').textContent = chat.model;
   return true;
 }
+async function selectReferences(run) {
+  const summaries = await invoke('contexts');
+  if (closed || run !== generation) return false;
+  references.clear();
+  const placeholder = document.createElement('option');
+  placeholder.value = ''; placeholder.textContent = 'No reference';
+  element('context').replaceChildren(placeholder);
+  for (const reference of summaries) {
+    if (reference.scope !== 'note') continue;
+    references.set(reference.handle, { handle: reference.handle, version: reference.version, expiresAt: reference.expiresAt });
+    const option = document.createElement('option');
+    option.value = reference.handle; option.textContent = reference.title;
+    element('context').append(option);
+  }
+  return true;
+}
 async function initialize() {
   const run = ++generation;
   busy(true);
   try {
     if (!await replaceChat(run)) return;
-    const summaries = await invoke('contexts');
-    if (closed || run !== generation) return;
-    for (const reference of summaries) {
-      if (reference.scope !== 'note') continue;
-      references.set(reference.handle, { handle: reference.handle, version: reference.version });
-      const option = document.createElement('option');
-      option.value = reference.handle; option.textContent = reference.title;
-      element('context').append(option);
-    }
+    if (!await selectReferences(run)) return;
     element('status').textContent = 'Ready';
   } catch {
     if (run !== generation) return;
@@ -59,9 +68,24 @@ element('refresh').addEventListener('click', async () => {
     if (run === generation) element('status').textContent = 'Choose a model and grant access in Netcatty, then refresh the model.';
   } finally { if (run === generation) busy(false); }
 });
+element('choose-reference').addEventListener('click', async () => {
+  if (closed || element('choose-reference').disabled) return;
+  const run = ++generation;
+  busy(true); element('status').textContent = 'Choosing reference...';
+  try {
+    if (await selectReferences(run)) element('status').textContent = 'References updated. Select a reference, then Send.';
+  } catch {
+    if (run === generation) element('status').textContent = 'Reference selection ended. Choose reference again when access is available.';
+  } finally { if (run === generation) busy(false); }
+});
 element('compose').addEventListener('submit', async (event) => {
   event.preventDefault();
   if (!chat || element('send').disabled) return;
+  const reference = references.get(element('context').value);
+  if (reference && reference.expiresAt <= Date.now()) {
+    element('status').textContent = 'Selected reference expired. Choose reference again, then Send.';
+    return;
+  }
   const run = ++generation;
   busy(true); element('status').textContent = 'Streaming...';
   element('response').textContent = ''; element('usage').textContent = '';
@@ -69,9 +93,8 @@ element('compose').addEventListener('submit', async (event) => {
     // No inference has been requested yet, so an expired session can be
     // replaced before this explicit Send. Never retry a failed send/read.
     if (chat.expiresAt <= Date.now() && !await replaceChat(run)) return;
-    const reference = references.get(element('context').value);
     const started = await invoke('send', { chatHandle: chat.chatHandle, prompt: element('prompt').value,
-      contexts: reference ? [reference] : [] });
+      contexts: reference ? [{ handle: reference.handle, version: reference.version }] : [] });
     if (run !== generation) { await invoke('stop', { turnHandle: started.turnHandle }); return; }
     turn = started.turnHandle;
     for (;;) {
@@ -83,7 +106,7 @@ element('compose').addEventListener('submit', async (event) => {
     }
     element('status').textContent = 'Complete';
   } catch {
-    if (run === generation) element('status').textContent = 'Request ended. Check access or refresh the model, then send again.';
+    if (run === generation) element('status').textContent = 'Request ended. Check access, choose reference again, or refresh the model before sending again.';
   } finally {
     if (run === generation) { turn = undefined; busy(false); }
   }

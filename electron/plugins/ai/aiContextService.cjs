@@ -118,7 +118,10 @@ class PluginAIContextService {
     }
     const previous = this.runtimeContexts.get(context.runtimeId);
     if (previous?.owner === owner && previous.keys === JSON.stringify(selections.map(({ key, version }) => [key, version]))) {
-      return { items: await this.selected.summaries(context) };
+      const items = await this.selected.summaries(context);
+      if (items.length === selections.length) return { items };
+      // The host has just explicitly selected these resources again. Expired
+      // or revoked handles stay invalid; issue fresh handles for this selection.
     }
     this.selected.releaseRuntime(context.runtimeId);
     const created = [];
