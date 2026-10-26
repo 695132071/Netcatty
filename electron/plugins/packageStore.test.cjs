@@ -435,6 +435,24 @@ test("catalog installation verifies actual package manifest and rejects Node bef
   assert.equal((await fixture.store.install(archive.archive, { enable: false, catalog: entry })).enabled, false);
   const advanced = await createPackage(fixture.root, { manifest: { version: "2.0.0", license: "MIT", main: { node: "dist/index.js" }, permissions: { required: ["runtime.advanced"] } } });
   const advancedEntry = { ...entry, version: "2.0.0", manifest: advanced.manifest, artifact: { sha256: createHash("sha256").update(await fs.promises.readFile(advanced.archive)).digest("hex") } };
-  await assert.rejects(fixture.store.install(advanced.archive, { catalog: advancedEntry }), /browser runtime only/);
+  await assert.rejects(fixture.store.install(advanced.archive, { catalog: advancedEntry }), /browser-only packages/);
   assert.equal(fixture.database.getActivePlugin(entry.id).activeVersion, "1.0.0");
+});
+
+test("normal release refuses advanced local imports and disables previously installed lazy packages", async (context) => {
+  const fixture = createStore(context);
+  await fixture.store.initialize();
+  const archive = await createPackage(fixture.root, { manifest: {
+    main: { browser: "dist/index.js", node: "dist/index.js" },
+    permissions: { optional: ["runtime.advanced"] },
+  } });
+  const installed = await fixture.store.install(archive.archive, { enable: true });
+  fixture.database.setValue(installed.id, "synthetic", 42);
+  fixture.store.allowAdvancedPlugins = false;
+  await fixture.store.initialize();
+  assert.equal(fixture.database.getActivePlugin(installed.id).enabled, false);
+  assert.match(fixture.database.getActivePlugin(installed.id).runtime.lastError, /developer mode/);
+  assert.equal(fixture.database.getValue(installed.id, "synthetic"), 42);
+  await assert.rejects(fixture.store.install(archive.archive), /browser-only packages/);
+  await assert.rejects(fixture.store.assertCompatible(installed), /browser-only packages/);
 });

@@ -131,3 +131,12 @@ test("native permission dialogs visibly escape control and bidi characters", asy
   assert.equal(captured.detail.split("\n").filter((line) => line.startsWith("Permission:")).length, 1);
   assert.equal(escapePermissionText("x".repeat(MAX_VISIBLE_FIELD_LENGTH + 20)).length, MAX_VISIBLE_FIELD_LENGTH);
 });
+
+test("native prompts share human-readable permission explanations and deny unknown permission IDs", async () => {
+  assert.match(describePermissionRequest(permissionRequest({ permission: "terminal.output" }), "zh-CN"), /读取终端输出/);
+  assert.match(describePermissionRequest(permissionRequest({ permission: "terminal.output" })), /credentials or private data/);
+  let prompts = 0;
+  const provider = createNativePermissionDecisionProvider({ dialog: { showMessageBox: async () => { prompts++; return { response: 1 }; } } });
+  assert.deepEqual(await provider(permissionRequest({ permission: "unknown.permission" })), { requestId: "request-1", decision: "deny" });
+  assert.equal(prompts, 0);
+});

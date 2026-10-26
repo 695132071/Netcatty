@@ -1,5 +1,7 @@
 "use strict";
 
+const { describePluginPermission } = require("../../domain/pluginPermissionDescriptions.cjs");
+
 const MAX_VISIBLE_RESOURCES = 20;
 const MAX_VISIBLE_FIELD_LENGTH = 1_024;
 const UNSAFE_DISPLAY_CHARACTERS = /[\u0000-\u001f\u007f-\u009f\u2028\u2029\u202a-\u202e\u2066-\u2069]/gu;
@@ -14,7 +16,8 @@ function escapePermissionText(value, maxLength = MAX_VISIBLE_FIELD_LENGTH) {
   });
 }
 
-function describePermissionRequest(request) {
+function describePermissionRequest(request, locale = "en") {
+  const permission = describePluginPermission(request.permission, locale);
   const identity = request.pluginName
     ? `${escapePermissionText(request.pluginName)} (${escapePermissionText(request.pluginId)})`
     : escapePermissionText(request.pluginId);
@@ -31,6 +34,7 @@ function describePermissionRequest(request) {
     `Plugin: ${identity}`,
     ...(request.publisher ? [`Publisher: ${escapePermissionText(request.publisher)}`] : []),
     `Permission: ${escapePermissionText(request.permission)}`,
+    `${permission.label}: ${permission.description}`,
     `Reason: ${escapePermissionText(request.reason)}`,
     ...(visibleResources.length ? ["Resources:", ...visibleResources] : []),
   ].join("\n");
@@ -44,6 +48,7 @@ function createNativePermissionDecisionProvider(options) {
   const window = options.window;
   return async (request, context = {}) => {
     context.signal?.throwIfAborted();
+    if (!describePluginPermission(request.permission).known) return Object.freeze({ requestId: request.requestId, decision: "deny" });
     const allowedScopes = Array.isArray(request.allowedScopes)
       ? new Set(request.allowedScopes)
       : null;
@@ -65,7 +70,7 @@ function createNativePermissionDecisionProvider(options) {
       type: "warning",
       title: "Plugin permission request",
       message: `${escapePermissionText(request.pluginName ?? request.pluginId)} requests ${escapePermissionText(request.permission)}`,
-      detail: describePermissionRequest(request),
+      detail: describePermissionRequest(request, options.getLocale?.() ?? "en"),
       buttons: choices.map(({ label }) => label),
       defaultId: 0,
       cancelId: 0,

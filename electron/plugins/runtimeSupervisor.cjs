@@ -1,5 +1,7 @@
 "use strict";
 
+const { describePluginRuntime } = require("../../domain/pluginRuntimePolicy.cjs");
+
 const { randomUUID } = require("node:crypto");
 const path = require("node:path");
 const { pathToFileURL } = require("node:url");
@@ -43,14 +45,7 @@ function freezeJson(value) {
 }
 
 function resolveDefaultRuntimeKind({ plugin }) {
-  const requiresPrivilegedTerminalPipeline = plugin.manifest.contributes?.providers?.some((provider) => (
-    provider.kind === "terminal.interceptor.input"
-    || provider.kind === "terminal.interceptor.output"
-  ));
-  if (plugin.manifest.companionExecutables?.length || requiresPrivilegedTerminalPipeline) {
-    return "utility";
-  }
-  return plugin.manifest.main.browser ? "browser" : "utility";
+  return describePluginRuntime(plugin.manifest).defaultRuntimeKind;
 }
 
 class RuntimeSupervisor {

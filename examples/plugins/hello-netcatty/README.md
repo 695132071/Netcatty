@@ -1,7 +1,6 @@
 # Hello Netcatty
 
-This package is the runnable internal example for the plugin API. With
-`NETCATTY_PLUGIN_DEV=1`, package and install it to exercise native settings,
+This package is the runnable internal example for the plugin API. Package and install it to exercise native settings,
 command-palette contributions, lazy command and Provider activation,
 localization, terminal completion/decoration Providers, and the runtime SDK.
 
@@ -24,7 +23,7 @@ terminal input/output streams.
 
 ## Import and inspect
 
-Launch a development build with `NETCATTY_PLUGIN_DEV=1`, using a fresh Electron
+Launch the normal browser-only plugin build using a fresh Electron
 user-data directory for demonstrations. In **Settings > Plugins**, choose
 **Import .ncpkg**, select the generated archive, and open its details. Review the
 manifest permissions, engine ranges and SHA-256, then choose **Enable**. Native
@@ -47,3 +46,8 @@ inspect the package again. Do not connect real hosts or a cloud account. The
 existing greeting setting is local; declaring `sync: true` on a non-secret
 setting opts it into the existing encrypted settings sidecar. Generic SDK KV
 storage does not sync.
+
+For a demonstration without terminal permissions, use `examples/plugins/starter-netcatty`.
+Enabling this lazy example does not grant permissions: required permissions are
+requested before its first command/provider activation, and optional permissions
+when used. Never treat Enabled as a security certification or grant.

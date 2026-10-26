@@ -1,10 +1,11 @@
-# Curated plugin catalog (development preview)
+# Curated plugin catalog
 
 The catalog lives in `electron/plugins/catalog.json` in this repository. There
 is no new marketplace account service or external directory repository. It is
 shipped with the app; catalog changes become available with an app update.
-The host remains behind `NETCATTY_PLUGIN_DEV=1` pending native acceptance and
-security/distribution review.
+Normal Settings exposes browser-only management and catalog browsing. Advanced
+local packages require `NETCATTY_PLUGIN_DEV=1`; that flag never grants permissions.
+Native acceptance and security/distribution review remain required before merge.
 
 ## Submit or update a plugin
 
@@ -31,7 +32,8 @@ node packages/plugin-cli/dist/cli.js pack examples/plugins/hello-netcatty --out 
 node packages/plugin-cli/dist/cli.js validate /tmp/hello-netcatty.ncpkg
 ```
 
-The initial catalog has only the first-party Hello Netcatty source example.
+The catalog contains first-party source examples: Plugin Starter for minimal
+settings/command use, and Hello Netcatty for terminal provider demonstrations.
 No downloadable release is fabricated or published by this change. A maintainer
 must verify real artifact provenance before adding the artifact object.
 
@@ -51,7 +53,7 @@ Unsigned runtime grants remain bound to package digest. No latest fallback and
 no background code updates exist. Installing an update stops the old version;
 the new version remains disabled until reviewed and explicitly enabled. Required
 permissions are mediated again by the existing runtime permission engine.
-Local private development packages use the existing developer permission model;
+Local advanced development packages require the developer flag and use the existing permission model;
 this does not grant advanced privileges or make Node a sandbox.
 
 README is fetched only from the selected commit, on opening details. Redirects
@@ -93,3 +95,12 @@ remain. Existing crash quarantine and generation-bound cancellation apply.
 Missing OS-backed key storage blocks secrets/credentials, without blocking
 catalog browsing or non-secret plugins. The Settings manager reports this state;
 never switch to plaintext storage or disable Chromium sandboxing for a demo.
+
+## When permission prompts appear
+
+Enabled is an availability switch, not a security review or a grant. A lazy
+plugin can become enabled without starting code. Its first command/provider use
+starts the runtime; required permissions are authorized at that activation
+boundary. Optional permissions are requested when a broker operation needs them.
+Missing/denied decisions fail closed. Never interpret an Enabled badge as proof
+that terminal, credential, network or filesystem access has been approved.

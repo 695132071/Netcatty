@@ -3,7 +3,6 @@
 const fs = require("node:fs/promises");
 const { randomUUID } = require("node:crypto");
 
-const { isPluginDevelopmentEnabled } = require("./constants.cjs");
 const { raceWithAbort } = require("./rpcRouter.cjs");
 const {
   INLINE_SYNC_OBJECT_SAFE_BYTES,
@@ -212,7 +211,6 @@ function registerPluginBridge(ipcMain, options) {
   const getTerminalWorkerManager = options.getTerminalWorkerManager ?? (() => null);
   const selectImporterFile = options.selectImporterFile;
   const viewHost = options.viewHost;
-  const env = options.env ?? process.env;
   const isTrustedSender = options.isTrustedSender;
   const defaultScopeCatalog = normalizePluginScopeCatalog({ device: [{ id: "device", label: "This device" }] });
   const scopeCatalogs = new Map();
@@ -254,15 +252,14 @@ function registerPluginBridge(ipcMain, options) {
       if (scopeCatalogs.delete(key)) publishScopeCatalog();
     });
   };
-  const configured = isPluginDevelopmentEnabled(env)
-    && Boolean(manager)
+  const configured = Boolean(manager)
     && typeof manager.initialize === "function";
   const resolveManager = async () => {
-    if (!configured) throw new Error("Plugin development runtime is disabled or unavailable");
+    if (!configured) throw new Error("Plugin runtime is disabled or unavailable");
     try {
       await manager.initialize();
     } catch (cause) {
-      throw new Error("Plugin development runtime is disabled or unavailable", { cause });
+      throw new Error("Plugin runtime is disabled or unavailable", { cause });
     }
     return manager;
   };

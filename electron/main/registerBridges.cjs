@@ -148,8 +148,8 @@ function createBridgeRegistrar(context) {
     } = require("../plugins/pluginBridge.cjs");
     let terminalWorkerManager = null;
     const { toElectronAccelerator } = require("../plugins/keybindings.cjs");
-    const { startDevelopmentPluginHost } = require("../plugins/hostBootstrap.cjs");
-    const pluginHostService = startDevelopmentPluginHost({
+    const { startPluginHost } = require("../plugins/hostBootstrap.cjs");
+    const pluginHostService = startPluginHost({
       env: process.env,
       createService: () => {
         const { createPluginHostService } = require("../plugins/hostService.cjs");
@@ -166,6 +166,7 @@ function createBridgeRegistrar(context) {
           electron: electronModule,
           safeStorage,
           requestPermissionDecision: createNativePermissionDecisionProvider({
+            getLocale: () => getWindowManager().getCurrentLanguage?.() ?? "en",
             dialog: electronModule.dialog,
             window: win,
           }),

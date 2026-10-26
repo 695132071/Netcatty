@@ -13,11 +13,11 @@ test("curated catalog uses pinned public first-party source and rejects advanced
   assert.equal(validateCatalog(entries).length, 1);
   for (const main of [{ node: "index.js" }, { browser: "index.js", node: "node.js" }]) {
     const entry = structuredClone(entries[0]); entry.manifest.main = main;
-    assert.throws(() => validateCatalog([entry]), /browser runtime only/);
+    assert.throws(() => validateCatalog([entry]), /browser-only packages/);
   }
   const entry = structuredClone(entries[0]);
   entry.manifest.permissions.optional.push("runtime.advanced");
-  assert.throws(() => assertCatalogManifest(entry.manifest, entry), /advanced runtime/);
+  assert.throws(() => assertCatalogManifest(entry.manifest, entry), /advanced developer mode/);
   for (const readme of ["../README.md", "a/%2e%2e/README.md", "a\\README.md"]) {
     assert.throws(() => validateCatalog([{ ...entries[0], readme }]), /unpinned/);
   }

@@ -1,36 +1,68 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { netcattyBridge } from '../../infrastructure/services/netcattyBridge';
 
+type ReadmeState = { id: string; attempt: number; status: 'loading' | 'ready' | 'error'; text: string; error: string | null };
 export function usePluginCatalog(selectedId: string | null) {
   const [entries, setEntries] = useState<NetcattyPluginCatalogEntry[]>([]);
-  const [readme, setReadme] = useState<{ id: string; text: string } | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [listStatus, setListStatus] = useState<'loading' | 'ready' | 'error'>('loading');
+  const [listError, setListError] = useState<string | null>(null);
+  const [listAttempt, setListAttempt] = useState(0);
+  const [readmeState, setReadmeState] = useState<ReadmeState | null>(null);
+  const [readmeAttempt, setReadmeAttempt] = useState(0);
+  const [installError, setInstallError] = useState<{ id: string; message: string } | null>(null);
   const [busy, setBusy] = useState(false);
+  const installing = useRef(false);
+  const mounted = useRef(false);
+  useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
   useEffect(() => {
     let active = true;
-    void netcattyBridge.get()?.listPluginCatalog?.().then((list) => { if (active) setEntries(list); }).catch((cause) => { if (active) setError(String(cause)); });
+    setListStatus('loading'); setListError(null);
+    void (async () => {
+      try {
+        const bridge = netcattyBridge.get();
+        if (!bridge?.listPluginCatalog) throw new Error('Catalog browsing unavailable');
+        const list = await bridge.listPluginCatalog();
+        if (active) { setEntries(list); setListStatus('ready'); }
+      } catch (cause) { if (active) { setListStatus('error'); setListError(String(cause)); } }
+    })();
     return () => { active = false; };
-  }, []);
+  }, [listAttempt]);
   useEffect(() => {
     if (!selectedId) return;
     let active = true;
-    void netcattyBridge.get()?.getPluginCatalogReadme?.(selectedId).then((text) => {
-      if (active) setReadme({ id: selectedId, text });
-    }).catch((cause) => { if (active) setError(String(cause)); });
+    const base = { id: selectedId, attempt: readmeAttempt, text: '', error: null };
+    setReadmeState({ ...base, status: 'loading' });
+    void (async () => {
+      try {
+        const bridge = netcattyBridge.get();
+        if (!bridge?.getPluginCatalogReadme) throw new Error('README retrieval unavailable');
+        const text = await bridge.getPluginCatalogReadme(selectedId);
+        if (active) setReadmeState({ ...base, status: 'ready', text });
+      } catch (cause) { if (active) setReadmeState({ ...base, status: 'error', error: String(cause) }); }
+    })();
     return () => { active = false; };
-  }, [selectedId]);
+  }, [selectedId, readmeAttempt]);
+  const currentReadme = readmeState?.id === selectedId && readmeState.attempt === readmeAttempt ? readmeState : null;
   return {
-    entries, readme: readme?.id === selectedId ? readme.text : null, error, busy,
+    entries, listStatus, listError,
+    readme: currentReadme?.status === 'ready' ? currentReadme.text : null,
+    readmeStatus: currentReadme?.status ?? (selectedId ? 'loading' : 'idle'),
+    readmeError: currentReadme?.error ?? null,
+    error: installError?.id === selectedId ? installError.message : null,
+    busy,
+    retryList: () => setListAttempt((attempt) => attempt + 1),
+    retryReadme: () => setReadmeAttempt((attempt) => attempt + 1),
     async install(id: string) {
-      if (busy) return;
-      setBusy(true); setError(null);
+      if (installing.current) return;
+      installing.current = true;
+      setBusy(true); setInstallError(null);
       try {
         const bridge = netcattyBridge.require();
         if (!bridge.installCatalogPlugin) throw new Error('Catalog installation unavailable');
         await bridge.installCatalogPlugin(id);
-        window.dispatchEvent(new Event('netcatty:plugin-packages-changed')); 
-      } catch (cause) { setError(String(cause)); }
-      finally { setBusy(false); }
+        window.dispatchEvent(new Event('netcatty:plugin-packages-changed'));
+      } catch (cause) { if (mounted.current) setInstallError({ id, message: String(cause) }); }
+      finally { installing.current = false; if (mounted.current) setBusy(false); }
     },
   };
 }

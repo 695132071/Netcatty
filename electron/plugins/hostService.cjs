@@ -2,7 +2,8 @@
 
 const path = require("node:path");
 
-const { PLUGIN_API_VERSION } = require("./constants.cjs");
+const { assertBrowserOnlyPlugin } = require("../../domain/pluginRuntimePolicy.cjs");
+const { isPluginDevelopmentEnabled, PLUGIN_API_VERSION } = require("./constants.cjs");
 const { PluginDatabase } = require("./database.cjs");
 const { PluginCompanionSupervisor } = require("./companionSupervisor.cjs");
 const { PluginCredentialBroker, assertLeaseParams } = require("./credentialBroker.cjs");
@@ -79,12 +80,14 @@ function collectInstalledSyncProviderCatalog(database) {
 }
 
 function createPluginHostService(options) {
+  const allowAdvancedPlugins = isPluginDevelopmentEnabled(options.env ?? process.env);
   const paths = createPluginPaths(options.app.getPath("userData"));
   const appRoot = options.appRoot ?? options.app.getAppPath();
   const runtimeDirectory = options.runtimeDirectory ?? path.join(__dirname, "runtime");
   const database = new PluginDatabase(paths.database);
   try {
     const packageStore = new PackageStore({
+      allowAdvancedPlugins,
       paths,
       database,
       netcattyVersion: options.app.getVersion(),
@@ -179,11 +182,13 @@ function createPluginHostService(options) {
     }
     const requestedRuntimeResolver = options.resolveRuntimeKind ?? resolveDefaultRuntimeKind;
     const resolveRuntimeKind = async (context) => {
+      if (!allowAdvancedPlugins) assertBrowserOnlyPlugin(context.plugin.manifest);
       const kind = await requestedRuntimeResolver(context);
       if (
         (kind !== "browser" && kind !== "utility")
         || !context.availableKinds.includes(kind)
       ) throw new Error(`Plugin runtime selection is unavailable: ${String(kind)}`);
+      if (!allowAdvancedPlugins && kind !== "browser") throw new Error("Advanced plugin runtime requires developer mode");
       await permissionEngine.authorizeRequired(context.plugin, {
         securityPrincipal: context.securityPrincipal,
         signal: context.signal,

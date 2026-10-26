@@ -22,6 +22,6 @@ test('package detail renders manifest resources as text and explains advanced au
   assert.match(html, /https:\/\/example.com/);
   assert.match(html, /&lt;script&gt;/);
   assert.doesNotMatch(html, /<script>/);
-  assert.match(html, /Declarations are not grants/);
+  assert.match(html, /not a grant/);
   assert.match(html, /aaaaaaaaaaaaaaaa/);
 });

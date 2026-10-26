@@ -1,3 +1,4 @@
+import { usePluginManager } from '../../../application/state/usePluginManager';
 import { PluginMarketplace } from './PluginMarketplace';
 import { PluginPackageManager } from './PluginPackageManager';
 import { FolderOpen } from 'lucide-react';
@@ -6,6 +7,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { normalizePluginKeyboardEvent } from '../../../application/state/pluginKeybindings';
 import { usePluginContributions } from '../../../application/state/usePluginContributions';
 import { useI18n } from '../../../application/i18n/I18nProvider';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '../../ui/tabs';
 import { Button } from '../../ui/button';
 import { Input } from '../../ui/input';
 import { SettingsAnchor, SettingsTabContent } from '../settings-ui';
@@ -282,6 +284,8 @@ export function PluginSettingField({
 
 export default function SettingsPluginsTab() {
   const { t } = useI18n();
+  const manager = usePluginManager();
+  const [pluginView, setPluginView] = useState<'installed' | 'marketplace'>('installed');
   const availableFonts = useAvailableFonts();
   const scopeCatalog = usePluginSettingScopeCatalog();
   const [scopeIds, setScopeIds] = useState<Partial<Record<NetcattyPluginSettingScopeKind, string>>>({});
@@ -297,20 +301,27 @@ export default function SettingsPluginsTab() {
     .flatMap((plugin) => plugin.settings.map((setting) => setting.scope))
     .filter((scope): scope is NetcattyPluginSettingScopeKind => scope !== 'application')),
   [contributions.snapshot.plugins]);
-  const hasVisibleContributions = contributions.snapshot.plugins.some((plugin) => (
-    plugin.settings.some((setting) => setting.visible)
-    || plugin.views.some((view) => view.visible && view.location === 'settings')
-  ));
+
 
   return (
     <SettingsTabContent value="plugins">
-      <SettingsAnchor anchorId="plugins-root" className="mx-auto w-full max-w-3xl space-y-6 px-8 py-8">
+      <SettingsAnchor anchorId="plugins-root" className="space-y-5">
         <div>
           <h2 className="text-xl font-semibold">{t('settings.plugins.title')}</h2>
           <p className="mt-1 text-sm text-muted-foreground">{t('settings.plugins.description')}</p>
         </div>
-        <PluginPackageManager />
-        {contributions.available && <PluginMarketplace />}
+        <Tabs value={pluginView} onValueChange={(value) => setPluginView(value as 'installed' | 'marketplace')} className="space-y-5">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <TabsList className="h-auto flex-wrap justify-start bg-muted/50">
+            <TabsTrigger value="installed">{t('settings.plugins.manager.installed')} <span className="ml-2 text-muted-foreground">{manager.plugins.length}</span></TabsTrigger>
+            <TabsTrigger value="marketplace">{t('settings.plugins.market.title')}</TabsTrigger>
+          </TabsList>
+          <Button variant="outline" size="sm" disabled={!manager.available || manager.busy} onClick={() => { setPluginView('installed'); void manager.importPackage(); }}><FolderOpen size={14} className="mr-2" />{t('settings.plugins.manager.import')}</Button>
+        </div>
+        {manager.credentialStorageAvailable === false && <p role="status" className="text-xs text-muted-foreground">{t('settings.plugins.manager.noVault')}</p>}
+        <TabsContent value="marketplace" className="m-0 space-y-6"><PluginMarketplace /></TabsContent>
+        <TabsContent value="installed" className="m-0 space-y-6">
+        <PluginPackageManager manager={manager} />
         {contextualScopes.size > 0 && (
           <section className="grid gap-3 rounded-lg border border-border/70 bg-muted/10 p-4 sm:grid-cols-2" aria-label={t('settings.plugins.scopeTargets')}>
             {[...contextualScopes].map((kind) => (
@@ -369,9 +380,8 @@ export default function SettingsPluginsTab() {
             </section>
           );
         })}
-        {!contributions.loading && contributions.available && !hasVisibleContributions && (
-          <p className="text-sm text-muted-foreground">{t('settings.plugins.empty')}</p>
-        )}
+        </TabsContent>
+        </Tabs>
       </SettingsAnchor>
     </SettingsTabContent>
   );

@@ -21,6 +21,7 @@ const {
   resolveInstalledVersionDirectory,
 } = require("./paths.cjs");
 
+const { assertBrowserOnlyPlugin } = require("../../domain/pluginRuntimePolicy.cjs");
 const { assertCatalogManifest } = require("./catalogPolicy.cjs");
 
 const INSTALL_METADATA_FILE = "install.json";
@@ -138,6 +139,7 @@ function validateRemovalMetadata(value) {
 
 class PackageStore {
   constructor(options) {
+    this.allowAdvancedPlugins = options.allowAdvancedPlugins !== false;
     this.paths = options.paths;
     this.database = options.database;
     this.netcattyVersion = options.netcattyVersion;
@@ -158,7 +160,7 @@ class PackageStore {
     for (const plugin of this.database.listPlugins()) {
       if (!plugin.enabled) continue;
       await this.assertCompatible(plugin).catch((error) => {
-        if (error.code !== "PLUGIN_INCOMPATIBLE") throw error;
+        if (!["PLUGIN_INCOMPATIBLE", "PLUGIN_UNSUPPORTED_RUNTIME"].includes(error.code)) throw error;
       });
     }
   }
@@ -170,9 +172,15 @@ class PackageStore {
       apiVersion: this.apiVersion,
       features: this.supportedFeatures,
     });
-    if (result.compatible) return result;
-    const error = new Error(`Plugin is incompatible: ${result.errors.join("; ")}`);
-    error.code = "PLUGIN_INCOMPATIBLE";
+    let error;
+    if (!this.allowAdvancedPlugins) {
+      try { assertBrowserOnlyPlugin(plugin.manifest); } catch (cause) { error = cause; }
+    }
+    if (!error && result.compatible) return result;
+    if (!error) {
+      error = new Error(`Plugin is incompatible: ${result.errors.join("; ")}`);
+      error.code = "PLUGIN_INCOMPATIBLE";
+    }
     const current = this.database.getActivePlugin(plugin.id);
     if (current?.activeVersion === plugin.activeVersion) {
       this.database.setEnabled(plugin.id, false);
@@ -206,6 +214,7 @@ class PackageStore {
       const validation = await pluginCli.extractPluginPackage(archiveSnapshot, extractedDirectory);
       await syncDirectoryTree(extractedDirectory);
       const manifest = validation.manifest;
+      if (!this.allowAdvancedPlugins) assertBrowserOnlyPlugin(manifest);
       const compatibility = pluginCli.checkPluginCompatibility(manifest, {
         netcattyVersion: this.netcattyVersion,
         apiVersion: this.apiVersion,
