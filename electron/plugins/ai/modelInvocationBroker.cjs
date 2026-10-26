@@ -28,9 +28,10 @@ function abortable(promise, signal) {
 // In-memory, source-isolated handles. No AgentRuntime, tools, chat persistence,
 // provider configuration, URLs, credentials or arbitrary system prompts cross it.
 class ModelInvocationBroker {
-  constructor({ resolveDataOwner, selectModel, contexts, clock = Date.now, limits = {} }) {
-    if (typeof resolveDataOwner !== "function" || typeof selectModel !== "function") throw new TypeError("Host adapters required");
+  constructor({ resolveDataOwner, resolveBudgetOwner, selectModel, contexts, clock = Date.now, limits = {} }) {
+    if (typeof resolveDataOwner !== "function" || typeof resolveBudgetOwner !== "function" || typeof selectModel !== "function") throw new TypeError("Host adapters required");
     this.resolveDataOwner = resolveDataOwner;
+    this.resolveBudgetOwner = resolveBudgetOwner;
     this.selectModel = selectModel;
     this.contexts = contexts;
     this.clock = clock;
@@ -54,13 +55,21 @@ class ModelInvocationBroker {
     const owner = await this.resolveDataOwner(context);
     await context.assertActive();
     if (!owner || (typeof owner !== "object" && typeof owner !== "string")) throw fail("permissionDenied", "Host data owner is unavailable");
-    return { owner, runtimeId: context.runtimeId, pluginVersion: context.pluginVersion };
+    // Handle identity remains runtime-specific. Budget identity is separately
+    // supplied by the host and must survive runtime replacement/regrant.
+    const budgetOwner = await this.resolveBudgetOwner(owner, context);
+    await context.assertActive();
+    if (typeof budgetOwner !== "string" || !budgetOwner || Buffer.byteLength(budgetOwner) > 8_192) {
+      throw fail("permissionDenied", "Host budget owner is unavailable");
+    }
+    return { owner, budgetOwner, runtimeId: context.runtimeId, pluginVersion: context.pluginVersion };
   }
 
   async #ownedChat(chat, context) {
     const binding = await this.#binding(context);
     if (this.closed || this.chats.get(chat.handle) !== chat
-      || chat.owner !== binding.owner || chat.runtimeId !== binding.runtimeId || chat.pluginVersion !== binding.pluginVersion) {
+      || chat.owner !== binding.owner || chat.budgetOwner !== binding.budgetOwner
+      || chat.runtimeId !== binding.runtimeId || chat.pluginVersion !== binding.pluginVersion) {
       throw fail("permissionDenied", "Plugin chat is unavailable");
     }
   }
@@ -149,14 +158,14 @@ class ModelInvocationBroker {
       }
       await this.#guard(turn, context);
       this.#prune();
-      const rate = this.rates.get(chat.owner) ?? { startedAt: this.clock(), count: 0, tokens: 0 };
+      const rate = this.rates.get(chat.budgetOwner) ?? { startedAt: this.clock(), count: 0, tokens: 0 };
       // Reserve conservatively using UTF-8 input bytes plus the output cap. Do
       // not refund unknown provider usage after cancellation or disconnect.
       const reserved = bytes + 1_024 + this.limits.outputTokens;
-      if ((!this.rates.has(chat.owner) && this.rates.size >= this.limits.rateOwners) || rate.count >= this.limits.requestsPerMinute || rate.tokens + reserved > this.limits.reservedTokensPerMinute) {
+      if ((!this.rates.has(chat.budgetOwner) && this.rates.size >= this.limits.rateOwners) || rate.count >= this.limits.requestsPerMinute || rate.tokens + reserved > this.limits.reservedTokensPerMinute) {
         throw fail("resourceExhausted", "Model request/token budget reached");
       }
-      rate.count++; rate.tokens += reserved; this.rates.set(chat.owner, rate);
+      rate.count++; rate.tokens += reserved; this.rates.set(chat.budgetOwner, rate);
       await this.#guard(turn, context);
       const iterator = await abortable(chat.model.invoke({ prompt, contexts: selected, signal: controller.signal,
         maxOutputTokens: this.limits.outputTokens, maxChunkBytes: this.limits.chunkBytes }), controller.signal);

@@ -3,11 +3,12 @@ const assert = require("node:assert/strict");
 const test = require("node:test");
 const { ModelInvocationBroker } = require("./modelInvocationBroker.cjs");
 const { SelectedContextAuthority } = require("../context/selectedContextAuthority.cjs");
+const { PluginAISourceBinding } = require("./sourceBinding.cjs");
 const { RPC_ERRORS } = require("../rpcRouter.cjs");
 const deferred = () => { let resolve; const promise = new Promise((r) => { resolve = r; }); return { promise, resolve }; };
 const denied = (error) => error.code === RPC_ERRORS.permissionDenied;
 function fixture(options = {}) {
-  const owner = {}; let currentOwner = owner; let current = true; let active = true; let now = 0;
+  const owner = { budgetOwner: "synthetic-source-a" }; let currentOwner = owner; let current = true; let active = true; let now = 0;
   const request = new AbortController();
   const context = { pluginId: "same-id", pluginVersion: "1", runtimeId: "r1", signal: request.signal,
     assertActive: async () => { request.signal.throwIfAborted(); if (!active) throw Error("stopped"); } };
@@ -17,7 +18,8 @@ function fixture(options = {}) {
       yield { kind: "usage", inputTokens: 7, outputTokens: 2, totalTokens: 9, secret: "DO_NOT_SERIALIZE" }; })(); }, ...options.model };
   const resolveDataOwner = async () => currentOwner;
   const contexts = new SelectedContextAuthority({ resolveDataOwner, clock: () => now });
-  const broker = new ModelInvocationBroker({ resolveDataOwner, selectModel: async () => model, contexts,
+  const broker = new ModelInvocationBroker({ resolveDataOwner, resolveBudgetOwner: (binding) => binding.budgetOwner,
+    selectModel: async () => model, contexts,
     clock: () => now, limits: options.limits });
   return { broker, context, contexts, calls, request, owner, model, setOwner: (value) => { currentOwner = value; },
     setCurrent: (value) => { current = value; }, setActive: (value) => { active = value; }, setTime: (value) => { now = value; } };
@@ -219,4 +221,66 @@ test("pending model selections reserve capacity and cannot publish after revocat
   f.broker.releaseRuntime("r1");
   pending.resolve({ ...f.model, dispose: () => { disposed++; } });
   await rejected; assert.equal(f.broker.chats.size, 0); assert.equal(f.broker.openings.size, 0); assert.equal(disposed, 1); f.broker.shutdown();
+});
+
+test("same-source runtime replacement preserves minute budgets while distinct sources stay isolated", async (t) => {
+  for (const limits of [{ requestsPerMinute: 1 }, { reservedTokensPerMinute: 3_074 }]) {
+    await t.test(Object.keys(limits)[0], async (t) => {
+      let now = 1_000; let sourceId = "source-a"; let runtimeId = "runtime-1"; let invocations = 0;
+      const pluginId = "com.example.assistant";
+      const context = () => ({ pluginId, pluginVersion: "1", runtimeId, assertActive: async () => {} });
+      const source = () => ({ id: sourceId, kind: "third-party", origin: `https://${sourceId}.example` });
+      const binding = new PluginAISourceBinding({
+        database: {
+          getActivePlugin: () => ({ enabled: true, activeVersion: "1", runtime: { status: "running" }, source: source() }),
+          getRetainedPluginSource: source,
+          privateOwner: () => `opaque:${sourceId}:assistant`,
+          publicPluginId: (owner) => owner === `opaque:${sourceId}:assistant` ? pluginId : null,
+        },
+        getRuntimeIdentity: () => ({ ...context(), runtimeKind: "browser" }),
+      });
+      const broker = new ModelInvocationBroker({
+        resolveDataOwner: (caller) => binding.resolve(caller),
+        resolveBudgetOwner: (owner) => JSON.stringify([owner.sourceKey, owner.privateOwner]),
+        selectModel: () => ({ label: "Synthetic model", isCurrent: () => true, invoke: () => {
+          invocations++; return (async function* () {})();
+        } }), clock: () => now, limits,
+      });
+      t.after(() => { broker.shutdown(); binding.shutdown(); });
+      const start = (chat) => broker.start({ chatHandle: chat.chatHandle, prompt: "Hi" }, context());
+      const replace = (nextSource) => {
+        broker.releaseRuntime(runtimeId); binding.releaseRuntime(runtimeId);
+        sourceId = nextSource; runtimeId = `${runtimeId}-next`;
+      };
+      const firstOwner = await binding.resolve(context());
+      const first = await broker.open(context()); const firstTurn = await start(first);
+      await broker.stop(firstTurn.turnHandle, context());
+      replace("source-a");
+      assert.notEqual(await binding.resolve(context()), firstOwner);
+      const restarted = await broker.open(context());
+      await assert.rejects(start(restarted), (error) => error.code === RPC_ERRORS.resourceExhausted);
+      assert.equal(invocations, 1);
+      assert.equal(await broker.close(first.chatHandle, context()), false);
+      replace("source-b");
+      const other = await broker.open(context()); const otherTurn = await start(other);
+      await broker.stop(otherTurn.turnHandle, context()); assert.equal(invocations, 2);
+      replace("source-a");
+      const returned = await broker.open(context());
+      now = 60_999;
+      await assert.rejects(start(returned), (error) => error.code === RPC_ERRORS.resourceExhausted);
+      now = 61_000;
+      const afterWindow = await start(returned); assert.equal(invocations, 3);
+      await broker.stop(afterWindow.turnHandle, context());
+    });
+  }
+});
+
+test("budget ownership requires an explicit host adapter and never falls back to the plugin ID", async (t) => {
+  assert.throws(() => new ModelInvocationBroker({ resolveDataOwner: () => ({}), selectModel: () => ({}) }), /Host adapters required/);
+  for (const budgetOwner of [undefined, "", {}, "x".repeat(8_193)]) {
+    const f = fixture(); t.after(() => f.broker.shutdown());
+    f.broker.resolveBudgetOwner = () => budgetOwner;
+    await assert.rejects(f.broker.open(f.context), denied);
+    assert.equal(f.calls.length, 0); assert.equal(f.broker.chats.size, 0);
+  }
 });

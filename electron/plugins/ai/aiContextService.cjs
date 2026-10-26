@@ -30,6 +30,7 @@ class PluginAIContextService {
     this.runtimeContexts = new Map();
     this.registrations = [];
     this.broker = new ModelInvocationBroker({ resolveDataOwner: this.resolveOwner,
+      resolveBudgetOwner: (binding) => JSON.stringify([binding.sourceKey, binding.privateOwner]),
       selectModel: async (context) => {
         await this.#guard(context);
         const model = await this.host.selectModel(context);
