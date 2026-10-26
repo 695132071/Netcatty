@@ -37,7 +37,6 @@ test("clean-checkout test entrypoints build plugin runtime workspaces first", ()
     packageJson.scripts.pretest,
     /^npm run build:plugin-runtime-deps(?: && npm run check:codebuddy-sdk-contract)?$/,
   );
-  for (const lifecycle of ["pretest:plugin-runtime", "pretest:plugin-runtime:electron"]) {
-    assert.equal(packageJson.scripts[lifecycle], "npm run build:plugin-runtime-deps");
-  }
+  assert.equal(packageJson.scripts["pretest:plugin-runtime"], "npm run build:plugin-runtime-deps && npm run build --workspace @netcatty/example-starter-plugin");
+  assert.equal(packageJson.scripts["pretest:plugin-runtime:electron"], "npm run build:plugin-runtime-deps");
 });
