@@ -23,6 +23,8 @@ test('state pill exposes actual state, opposite action, focus styling and pendin
     assert.equal(pill().props['aria-label'], 'Disable Pill');
     assert.ok(pill().children.includes('Enabled'));
     assert.match(pill().props.className, /rounded-full/);
+    assert.match(pill().props.className, /border-0/);
+    assert.doesNotMatch(pill().props.className, /border-primary|border-border/);
     assert.match(pill().props.className, /bg-primary\/10/);
     assert.match(pill().props.className, /focus-visible:ring-2/);
     assert.match(pill().props.style.color, /--primary/);
