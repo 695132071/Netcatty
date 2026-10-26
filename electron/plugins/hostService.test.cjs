@@ -401,3 +401,30 @@ test("normal release blocks a custom utility placement before permission prompts
   }), /requires developer mode/);
   assert.equal(prompts, 0);
 });
+
+test("host service logs revocation with injected provenance and drains through manager shutdown", async (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "netcatty-synthetic-log-host-"));
+  let seen;
+  const service = createPluginHostService({ ...createOptions(root), resolvePluginProvenance(input) {
+    seen = input;
+    return { sourceId: "synthetic-host-source", namespace: "test", sourceKind: "local" };
+  } });
+  t.after(async () => { await service.manager.shutdown(); fs.rmSync(root, { recursive: true, force: true }); });
+  const manifest = { manifestVersion: 1, id: "com.example.synthetic-audit", version: "1.0.0", name: "Synthetic", publisher: "example", engines: { netcatty: ">=0.0.0", api: ">=0.1.0-internal <0.2.0" }, main: { browser: "index.js" } };
+  service.database.installVersion({ pluginId: manifest.id, version: manifest.version, manifest, archiveSha256: "b".repeat(64), packageRelativePath: `${manifest.id}/${manifest.version}/package` }, { enable: true });
+  await service.logService.ready;
+  assert.equal(service.logService.status().saveToDisk, false);
+  await service.logService.configure({ saveToDisk: true, verbose: false });
+  service.permissionEngine.revokeAll(manifest.id);
+  await service.logService.sink.flush();
+  const record = JSON.parse(await fsp.readFile(service.logService.sink.file(0), "utf8"));
+  assert.equal(record.operation, "permission.revoked");
+  assert.equal(record.sourceId, "synthetic-host-source");
+  assert.equal(record.archiveSha256, "b".repeat(64));
+  assert.equal(record.pluginVersion, "1.0.0");
+  assert.equal(record.runtimeId, null);
+  assert.equal(seen.pluginId, manifest.id);
+  assert.equal(seen.archiveSha256, "b".repeat(64));
+  await service.manager.shutdown();
+  assert.equal(service.logService.sink.closed, true);
+});

@@ -1,6 +1,7 @@
 "use strict";
 
 const path = require("node:path");
+const { PluginLogService } = require("./pluginLogService.cjs");
 const NETWORK_CREDENTIAL_LEASE_FEATURE = require("./generated/plugin-contract.schema.json").$defs.NetworkCredentialLeaseFeature.const;
 const VAULT_PAGES_FEATURE = require("./generated/plugin-contract.schema.json").$defs.VaultPagesFeature.const;
 const TERMINAL_SIDEBAR_FEATURE = require("./generated/plugin-contract.schema.json").$defs.TerminalSidebarFeature.const;
@@ -92,6 +93,7 @@ function createPluginHostService(options) {
   const runtimeDirectory = options.runtimeDirectory ?? path.join(__dirname, "runtime");
   const database = new PluginDatabase(paths.database);
   let interactionService;
+  const logService = new PluginLogService({ paths, electron: options.electron, resolveProvenance: options.resolvePluginProvenance });
   try {
     const packageStore = new PackageStore({
       allowAdvancedPlugins,
@@ -139,6 +141,8 @@ function createPluginHostService(options) {
     const filesystemBroker = new PluginFilesystemBroker({
       quotaManager,
       openDirectoryHandle: options.openPluginDirectoryHandle,
+      protectedDirectories: [paths.logs],
+      protectedFiles: [logService.preferencesPath, `${logService.preferencesPath}.tmp`],
     });
     const networkBroker = new PluginNetworkBroker({
       fetch: options.fetch ?? (options.electron.net?.fetch
@@ -233,6 +237,7 @@ function createPluginHostService(options) {
     };
     runtimeSupervisor = new RuntimeSupervisor({
       electron: options.electron,
+      logService,
       database,
       packageStore,
       protocol,
@@ -256,6 +261,16 @@ function createPluginHostService(options) {
       utilityModuleMappings: options.utilityModuleMappings ?? createUtilityModuleMappings(moduleResources),
     });
     runtimeSupervisor.onDidChangeRuntime((event) => contributionService.onRuntimeStateChanged(event));
+    permissionEngine.onDidRevoke((event) => {
+      const plugin = database.getActivePlugin(event.pluginId);
+      const identity = runtimeSupervisor.getRuntimeIdentity(event.pluginId) ?? {
+        pluginId: event.pluginId, pluginVersion: plugin?.activeVersion,
+      };
+      logService.audit(logService.identity(identity, plugin), {
+        operation: "permission.revoked", authorization: "not-required", result: "ok",
+        resources: event.resource ? [event.resource] : [],
+      });
+    });
     const terminalProviderService = new PluginTerminalProviderService({
       contributionService,
       permissionEngine,
@@ -389,9 +404,11 @@ function createPluginHostService(options) {
         leaseStore.shutdown();
         permissionEngine.shutdown();
         quotaManager.shutdown();
+        await logService.close();
       },
     });
     return {
+      logService,
       themeService,
       interactionService,
       catalogService: new RegistryCatalogService({ manager, fetch: options.electron.net?.fetch?.bind(options.electron.net) }),
@@ -422,6 +439,7 @@ function createPluginHostService(options) {
     };
   } catch (error) {
     try { interactionService?.shutdown(); } catch {}
+    void logService.close();
     database.close();
     throw error;
   }

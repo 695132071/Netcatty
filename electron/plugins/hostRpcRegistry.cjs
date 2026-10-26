@@ -175,45 +175,73 @@ class PluginHostRpcRegistry {
         await assertCurrent?.();
         transportContext.signal?.throwIfAborted();
       };
-      await assertActive();
-      const validatedParams = registration.validateParams
-        ? registration.validateParams(params)
-        : params;
-      if (validatedParams && typeof validatedParams.then === "function") {
-        throw new TypeError("Plugin host RPC parameter validators must be synchronous");
-      }
-      const authorizationContext = Object.freeze({
-        ...transportContext,
-        ...identity,
-        assertActive,
-        kind,
-        method,
-        metadata: registration.metadata,
-        params: validatedParams,
-      });
-      const resolvedAuthorization = typeof registration.authorization === "function"
-        ? await registration.authorization(validatedParams, authorizationContext)
-        : registration.authorization;
-      const authorization = resolvedAuthorization == null
-        ? null
-        : cloneAndFreezeMetadata(resolvedAuthorization);
-      await assertActive();
-      const context = Object.freeze({
-        ...authorizationContext,
-        authorization,
-      });
-      let index = -1;
-      const dispatch = async (nextIndex) => {
-        if (nextIndex <= index) throw new Error("Plugin host RPC middleware called next() more than once");
-        index = nextIndex;
-        const current = middleware[nextIndex];
-        if (current) return current(context, () => dispatch(nextIndex + 1));
+      const startedAt = Date.now();
+      let authorizationOutcome = "not-reached";
+      let auditResources;
+      let auditResult;
+      let auditError;
+      try {
         await assertActive();
-        return registration.handler(validatedParams, context);
-      };
-      const result = await dispatch(0);
-      await assertActive();
-      return result;
+        const validatedParams = registration.validateParams
+          ? registration.validateParams(params)
+          : params;
+        if (validatedParams && typeof validatedParams.then === "function") {
+          throw new TypeError("Plugin host RPC parameter validators must be synchronous");
+        }
+        const authorizationContext = Object.freeze({
+          ...transportContext,
+          ...identity,
+          assertActive,
+          kind,
+          method,
+          metadata: registration.metadata,
+          recordAuthorization: (outcome) => {
+            if (["allowed", "denied", "not-required"].includes(outcome)) authorizationOutcome = outcome;
+          },
+          params: validatedParams,
+        });
+        const resolvedAuthorization = typeof registration.authorization === "function"
+          ? await registration.authorization(validatedParams, authorizationContext)
+          : registration.authorization;
+        const authorization = resolvedAuthorization == null
+          ? null
+          : cloneAndFreezeMetadata(resolvedAuthorization);
+        auditResources = authorization?.resources;
+        await assertActive();
+        const context = Object.freeze({
+          ...authorizationContext,
+          authorization,
+        });
+        let index = -1;
+        const dispatch = async (nextIndex) => {
+          if (nextIndex <= index) throw new Error("Plugin host RPC middleware called next() more than once");
+          index = nextIndex;
+          const current = middleware[nextIndex];
+          if (current) return current(context, () => dispatch(nextIndex + 1));
+          await assertActive();
+          return registration.handler(validatedParams, context);
+        };
+        const result = await dispatch(0);
+        await assertActive();
+        auditResult = result;
+        return result;
+      } catch (error) {
+        auditError = error;
+        throw error;
+      } finally {
+        // Never record params, handler results, error messages or plugin text.
+        const dataBytes = (value) => {
+          if (typeof value === "string") return Buffer.byteLength(value);
+          if (Buffer.isBuffer(value) || value instanceof Uint8Array) return value.byteLength;
+          return null;
+        };
+        const field = (value, key) => value && typeof value === "object"
+          ? Object.getOwnPropertyDescriptor(value, key)?.value : undefined;
+        try { identity.logger?.audit?.({ operation: method, resources: auditResources,
+          authorization: authorizationOutcome, result: auditError ? "error" : "ok",
+          errorCode: auditError?.code, durationMs: Date.now() - startedAt,
+          inputBytes: dataBytes(field(params, "data")), outputBytes: dataBytes(field(auditResult, "data")) }); } catch {}
+      }
     };
     const requestHandlers = Object.freeze(Object.fromEntries(
       [...this.requests].map(([method, registration]) => [

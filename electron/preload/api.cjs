@@ -122,6 +122,11 @@ function createPreloadApi(ctx) {
   }),
   restartPlugin: (pluginId) => ipcRenderer.invoke("netcatty:plugins:restart", { pluginId }),
   uninstallPlugin: (pluginId) => ipcRenderer.invoke("netcatty:plugins:uninstall", { pluginId }),
+  getPluginLogStatus: () => ipcRenderer.invoke("netcatty:plugins:log-status"),
+  configurePluginLogs: (settings) => ipcRenderer.invoke("netcatty:plugins:log-configure", settings),
+  openPluginLogFolder: () => ipcRenderer.invoke("netcatty:plugins:log-open"),
+  exportPluginLogs: () => ipcRenderer.invoke("netcatty:plugins:log-export"),
+  clearPluginLogs: () => ipcRenderer.invoke("netcatty:plugins:log-clear"),
   getPluginThemes: () => ipcRenderer.invoke("netcatty:plugins:theme-catalog"),
   applyPluginTheme: (request) => ipcRenderer.invoke("netcatty:plugins:theme-apply", request),
   onPluginThemesChanged: (callback) => {

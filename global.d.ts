@@ -439,7 +439,22 @@ declare global {
     | NetcattyPluginAuthenticationChallengeOpenEvent
     | NetcattyPluginAuthenticationChallengeCancelEvent;
 
+  interface NetcattyPluginLogStatus {
+    saveToDisk: boolean;
+    verbose: boolean;
+    droppedRecords: number;
+    writeErrors: number;
+    pendingBytes: number;
+    maxBytes: number;
+    retentionDays: number;
+  }
+
   interface NetcattyBridge {
+    getPluginLogStatus?(): Promise<NetcattyPluginLogStatus>;
+    configurePluginLogs?(settings: { saveToDisk: boolean; verbose: boolean }): Promise<NetcattyPluginLogStatus>;
+    openPluginLogFolder?(): Promise<NetcattyPluginLogStatus>;
+    exportPluginLogs?(): Promise<NetcattyPluginLogStatus>;
+    clearPluginLogs?(): Promise<NetcattyPluginLogStatus>;
     getPluginRuntimeStatus?(): Promise<NetcattyPluginRuntimeStatus>;
     listPluginCatalog?(): Promise<NetcattyPluginCatalogSnapshot>;
     getPluginCatalogReadme?(id: string, selectionToken?: string): Promise<string>;

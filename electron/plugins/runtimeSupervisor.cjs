@@ -51,6 +51,7 @@ function resolveDefaultRuntimeKind({ plugin }) {
 class RuntimeSupervisor {
   constructor(options) {
     this.electron = options.electron;
+    this.logService = options.logService;
     this.database = options.database;
     this.packageStore = options.packageStore;
     this.protocol = options.protocol;
@@ -202,6 +203,7 @@ class RuntimeSupervisor {
         quarantinedAt: details.quarantinedAt,
       });
     }
+    if (identity) this.logService?.audit(identity.logger.identity, { operation: `runtime.${status}`, authorization: "not-required", result: ["error", "quarantined"].includes(status) ? "error" : "ok" });
     this.#emitRuntimeState(identity, status, details);
   }
 
@@ -278,7 +280,7 @@ class RuntimeSupervisor {
     ) {
       throw new PluginRpcError(RPC_ERRORS.unavailable, "Plugin changed while runtime placement was resolved");
     }
-    const logger = new PluginLogger({ pluginId, logsDirectory: this.paths.logs });
+    let logger;
     let runtime;
     const identity = Object.freeze({
       pluginId,
@@ -288,7 +290,7 @@ class RuntimeSupervisor {
       securityPrincipal,
       manifest: freezeJson(structuredClone(plugin.manifest)),
       packageRoot,
-      logger,
+      get logger() { return logger; },
       assertCurrent: () => {
         const active = this.database.getActivePlugin(pluginId);
         if (
@@ -301,11 +303,13 @@ class RuntimeSupervisor {
         }
       },
     });
+    logger = this.logService?.createLogger(identity, plugin) ?? new PluginLogger();
     const routes = this.rpcRegistry.createRoutes(identity);
     const onExit = (details) => { void this.#handleExit(pluginId, runtime, identity, details); };
-    const onProtocolError = (error) => logger.write("error", "Plugin protocol violation", {
-      error: error?.message ?? String(error),
-    });
+    const onProtocolError = (error) => {
+      logger.audit({ operation: "runtime.protocol", authorization: "not-reached", result: "error", errorCode: error?.code });
+      return logger.write("error", "Plugin protocol violation", { error: error?.message });
+    };
     runtime = kind === "browser"
       ? this.runtimeFactories.browser({
           electron: this.electron,
@@ -541,6 +545,7 @@ class RuntimeSupervisor {
   }
 
   async #cleanupRuntime(identity) {
+    identity?.logger?.close();
     if (!identity || !this.runtimeCleanup) return;
     await this.runtimeCleanup(Object.freeze({
       pluginId: identity.pluginId,

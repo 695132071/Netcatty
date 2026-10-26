@@ -637,11 +637,21 @@ class PluginPermissionEngine {
 
   createMiddleware() {
     return async (context, next) => {
-      if (context.metadata.public === true) return next();
+      if (context.metadata.public === true) {
+        context.recordAuthorization?.("not-required");
+        return next();
+      }
       if (!context.authorization) {
+        context.recordAuthorization?.("denied");
         throw permissionDenied(`Plugin host method has no authorization policy: ${context.method}`);
       }
-      await this.authorize(context, context.authorization);
+      try {
+        await this.authorize(context, context.authorization);
+      } catch (error) {
+        if (error?.code === RPC_ERRORS.permissionDenied) context.recordAuthorization?.("denied");
+        throw error;
+      }
+      context.recordAuthorization?.("allowed");
       return next();
     };
   }
