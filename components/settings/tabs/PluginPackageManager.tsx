@@ -49,9 +49,9 @@ export function PluginPackageDetails({ plugin }: { plugin: NetcattyInstalledPlug
   </div>;
 }
 
-export function PluginPackageManager({ manager, onSelectionChange }: { manager: ReturnType<typeof usePluginManager>; onSelectionChange?: (id: string | null) => void }) {
+export function PluginPackageManager({ manager, onSelectionChange, initialSelectedId }: { initialSelectedId?: string | null; manager: ReturnType<typeof usePluginManager>; onSelectionChange?: (id: string | null) => void }) {
   const { t, resolvedLocale } = useI18n();
-  const [selected, setSelected] = useState<string | null>(null);
+  const [selected, setSelected] = useState<string | null>(initialSelectedId ?? null);
   const [search, setSearch] = useState('');
   const [sourceFilter, setSourceFilter] = useState('');
   const rootRef = useRef<HTMLElement>(null);

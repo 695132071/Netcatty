@@ -88,10 +88,12 @@ runtime, which already has full Node and filesystem authority.
 
 ## Integration boundaries
 
-`PluginLogSettings` is a standalone compact component, mounted by a single import
-and element in `SettingsPluginsTab`. It adds no marketplace tab and changes no
-Installed, Official, Third-party, or source-database implementation. When merging
-with the marketplace branch, preserve this element in the host settings surface.
+`PluginLogSettings` presents a compact settings row on `PluginSettingsLanding`.
+Its standard host dialog contains the save and verbose switches plus local file
+actions. The landing page also shows installed-plugin quick controls using the
+existing host manager. The Installed, Official and Third-party manager pages keep
+their existing layout; declared settings links open the relevant installed detail.
+The logging backend and source database are unchanged by this UI restructuring.
 
 `createPluginHostService` now injects the host-owned
 `createPluginLogProvenanceResolver(database)` by default. It consumes the source
@@ -132,7 +134,8 @@ synthetic fixture below. Do not retry the blocked local Electron launch.
 Do not open real logs or credentials. Capture screenshots of the settings card,
 verbose disclosure, and native Clear confirmation. Record a short flow:
 
-1. Open Plugins settings. Confirm both options are off and no host-v1 files exist.
+1. Open Plugins settings and choose **Configure** in the local logging row.
+   Confirm both options are off and no host-v1 files exist.
 2. Enable local saving. Invoke a synthetic plugin host operation and deny another.
 3. Open the folder and export to a synthetic destination. Inspect parsed JSONL for
    host identity, outcomes, target digests, and absence of synthetic secret bodies.

@@ -5,8 +5,8 @@ import { PluginMarketplace } from './PluginMarketplace';
 import { PluginPackageManager } from './PluginPackageManager';
 import { FolderOpen } from 'lucide-react';
 import { PluginStatus } from './PluginStatus';
-import { PluginLogSettings } from './PluginLogSettings';
-import React, { useEffect, useMemo, useState } from 'react';
+import { PluginSettingsLanding } from './PluginSettingsLanding';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 
 import { normalizePluginKeyboardEvent } from '../../../application/state/pluginKeybindings';
 import { usePluginContributions } from '../../../application/state/usePluginContributions';
@@ -286,11 +286,14 @@ export function PluginSettingField({
   );
 }
 
-function PluginManagementContent({ handoff }: { handoff: (action: () => void) => void }) {
+function PluginManagementContent({ handoff, manager, initialSelectedId }: {
+  handoff: (action: () => void) => void;
+  manager: ReturnType<typeof usePluginManager>;
+  initialSelectedId: string | null;
+}) {
   const { t } = useI18n();
-  const manager = usePluginManager();
   const [catalogToolbar, setCatalogToolbar] = useState<HTMLDivElement | null>(null);
-  const [selectedInstalled, setSelectedInstalled] = useState<string | null>(null);
+  const [selectedInstalled, setSelectedInstalled] = useState<string | null>(initialSelectedId);
   const [pluginView, setPluginView] = useState<'installed' | 'marketplace' | 'thirdparty'>('installed');
   const availableFonts = useAvailableFonts();
   const scopeCatalog = usePluginSettingScopeCatalog();
@@ -328,7 +331,7 @@ function PluginManagementContent({ handoff }: { handoff: (action: () => void) =>
         <TabsContent forceMount hidden={pluginView !== 'marketplace'} value="marketplace" className="m-0 space-y-6"><PluginMarketplace installed={manager.plugins} toolbarContainer={pluginView === 'marketplace' ? catalogToolbar : undefined} noVault={manager.credentialStorageAvailable === false} /></TabsContent>
         <TabsContent forceMount hidden={pluginView !== 'thirdparty'} value="thirdparty" className="m-0 space-y-6"><PluginThirdPartyMarket installed={manager.plugins} toolbarContainer={pluginView === 'thirdparty' ? catalogToolbar : undefined} noVault={manager.credentialStorageAvailable === false} /></TabsContent>
         <TabsContent value="installed" className="m-0 space-y-6">
-        <PluginPackageManager manager={manager} onSelectionChange={setSelectedInstalled} />
+        <PluginPackageManager manager={manager} initialSelectedId={initialSelectedId} onSelectionChange={setSelectedInstalled} />
         {contextualScopes.size > 0 && (
           <section className="grid gap-3 rounded-lg border border-border/70 bg-muted/10 p-4 sm:grid-cols-2" aria-label={t('settings.plugins.scopeTargets')}>
             {[...contextualScopes].map((kind) => (
@@ -395,16 +398,26 @@ function PluginManagementContent({ handoff }: { handoff: (action: () => void) =>
 
 
 export default function SettingsPluginsTab() {
-  const { t } = useI18n();
+  const manager = usePluginManager();
+  const [open, setOpen] = useState(false);
+  const [initialSelectedId, setInitialSelectedId] = useState<string | null>(null);
+  const opener = useRef<HTMLElement | null>(null);
+  const managerButton = useRef<HTMLButtonElement | null>(null);
+  const contributions = usePluginContributions({ context: { 'netcatty.surface': 'settings' } });
+  const settingsAvailable = useMemo(() => new Set(contributions.snapshot.plugins
+    .filter((plugin) => plugin.settings.some((setting) => setting.visible) || plugin.views.some((view) => view.location === 'settings' && view.visible))
+    .map((plugin) => plugin.id)), [contributions.snapshot]);
   return (
     <SettingsTabContent value="plugins">
-      <SettingsAnchor anchorId="plugins-root" className="space-y-5">
-        <div>
-          <h2 className="text-xl font-semibold">{t('settings.plugins.title')}</h2>
-          <p className="mt-1 text-sm text-muted-foreground">{t('settings.plugins.description')}</p>
-        </div>
-        <PluginManagementDialog>{(handoff) => <PluginManagementContent handoff={handoff} />}</PluginManagementDialog>
-        <PluginLogSettings />
+      <SettingsAnchor anchorId="plugins-root" className="space-y-6">
+        <PluginSettingsLanding manager={manager} managerButtonRef={managerButton} settingsAvailable={settingsAvailable} settingsError={contributions.error?.message} onManage={(pluginId, element) => {
+          opener.current = element;
+          setInitialSelectedId(pluginId);
+          setOpen(true);
+        }} />
+        <PluginManagementDialog open={open} onOpenChange={setOpen} trigger={null} restoreFocusTo={opener} fallbackFocusTo={managerButton}>
+          {(handoff) => <PluginManagementContent handoff={handoff} manager={manager} initialSelectedId={initialSelectedId} />}
+        </PluginManagementDialog>
       </SettingsAnchor>
     </SettingsTabContent>
   );

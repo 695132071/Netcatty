@@ -1,6 +1,26 @@
 import type { Messages } from '../types';
 
 export const enCoreMessages: Messages = {
+  "settings.plugins.landing.loading": "Loading installed plugins…",
+  "settings.plugins.landing.settingsUnavailable": "No plugin settings are available in this context.",
+  "settings.plugins.landing.options": "Plugin options",
+  "settings.plugins.landing.manager": "Plugin manager",
+  "settings.plugins.landing.managerDescription": "Browse plugins and manage installed packages and sources.",
+  "settings.plugins.landing.browse": "Browse",
+  "settings.plugins.landing.refresh": "Refresh installed plugins",
+  "settings.plugins.landing.unavailable": "Plugin management is unavailable in this session.",
+  "settings.plugins.landing.empty": "No plugins installed. Browse the plugin manager to get started.",
+  "settings.plugins.landing.search": "Search installed plugins",
+  "settings.plugins.landing.settingsFor": "Settings for {name}",
+  "settings.plugins.landing.enableSettings": "Enable this plugin to open its available settings.",
+  "settings.plugins.landing.sourceUnknown": "Source unknown",
+  "settings.plugins.landing.status.running": "Running",
+  "settings.plugins.landing.status.starting": "Starting",
+  "settings.plugins.landing.status.stopping": "Stopping",
+  "settings.plugins.landing.status.error": "Error",
+  "settings.plugins.landing.status.quarantined": "Quarantined",
+  "settings.plugins.landing.status.unknown": "Status unknown",
+  "settings.plugins.landing.status.idle": "Enabled, idle",
   // Common
   'common.save': 'Save',
   'common.cancel': 'Cancel',

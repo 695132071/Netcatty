@@ -17,7 +17,7 @@ test('plugin manager is single-instance, closes with Escape, restores focus and 
   install('requestAnimationFrame', dom.window.requestAnimationFrame.bind(dom.window));
   install('cancelAnimationFrame', dom.window.cancelAnimationFrame.bind(dom.window));
   install('IS_REACT_ACT_ENVIRONMENT', true);
-  const { default: React, act, useEffect } = await import('react');
+  const { default: React, act, useEffect, useRef, useState } = await import('react');
   const { createRoot } = await import('react-dom/client');
   const { I18nProvider } = await import('../../../application/i18n/I18nProvider');
   const { PluginManagementDialog } = await import('./PluginManagementDialog');
@@ -69,6 +69,28 @@ test('plugin manager is single-instance, closes with Escape, restores focus and 
     await click(trigger);
     await click(document.querySelector<HTMLButtonElement>('[role="dialog"] button:not([data-dialog-close])')!);
     assert.equal(handedOff, true, 'external view opens only after modal ownership is released');
+    function ControlledEntry() {
+      const [open, setOpen] = useState(false);
+      const browse = useRef<HTMLButtonElement | null>(null);
+      const opener = useRef<HTMLElement | null>(null);
+      return <>
+        <button ref={browse}>Fallback browse</button>
+        <button onClick={(event) => { opener.current = event.currentTarget; setOpen(true); }}>External plugin settings</button>
+        <PluginManagementDialog open={open} onOpenChange={setOpen} trigger={null} restoreFocusTo={opener} fallbackFocusTo={browse}><input aria-label="Controlled search" /></PluginManagementDialog>
+      </>;
+    }
+    await act(async () => root.render(<I18nProvider locale="en"><ControlledEntry /></I18nProvider>));
+    const external = [...document.querySelectorAll<HTMLButtonElement>('button')].find((item) => item.textContent === 'External plugin settings')!;
+    external.focus();
+    await click(external);
+    assert.equal(document.querySelectorAll('[role=dialog]').length, 1);
+    await act(async () => { document.activeElement!.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })); await settle(); });
+    assert.equal(document.activeElement, external, 'controlled entry restores the actual row opener');
+    await click(external);
+    external.disabled = true;
+    await act(async () => { document.activeElement!.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })); await settle(); });
+    assert.equal(document.activeElement?.textContent, 'Fallback browse', 'a disabled or removed opener uses the stable browse action');
+
   } finally {
     await act(async () => root.unmount());
     dom.window.close();

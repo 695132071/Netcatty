@@ -1,6 +1,26 @@
 import type { Messages } from '../types';
 
 export const zhTWCoreMessages: Messages = {
+  "settings.plugins.landing.loading": "正在載入已安裝外掛…",
+  "settings.plugins.landing.settingsUnavailable": "目前內容中沒有可用的外掛設定。",
+  "settings.plugins.landing.options": "外掛選項",
+  "settings.plugins.landing.manager": "外掛管理器",
+  "settings.plugins.landing.managerDescription": "瀏覽外掛，管理已安裝的外掛套件及來源。",
+  "settings.plugins.landing.browse": "瀏覽",
+  "settings.plugins.landing.refresh": "重新整理已安裝外掛",
+  "settings.plugins.landing.unavailable": "目前工作階段無法使用外掛管理。",
+  "settings.plugins.landing.empty": "尚未安裝外掛。可在外掛管理器中瀏覽或匯入外掛。",
+  "settings.plugins.landing.search": "搜尋已安裝外掛",
+  "settings.plugins.landing.settingsFor": "{name} 的設定",
+  "settings.plugins.landing.enableSettings": "啟用此外掛後可開啟其可用設定。",
+  "settings.plugins.landing.sourceUnknown": "來源不明",
+  "settings.plugins.landing.status.running": "執行中",
+  "settings.plugins.landing.status.starting": "啟動中",
+  "settings.plugins.landing.status.stopping": "停止中",
+  "settings.plugins.landing.status.error": "錯誤",
+  "settings.plugins.landing.status.quarantined": "已隔離",
+  "settings.plugins.landing.status.unknown": "狀態不明",
+  "settings.plugins.landing.status.idle": "已啟用，閒置",
   // Common
   'common.save': '儲存',
   'common.cancel': '取消',

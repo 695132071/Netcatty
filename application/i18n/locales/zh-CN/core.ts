@@ -1,6 +1,26 @@
 import type { Messages } from '../types';
 
 export const zhCNCoreMessages: Messages = {
+  "settings.plugins.landing.loading": "正在载入已安装插件…",
+  "settings.plugins.landing.settingsUnavailable": "当前上下文中没有可用的插件设置。",
+  "settings.plugins.landing.options": "插件选项",
+  "settings.plugins.landing.manager": "插件管理器",
+  "settings.plugins.landing.managerDescription": "浏览插件，管理已安装的插件包及来源。",
+  "settings.plugins.landing.browse": "浏览",
+  "settings.plugins.landing.refresh": "刷新已安装插件",
+  "settings.plugins.landing.unavailable": "当前会话无法使用插件管理。",
+  "settings.plugins.landing.empty": "尚未安装插件。可在插件管理器中浏览或导入插件。",
+  "settings.plugins.landing.search": "搜索已安装插件",
+  "settings.plugins.landing.settingsFor": "{name} 的设置",
+  "settings.plugins.landing.enableSettings": "启用此插件后可打开其可用设置。",
+  "settings.plugins.landing.sourceUnknown": "来源未知",
+  "settings.plugins.landing.status.running": "运行中",
+  "settings.plugins.landing.status.starting": "启动中",
+  "settings.plugins.landing.status.stopping": "停止中",
+  "settings.plugins.landing.status.error": "错误",
+  "settings.plugins.landing.status.quarantined": "已隔离",
+  "settings.plugins.landing.status.unknown": "状态未知",
+  "settings.plugins.landing.status.idle": "已启用，空闲",
   // Common
   'common.save': '保存',
   'common.cancel': '取消',
