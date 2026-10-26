@@ -38,6 +38,11 @@ export function useEmbeddedPluginView({ viewId, version, slot, active, context, 
       lifecycle.markViewClosed(viewId);
       void closeView(instanceId).catch(() => {});
     };
+    const failCurrent = () => {
+      if (cancelled) return;
+      close();
+      unavailableRef.current();
+    };
     const unsubscribe = onViewClosed((event) => {
       lifecycle.handleHostClose(event.instanceId);
       if (event.instanceId === instanceId && !cancelled) {
@@ -58,10 +63,10 @@ export function useEmbeddedPluginView({ viewId, version, slot, active, context, 
       const next = rect.width > 0 && rect.height > 0 && !isPluginViewOccluded(mount);
       if (visible === next) return;
       visible = next;
-      void setViewVisibility(instanceId, next).catch(() => { close(); unavailableRef.current(); });
+      void setViewVisibility(instanceId, next).catch(failCurrent);
     };
     const resize = () => {
-      if (opened && !cancelled) void setViewBounds(instanceId, bounds()).catch(() => { close(); unavailableRef.current(); });
+      if (opened && !cancelled) void setViewBounds(instanceId, bounds()).catch(failCurrent);
       updateVisibility();
     };
     const observer = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(resize);
