@@ -1,5 +1,7 @@
 "use strict";
 
+const { describePluginRuntime } = require("../../domain/pluginRuntimePolicy.cjs");
+
 const { randomUUID } = require("node:crypto");
 const path = require("node:path");
 const { pathToFileURL } = require("node:url");
@@ -43,14 +45,7 @@ function freezeJson(value) {
 }
 
 function resolveDefaultRuntimeKind({ plugin }) {
-  const requiresPrivilegedTerminalPipeline = plugin.manifest.contributes?.providers?.some((provider) => (
-    provider.kind === "terminal.interceptor.input"
-    || provider.kind === "terminal.interceptor.output"
-  ));
-  if (plugin.manifest.companionExecutables?.length || requiresPrivilegedTerminalPipeline) {
-    return "utility";
-  }
-  return plugin.manifest.main.browser ? "browser" : "utility";
+  return describePluginRuntime(plugin.manifest).defaultRuntimeKind;
 }
 
 class RuntimeSupervisor {
@@ -212,7 +207,7 @@ class RuntimeSupervisor {
 
   async startEnabled() {
     for (const plugin of this.database.listPlugins()) {
-      if (!plugin.enabled || plugin.runtime.quarantinedAt != null) continue;
+      if (!plugin.enabled || plugin.runtime.quarantinedAt != null || plugin.manifest?.main?.data) continue;
       try { await this.start(plugin.id); } catch {}
     }
   }
@@ -244,7 +239,12 @@ class RuntimeSupervisor {
     signal.throwIfAborted();
     const plugin = this.database.getActivePlugin(pluginId);
     if (!plugin?.manifest || !plugin.packageRelativePath) throw new Error(`Plugin is not installed: ${pluginId}`);
+    // Capture the host's opaque source owner before async package/placement work.
+    // Test doubles without provenance APIs cannot use source-bound capabilities.
+    const sourceOwner = plugin.source && typeof this.database.privateOwner === "function"
+      ? this.database.privateOwner(pluginId) : null;
     if (!plugin.enabled) throw new Error(`Plugin is disabled: ${pluginId}`);
+    if (plugin.manifest.main.data) throw new Error("Static theme packs have no executable runtime");
     if (plugin.runtime.quarantinedAt != null) throw new Error(`Plugin is quarantined: ${pluginId}`);
     const pluginCli = await import("@netcatty/plugin-cli");
     signal.throwIfAborted();
@@ -277,6 +277,8 @@ class RuntimeSupervisor {
     const currentPlugin = this.database.getActivePlugin(pluginId);
     if (
       !currentPlugin?.enabled
+      || (sourceOwner !== null && this.database.privateOwner(pluginId) !== sourceOwner)
+      || (plugin.source && currentPlugin.source?.id !== plugin.source.id)
       || currentPlugin.activeVersion !== plugin.activeVersion
       || currentPlugin.runtime.quarantinedAt != null
     ) {
@@ -290,6 +292,7 @@ class RuntimeSupervisor {
       runtimeId: randomUUID(),
       runtimeKind: kind,
       securityPrincipal,
+      ...(sourceOwner === null ? {} : { sourceOwner, sourceId: plugin.source.id }),
       manifest: freezeJson(structuredClone(plugin.manifest)),
       packageRoot,
       logger,
@@ -298,6 +301,8 @@ class RuntimeSupervisor {
         if (
           this.runtimes.get(pluginId) !== runtime
           || !active?.enabled
+          || (sourceOwner !== null && this.database.privateOwner(pluginId) !== sourceOwner)
+          || (plugin.source && active.source?.id !== plugin.source.id)
           || active.activeVersion !== plugin.activeVersion
           || (active.runtime.status !== "starting" && active.runtime.status !== "running")
         ) {
@@ -356,7 +361,7 @@ class RuntimeSupervisor {
         pluginId,
         pluginVersion: plugin.activeVersion,
         netcattyVersion: this.netcattyVersion,
-        apiVersion: this.apiVersion,
+        apiVersion: compatibility.apiVersion,
         supportedFeatures: this.supportedFeatures,
         enabledFeatures: compatibility.enabledFeatures,
         environment,
@@ -367,7 +372,7 @@ class RuntimeSupervisor {
       if (
         initialized.pluginId !== pluginId
         || initialized.pluginVersion !== plugin.activeVersion
-        || initialized.apiVersion !== this.apiVersion
+        || initialized.apiVersion !== compatibility.apiVersion
         || JSON.stringify([...initialized.enabledFeatures].sort())
           !== JSON.stringify([...compatibility.enabledFeatures].sort())
       ) {
@@ -547,6 +552,7 @@ class RuntimeSupervisor {
   async #cleanupRuntime(identity) {
     if (!identity || !this.runtimeCleanup) return;
     await this.runtimeCleanup(Object.freeze({
+      ...(identity.sourceOwner ? { sourceOwner: identity.sourceOwner, sourceId: identity.sourceId } : {}),
       pluginId: identity.pluginId,
       pluginVersion: identity.pluginVersion,
       runtimeId: identity.runtimeId,
@@ -579,6 +585,7 @@ class RuntimeSupervisor {
       runtimeId: identity.runtimeId,
       runtimeKind: identity.runtimeKind,
       securityPrincipal: identity.securityPrincipal,
+      ...(identity.sourceOwner ? { sourceOwner: identity.sourceOwner, sourceId: identity.sourceId } : {}),
     });
   }
 
@@ -655,7 +662,7 @@ class RuntimeSupervisor {
     if (typeof runtime.openStream !== "function") {
       throw new PluginRpcError(RPC_ERRORS.unavailable, `Plugin runtime cannot receive streams: ${pluginId}`);
     }
-    const stream = await runtime.openStream(streamId, windowBytes);
+    const stream = await runtime.openStream(streamId, windowBytes, { onClose: options?.onClose });
     try {
       const current = await this.#getRunningRuntime(pluginId);
       if (current.runtime !== runtime || current.identity.runtimeId !== identity.runtimeId) {

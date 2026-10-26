@@ -201,7 +201,7 @@ class PluginPermissionEngine {
   }
 
   #grantKey(pluginId, permission, declarationHash, resource) {
-    return `${pluginId}\0${permission}\0${declarationHash}\0${resource}`;
+    return `${this.database.privateOwner?.(pluginId) ?? pluginId}\0${permission}\0${declarationHash}\0${resource}`;
   }
 
   #sessionGrantKey(sessionId, grantKey) {
@@ -219,6 +219,7 @@ class PluginPermissionEngine {
   ) {
     return Object.freeze({
       pluginId: context.pluginId,
+      sourceOwner: this.database.privateOwner?.(context.pluginId) ?? context.pluginId,
       permission,
       declarationHash,
       resource,
@@ -239,6 +240,7 @@ class PluginPermissionEngine {
     sessionId,
   ) {
     return grant.pluginId === context.pluginId
+      && grant.sourceOwner === (this.database.privateOwner?.(context.pluginId) ?? context.pluginId)
       && grant.permission === permission
       && grant.declarationHash === declarationHash
       && (grant.scope !== "session" || grant.sessionId === sessionId)
@@ -658,6 +660,22 @@ class PluginPermissionEngine {
         grant.pluginId === pluginId
       ))),
     });
+  }
+
+  describeGrants(pluginId, context) {
+    const groups = this.listGrants(pluginId);
+    const declarations = context ? normalizePermissionDeclarations(context.manifest) : new Map();
+    return Object.fromEntries(Object.entries(groups).map(([scope, grants]) => [scope, grants.map((grant) => {
+      const declaration = declarations.get(grant.permission);
+      const matchesCurrentActivation = Boolean(
+        context?.pluginId === pluginId
+        && context.securityPrincipal
+        && declaration
+        && declarationAllowsResource(declaration, grant.resource)
+        && grant.declarationHash === permissionDeclarationHash(declaration, context.securityPrincipal),
+      );
+      return Object.freeze({ ...grant, matchesCurrentActivation });
+    })]));
   }
 
   revokeAlways(pluginId, permission, resource) {

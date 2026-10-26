@@ -333,6 +333,7 @@ test("required resource-scoped permissions declare activation-time bounds", () =
   const validate = validator("PluginManifest");
   const resourceScoped = [
     ["network", "https://example.com"],
+    ["network.stream", "tls://example.com:443"],
     ["filesystem.read", "/tmp/plugin-read"],
     ["filesystem.write", "/tmp/plugin-write"],
     ["companion.execute", "com.example.contract-test.helper"],
@@ -365,6 +366,10 @@ test("required resource-scoped permissions declare activation-time bounds", () =
     assert.equal(validate({
       ...validManifest,
       permissions: { optional: [permission] },
+    }), permission !== "network.stream", `${permission}: ${JSON.stringify(validate.errors)}`);
+    assert.equal(validate({
+      ...validManifest,
+      permissions: { optional: [{ permission, resources: [resource] }] },
     }), true, JSON.stringify(validate.errors));
   }
 });

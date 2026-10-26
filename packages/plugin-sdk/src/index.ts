@@ -13,6 +13,8 @@ import type {
   ConnectionStatusResult,
   ConnectionValidateResult,
   CredentialRef,
+  PluginNetworkRequest,
+  PluginNetworkResponse,
   FeatureId,
   ImporterDetectPayload,
   ImporterDetectResult,
@@ -105,6 +107,19 @@ export type PluginCommandHandler = (args: JsonValue | undefined, invocation: Plu
 export interface PluginCommands {
   registerCommand(commandId: string, handler: PluginCommandHandler): Disposable;
   executeCommand<T extends JsonValue = JsonValue>(commandId: string, args?: JsonValue): Promise<T>;
+}
+
+export interface PluginHostUI {
+  quickPick(title: string, items: readonly import("@netcatty/plugin-contract").HostQuickPickItem[]): Promise<string | undefined>;
+  /** Single-line text. The host rejects CR/LF in initial values and submitted responses. */
+  input(title: string, initialValue?: string): Promise<string | undefined>;
+}
+
+export interface PluginClipboard {
+  /** The host previews text only after the user asks, then separately confirms sharing it. */
+  readText(title: string): Promise<string | undefined>;
+  /** The host shows the exact text and requires explicit confirmation before replacement. */
+  writeText(text: string, title: string): Promise<boolean>;
 }
 
 export interface PluginContextKeys {
@@ -636,23 +651,32 @@ export interface PluginCredentialBroker {
   createLease(credential: SecretRef | CredentialRef, options: PluginCredentialLeaseOptions): Promise<SecretLeaseRef>;
 }
 
-export interface PluginNetworkRequest {
-  readonly url: string;
-  readonly method?: "GET" | "POST" | "PUT" | "PATCH" | "DELETE" | "HEAD";
-  readonly headers?: Readonly<Record<string, string>>;
-  readonly body?: Readonly<{ encoding: "utf8" | "base64"; data: string }>;
-  readonly timeoutMs?: number;
-}
-
-export interface PluginNetworkResponse {
-  readonly url: string;
-  readonly status: number;
-  readonly headers: Readonly<Record<string, string>>;
-  readonly body: Readonly<{ encoding: "base64"; data: string }>;
-}
+export type { PluginNetworkAuthorization, PluginNetworkRequest, PluginNetworkResponse } from "@netcatty/plugin-contract";
 
 export interface PluginNetworkClient {
   request(request: PluginNetworkRequest): Promise<PluginNetworkResponse>;
+  connect(request: import("@netcatty/plugin-contract").ByteStreamConnectRequest, cancellationToken?: CancellationToken): Promise<PluginByteConnection>;
+}
+
+export interface PluginAIClient {
+  openChat(params: import("@netcatty/plugin-contract").PluginAIEmptyParams): Promise<import("@netcatty/plugin-contract").PluginAIChatResult>;
+  startTurn(params: import("@netcatty/plugin-contract").PluginAIStartTurnParams): Promise<import("@netcatty/plugin-contract").PluginAITurnResult>;
+  readTurn(params: import("@netcatty/plugin-contract").PluginAITurnRef): Promise<import("@netcatty/plugin-contract").PluginAIStreamEvent>;
+  stopTurn(params: import("@netcatty/plugin-contract").PluginAITurnRef): Promise<import("@netcatty/plugin-contract").PluginAIBooleanResult>;
+  closeChat(params: import("@netcatty/plugin-contract").PluginAIChatRef): Promise<import("@netcatty/plugin-contract").PluginAIBooleanResult>;
+}
+
+export interface PluginSelectedContextClient {
+  list(params: import("@netcatty/plugin-contract").PluginAIEmptyParams): Promise<import("@netcatty/plugin-contract").PluginSelectedContextListResult>;
+  read(params: import("@netcatty/plugin-contract").PluginSelectedContextRef): Promise<import("@netcatty/plugin-contract").PluginSelectedContextContent>;
+}
+
+export interface PluginByteConnection extends Disposable {
+  readonly endpoint: string;
+  readonly readable: PluginReadableByteStream;
+  readonly writable: PluginWritableByteStream;
+  /** Closes both directions. Repeated calls on this handle are harmless. */
+  close(): Promise<void>;
 }
 
 export interface PluginFilesystemEntry {
@@ -734,6 +758,8 @@ export interface PluginContext {
   readonly storage: PluginKeyValueStore;
   readonly settings: PluginSettings;
   readonly commands: PluginCommands;
+  readonly ui: PluginHostUI;
+  readonly clipboard: PluginClipboard;
   readonly contextKeys: PluginContextKeys;
   readonly views: PluginViews;
   readonly providers: PluginProviders;
@@ -742,6 +768,8 @@ export interface PluginContext {
   readonly secrets: PluginSecretStore;
   readonly credentials: PluginCredentialBroker;
   readonly network: PluginNetworkClient;
+  readonly ai: PluginAIClient;
+  readonly selectedContext: PluginSelectedContextClient;
   readonly filesystem: PluginFilesystemClient;
   readonly companions: PluginCompanionService;
   readonly streams: PluginStreams;
@@ -922,3 +950,14 @@ export function definePlugin<T extends NetcattyPlugin>(plugin: T): T {
 export function throwIfCancellationRequested(token: CancellationToken): void {
   if (token.isCancellationRequested) throw new CancellationError();
 }
+
+export { PLUGIN_NETWORK_CREDENTIAL_LEASE_FEATURE } from "@netcatty/plugin-contract";
+export { PLUGIN_BYTE_STREAM_FEATURE, PLUGIN_BYTE_STREAM_LIMITS } from "@netcatty/plugin-contract";
+export { PLUGIN_AI_MODEL_INVOCATION_FEATURE, PLUGIN_SELECTED_CONTEXT_FEATURE } from "@netcatty/plugin-contract";
+
+export { PLUGIN_HOST_INTERACTION_FEATURE } from "@netcatty/plugin-contract";
+export { PLUGIN_VAULT_PAGES_FEATURE } from "@netcatty/plugin-contract";
+export { PLUGIN_TERMINAL_SIDEBAR_FEATURE } from "@netcatty/plugin-contract";
+export { PLUGIN_INTERACTIVE_COMMAND_FEATURE } from "@netcatty/plugin-contract";
+
+export { PLUGIN_THEME_PACK_FEATURE } from "@netcatty/plugin-contract";

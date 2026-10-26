@@ -1,9 +1,16 @@
+import { PluginThirdPartyMarket } from './PluginThirdPartyMarket';
+import { usePluginManager } from '../../../application/state/usePluginManager';
+import { PluginManagementDialog } from './PluginManagementDialog';
+import { PluginMarketplace } from './PluginMarketplace';
+import { PluginPackageManager } from './PluginPackageManager';
 import { FolderOpen } from 'lucide-react';
+import { PluginStatus } from './PluginStatus';
 import React, { useEffect, useMemo, useState } from 'react';
 
 import { normalizePluginKeyboardEvent } from '../../../application/state/pluginKeybindings';
 import { usePluginContributions } from '../../../application/state/usePluginContributions';
 import { useI18n } from '../../../application/i18n/I18nProvider';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '../../ui/tabs';
 import { Button } from '../../ui/button';
 import { Input } from '../../ui/input';
 import { SettingsAnchor, SettingsTabContent } from '../settings-ui';
@@ -278,8 +285,12 @@ export function PluginSettingField({
   );
 }
 
-export default function SettingsPluginsTab() {
+function PluginManagementContent({ handoff }: { handoff: (action: () => void) => void }) {
   const { t } = useI18n();
+  const manager = usePluginManager();
+  const [catalogToolbar, setCatalogToolbar] = useState<HTMLDivElement | null>(null);
+  const [selectedInstalled, setSelectedInstalled] = useState<string | null>(null);
+  const [pluginView, setPluginView] = useState<'installed' | 'marketplace' | 'thirdparty'>('installed');
   const availableFonts = useAvailableFonts();
   const scopeCatalog = usePluginSettingScopeCatalog();
   const [scopeIds, setScopeIds] = useState<Partial<Record<NetcattyPluginSettingScopeKind, string>>>({});
@@ -292,21 +303,31 @@ export default function SettingsPluginsTab() {
   }), [scopeIds]);
   const contributions = usePluginContributions(query);
   const contextualScopes = useMemo(() => new Set(contributions.snapshot.plugins
+    .filter((plugin) => plugin.id === selectedInstalled)
     .flatMap((plugin) => plugin.settings.map((setting) => setting.scope))
     .filter((scope): scope is NetcattyPluginSettingScopeKind => scope !== 'application')),
-  [contributions.snapshot.plugins]);
-  const hasVisibleContributions = contributions.snapshot.plugins.some((plugin) => (
-    plugin.settings.some((setting) => setting.visible)
-    || plugin.views.some((view) => view.visible && view.location === 'settings')
-  ));
+  [contributions.snapshot.plugins, selectedInstalled]);
+
 
   return (
-    <SettingsTabContent value="plugins">
-      <SettingsAnchor anchorId="plugins-root" className="mx-auto w-full max-w-3xl space-y-6 px-8 py-8">
-        <div>
-          <h2 className="text-xl font-semibold">{t('settings.plugins.title')}</h2>
-          <p className="mt-1 text-sm text-muted-foreground">{t('settings.plugins.description')}</p>
+    <div className="space-y-5">
+        <Tabs value={pluginView} onValueChange={(value) => { setSelectedInstalled(null); setPluginView(value as 'installed' | 'marketplace' | 'thirdparty'); }} className="space-y-5">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <TabsList className="h-auto flex-wrap justify-start bg-muted/50">
+            <TabsTrigger value="installed">{t('settings.plugins.manager.installed')} <span className="ml-2 text-muted-foreground">{manager.plugins.length}</span></TabsTrigger>
+            <TabsTrigger value="marketplace">{t('settings.plugins.sources.official')}</TabsTrigger>
+            <TabsTrigger value="thirdparty">{t('settings.plugins.sources.thirdparty')}</TabsTrigger>
+          </TabsList>
+          <div className="flex items-center gap-2">
+          {pluginView === 'installed' && <PluginStatus noVault={manager.credentialStorageAvailable === false} />}
+          <div ref={setCatalogToolbar} className="flex items-center gap-2" />
+          <Button variant="outline" size="sm" disabled={!manager.available || manager.busy} onClick={() => { setPluginView('installed'); void manager.importPackage(); }}><FolderOpen size={14} className="mr-2" />{t('settings.plugins.manager.import')}</Button>
+          </div>
         </div>
+        <TabsContent forceMount hidden={pluginView !== 'marketplace'} value="marketplace" className="m-0 space-y-6"><PluginMarketplace installed={manager.plugins} toolbarContainer={pluginView === 'marketplace' ? catalogToolbar : undefined} noVault={manager.credentialStorageAvailable === false} /></TabsContent>
+        <TabsContent forceMount hidden={pluginView !== 'thirdparty'} value="thirdparty" className="m-0 space-y-6"><PluginThirdPartyMarket installed={manager.plugins} toolbarContainer={pluginView === 'thirdparty' ? catalogToolbar : undefined} noVault={manager.credentialStorageAvailable === false} /></TabsContent>
+        <TabsContent value="installed" className="m-0 space-y-6">
+        <PluginPackageManager manager={manager} onSelectionChange={setSelectedInstalled} />
         {contextualScopes.size > 0 && (
           <section className="grid gap-3 rounded-lg border border-border/70 bg-muted/10 p-4 sm:grid-cols-2" aria-label={t('settings.plugins.scopeTargets')}>
             {[...contextualScopes].map((kind) => (
@@ -326,7 +347,7 @@ export default function SettingsPluginsTab() {
         )}
         {contributions.loading && <p className="text-sm text-muted-foreground">{t('settings.plugins.loading')}</p>}
         {contributions.error && <p role="alert" className="text-sm text-destructive">{contributions.error.message}</p>}
-        {contributions.snapshot.plugins.map((plugin) => {
+        {contributions.snapshot.plugins.filter((plugin) => plugin.id === selectedInstalled).map((plugin) => {
           const settings = plugin.settings.filter((setting) => setting.visible);
           const views = plugin.views.filter((view) => view.visible && view.location === 'settings');
           if (!settings.length && !views.length) return null;
@@ -356,18 +377,32 @@ export default function SettingsPluginsTab() {
                     <div className="font-mono text-[10px] text-muted-foreground">{view.id}</div>
                     </div>
                   </div>
-                  <Button type="button" variant="outline" size="sm" onClick={() => requestOpenPluginView({
+                  <Button type="button" variant="outline" size="sm" onClick={() => handoff(() => requestOpenPluginView({
                     viewId: view.id,
                     context: { 'netcatty.surface': 'settings' },
-                  })}>{t('common.open')}</Button>
+                  }))}>{t('settings.plugins.openView')}</Button>
                 </div>
               ))}
             </section>
           );
         })}
-        {!contributions.loading && contributions.available && !hasVisibleContributions && (
-          <p className="text-sm text-muted-foreground">{t('settings.plugins.empty')}</p>
-        )}
+        </TabsContent>
+        </Tabs>
+    </div>
+  );
+}
+
+
+export default function SettingsPluginsTab() {
+  const { t } = useI18n();
+  return (
+    <SettingsTabContent value="plugins">
+      <SettingsAnchor anchorId="plugins-root" className="space-y-5">
+        <div>
+          <h2 className="text-xl font-semibold">{t('settings.plugins.title')}</h2>
+          <p className="mt-1 text-sm text-muted-foreground">{t('settings.plugins.description')}</p>
+        </div>
+        <PluginManagementDialog>{(handoff) => <PluginManagementContent handoff={handoff} />}</PluginManagementDialog>
       </SettingsAnchor>
     </SettingsTabContent>
   );

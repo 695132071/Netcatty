@@ -19,6 +19,12 @@ import {
 } from '../providerContinuation';
 
 export interface ProviderRequestContext {
+  /** Refuse direct-fetch fallback for host-brokered plugin model invocations. */
+  requireBridge?: boolean;
+  /** Optional aggregate SSE payload cap, enforced before renderer buffering. */
+  maxStreamBytes?: number;
+  /** Host-owned tag for targeted plugin model transport teardown. */
+  requestIdPrefix?: string;
   getOpenAIChatAssistantFields?: () => Array<OpenAIChatAssistantFields | undefined>;
   transformOpenAIChatAssistantFields?: (
     fields: Array<OpenAIChatAssistantFields | undefined>,
@@ -451,6 +457,7 @@ export function createBridgeFetchForSDK(
   ): Promise<Response> => {
     const bridge = getBridge();
     if (!bridge) {
+      if (requestContext?.requireBridge) throw new Error('Host AI transport is unavailable');
       return globalThis.fetch(input, init);
     }
 
@@ -489,7 +496,7 @@ export function createBridgeFetchForSDK(
 
     // Streaming path
     if (isStreamingRequest(resolvedInit)) {
-      const requestId = `sdk_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+      const requestId = `${requestContext?.requestIdPrefix ?? ''}sdk_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
       const captureOpenAIChatFields = createOpenAIChatStreamFieldCapture(requestContext);
       const normalizeOpenAIChatToolCalls = createOpenAIChatToolCallNormalizer(requestId);
 
@@ -498,6 +505,7 @@ export function createBridgeFetchForSDK(
       const encoder = new TextEncoder();
       let streamController: ReadableStreamDefaultController<Uint8Array> | null = null;
       const pendingChunks: Uint8Array[] = [];
+      let receivedBytes = 0;
       let pendingClose = false;
       let pendingError: Error | null = null;
       let cleanedUp = false;
@@ -537,6 +545,14 @@ export function createBridgeFetchForSDK(
       };
 
       const unsubData = bridge.onAiStreamData(requestId, (data: string) => {
+        if (cleanedUp) return;
+        receivedBytes += encoder.encode(data).byteLength;
+        if (requestContext?.maxStreamBytes !== undefined && receivedBytes > requestContext.maxStreamBytes) {
+          errorStream(new Error('AI stream byte budget exceeded'));
+          cleanup();
+          bridge.aiChatCancel(requestId).catch(() => {});
+          return;
+        }
         const normalizedData = normalizeOpenAIChatCacheUsage(normalizeOpenAIChatToolCalls(data));
         captureOpenAIChatFields(normalizedData);
         // Re-wrap as SSE so the SDK can parse it

@@ -1,3 +1,4 @@
+import { usePluginThemeRuntime } from './usePluginThemeRuntime';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type SetStateAction } from 'react';
 
 import { runThemeTransition, type ThemeTransitionMode } from './themeTransition';
@@ -217,6 +218,7 @@ import {
 } from './appearanceSync';
 
 export const useSettingsState = (options: { enableSettingsSync?: boolean; enableSystemEffects?: boolean } = {}) => {
+  const pluginThemeRevision = usePluginThemeRuntime();
   const enableSettingsSync = options.enableSettingsSync !== false;
   const enableSystemEffects = options.enableSystemEffects !== false;
   const initialCustomKeyBindingsRecord =
@@ -1212,7 +1214,7 @@ export const useSettingsState = (options: { enableSettingsSync?: boolean; enable
         notifySettingsChanged(STORAGE_KEY_COLOR, customAccentRecord);
       }
     }
-  }, [theme, resolvedTheme, lightUiThemeId, darkUiThemeId, accentMode, customAccent, customAccentRecord, notifySettingsChanged]);
+  }, [theme, resolvedTheme, lightUiThemeId, darkUiThemeId, accentMode, customAccent, customAccentRecord, notifySettingsChanged, pluginThemeRevision]);
 
   // Listen for OS color scheme changes to keep systemPreference in sync
   useEffect(() => {
@@ -1979,9 +1981,10 @@ export const useSettingsState = (options: { enableSettingsSync?: boolean; enable
   }, [setTerminalSettings]);
 
   const applyAppTheme = useCallback(() => {
+    void pluginThemeRevision; // Invalidate the closure when host theme data changes.
     const tokens = getUiThemeById(resolvedTheme, resolvedTheme === 'dark' ? darkUiThemeId : lightUiThemeId).tokens;
     applyThemeTokens(theme, resolvedTheme, tokens, accentMode, customAccent);
-  }, [theme, resolvedTheme, lightUiThemeId, darkUiThemeId, accentMode, customAccent]);
+  }, [theme, resolvedTheme, lightUiThemeId, darkUiThemeId, accentMode, customAccent, pluginThemeRevision]);
 
   const setEditorWordWrap = useCallback((enabled: boolean) => {
     setEditorWordWrapState(enabled);

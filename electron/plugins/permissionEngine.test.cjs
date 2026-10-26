@@ -631,3 +631,25 @@ test("permission middleware rejects unclassified methods and permits explicit pu
   }, async () => "ok"), "ok");
   database.close();
 });
+
+test("grant descriptions distinguish current activation from old package and changed declarations", async (context) => {
+  const database = createDatabase(context);
+  const engine = new PluginPermissionEngine({ database, requestDecision: async (request) => ({
+    requestId: request.requestId, decision: "allow", scope: "always",
+  }) });
+  const pluginManifest = manifest({ optional: [{ permission: "network", resources: ["https://example.invalid"] }] });
+  const first = runtimeContext(pluginManifest, { securityPrincipal: defaultSecurityPrincipal(pluginManifest, "a".repeat(64)) });
+  const descriptor = { permission: "network", resources: ["https://example.invalid"], reason: "Synthetic request" };
+  await engine.authorize(first, descriptor);
+  assert.equal(engine.describeGrants(first.pluginId, first).always[0].matchesCurrentActivation, true);
+  assert.equal(engine.describeGrants(first.pluginId, null).always[0].matchesCurrentActivation, false);
+  const upgraded = { ...first, securityPrincipal: defaultSecurityPrincipal(pluginManifest, "b".repeat(64)) };
+  assert.equal(engine.describeGrants(first.pluginId, upgraded).always[0].matchesCurrentActivation, false);
+  await assert.rejects(engine.authorize(upgraded, { ...descriptor, interactive: false }), /permission/i);
+  const changed = { ...first, manifest: { ...pluginManifest, permissions: { optional: [{ permission: "network", resources: ["https://example.invalid", "https://other.invalid"] }] } } };
+  assert.equal(engine.describeGrants(first.pluginId, changed).always[0].matchesCurrentActivation, false);
+  await assert.rejects(engine.authorize(changed, { ...descriptor, interactive: false }), /permission/i);
+  assert.equal(engine.describeGrants(first.pluginId, { ...first, manifest: { ...pluginManifest, permissions: {} } }).always[0].matchesCurrentActivation, false);
+  engine.shutdown();
+  database.close();
+});

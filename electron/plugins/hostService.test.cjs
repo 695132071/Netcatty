@@ -16,6 +16,7 @@ function createOptions(root, configureRpcRegistry) {
       getPath: () => root,
       getVersion: () => "0.0.0",
     },
+    env: { NETCATTY_PLUGIN_DEV: "1" },
     electron: {},
     configureRpcRegistry,
   };
@@ -385,4 +386,18 @@ test("custom host methods without an explicit authorization classification are d
     routes.requestHandlers["custom.unclassified"]({}, transportContext()),
     /no authorization policy/,
   );
+});
+
+test("normal release blocks a custom utility placement before permission prompts", async (context) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "netcatty-plugin-normal-mode-"));
+  context.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  let prompts = 0;
+  const service = createPluginHostService({ ...createOptions(root), env: {}, resolveRuntimeKind: () => "utility", requestPermissionDecision: () => { prompts++; } });
+  context.after(() => service.database.close());
+  await assert.rejects(service.runtimeSupervisor.resolveRuntimeKind({
+    plugin: { id: "com.example.safe", manifest: { main: { browser: "index.js" } } },
+    availableKinds: ["browser", "utility"],
+    signal: new AbortController().signal,
+  }), /requires developer mode/);
+  assert.equal(prompts, 0);
 });

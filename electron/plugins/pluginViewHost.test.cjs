@@ -25,6 +25,7 @@ function fixture(options = {}) {
       if (options.loadURL) await options.loadURL(this);
     }
     send(channel, payload) { this.sent.push([channel, payload]); }
+    focus() { this.emit("focus"); }
     isDestroyed() { return this.destroyed; }
     close() { this.destroyed = true; this.emit("destroyed"); }
   }
@@ -87,9 +88,10 @@ function fixture(options = {}) {
     onDidPostViewMessage(listener) { viewListener = listener; return { dispose() {} }; },
     onDidChange(listener) { changeListener = listener; return { dispose() {} }; },
     async activateView() {
+      await options.activateView?.();
       return {
         plugin: { id: "com.example.view", activeVersion: "1.0.0" },
-        view: { id: "com.example.view.panel", entry: "view.html", location: "aside" },
+        view: { id: "com.example.view.panel", entry: "view.html", location: options.location ?? "aside" },
         identity: { runtimeId: "runtime-view-1", pluginVersion: "1.0.0" },
       };
     },
@@ -121,6 +123,8 @@ function fixture(options = {}) {
       setViewState(pluginId, viewId, scopeId, value) { state.set(`${pluginId}:${viewId}:${scopeId}`, value); },
     },
     contributionService,
+    isLocked: options.isLocked,
+    subscribeLock: options.subscribeLock,
     preloadPath: "/runtime/viewPreload.cjs",
   });
   function createOwner() {
@@ -131,7 +135,7 @@ function fixture(options = {}) {
       addChildView(view) { owner.children.push(view); },
       removeChildView(view) { owner.children = owner.children.filter((entry) => entry !== view); },
     };
-    const sender = {};
+    const sender = new EventEmitter();
     senderOwners.set(sender, owner);
     return { owner, sender };
   }
@@ -340,4 +344,133 @@ test("view cleanup failures cannot suppress owner removal or the renderer close 
     viewId: "com.example.view.panel",
     reason: "renderer-requested",
   }]);
+});
+
+test("Vault pages start hidden and are withdrawn when their current contribution is no longer available", async () => {
+  const value = fixture({ location: "vault-page" });
+  const { owner, sender } = value.createOwner();
+  const result = await value.host.open({ viewId: "com.example.view.panel", scopeId: "window-1:vault-page" }, sender);
+  assert.equal(owner.children.length, 1);
+  assert.equal(value.views[0].visible, false, "host modal checks precede native visibility");
+  value.host.setVisible(result.instanceId, true, sender);
+  assert.equal(value.views[0].visible, true);
+  value.setActivationCurrent(false);
+  value.changeListener()({ reason: "context-key-changed" });
+  assert.equal(owner.children.length, 0);
+  assert.equal(value.views[0].webContents.destroyed, true);
+  await value.host.shutdown();
+});
+
+test("closing a reserved owner instance cancels activation before any native page is constructed", async () => {
+  let release;
+  const gate = new Promise((resolve) => { release = resolve; });
+  const value = fixture({ location: "vault-page", activateView: () => gate });
+  const { owner, sender } = value.createOwner();
+  const other = value.createOwner();
+  const opening = value.host.open({ viewId: "com.example.view.panel", scopeId: "window-1:vault-page", instanceId: "reserved-page" }, sender);
+  await assert.rejects(value.host.close("reserved-page", other.sender), /Untrusted/);
+  await value.host.close("reserved-page", sender);
+  release();
+  await assert.rejects(opening, /cancelled/);
+  assert.equal(value.views.length, 0);
+  assert.equal(owner.children.length, 0);
+  assert.equal(value.host.opening.size, 0);
+  await value.host.shutdown();
+});
+
+test("app lock closes attached pages and cancels pending opens, with subscription cleanup", async () => {
+  let listener, locked = false, disposed = 0;
+  const value = fixture({ location: "vault-page", isLocked: () => locked,
+    subscribeLock(fn) { listener = fn; return () => { disposed++; }; } });
+  const { owner, sender } = value.createOwner();
+  const result = await value.host.open({ viewId: "com.example.view.panel", scopeId: "window-1:vault-page" }, sender);
+  locked = true; listener({ locked: true });
+  assert.equal(owner.children.length, 0);
+  assert.equal(value.views[0].webContents.destroyed, true);
+  await assert.rejects(value.host.open({ viewId: "com.example.view.panel", scopeId: "window-1:vault-page" }, sender), /unavailable/);
+  assert.throws(() => value.host.setVisible(result.instanceId, true, sender));
+  await value.host.shutdown();
+  assert.equal(disposed, 1);
+});
+
+test("browser Scratchpad saves, reopens and clears only its own view state through the real host IPC", async () => {
+  const { readFile } = require("node:fs/promises");
+  const path = require("node:path");
+  const { JSDOM } = require("jsdom");
+  const { VIEW_CHANNELS } = require("./pluginViewHost.cjs");
+  const html = await readFile(path.join(__dirname, "../../examples/plugins/vault-scratchpad/page.html"), "utf8");
+  const script = await readFile(path.join(__dirname, "../../examples/plugins/vault-scratchpad/page.js"), "utf8");
+  const value = fixture({ location: "vault-page" });
+  const { sender } = value.createOwner();
+  async function open(scopeId) {
+    const result = await value.host.open({ viewId: "com.example.view.panel", scopeId }, sender);
+    const contents = value.host.instances.get(result.instanceId).contents;
+    const dom = new JSDOM(html, { runScripts: "outside-only" });
+    dom.window.netcattyView = {
+      getState: async () => value.ipcHandlers.get(VIEW_CHANNELS.getState)({ sender: contents }),
+      setState: async (state) => value.ipcHandlers.get(VIEW_CHANNELS.setState)({ sender: contents }, structuredClone(state)),
+    };
+    dom.window.eval(script);
+    await new Promise((resolve) => setImmediate(resolve));
+    return { dom, document: dom.window.document, id: result.instanceId, contents };
+  }
+  const first = await open("window-1:vault-page");
+  first.document.getElementById("draft").value = "synthetic private draft";
+  first.document.getElementById("save").click();
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.match(first.document.getElementById("status").textContent, /saved/);
+  await value.host.close(first.id, sender); first.dom.window.close();
+  const separate = await open("window-2:vault-page");
+  assert.equal(separate.document.getElementById("draft").value, "", "a different host-owned state scope does not inherit this draft");
+  const reopened = await open("window-1:vault-page");
+  assert.equal(reopened.document.getElementById("draft").value, "synthetic private draft");
+  reopened.document.getElementById("clear").click();
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(reopened.document.getElementById("draft").value, "");
+  const cleared = await open("window-1:vault-page");
+  assert.equal(cleared.document.getElementById("draft").value, "");
+  await value.host.shutdown();
+  assert.throws(() => value.ipcHandlers.get(VIEW_CHANNELS.getState)({ sender: reopened.contents }), /Untrusted/);
+  for (const panel of [separate, reopened, cleared]) panel.dom.window.close();
+});
+
+test("host reload, host/view renderer exit, and host Escape close embedded pages", async () => {
+  for (const action of ["reload", "host-exit", "view-exit", "escape"]) {
+    const value = fixture({ location: "vault-page" });
+    const { sender, owner } = value.createOwner();
+    const opened = await value.host.open({ viewId: "com.example.view.panel", scopeId: "window-1:vault-page" }, sender);
+    const contents = value.views[0].webContents;
+    sender.emit("did-start-navigation", { isMainFrame: true, isSameDocument: true });
+    assert.equal(owner.children.length, 1);
+    if (action === "reload") sender.emit("did-start-navigation", { isMainFrame: true, isSameDocument: false });
+    if (action === "host-exit") sender.emit("render-process-gone");
+    if (action === "view-exit") contents.emit("render-process-gone");
+    if (action === "escape") {
+      let prevented = false;
+      contents.emit("before-input-event", { preventDefault() { prevented = true; } }, { type: "keyDown", key: "Escape" });
+      assert.equal(prevented, true);
+    }
+    assert.equal(owner.children.length, 0, action);
+    assert.equal(value.host.instances.has(opened.instanceId), false, action);
+    assert.equal(sender.listenerCount("render-process-gone"), 0, action);
+    await value.host.shutdown();
+  }
+});
+
+test("sidebar native focus is explicit, owner-bound and cannot raise a hidden or locked page", async () => {
+  let locked = false;
+  const value = fixture({ location: "terminal-sidebar", isLocked: () => locked });
+  const { owner, sender } = value.createOwner(); const other = value.createOwner();
+  const events = [];
+  sender.send = (channel, event) => events.push({ channel, event }); owner.webContents = sender; owner.isFocused = () => true;
+  const { instanceId } = await value.host.open({ viewId: "com.example.view.panel", scopeId: "window-1:terminal-sidebar" }, sender);
+  assert.equal(value.views[0].visible, false);
+  value.host.focus(instanceId, sender); assert.deepEqual(events, []);
+  value.host.setVisible(instanceId, true, sender); assert.deepEqual(events, [], "revealing multiple panes does not focus each one");
+  assert.throws(() => value.host.focus(instanceId, other.sender), /another window/i);
+  value.host.focus(instanceId, sender);
+  assert.deepEqual(events, [{ channel: "netcatty:plugins:view-focused", event: { instanceId } }]);
+  locked = true; value.host.focus(instanceId, sender); assert.equal(events.length, 1);
+  locked = false; value.setActivationCurrent(false); value.changeListener()({ reason: "context-key-changed" });
+  assert.equal(owner.children.length, 0); await value.host.shutdown();
 });

@@ -1,3 +1,6 @@
+import { pluginThemeRegistry } from '../../infrastructure/config/pluginThemeRegistry';
+import { usePluginThemeRevision } from './usePluginThemeRuntime';
+import { useSettingsChromeStore } from './settingsChromeStore';
 import { useLayoutEffect, useRef } from "react";
 import type { TerminalTheme } from "../../domain/models";
 import {
@@ -271,12 +274,15 @@ export function useActiveChromeTheme({
   activeTheme: TerminalTheme | null;
   applyAppTheme: () => void;
 }) {
+  const pluginThemeRevision = usePluginThemeRevision();
+  const { resolvedTheme } = useSettingsChromeStore();
+  const effectiveTheme = pluginThemeRegistry.isActive(resolvedTheme) ? null : activeTheme;
   const applyAppThemeRef = useRef(applyAppTheme);
   applyAppThemeRef.current = applyAppTheme;
 
   useLayoutEffect(() => {
-    syncActiveChromeTheme(activeTheme, applyAppTheme);
-  }, [activeTheme, applyAppTheme]);
+    syncActiveChromeTheme(effectiveTheme, applyAppTheme);
+  }, [effectiveTheme, applyAppTheme, pluginThemeRevision]);
 
   useLayoutEffect(() => {
     return () => {

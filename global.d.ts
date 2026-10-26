@@ -331,13 +331,53 @@ declare global {
   interface NetcattyPluginRuntimeStatus {
     available: boolean;
     experimental: true;
+    credentialStorageAvailable?: boolean;
   }
 
+  interface NetcattyPluginCatalogSnapshot {
+    entries: NetcattyPluginCatalogEntry[];
+    source: "registry" | "cached" | "builtin";
+    error: string | null;
+  }
+
+  interface NetcattyPluginCatalogEntry {
+    selectionToken?: string;
+    id: string;
+    version: string;
+    name: string;
+    description: string;
+    author: string;
+    repository: string;
+    commit: string;
+    license: string;
+    readme: string;
+    manifest: import("@netcatty/plugin-contract").PluginManifest;
+    artifact?: { url: string; sha256: string };
+  }
+
+  interface NetcattyPluginPermissionSnapshot {
+    grants: Array<{
+      permission: string; resource: string; resourceKind: string;
+      scope: 'always' | 'application' | 'session'; sessionId: string | null; grantedAt: number;
+      matchesCurrentActivation: boolean;
+    }>;
+    audit: Array<{ event: string; createdAt: number; permission?: string; scope?: string }>;
+  }
+
+  interface NetcattyPluginSource {
+    id: string;
+    kind: 'official' | 'third-party' | 'local';
+    name: string;
+    origin: string | null;
+    enabled?: boolean;
+  }
   interface NetcattyInstalledPlugin {
+    source?: NetcattyPluginSource;
     id: string;
     enabled: boolean;
     activeVersion: string | null;
-    manifest: unknown;
+    manifest: import("@netcatty/plugin-contract").PluginManifest | null;
+    archiveSha256?: string | null;
     runtime: {
       status: string;
       kind: 'browser' | 'utility' | null;
@@ -409,12 +449,33 @@ declare global {
 
   interface NetcattyBridge {
     getPluginRuntimeStatus?(): Promise<NetcattyPluginRuntimeStatus>;
+    getPluginSourceBinding?(pluginId: string): Promise<NetcattyPluginSource | null>;
+    resetPluginSource?(pluginId: string, expectedSourceId: string): Promise<void>;
+    listPluginSources?(): Promise<NetcattyPluginSource[]>;
+    addPluginSource?(source: { name: string; address: string }): Promise<NetcattyPluginSource>;
+    updatePluginSource?(source: { id: string; name: string; enabled: boolean }): Promise<NetcattyPluginSource>;
+    removePluginSource?(id: string, disablePlugins: boolean): Promise<void>;
+    listPluginCatalog?(sourceId?: string): Promise<NetcattyPluginCatalogSnapshot>;
+    getPluginCatalogReadme?(id: string, selectionToken?: string, sourceId?: string): Promise<string>;
+    installCatalogPlugin?(id: string, selectionToken?: string, sourceId?: string, acceptedSourceId?: string): Promise<NetcattyInstalledPlugin>;
+    setPluginAIHostReady?(ready: boolean): Promise<boolean>;
+    respondPluginAIHost?(response: import("@netcatty/plugin-contract").PluginAIHostResponse): Promise<boolean>;
+    onPluginAIHostRequest?(callback: (request: import("@netcatty/plugin-contract").PluginAIHostRequest) => void): () => void;
+    setPluginInteractionReady?(ready: boolean): Promise<boolean>;
+    respondPluginInteraction?(response: import("@netcatty/plugin-contract").HostInteractionResponse): Promise<boolean>;
+    onPluginInteraction?(callback: (event: import("@netcatty/plugin-contract").HostInteractionEvent) => void): () => void;
     listPlugins?(): Promise<NetcattyInstalledPlugin[]>;
+    getPluginPermissions?(pluginId: string): Promise<NetcattyPluginPermissionSnapshot>;
+    revokePluginPermissions?(pluginId: string): Promise<NetcattyInstalledPlugin>;
     installPluginPackage?(archivePath: string, options?: { enable?: boolean }): Promise<NetcattyInstalledPlugin>;
     setPluginEnabled?(pluginId: string, enabled: boolean): Promise<NetcattyInstalledPlugin>;
     restartPlugin?(pluginId: string): Promise<NetcattyInstalledPlugin>;
     uninstallPlugin?(pluginId: string): Promise<boolean>;
+    getPluginThemes?(): Promise<import("@netcatty/plugin-contract").ThemePackCatalog>;
+    applyPluginTheme?(request: import("@netcatty/plugin-contract").ThemePackApplyRequest): Promise<import("@netcatty/plugin-contract").ThemePackCatalog>;
+    onPluginThemesChanged?(callback: () => void): () => void;
     getPluginContributions?(options?: NetcattyPluginContributionQuery): Promise<NetcattyPluginContributionSnapshot>;
+    getPluginBrandIcon?(pluginId: string): Promise<{ light: string; dark?: string } | null>;
     getPluginContributionIcon?(pluginId: string, icon: Extract<NetcattyPluginIconReference, { kind: 'package' }>): Promise<{ light: string; dark?: string }>;
     executePluginCommand?(command: string, args?: unknown, context?: Record<string, unknown>): Promise<unknown>;
     updatePluginSetting?(pluginId: string, settingId: string, value: unknown, scopeId?: string): Promise<{ restartRequired: boolean }>;
@@ -540,10 +601,12 @@ declare global {
     closePluginView?(instanceId: string): Promise<void>;
     setPluginViewBounds?(instanceId: string, bounds: { x: number; y: number; width: number; height: number }): Promise<void>;
     setPluginViewVisibility?(instanceId: string, visible: boolean): Promise<void>;
+    focusPluginView?(payload: import('@netcatty/plugin-contract').PluginViewFocusRequest): Promise<void>;
     postPluginViewMessage?(instanceId: string, message: unknown): Promise<void>;
     onPluginContributionsChanged?(callback: (event: { reason: string; pluginId: string | null; revision: number }) => void): () => void;
     onPluginViewMessage?(callback: (event: { pluginId: string; viewId: string; message: unknown }) => void): () => void;
     onPluginViewClosed?(callback: (event: NetcattyPluginViewClosedEvent) => void): () => void;
+    onPluginViewFocused?(callback: (event: import('@netcatty/plugin-contract').PluginViewFocusEvent) => void): () => void;
     getPluginScopeCatalog?(): Promise<NetcattyPluginScopeCatalog>;
     setPluginScopeCatalog?(catalog: NetcattyPluginScopeCatalog): Promise<void>;
     onPluginScopeCatalogChanged?(callback: (catalog: NetcattyPluginScopeCatalog) => void): () => void;

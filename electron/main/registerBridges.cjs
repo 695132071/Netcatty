@@ -148,8 +148,8 @@ function createBridgeRegistrar(context) {
     } = require("../plugins/pluginBridge.cjs");
     let terminalWorkerManager = null;
     const { toElectronAccelerator } = require("../plugins/keybindings.cjs");
-    const { startDevelopmentPluginHost } = require("../plugins/hostBootstrap.cjs");
-    const pluginHostService = startDevelopmentPluginHost({
+    const { startPluginHost } = require("../plugins/hostBootstrap.cjs");
+    const pluginHostService = startPluginHost({
       env: process.env,
       createService: () => {
         const { createPluginHostService } = require("../plugins/hostService.cjs");
@@ -165,9 +165,19 @@ function createBridgeRegistrar(context) {
           app,
           electron: electronModule,
           safeStorage,
+          getInteractionWindow: () => win,
+          isAppLocked: () => getAppLockController?.()?.getRuntimeState?.()?.locked !== false,
+          subscribeAppLock: (listener) => getAppLockController?.()?.subscribe?.(listener),
           requestPermissionDecision: createNativePermissionDecisionProvider({
+            getLocale: () => getWindowManager().getCurrentLanguage?.() ?? "en",
             dialog: electronModule.dialog,
             window: win,
+            getWindow: () => {
+              const settingsWindow = getWindowManager().getSettingsWindow?.();
+              return settingsWindow && !settingsWindow.isDestroyed() && settingsWindow.isFocused()
+                ? settingsWindow
+                : win;
+            },
           }),
           getLocale: () => getWindowManager().getCurrentLanguage?.() ?? "en",
           requestTerminalInterceptorSelection: async ({ direction, providers }) => {
@@ -210,6 +220,11 @@ function createBridgeRegistrar(context) {
     });
     registerPluginBridge(ipcMain, {
       manager: pluginHostService?.manager,
+      interactionService: pluginHostService?.interactionService,
+      permissionEngine: pluginHostService?.permissionEngine,
+      runtimeSupervisor: pluginHostService?.runtimeSupervisor,
+      database: pluginHostService?.database,
+      catalogService: pluginHostService?.catalogService,
       contributionService: pluginHostService?.contributionService,
       terminalProviderService: pluginHostService?.terminalProviderService,
       terminalDataPipelineService: pluginHostService?.terminalDataPipelineService,
@@ -227,7 +242,9 @@ function createBridgeRegistrar(context) {
         });
         return result.canceled ? null : result.filePaths[0] ?? null;
       },
+      resolveBrandIcon: (pluginId) => pluginHostService?.contributionIconService?.resolveBrand(pluginId),
       resolveContributionIcon: (payload) => pluginHostService?.contributionIconService?.resolve(payload),
+      themeService: pluginHostService?.themeService,
       viewHost: pluginHostService?.viewHost,
       env: process.env,
       isTrustedSender: createTrustedPluginBridgeSender({ devServerUrl: effectiveDevServerUrl }),

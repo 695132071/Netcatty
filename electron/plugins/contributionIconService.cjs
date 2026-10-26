@@ -231,12 +231,42 @@ class PluginContributionIconService {
     return result;
   }
 
-  async #readIcon(packageRoot, packagePath) {
+  // Branding is inert installed metadata. It does not share the enabled-only
+  // contribution admission path, and accepts no renderer-provided resource path.
+  async resolveBrand(pluginId) {
+    if (typeof pluginId !== "string" || pluginId.length > 256) throw new TypeError("Invalid plugin ID");
+    const plugin = this.database.getActivePlugin(pluginId);
+    if (!plugin?.activeVersion || plugin.runtime?.quarantinedAt != null) return null;
+    const icon = plugin.manifest?.icon;
+    if (icon?.kind !== "package") return null;
+    const identity = JSON.stringify([plugin.activeVersion, plugin.archiveSha256, icon]);
+    const key = JSON.stringify(["brand", pluginId, identity]);
+    if (this.cache.has(key)) return this.cache.get(key);
+    if (this.pending.has(key)) return this.pending.get(key);
+    const pending = (async () => {
+      const root = await this.packageStore.preparePackageRoot(plugin);
+      const result = { light: await this.#readIcon(root, icon.light, true),
+        ...(icon.dark ? { dark: await this.#readIcon(root, icon.dark, true) } : {}) };
+      const current = this.database.getActivePlugin(pluginId);
+      if (!current || current.runtime?.quarantinedAt != null || identity !== JSON.stringify([current.activeVersion, current.archiveSha256, current.manifest?.icon])) {
+        throw new Error("Plugin brand icon ownership changed while loading");
+      }
+      if (this.cache.size >= 256) this.cache.clear();
+      this.cache.set(key, result);
+      return result;
+    })().finally(() => this.pending.delete(key));
+    this.pending.set(key, pending);
+    return pending;
+  }
+
+  async #readIcon(packageRoot, packagePath, brand = false) {
     const segments = packagePath.split("/");
     const file = await readContainedFile(packageRoot, segments);
     if (file.body.byteLength > MAX_ICON_SOURCE_BYTES) throw new Error("Plugin contribution icon is too large");
     const extension = path.extname(file.filePath).toLowerCase();
-    const inspected = inspectContributionIconSource(file.body, extension);
+    const inspected = brand
+      ? (await import("@netcatty/plugin-contract")).inspectPluginBrandIcon(file.body, packagePath)
+      : inspectContributionIconSource(file.body, extension);
     const png = await this.rasterizeIcon({
       body: file.body,
       ...inspected,
