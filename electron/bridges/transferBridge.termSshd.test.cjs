@@ -233,6 +233,7 @@ async function createSequentialTransferFixture(t) {
   return {
     payload, files, sftp, handles, clients,
     rejectedOpens: () => rejectedOpens,
+    openCount: () => opens,
     async start(direction, sftpId = "first", options = {}) {
       const transferId = options.transferId || crypto.randomUUID();
       const localPath = tempDirBridge.getTempFilePath(`term-concurrent-${transferId}.bin`);
@@ -262,6 +263,61 @@ async function createSequentialTransferFixture(t) {
     },
   };
 }
+
+test("single-channel upload waits for the prior promotion before starting the next file", { timeout: 5_000 }, async (t) => {
+  const fixture = await createSequentialTransferFixture(t);
+  const originalLstat = fixture.sftp.lstat;
+  let lstatCalls = 0;
+  let promotionStarted;
+  const promotionStartedPromise = new Promise((resolve) => { promotionStarted = resolve; });
+  let releasePromotion;
+  const promotionGate = new Promise((resolve) => { releasePromotion = resolve; });
+
+  fixture.sftp.lstat = (remotePath, callback) => {
+    lstatCalls += 1;
+    // The first two calls inspect the recovery backup and initial destination.
+    // The third is the final safety check after the .part write; hold it to
+    // prove that the next file cannot acquire the channel yet.
+    if (lstatCalls === 3) {
+      promotionStarted();
+      void promotionGate.then(() => originalLstat(remotePath, callback));
+      return;
+    }
+    originalLstat(remotePath, callback);
+  };
+
+  const first = fixture.start("upload", "first");
+  await promotionStartedPromise;
+  const openCountAtPromotion = fixture.openCount();
+  const second = fixture.start("upload", "alias");
+  let firstResult;
+  let secondResult;
+  try {
+    // start() first writes its local source. Wait until the second upload
+    // actually queues, or incorrectly starts remote work, before asserting.
+    const deadline = Date.now() + 1_000;
+    while (
+      transferBridge._getSessionFastDownloadWaiterCountForTests(fixture.sftp) === 0
+      && lstatCalls === 3
+      && fixture.openCount() === openCountAtPromotion
+      && Date.now() < deadline
+    ) {
+      await new Promise((resolve) => setImmediate(resolve));
+    }
+    assert.equal(lstatCalls, 3, "the next file must not inspect its target during prior promotion");
+    assert.equal(fixture.openCount(), openCountAtPromotion, "the next file must not open a remote handle during prior promotion");
+    assert.equal(transferBridge._getSessionFastDownloadWaiterCountForTests(fixture.sftp), 1,
+      "the second upload must be waiting for the shared channel");
+  } finally {
+    releasePromotion();
+    [firstResult, secondResult] = await Promise.all([first, second]);
+  }
+  assert.equal(firstResult.result.error, undefined);
+  assert.equal(secondResult.result.error, undefined);
+  assert.deepEqual(fixture.files.get(firstResult.targetPath), fixture.payload);
+  assert.deepEqual(fixture.files.get(secondResult.targetPath), fixture.payload);
+  assert.equal(fixture.rejectedOpens(), 0);
+});
 
 for (const secondId of ["first", "alias"]) {
   test(`TERM-SSHD small downloads serialize through body and verification (${secondId})`, async (t) => {
