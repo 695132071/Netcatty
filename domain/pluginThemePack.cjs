@@ -85,6 +85,12 @@ function resolveThemePalette(palette) {
   for (const [a, b] of pairs)
     if (contrast(colors[a], colors[b]) < 4.51)
       throw new Error("Theme text contrast is below 4.5:1");
+  // Host labels and descriptions reuse these text tokens across neutral
+  // surfaces; they do not always sit on their namesake background token.
+  for (const surface of ["background", "card", "popover", "secondary", "muted"])
+    for (const key of ["foreground", "mutedForeground"])
+      if (contrast(colors[key], colors[surface]) < 4.51)
+        throw new Error("Theme neutral-surface text contrast is below 4.5:1");
   for (const surface of ["background", "card", "popover"]) {
     for (const key of ["accent", "destructive"])
       if (contrast(colors[key], colors[surface]) < 4.51)

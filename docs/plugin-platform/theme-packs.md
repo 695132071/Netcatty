@@ -110,3 +110,26 @@ checks; picker preview/apply/cancel/reset and stale-owner/withdrawal/high-contra
 checks; and view-template initial/live environment/disposal checks. Exact-SHA
 CI, independent review and parent native multi-window/security-surface acceptance
 remain separate delivery gates. Local production builds do not establish them.
+
+### First review / CI delta
+
+The first review found that muted text was validated only against its namesake
+muted surface, although host descriptions and statuses also use it on background,
+card and popover surfaces. The validator now checks generic and muted text on
+all neutral surfaces that reuse those tokens. The white-on-white counterexample
+is rejected both by the pure validator and the host catalog. Forest light/dark
+palettes remain valid.
+
+The first exact-head test run `40317690002` failed with 15187 passing tests,
+one failure and 50 skips. Its single failure was the unchanged TERM-SSHD
+concurrent failure-release test expecting a particular invocation to reach OPEN
+first. Both calls perform asynchronous local-file preparation. The test now
+requires exactly one explicit Permission denied result, one successful result
+with matching bytes, and no rejected concurrent handle; it retains concurrency
+without assuming filesystem completion order. No transfer implementation changed.
+The test file's original SHA256 was identical in e5bd294c, 733f44c and fdeeaf74:
+`8b200d9f6a05ac5cd91fe4e0a95ea36a770d22267a6a0162b4c9fc927beb52a7`.
+This is source identity and a source-based ordering diagnosis, not a claim that a
+baseline runtime failure was reproduced locally. The updated test needs the new
+exact-head CI result. That same first run passed the added Vite browser-import
+smoke, resolving the earlier local temp-directory limitation for that head.

@@ -111,6 +111,7 @@ test("palette validation rejects unsupported values, low contrast, mode mismatch
   for (const palette of [
     { formatVersion: 1, base: "light", colors: { accent: "var(--x)" } },
     { formatVersion: 1, base: "light", colors: { foreground: "#ffffff" } },
+    { formatVersion: 1, base: "light", colors: { muted: "#000000", mutedForeground: "#ffffff" } },
     { formatVersion: 1, base: "dark", colors: { accent: "#86efac" } },
     " ".repeat(65537),
   ]) {

@@ -20,3 +20,14 @@ test("opaque accessible palettes derive coupled accent tokens and fixed high con
     /contrast/,
   );
 });
+
+test("generic and muted text stay readable on the neutral surfaces that use them", () => {
+  for (const colors of [
+    { muted: "#000000", mutedForeground: "#ffffff" },
+    { card: "#000000", cardForeground: "#ffffff" },
+    { popover: "#000000", popoverForeground: "#ffffff" },
+    { secondary: "#000000", secondaryForeground: "#ffffff" },
+  ]) {
+    assert.throws(() => resolveThemePalette({ base: "light", colors }), /contrast/);
+  }
+});
