@@ -1172,6 +1172,7 @@ Vaults 分頁維持扁平，不使用這塊背景。
   "settings.plugins.manager.advanced": "高級運行時：擁有完整 Node 文件系統和網絡能力，代理權限無法限制這些訪問。僅供開發預覽。",
   "settings.plugins.manager.data": "本地 KV 僅保留在此設備。只有明確標記為同步的非秘密設置進入加密雲 sidecar。插件包和權限授權不參與同步。",
   "settings.plugins.manager.unbounded": "未宣告更細的資源範圍。請在權限提示中檢查實際授權範圍。",
+  "settings.plugins.openView": "開啟",
   "settings.plugins.openManager": "開啟插件管理",
   "settings.plugins.title": "插件",
   "settings.plugins.description": "管理已安裝插件，瀏覽精選目錄。",

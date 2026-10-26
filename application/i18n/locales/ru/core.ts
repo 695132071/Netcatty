@@ -1170,6 +1170,7 @@ export const ruCoreMessages: Messages = {
   "settings.plugins.market.noResults": "Совпадений нет. Измените запрос.",
   "settings.plugins.market.manifest": "Совместимость и разрешения",
   "settings.plugins.manager.unbounded": "Более узкая область ресурсов не заявлена. Проверьте фактическую область в запросе разрешения.",
+  "settings.plugins.openView": "Открыть",
   "settings.plugins.openManager": "Открыть управление плагинами",
   "settings.plugins.title": "Плагины",
   "settings.plugins.description": "Управляйте плагинами и просматривайте каталог.",

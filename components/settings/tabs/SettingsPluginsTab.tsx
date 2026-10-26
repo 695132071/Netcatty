@@ -370,7 +370,7 @@ function PluginManagementContent({ handoff }: { handoff: (action: () => void) =>
                   <Button type="button" variant="outline" size="sm" onClick={() => handoff(() => requestOpenPluginView({
                     viewId: view.id,
                     context: { 'netcatty.surface': 'settings' },
-                  }))}>{t('common.open')}</Button>
+                  }))}>{t('settings.plugins.openView')}</Button>
                 </div>
               ))}
             </section>

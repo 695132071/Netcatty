@@ -1275,6 +1275,7 @@ Resalta el panel dividido enfocado:
   "settings.plugins.market.noResults": "No hay plugins coincidentes. Prueba otra búsqueda.",
   "settings.plugins.market.manifest": "Compatibilidad y permisos",
   "settings.plugins.manager.unbounded": "No se declara un alcance de recursos más limitado. Revisa el alcance real en la solicitud de permiso.",
+  "settings.plugins.openView": "Abrir",
   "settings.plugins.openManager": "Abrir gestor de plugins",
   "settings.plugins.title": "Plugins",
   "settings.plugins.description": "Gestiona tus plugins y explora el catálogo.",

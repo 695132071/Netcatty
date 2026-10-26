@@ -25,3 +25,5 @@ require("./plugins/streamRouter.test.cjs");
 require("./plugins/utilityPluginRuntime.test.cjs");
 
 require('./plugins/brandIconService.test.cjs');
+
+require('./plugins/settingsViewFixture.test.cjs');

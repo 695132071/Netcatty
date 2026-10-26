@@ -18,6 +18,8 @@ test('state pill exposes actual state, opposite action, focus styling and pendin
     await act(async () => { renderer = create(render(true)); });
     const pill = () => renderer.root.findAllByType('button').find((node) => node.props['aria-pressed'] !== undefined)!;
     assert.equal(pill().props['aria-pressed'], true);
+    const logoSlot = renderer.root.findAllByType('div').find((node) => node.props.className === 'flex h-12 w-12 shrink-0 items-center justify-center');
+    assert.ok(logoSlot, 'logo keeps its 48px layout slot without an extra decorative background');
     assert.equal(pill().props['aria-label'], 'Disable Pill');
     assert.ok(pill().children.includes('Enabled'));
     assert.match(pill().props.className, /rounded-full/);

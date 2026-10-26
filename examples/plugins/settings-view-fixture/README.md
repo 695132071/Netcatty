@@ -19,3 +19,5 @@ a view. If allowed, the plugin manager must close before the external Settings
 view appears. Verify its host-provided title/close button is clickable and can
 receive focus; close it, then reopen plugin management. Do not use existing
 Starter modal permission approval as authorization for this separate fixture.
+
+Version 0.1.1 corrects the default-export entrypoint contract. It retains the same sole `views` declaration and static HTML. Version 0.1.0 failed before activation and must not be used for successful native acceptance.

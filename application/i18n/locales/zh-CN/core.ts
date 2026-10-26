@@ -1190,6 +1190,7 @@ Vaults 标签保持扁平，不使用这块背景。
   "settings.plugins.market.noResults": "没有匹配插件，请尝试其他关键词。",
   "settings.plugins.market.manifest": "兼容性与权限",
   "settings.plugins.manager.unbounded": "未声明更细的资源范围。请在权限提示中检查实际授权范围。",
+  "settings.plugins.openView": "打开",
   "settings.plugins.openManager": "打开插件管理",
   "settings.plugins.title": "插件",
   "settings.plugins.description": "管理已安装插件，浏览精选目录。",
