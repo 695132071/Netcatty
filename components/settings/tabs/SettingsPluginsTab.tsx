@@ -4,7 +4,6 @@ import { PluginMarketplace } from './PluginMarketplace';
 import { PluginPackageManager } from './PluginPackageManager';
 import { FolderOpen } from 'lucide-react';
 import { PluginStatus } from './PluginStatus';
-import { PluginInfo } from './PluginInfo';
 import React, { useEffect, useMemo, useState } from 'react';
 
 import { normalizePluginKeyboardEvent } from '../../../application/state/pluginKeybindings';
@@ -318,7 +317,6 @@ function PluginManagementContent({ handoff }: { handoff: (action: () => void) =>
             <TabsTrigger value="marketplace">{t('settings.plugins.market.title')}</TabsTrigger>
           </TabsList>
           <div className="flex items-center gap-2">
-          <PluginInfo label={t('settings.plugins.info')}><p>{t('settings.plugins.manager.preview')}</p><p>{t('settings.plugins.market.note')}</p></PluginInfo>
           {pluginView === 'installed' && <PluginStatus noVault={manager.credentialStorageAvailable === false} />}
           <div ref={setCatalogToolbar} className="flex items-center gap-2" />
           <Button variant="outline" size="sm" disabled={!manager.available || manager.busy} onClick={() => { setPluginView('installed'); void manager.importPackage(); }}><FolderOpen size={14} className="mr-2" />{t('settings.plugins.manager.import')}</Button>

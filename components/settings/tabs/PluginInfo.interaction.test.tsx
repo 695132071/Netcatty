@@ -64,7 +64,7 @@ test('information previews on hover/focus, pins on click and Escape returns focu
     pane.scrollTop = 450;
     await act(async () => { document.querySelector<HTMLButtonElement>('[data-plugin-id]')!.click(); await settle(); });
     assert.equal(document.querySelector('.plugin-marketplace-catalog'), null, 'detail replaces the candidate list');
-    assert.equal(document.querySelector('[data-toolbar]')?.textContent, '', 'list refresh stays out of detail');
+    assert.doesNotMatch(document.querySelector('[data-toolbar]')?.textContent ?? '', /Refresh/, 'list refresh stays out of detail');
     assert.equal(pane.scrollTop, 0);
     assert.equal(document.activeElement?.tagName, 'H4');
     assert.equal(document.activeElement?.textContent, 'Guide');
@@ -81,20 +81,29 @@ test('information previews on hover/focus, pins on click and Escape returns focu
       return <I18nProvider locale="en"><PluginStatus noVault={noVault} offlineError={offline ? 'Network unavailable' : null} retry={() => setOffline(false)} /><button onClick={() => setNoVault(false)}>Restore vault</button></I18nProvider>;
     }
     await act(async () => { root.render(<StatusHarness />); await settle(); });
-    const status = document.querySelector<HTMLButtonElement>('button[aria-label="Notices: 2"]')!;
+    const status = document.querySelector<HTMLButtonElement>('button[aria-label$="Notices: 2"]')!;
     await act(async () => { status.focus(); await settle(); });
     assert.match(document.querySelector('[role="tooltip"]')?.textContent ?? '', /Network unavailable/);
     assert.equal(document.querySelector('[role="tooltip"] button'), null, 'hover preview never contains an interactive Retry');
     await act(async () => { status.click(); await settle(); });
     const retry = document.querySelector<HTMLButtonElement>('[role="dialog"] button')!;
     assert.equal(retry.textContent, 'Retry');
+    assert.equal(status.textContent, '2', 'only the number badge is visible, not a second text label');
+    assert.equal(document.querySelectorAll('button[aria-label*="Notices:"]').length, 1);
+    assert.match(document.querySelector('[role="dialog"]')?.textContent ?? '', /Updates are manual/);
+    assert.ok(document.querySelector('[role="dialog"] hr'));
     await act(async () => { retry.click(); await settle(); });
-    assert.ok(document.querySelector('button[aria-label="Notices: 1"]'));
+    assert.ok(document.querySelector('button[aria-label$="Notices: 1"]'));
     assert.doesNotMatch(document.querySelector('[role="dialog"]')?.textContent ?? '', /Network unavailable/);
     await act(async () => { document.querySelector('[role="dialog"]')!.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true })); await settle(); });
-    assert.equal(document.activeElement?.getAttribute('aria-label'), 'Notices: 1');
+    assert.match(document.activeElement?.getAttribute('aria-label') ?? '', /Notices: 1$/);
     await act(async () => { Array.from(document.querySelectorAll('button')).find((button) => button.textContent === 'Restore vault')!.click(); await settle(); });
-    assert.equal(document.querySelector('button[aria-label^="Notices:"]'), null, 'healthy state leaves no empty status control');
+    const healthy = document.querySelector<HTMLButtonElement>('button[aria-label="Plugin information"]')!;
+    assert.ok(healthy, 'one information control remains when healthy');
+    assert.equal(healthy.querySelector('span[aria-hidden="true"]'), null, 'healthy control has no count badge');
+    await act(async () => { healthy.click(); await settle(); });
+    assert.match(document.querySelector('[role="dialog"]')?.textContent ?? '', /Updates are manual/);
+    await act(async () => { document.querySelector('[role="dialog"]')!.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true })); await settle(); });
   } finally {
     await act(async () => root.unmount());
     dom.window.close();
