@@ -333,6 +333,9 @@
         },
         {
           "$ref": "#/$defs/HostClipboardWriteRequest"
+        },
+        {
+          "$ref": "#/$defs/HostTerminalSelectionReadRequest"
         }
       ]
     },
@@ -369,6 +372,9 @@
                 },
                 {
                   "const": true
+                },
+                {
+                  "$ref": "#/$defs/SharedTerminalSelection"
                 }
               ]
             }
@@ -479,6 +485,11 @@
           "type": "string",
           "maxLength": 4096,
           "pattern": "^[^\\u0000]*$"
+        },
+        "terminalSessionId": {
+          "type": "string",
+          "maxLength": 128,
+          "pattern": "^[A-Za-z0-9_-]+$"
         }
       },
       "additionalProperties": false
@@ -1101,7 +1112,8 @@
         "provider.connection",
         "provider.authentication",
         "provider.sync",
-        "provider.importer"
+        "provider.importer",
+        "terminal.selection.read"
       ]
     },
     "NonResourceScopedPermission": {
@@ -1138,7 +1150,8 @@
         "provider.connection",
         "provider.authentication",
         "provider.sync",
-        "provider.importer"
+        "provider.importer",
+        "terminal.selection.read"
       ]
     },
     "ResourceScopedPermission": {
@@ -1215,9 +1228,16 @@
     "RequiredPermissionDeclaration": {
       "description": "Required resource-scoped permissions must name their complete activation-time approval bounds.",
       "oneOf": [
-        { "$ref": "#/$defs/NonResourceScopedPermission" },
-        { "$ref": "#/$defs/RequiredPermissionResourceDeclaration" }
-      ]
+        {
+          "$ref": "#/$defs/NonResourceScopedPermission"
+        },
+        {
+          "$ref": "#/$defs/RequiredPermissionResourceDeclaration"
+        }
+      ],
+      "not": {
+        "const": "terminal.selection.read"
+      }
     },
     "PermissionSet": {
       "type": "object",
@@ -4202,6 +4222,77 @@
           "additionalProperties": false
         }
       ]
+    },
+    "TerminalSelectionSharingFeature": {
+      "const": "terminal.selection-sharing"
+    },
+    "TerminalSelectionSharingLimits": {
+      "const": {
+        "textBytes": 4096,
+        "handleTtlMs": 120000,
+        "handlesPerRuntime": 4,
+        "handlesTotal": 64
+      }
+    },
+    "HostTerminalTarget": {
+      "type": "object",
+      "properties": {
+        "sessionId": {
+          "type": [
+            "string",
+            "null"
+          ],
+          "maxLength": 128,
+          "pattern": "^[A-Za-z0-9_-]+$"
+        }
+      },
+      "required": [
+        "sessionId"
+      ],
+      "additionalProperties": false
+    },
+    "HostTerminalSelectionReadRequest": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "const": "terminal.selection.read"
+        },
+        "title": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        }
+      },
+      "required": [
+        "kind",
+        "title"
+      ],
+      "additionalProperties": false
+    },
+    "SharedTerminalSelection": {
+      "type": "object",
+      "properties": {
+        "text": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4096,
+          "pattern": "^[^\\u0000]*$"
+        },
+        "handle": {
+          "type": "string",
+          "minLength": 64,
+          "maxLength": 256
+        },
+        "expiresAt": {
+          "$ref": "#/$defs/SafePositiveInteger"
+        }
+      },
+      "required": [
+        "text",
+        "handle",
+        "expiresAt"
+      ],
+      "additionalProperties": false
     }
   }
 }

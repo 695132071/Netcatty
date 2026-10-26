@@ -166,6 +166,7 @@ function createBridgeRegistrar(context) {
           electron: electronModule,
           safeStorage,
           getInteractionWindow: () => win,
+          getTerminalWorkerManager: () => terminalWorkerManager,
           isAppLocked: () => getAppLockController?.()?.getRuntimeState?.()?.locked !== false,
           subscribeAppLock: (listener) => getAppLockController?.()?.subscribe?.(listener),
           requestPermissionDecision: createNativePermissionDecisionProvider({

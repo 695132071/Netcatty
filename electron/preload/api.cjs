@@ -135,6 +135,7 @@ function createPreloadApi(ctx) {
   }),
   restartPlugin: (pluginId) => ipcRenderer.invoke("netcatty:plugins:restart", { pluginId }),
   uninstallPlugin: (pluginId) => ipcRenderer.invoke("netcatty:plugins:uninstall", { pluginId }),
+  setPluginTerminalTarget: (target) => ipcRenderer.invoke("netcatty:plugins:terminal-target", target),
   getPluginThemes: () => ipcRenderer.invoke("netcatty:plugins:theme-catalog"),
   applyPluginTheme: (request) => ipcRenderer.invoke("netcatty:plugins:theme-apply", request),
   onPluginThemesChanged: (callback) => {

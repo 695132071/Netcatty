@@ -64,3 +64,5 @@ export const PLUGIN_TERMINAL_SIDEBAR_FEATURE = "views.terminal-sidebar" as const
 export const PLUGIN_INTERACTIVE_COMMAND_FEATURE = "commands.interactive" as const satisfies import("./generated/plugin-contract.js").InteractiveCommandFeature;
 
 export const PLUGIN_THEME_PACK_FEATURE = "appearance.theme-packs" as const satisfies import("./generated/plugin-contract.js").ThemePackFeature;
+
+export const PLUGIN_TERMINAL_SELECTION_SHARING_FEATURE = "terminal.selection-sharing" as const satisfies import("./generated/plugin-contract.js").TerminalSelectionSharingFeature;
