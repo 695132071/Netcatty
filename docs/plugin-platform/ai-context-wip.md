@@ -14,6 +14,10 @@ transport task owns the public schema, SDK, and runtime peer. Its
 `c4433d4961ecf4a81bea92b0a14f47b4ec12f679` head contains the public AI/context
 routes and is merged into this branch. The parent assigned this task the additive
 trusted-host IPC schema, preload, AppView mount, and AI-only hostService wiring.
+The base later advanced to `f1410f8bb`; its source/stream changes are incorporated
+by ordinary merge. Three overlaps retain this branch's permission explanations,
+bounded-stream assertions, and six-file assistant staging. The source database
+and sidecar changes come from their owning task, without local modifications.
 
 The model API uses a host-selected configured model. Plugins receive a chat
 handle, a display label, an expiry, turn handles, text chunks, and usage totals.
@@ -197,6 +201,7 @@ Failed aggregate runs remain evidence, not passing acceptance records:
 | `netcatty-ai-fixed-contract-suite.log` | After `0ba3ea606`: all 88 contract/SDK/CLI tests passed |
 | `netcatty-ai-fixed-final-tests.log` | Before the later review corrections, `173ef5abb`: 15,248 tests, 15,205 passed, 0 failed, 0 cancelled, 43 skipped |
 | `netcatty-ai-review-final-runtime.log` | After both review corrections: 614 tests, 612 passed, 0 failed, 0 cancelled, 2 skipped |
+| `netcatty-ai-review-final-tests.log` | Review-corrected head `d81896b0d`: 15,252 tests, 15,209 passed, 0 failed, 0 cancelled, 43 skipped, before the later base merge |
 
 The ten Cursor failures in the second full run came from its missing SQLite
 native dependency. Rebuilding the existing dependency with the standard

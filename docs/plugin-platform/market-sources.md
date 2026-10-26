@@ -60,7 +60,7 @@ recovery and uninstall. Cross-source install or update is rejected, even when
 version and package bytes match. Local imports are a separate source.
 
 Private settings, view state, persistent and in-memory grants, secrets, and cloud
-sidecars are namespaced by host-derived source identity. KV keys are qualified
+sidecars are namespaced by host-derived source identity. Every source, including local imports, uses an opaque encoded owner; public plugin IDs are never storage-owner aliases in sync payloads. Before each sync entry and after every awaited contribution update/reset, the host rechecks that owner against the live source and contributions. Hydration captures its owner before yielding and never remaps a public ID for a later write. KV keys are qualified
 inside the existing per-plugin FK. Code, permissions and source configuration do
 not participate in cloud sync. Old-source cloud settings may remain orphaned;
 they cannot hydrate the same plugin ID from a different source. Generic KV still
@@ -82,3 +82,20 @@ Tests use synthetic source responses and first-party packages. Passing tests is
 not a sandbox certification. Native UI, real third-party hosting, network
 availability and multi-device encrypted-sync acceptance must be reported
 separately. No real credentials or untrusted community code are needed for tests.
+
+## Source-owner integration
+
+Use `PluginDatabase.getActivePlugin(context.pluginId)` to require a current host
+installation, then `database.privateOwner(plugin.id)` for an opaque data partition.
+`plugin.source` is host-owned `{id, kind, name, origin}`.
+`getRetainedPluginSource(pluginId)` returns a retained uninstall binding or null.
+`publicPluginId(owner)` resolves only an encoded owner matching the current source;
+it rejects raw public IDs and stale owners. Never accept owner/source from a plugin
+request or invent a `pluginId` fallback. Capture owner/source at async operation
+start and revalidate before committing; follow runtime lifecycle cancellation.
+
+Plugin database schema 7 atomically converts existing raw local private rows and
+KV keys to the same encoded-owner model without deleting them. This is a one-time
+conversion, not a parallel runtime compatibility path. A conflicting conversion
+fails without publishing schema 7. Old raw-ID cloud entries remain orphaned and
+cannot hydrate an installed plugin. Host/Vault/input schemas are unchanged.
