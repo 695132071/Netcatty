@@ -53,6 +53,7 @@ jobs:
         run: |
           npm run check:plugin-contract
           npm run test:plugin-runtime
+          node --test --import tsx components/settings/tabs/Plugin*.test.tsx
 
       - name: Test
         run: npm test
