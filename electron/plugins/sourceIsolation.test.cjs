@@ -64,6 +64,7 @@ test("same ID cannot change source during install, uninstall or database restart
   db.upsertSecret({ pluginId: id, key: "secret", secretRef: "old-ref", ciphertext: Buffer.from("ciphertext") });
   db.setSyncSidecar(id, "account_baseline", "account", "old baseline");
   assert.equal(db.getSecretByRef(id, "old-ref").pluginId, id);
+  assert.deepEqual(db.listPluginIdsWithSecretKeyPrefix("secret"), [id], "host provider recovery receives the current public plugin ID, not its opaque storage owner");
   assert.equal(db.listPermissionGrants(id)[0].pluginId, id);
   assert.throws(() => install(db, second), /source differs/);
   assert.throws(() => db.clearUninstalledSourceData(id, first.id), /Uninstall/);

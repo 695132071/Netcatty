@@ -956,7 +956,7 @@ class PluginDatabase {
       SELECT DISTINCT plugin_id
       FROM plugin_secrets
       WHERE key = ? OR key LIKE ? ESCAPE '\\'
-    `).all(prefix, `${escaped}:%`).map((row) => row.plugin_id);
+    `).all(prefix, `${escaped}:%`).map((row) => this.publicPluginId(row.plugin_id)).filter((id) => id !== null);
   }
 
   /**
