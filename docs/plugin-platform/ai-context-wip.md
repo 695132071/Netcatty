@@ -2,23 +2,25 @@
 
 Base: ThemePack #3978, `91b8927c56314e68c06e2c008e84559ddfb96d78`.
 Branch: `feat/plugin-ai-context`.
-Status: source-bound services, trusted main/renderer adapters, and an installable
-minimal example are implemented. Shared trusted-preload wiring, complete independent
-review, and native acceptance remain pending. This source is not ready to merge or release.
+Status: source-bound services, default trusted main/renderer adapters, app preload,
+the AppView host chooser, canonical private IPC types, and an installable minimal
+example are connected. Complete independent review and native acceptance remain
+pending. This source is not ready to merge or release.
 
 ## Public boundaries
 
 The parent approved `ai.model-invocation` and `context.selected-read`. The
-transport task owns the canonical schema, SDK, runtime peer, and hostService
-registration. Its `c4433d4961ecf4a81bea92b0a14f47b4ec12f679` head contains the
-public AI/context routes. This branch does not overwrite those shared files.
+transport task owns the public schema, SDK, and runtime peer. Its
+`c4433d4961ecf4a81bea92b0a14f47b4ec12f679` head contains the public AI/context
+routes and is merged into this branch. The parent assigned this task the additive
+trusted-host IPC schema, preload, AppView mount, and AI-only hostService wiring.
 
 The model API uses a host-selected configured model. Plugins receive a chat
 handle, a display label, an expiry, turn handles, text chunks, and usage totals.
 Plugins do not supply provider IDs, URLs, credentials, tools, or Agent policies.
 The internal operations are `open`, `start`, `read`, `stop`, and `close`.
-`read` pulls one chunk with one pending read per turn. The parent can map this
-iterator onto the existing stream router after the canonical contract is agreed.
+`read` pulls one chunk with one pending read per turn through the registered SDK
+and runtime routes.
 
 Context summary enumeration returns only references explicitly shared with the
 current runtime and source owner. Content reads require an opaque handle and an
@@ -32,7 +34,9 @@ or arbitrary entity-ID lookup.
 | --- | --- |
 | This task | `electron/plugins/ai/`, `electron/plugins/context/`, `infrastructure/ai/plugin/`, `examples/plugins/assistant/`, this document |
 | This task | Opt-in `requireBridge` and `maxStreamBytes` request context in `infrastructure/ai/sdk/providers.ts` |
-| Transport task | Canonical schema, generated files, SDK, runtime forwarding, hostService registration, trusted preload methods, app host mount |
+| This task | Additive trusted-host IPC types and generation, app preload methods/types, AppView host mount, AI-only hostService adapter construction/registration |
+| This task | Host security-dialog visibility hook in the modal/tab plugin view lifecycle |
+| Transport task | Public canonical schema, generated SDK, runtime forwarding, generic stream registration |
 | Market task | Source identity, private data-owner namespace, installer database, marketplace UI |
 | Transport task | Generic TCP and TLS streams |
 | Logging task | Optional local plugin logs |
@@ -94,26 +98,35 @@ a tokenizer or a monetary billing cap. Provider usage is reported separately.
 Reservations are not refunded after cancellation. Rate limits survive runtime
 restart within the broker's lifetime. Host shutdown clears this in-memory state.
 
-## Required host adapters
+## Connected host path
 
-The public service is registered in the transport integration. Its trusted
-renderer wiring still needs these parent-owned connections:
+`createPluginHostService` constructs `PluginAITrustedHostAdapter` by default from
+the existing interaction window, app-lock subscription, and native dialog. It
+registers the trusted ready/response IPC handlers. App preload exposes the request
+subscription and validated responses only to the trusted application renderer;
+the sandbox view preload does not expose these methods.
 
-1. `resolveDataOwner(context)` must return the current private source owner from
-   host provenance. A plugin-supplied source value or plugin ID is insufficient.
-2. `selectModel(context)` must return a trusted invocation adapter for the model
-   explicitly selected in the main UI. No provider configuration crosses RPC.
-3. The renderer adapter must validate the current window, selected resource,
-   lifecycle generation, version, and owner before and after asynchronous reads.
-   Reconnect, tab or session close, navigation, lock, disable, and permission
-   revocation must invalidate handles and abort turns.
-4. Summary enumeration, content reads, and model invocation need separate
-   permissions. Only the canonical schema can define their wire format.
-   Model invocation permission does not grant context or action permissions.
-5. Host review must show selected content before it becomes model input.
-   A command-palette or menu ID is never resource authority.
-6. The shared hostService adapter must register teardown and permission-revoke
-   hooks, and discard results if its renderer owner changes.
+`AppView` mounts `PluginAIContextHost`. Its hook chooses the currently configured
+host model and opens an app-owned Note chooser. `trustedHostRuntime` keeps the
+provider adapter and selected readers in renderer-local maps; only canonical,
+validated request/results cross the main/renderer IPC boundary. The default
+adapter authenticates the current main-window sender, uses one-use nonces,
+rechecks the current owner after awaits, and invalidates on lock, navigation,
+hide, destruction, or renderer replacement. Plugin permission revocation,
+disable, and runtime release abort that runtime's turns and transport requests.
+
+Summary enumeration, content reads, and model invocation require separate
+permissions. Before selected text becomes model input, a native host dialog
+shows that exact text and version with Cancel as the default. Model invocation
+permission grants neither context nor action access. Menu IDs are never data
+authority. While the app-owned chooser is present, the active native modal/tab
+plugin view yields so it cannot cover the chooser. Existing embedded views use
+their host-overlay occlusion observer. Native stacking still requires desktop QA.
+
+The selected-context authority is read-only text. Its constructor and lifecycle
+API are documented in [Selected context authority](selected-context-authority.md).
+Host metadata handles cannot be promoted into edit/connect authority; those
+actions require separate typed host targets, grants, and confirmations.
 
 ## QA evidence
 
@@ -144,12 +157,21 @@ node --test --import tsx infrastructure/ai/plugin/modelInvocationAdapter.test.ts
 npx eslint infrastructure/ai/plugin/*.ts infrastructure/ai/sdk/providers.ts examples/plugins/assistant/panel.js
 ```
 
-The installed assistant command test passes against the parent-coordinated local
-integration of the AI branch and transport head `c4433d496`. It installs and
+The installed assistant command test passes on this branch's ordinary merge with
+transport head `c4433d496`. It installs and
 activates the six-file sample through the actual package manager and runtime peer,
 then checks canonical SDK/RPC, independent model/content denial, text-review
 cancellation, text/usage streaming, spoofed fields, revocation, and stale versions.
 The in-process browser harness is a Node test transport, not native sandbox proof.
+
+`components/PluginAIContextHost.test.tsx` connects the default main adapter, actual
+app preload factory, mounted host chooser, installed sample command/runtime peer,
+existing provider factory, and existing main HTTP transport to the loopback
+fixture. It checks content denial, review cancellation, streaming usage, Stop,
+lock revocation, and absence of keys/configuration/policy on the trusted wire.
+The view-visibility tests cover chooser appearance, dismissal, hidden surfaces,
+and teardown without restoring an old view. DOM tests do not establish native
+WebContentsView stacking or Chromium sandbox behavior.
 
 The trusted main/renderer suites cover nonce replay, sender substitution, owner
 replacement, navigation, hide, runtime release, lock, cancellation, focus recovery,
@@ -157,14 +179,37 @@ safe field projection, and late selected-content results. The main transport tes
 also verifies targeted plugin cancellation leaves an ordinary synthetic Agent
 stream running and aborts an oversized plugin stream.
 
-The first integrated runtime checkpoint reports 603 passed, 1 failed, and 2 skipped.
-The failure is shared permission-copy coverage: the new AI/context and byte-stream
-permissions need entries in `domain/pluginPermissionDescriptions.cjs`. The full
-repository run has additional failures and is not a passing acceptance record.
-Ten Cursor discovery failures also reproduce on the unchanged core baseline.
-Other failures have not yet been attributed. Focused changed-source lint passes.
-The repository typecheck retains existing errors; the new adapter files have no
-diagnostics after the local type repair.
+Failed aggregate runs remain evidence, not passing acceptance records:
+
+| Log in `/tmp` | Result |
+| --- | --- |
+| `netcatty-ai-qa-tests-full.log` | 14,912 tests: 14,783 passed, 85 failed, 1 cancelled, 43 skipped; a stuck FIDO child was terminated |
+| `netcatty-ai-final-tests.log` | After standard dependency patches: 15,246 tests, 15,192 passed, 11 failed, 43 skipped |
+| `netcatty-ai-final-runtime.log` | 610 tests: 607 passed, 1 failed, 2 skipped |
+| `netcatty-ai-connected-final-tests.log` | Connected code `42a982660`: 15,248 tests, 15,204 passed, 1 failed, 0 cancelled, 43 skipped |
+| `netcatty-ai-connected-final-runtime.log` | Connected code: 610 tests, 607 passed, 1 failed, 0 cancelled, 2 skipped |
+
+The ten Cursor failures in the second full run came from its missing SQLite
+native dependency. Rebuilding the existing dependency with the standard
+`node-gyp --devdir` option repaired them; the focused rerun passed 42 with 3
+skipped. The remaining full-run failure is a shared test expectation missing
+`network.stream` after `network`. The runtime failure is shared permission-copy
+coverage missing descriptions for `ai.invoke`, `context.selected.list`,
+`context.selected.read`, and `network.stream`. These shared files belong to the
+transport task. The final connected-head aggregates above confirm these are the
+only remaining test failures. The earlier failed runs must not be relabeled.
+
+The final connected UI/visibility run passes all 3 tests. The 47 focused
+service/preload/runtime checks and 7 connected provider/renderer checks also pass.
+`npm run check:plugin-contract` passes. The six-file package validates and retains
+the SHA-256 recorded in the native recipe.
+
+The connected AppView production build passes. Full lint reports no errors and
+seven existing warnings. The repository typecheck remains red with 773 diagnostics;
+the new adapter, component, hook, and visibility modules have no diagnostics. Native packaging's
+standard Electron rebuild stops at its hardcoded `/home/agent/.electron-gyp`
+cache outside this executor's writable roots. No dependency patch or home-directory
+override was used to bypass it.
 
 The package build validates six files. The final artifact and native procedure
 are recorded in [the native QA recipe](assistant-native-qa.md). The source staging
@@ -180,4 +225,4 @@ not been retried through another route. CI is not a substitute for that review.
 Native Electron launch on this executor aborts because `chrome-sandbox` is not
 root-owned mode 4755. No sandbox bypass or native retry was attempted. Native
 screenshots, video, and installed UI acceptance belong to the parent's working
-cloud GUI machine after shared wiring. No native acceptance is claimed here.
+cloud GUI machine on the integrated exact head. No native acceptance is claimed here.

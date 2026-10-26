@@ -15,6 +15,8 @@ commit and artifact hashes. Keep all PRs Draft. Do not merge or release them.
 Run the build and tests with the repository's supported Node version:
 
 ```sh
+git rev-parse HEAD
+npm run build
 npm run build:plugin-runtime-deps
 node examples/plugins/assistant/build.mjs
 node packages/plugin-cli/dist/cli.js pack examples/plugins/assistant/.package --out /tmp/assistant-example.ncpkg
@@ -26,6 +28,8 @@ The package contains six files: its manifest, README, three panel files, and one
 browser runtime entry. It has no Node entry, networking, filesystem, secrets,
 storage, terminal, or command-execution permission. Its `commands` permission
 registers its own view callbacks. It cannot execute terminal commands.
+The six-file artifact at this checkpoint has SHA-256
+`8ef162d13d0a16878fb817462759c9221352d0565dcefebeb102ea3575a918e8`.
 
 ## Start the deterministic fixture
 
@@ -38,6 +42,22 @@ messages. It keeps only request counts and prints no request content or headers.
 Launch the exact integrated app on the working desktop with a fresh disposable
 user-data directory. Preserve Chromium sandboxing. Do not use a real app profile,
 cloud account, credential, host, Note, or chat history.
+
+On that working desktop, use a separate shell for each long-running process:
+
+```sh
+node scripts/plugin-assistant-provider-fixture.mjs --port 9217
+```
+
+```sh
+netcattyAssistantQaProfile=$(mktemp -d /tmp/netcatty-assistant-qa.XXXXXX)
+env -u ELECTRON_RUN_AS_NODE node node_modules/electron/cli.js . --user-data-dir="$netcattyAssistantQaProfile"
+```
+
+The fixture's counts are available from `http://127.0.0.1:9217/fixture/status`.
+Use a different unused loopback port if 9217 is occupied and update the provider
+URL accordingly. These launch commands are for the working GUI machine; they do
+not override this executor's failed sandbox-helper check.
 
 In AI Settings, create a custom OpenAI-compatible provider with the fixture's
 `/v1` URL, model `deterministic-fixture`, and the literal synthetic credential marker
@@ -61,6 +81,8 @@ Synthetic retry plan: add a retry button and show a connection status label.
    view catalog. Allow only its required view and command registration permissions.
 3. Grant `ai.invoke` and `context.selected.list` when the host prompts. Record the
    host-selected model label. The host's Note chooser must show app-owned chrome.
+   Verify the native plugin modal yields while this chooser is open and restores
+   after dismissal; the plugin must not cover the host's selection controls.
    Select only `Synthetic retry plan` and click **Share selected summaries**.
 4. Verify that the plugin reference dropdown starts at **No reference**. Select
    `Synthetic retry plan` explicitly, then click **Send**.
