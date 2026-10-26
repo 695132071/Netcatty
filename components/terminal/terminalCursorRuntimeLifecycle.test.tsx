@@ -212,3 +212,33 @@ test("first width-only update after actual runtime creation preserves an applica
 
   await act(async () => renderer!.unmount());
 });
+
+test('the real runtime mount publishes a late terminal ref without another focus or status render', async () => {
+  const { usePluginTerminalSelection } = await import('../../application/state/usePluginTerminalSelection');
+  const element = document.createElement('div'); document.body.append(element);
+  const term = Object.assign(createTerm(), { element });
+  const { context, termRef } = createContext(term, { cursorShape: 'block' });
+  const previous = Object.getOwnPropertyDescriptor(window, 'netcatty');
+  const targets: Array<{ sessionId: string | null }> = [];
+  Object.defineProperty(window, 'netcatty', { configurable: true, value: {
+    async setPluginTerminalTarget(target: { sessionId: string | null }) { targets.push(target); return true; },
+  } });
+  function SelectionHarness() {
+    usePluginTerminalSelection('late-mount', () => ({ sessionId: 'cursor-test', term: termRef.current as never,
+      bootEpoch: 1, visible: true, focused: true, connected: true, sensitive: false, normalize: false, label: 'Synthetic mount' }), 'unchanged-focus-status');
+    context.useEffect = useEffect; context.useLayoutEffect = useLayoutEffect;
+    useTerminalEffects(context);
+    return null;
+  }
+  let renderer: ReturnType<typeof create> | undefined;
+  try {
+    await act(async () => { renderer = create(<SelectionHarness />); await Promise.resolve(); await Promise.resolve(); });
+    assert.equal(termRef.current, term);
+    assert.ok(targets.some((target) => target.sessionId === 'cursor-test'), 'runtime assignment must publish after the earlier null ref');
+  } finally {
+    await act(async () => renderer?.unmount());
+    assert.equal(targets.at(-1)?.sessionId, null);
+    element.remove();
+    if (previous) Object.defineProperty(window, 'netcatty', previous); else Reflect.deleteProperty(window, 'netcatty');
+  }
+});

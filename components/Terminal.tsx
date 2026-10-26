@@ -1,3 +1,4 @@
+import { publishTerminalSelectionTarget } from "../infrastructure/plugins/terminalSelectionRegistry";
 import { usePluginTerminalSelection } from "../application/state/usePluginTerminalSelection";
 import { clearTerminalBroadcastUserInput, markTerminalBroadcastUserInput } from "./terminal/runtime/terminalPacedBroadcast";
 import { shouldBroadcastDuringSensitivePrompt } from "../domain/terminalBroadcast";
@@ -1981,6 +1982,7 @@ const TerminalComponent: React.FC<TerminalProps> = ({
     serializeAddonRef.current = null;
     searchAddonRef.current = null;
     hasRuntimeRef.current = false;
+    publishTerminalSelectionTarget();
   };
 
   const clearHibernateRuntimeState = useCallback(() => {
@@ -4722,7 +4724,10 @@ const TerminalComponent: React.FC<TerminalProps> = ({
       updateStatus: (next) => updateStatusRef.current(next),
       replayChunkBytes: resolveTerminalHibernateReplayChunkBytes(terminalSettings),
       additionalKeywordHighlightRules: pluginDecorationRulesRef.current,
-    }).then((ok) => ok).catch((err) => {
+    }).then((ok) => {
+      publishTerminalSelectionTarget();
+      return ok;
+    }).catch((err) => {
       logger.error("[Terminal] Failed to resume from hibernate", err);
       return false;
     }).finally(() => {

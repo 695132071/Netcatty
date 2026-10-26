@@ -16,6 +16,7 @@ main branch, or release was rewritten or published.
 | `npm run test:plugin-examples` | Five passed, one existing opt-in database skip |
 | Focused renderer, worker-manager, and #3991 popup input-mode tests | 119 passed |
 | Final selection reader, host-dialog, and manifest tests | Five passed |
+| Late runtime-mount regression, selection/dialog, and popup input-mode checks | 11 passed |
 | Generated plugin contract, capability tools, Codex schema checks | Passed; tool catalogs unchanged |
 | `npm run lint` | Zero errors, seven existing warnings |
 | `npm run build` | Passed; existing chunk-size warning |
@@ -39,6 +40,18 @@ their original paths.
 Standalone `tsc --noEmit` remains outside the clean repository checks. A comparison
 with the merged baseline reports the same 447 normalized diagnostics, with no new
 or removed diagnostic. Package builds and the prescribed production build pass.
+
+A real runtime-mount regression failed against the first published head
+`3cfc7db3716b42f346e2819c822f546e949e1a88`: the selection hook saw a null ref before
+asynchronous xterm creation, without a later focus/status render. Publication now
+also runs after runtime assignment, teardown, and hibernate wake completion.
+The regression and the associated popup input-mode checks pass. This uses the
+existing mount and wake paths and adds no polling or terminal reader fallback.
+
+That earlier head passed [test CI](https://github.com/binaricat/Netcatty/actions/runs/40380234637)
+with 15,316 tests, 15,266 passed, 50 skipped, and zero failures. All four
+[platform package jobs](https://github.com/binaricat/Netcatty/actions/runs/40380234655)
+also passed. The Draft PR records fresh exact-head results for the lifecycle fix.
 
 ## Packaging and native acceptance
 
