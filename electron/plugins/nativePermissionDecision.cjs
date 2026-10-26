@@ -45,7 +45,6 @@ function createNativePermissionDecisionProvider(options) {
     throw new TypeError("Native plugin permission decisions require an Electron dialog");
   }
   const dialog = options.dialog;
-  const window = options.window;
   return async (request, context = {}) => {
     context.signal?.throwIfAborted();
     if (!describePluginPermission(request.permission).known) return Object.freeze({ requestId: request.requestId, decision: "deny" });
@@ -77,6 +76,9 @@ function createNativePermissionDecisionProvider(options) {
       noLink: true,
       ...(context.signal ? { signal: context.signal } : {}),
     };
+    // Choose a host-owned parent when the prompt opens, not once at bootstrap.
+    const candidate = options.getWindow?.() ?? options.window;
+    const window = candidate?.isDestroyed?.() ? undefined : candidate;
     const result = window
       ? await dialog.showMessageBox(window, messageBoxOptions)
       : await dialog.showMessageBox(messageBoxOptions);

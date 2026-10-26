@@ -169,6 +169,12 @@ function createBridgeRegistrar(context) {
             getLocale: () => getWindowManager().getCurrentLanguage?.() ?? "en",
             dialog: electronModule.dialog,
             window: win,
+            getWindow: () => {
+              const settingsWindow = getWindowManager().getSettingsWindow?.();
+              return settingsWindow && !settingsWindow.isDestroyed() && settingsWindow.isFocused()
+                ? settingsWindow
+                : win;
+            },
           }),
           getLocale: () => getWindowManager().getCurrentLanguage?.() ?? "en",
           requestTerminalInterceptorSelection: async ({ direction, providers }) => {

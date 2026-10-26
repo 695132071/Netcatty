@@ -140,3 +140,27 @@ test("native prompts share human-readable permission explanations and deny unkno
   assert.deepEqual(await provider(permissionRequest({ permission: "unknown.permission" })), { requestId: "request-1", decision: "deny" });
   assert.equal(prompts, 0);
 });
+
+
+test("permission parent is resolved at prompt time without forcing focus", async () => {
+  const main = { name: "main" };
+  const settings = { name: "settings", isDestroyed: () => false };
+  let active = main;
+  const parents = [];
+  const provider = createNativePermissionDecisionProvider({
+    window: main,
+    getWindow: () => active,
+    dialog: { async showMessageBox(...args) {
+      parents.push(args.length === 2 ? args[0] : null);
+      return { response: 0 };
+    } },
+  });
+  await provider(permissionRequest());
+  active = settings;
+  await provider(permissionRequest());
+  active = { isDestroyed: () => true };
+  await provider(permissionRequest());
+  active = null;
+  await provider(permissionRequest());
+  assert.deepEqual(parents, [main, settings, null, main]);
+});
