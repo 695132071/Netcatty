@@ -14,6 +14,7 @@ test('landing settings entry targets the declared plugin and a manager tab round
   install('requestAnimationFrame', dom.window.requestAnimationFrame.bind(dom.window));
   install('cancelAnimationFrame', dom.window.cancelAnimationFrame.bind(dom.window));
   install('IS_REACT_ACT_ENVIRONMENT', true);
+  dom.window.HTMLElement.prototype.scrollIntoView = () => {};
   const { default: React, act } = await import('react');
   const { createRoot } = await import('react-dom/client');
   const { I18nProvider } = await import('../../../application/i18n/I18nProvider');
