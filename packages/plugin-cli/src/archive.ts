@@ -504,7 +504,7 @@ export async function validatePluginDirectory(
   };
 }
 
-function openZip(filePath: string): Promise<ZipFile> {
+function openZip(filePath: string, autoClose = true): Promise<ZipFile> {
   return new Promise((resolve, reject) => {
     yauzl.open(
       filePath,
@@ -512,7 +512,7 @@ function openZip(filePath: string): Promise<ZipFile> {
       // AssertByteCountStream that rejects an overflowing chunk before it is
       // forwarded to readEntry(). Combined with the metadata limits below,
       // captured manifest contents cannot exceed PACKAGE_LIMITS.manifestBytes.
-      { lazyEntries: true, decodeStrings: true, strictFileNames: true, validateEntrySizes: true },
+      { lazyEntries: true, autoClose, decodeStrings: true, strictFileNames: true, validateEntrySizes: true },
       (error, zipFile) => {
         if (error || !zipFile) reject(error ?? new Error("Unable to open plugin archive"));
         else resolve(zipFile);
@@ -659,9 +659,11 @@ async function inspectPluginPackage(
   if (archiveStats.size > PACKAGE_LIMITS.archiveBytes) {
     throw new Error(`Plugin archive exceeds ${PACKAGE_LIMITS.archiveBytes} bytes`);
   }
-  const zipFile = await openZip(archivePath);
+  const zipFile = await openZip(archivePath, false);
+  try {
   const registry = new PackagePathRegistry();
   const entries = new Map<string, {
+    zipEntry: Entry;
     contents?: Buffer;
     mode: number;
     sha256: string;
@@ -711,13 +713,14 @@ async function inspectPluginPackage(
           const result = await readEntry(
             zipFile,
             entry,
-            packagePath === "netcatty.plugin.json" || (/\.(png|webp)$/.test(packagePath) && entry.uncompressedSize <= PLUGIN_BRAND_ICON_MAX_BYTES),
+            packagePath === "netcatty.plugin.json",
             extractionDirectory ? path.join(extractionDirectory, ...packagePath.split("/")) : undefined,
           );
           if (result.bytes !== entry.uncompressedSize || result.crc32 !== entry.crc32) {
             throw new Error(`ZIP entry integrity check failed: ${packagePath}`);
           }
           entries.set(packagePath, {
+            zipEntry: entry,
             contents: result.contents,
             mode,
             sha256: result.sha256,
@@ -760,10 +763,16 @@ async function inspectPluginPackage(
       throw new Error(`Manifest references a missing package file: ${requiredPath}`);
     }
   }
-  for (const iconPath of packageIconPaths(manifest.icon)) {
-    const contents = entries.get(iconPath)?.contents;
-    if (!contents) throw new Error('Brand icon is missing or exceeds size limit');
-    inspectPluginBrandIcon(contents, iconPath);
+  // The manifest may follow its assets in ZIP order. Keep the same verified
+  // descriptor open, then capture only the (at most two) declared brand images.
+  // Non-logo images remain streamed regardless of extension or size.
+  for (const iconPath of new Set(packageIconPaths(manifest.icon))) {
+    const record = entries.get(iconPath);
+    if (!record || record.size > PLUGIN_BRAND_ICON_MAX_BYTES) throw new Error('Brand icon is missing or exceeds size limit');
+    const result = await readEntry(zipFile, record.zipEntry, true);
+    if (!result.contents || result.sha256 !== record.sha256 || result.bytes !== record.size
+      || result.crc32 !== record.zipEntry.crc32) throw new Error('Brand icon changed during archive validation');
+    inspectPluginBrandIcon(result.contents, iconPath);
   }
   for (const [companionPath, companion] of declaredCompanions) {
     const entry = entries.get(companionPath);
@@ -789,6 +798,7 @@ async function inspectPluginPackage(
     })),
   );
   return { manifest, fileCount: entries.size, uncompressedBytes: totalBytes, contentSha256 };
+  } finally { zipFile.close(); }
 }
 
 export async function validatePluginPackage(

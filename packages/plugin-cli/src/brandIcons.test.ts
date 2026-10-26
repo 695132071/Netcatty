@@ -55,3 +55,25 @@ test('directory validation, packing and archive validation include both brand re
   await writeFile(path.join(dir, 'assets/logo-dark.png'), Buffer.alloc(256 * 1024 + 1));
   await assert.rejects(validatePluginDirectory(dir), /size limit/);
 });
+
+test('undeclared PNG assets remain streamed even when their names sort before the manifest', async (t) => {
+  const root = await mkdtemp(path.join(tmpdir(), 'netcatty-brand-stream-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const dir = path.join(root, 'plugin'); await mkdir(dir);
+  const { icon: _icon, features: _features, ...plain } = manifest;
+  await writeFile(path.join(dir, 'netcatty.plugin.json'), JSON.stringify({ ...plain, main: { browser: 'index.js' }, contributes: undefined, activationEvents: [] }));
+  await writeFile(path.join(dir, 'index.js'), 'export function activate() {}');
+  for (let i = 0; i < 16; i++) await writeFile(path.join(dir, `a-${i}.png`), Buffer.alloc(240 * 1024));
+  const archive = path.join(root, 'no-brand.ncpkg'); await buildPluginPackage(dir, archive);
+  // Instrument the explicit byte aggregation boundary, not RSS/GC timing.
+  const originalConcat = Buffer.concat; let retainedImageBodies = 0;
+  Buffer.concat = (list, totalLength) => {
+    if (list.reduce((sum, item) => sum + item.length, 0) >= 240 * 1024) retainedImageBodies++;
+    return originalConcat(list, totalLength);
+  };
+  try {
+    const result = await validatePluginPackage(archive);
+    assert.equal(result.fileCount, 18);
+    assert.equal(retainedImageBodies, 0, 'unreferenced images must never be concatenated and retained');
+  } finally { Buffer.concat = originalConcat; }
+});

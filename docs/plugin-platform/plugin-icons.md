@@ -28,7 +28,7 @@ number. The API range and required feature enforce support in the meantime.
 
 Alternatively use a host-owned theme glyph, for example
 `"icon": { "kind": "theme", "name": "terminal" }`, with the same API/feature
-requirements. The theme names are the existing `ThemeIcon` contract enum.
+requirements. Theme glyphs use the existing host allowlist; unknown names fall back safely.
 
 ## Prepare files
 

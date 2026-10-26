@@ -58,3 +58,13 @@ test('installed brand uses metadata only, rejects stale responses, and falls bac
     (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = previousAct;
   }
 });
+
+
+test('disabled brand theme names cannot resolve Object prototype members', () => {
+  for (const name of ['constructor', '__proto__', 'toString', 'valueOf', 'hasOwnProperty']) {
+    const plugin = { id: 'com.test.theme', enabled: false, activeVersion: '1.0.0', runtime: {}, manifest: { icon: { kind: 'theme', name } } } as NetcattyInstalledPlugin;
+    const html = renderToStaticMarkup(<PluginBrandIcon plugin={plugin} />);
+    assert.match(html, /lucide-puzzle/);
+    assert.doesNotMatch(html, /<img/);
+  }
+});
