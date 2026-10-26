@@ -29,7 +29,7 @@ const { PluginManager } = require("./pluginManager.cjs");
 const { PluginNetworkBroker } = require("./networkBroker.cjs");
 const { PluginByteStreamService, FEATURE: BYTE_STREAM_FEATURE } = require("./byteStreamService.cjs");
 const { PluginAIContextService, PLUGIN_AI_CONTEXT_FEATURES } = require("./ai/aiContextService.cjs");
-const { PluginRpcError, RPC_ERRORS } = require("./rpcRouter.cjs");
+const { PluginAITrustedHostAdapter } = require("./ai/trustedHostAdapter.cjs");
 const { HOST_INTERACTION_FEATURE, PluginHostInteractionService } = require("./hostInteractionService.cjs");
 const { PluginPermissionEngine } = require("./permissionEngine.cjs");
 const { PluginProtocol } = require("./pluginProtocol.cjs");
@@ -98,6 +98,7 @@ function createPluginHostService(options) {
   let interactionService;
   let byteStreamService;
   let aiContextService;
+  let aiHostAdapter;
   try {
     const packageStore = new PackageStore({
       allowAdvancedPlugins,
@@ -265,14 +266,16 @@ function createPluginHostService(options) {
     });
     byteStreamService = new PluginByteStreamService({ database, permissionEngine, quotaManager, runtimeSupervisor });
     byteStreamService.register(rpcRegistry);
+    aiHostAdapter = options.pluginAIHostAdapter ?? new PluginAITrustedHostAdapter({
+      getWindow: options.getInteractionWindow ?? (() => null),
+      isLocked: options.isAppLocked,
+      subscribeLock: options.subscribeAppLock,
+      dialog: options.electron.dialog,
+    });
+    if (options.electron.ipcMain) aiHostAdapter.registerIpc?.(options.electron.ipcMain);
     aiContextService = new PluginAIContextService({ database, permissionEngine,
       getRuntimeIdentity: (pluginId) => runtimeSupervisor.getRuntimeIdentity(pluginId),
-      hostAdapter: options.pluginAIHostAdapter ?? {
-        assertActive: (context) => context.assertActive(),
-        selectModel: () => { throw new PluginRpcError(RPC_ERRORS.unavailable, "Plugin model adapter is unavailable"); },
-        listSelected: () => [],
-        reviewText: () => false,
-      },
+      hostAdapter: aiHostAdapter,
     });
     aiContextService.registerRpcCapabilities(rpcRegistry);
     const originalOnPluginDisabled = contributionService.onPluginDisabled.bind(contributionService);
@@ -454,6 +457,7 @@ function createPluginHostService(options) {
     try { interactionService?.shutdown(); } catch {}
     try { byteStreamService?.shutdown(); } catch {}
     try { aiContextService?.shutdown(); } catch {}
+    if (!aiContextService) { try { aiHostAdapter?.shutdown?.(); } catch {} }
     database.close();
     throw error;
   }

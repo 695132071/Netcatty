@@ -108,6 +108,13 @@ function createPreloadApi(ctx) {
   listPluginCatalog: (sourceId) => ipcRenderer.invoke("netcatty:plugins:catalog", { sourceId }),
   getPluginCatalogReadme: (id, selectionToken, sourceId) => ipcRenderer.invoke("netcatty:plugins:catalog-readme", { id, selectionToken, sourceId }),
   installCatalogPlugin: (id, selectionToken, sourceId, acceptedSourceId) => ipcRenderer.invoke("netcatty:plugins:catalog-install", { id, selectionToken, sourceId, acceptedSourceId }),
+  setPluginAIHostReady: (ready) => ipcRenderer.invoke("netcatty:plugins:ai-host-ready", ready),
+  respondPluginAIHost: (response) => ipcRenderer.invoke("netcatty:plugins:ai-host-response", response),
+  onPluginAIHostRequest: (callback) => {
+    const listener = (_event, payload) => callback(payload);
+    ipcRenderer.on("netcatty:plugins:ai-host-request", listener);
+    return () => ipcRenderer.removeListener("netcatty:plugins:ai-host-request", listener);
+  },
   setPluginInteractionReady: (ready) => ipcRenderer.invoke("netcatty:plugins:interaction-ready", { ready }),
   respondPluginInteraction: (response) => ipcRenderer.invoke("netcatty:plugins:interaction-response", response),
   onPluginInteraction: (callback) => {

@@ -23,6 +23,8 @@ export interface ProviderRequestContext {
   requireBridge?: boolean;
   /** Optional aggregate SSE payload cap, enforced before renderer buffering. */
   maxStreamBytes?: number;
+  /** Host-owned tag for targeted plugin model transport teardown. */
+  requestIdPrefix?: string;
   getOpenAIChatAssistantFields?: () => Array<OpenAIChatAssistantFields | undefined>;
   transformOpenAIChatAssistantFields?: (
     fields: Array<OpenAIChatAssistantFields | undefined>,
@@ -494,7 +496,7 @@ export function createBridgeFetchForSDK(
 
     // Streaming path
     if (isStreamingRequest(resolvedInit)) {
-      const requestId = `sdk_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+      const requestId = `${requestContext?.requestIdPrefix ?? ''}sdk_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
       const captureOpenAIChatFields = createOpenAIChatStreamFieldCapture(requestContext);
       const normalizeOpenAIChatToolCalls = createOpenAIChatToolCallNormalizer(requestId);
 

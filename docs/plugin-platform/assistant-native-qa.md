@@ -1,0 +1,120 @@
+# Test the selected Note assistant on an isolated desktop
+
+This recipe tests a sandbox plugin against a deterministic loopback provider.
+The provider does not run a model or contact a paid service. The profile contains
+only synthetic data. The parent owns native screenshots and video on the working
+cloud GUI machine. The local executor's sandbox-helper failure remains a separate
+failed launch record.
+
+## Prepare the integrated head
+
+Use a head containing the market source API, #3985's malformed-context repair,
+#3986, and the transport task's canonical AI/context registration. Record the exact
+commit and artifact hashes. Keep all PRs Draft. Do not merge or release them.
+
+Run the build and tests with the repository's supported Node version:
+
+```sh
+git rev-parse HEAD
+npm run build
+npm run build:plugin-runtime-deps
+node examples/plugins/assistant/build.mjs
+node packages/plugin-cli/dist/cli.js pack examples/plugins/assistant/.package --out /tmp/assistant-example.ncpkg
+node packages/plugin-cli/dist/cli.js validate /tmp/assistant-example.ncpkg
+sha256sum /tmp/assistant-example.ncpkg
+```
+
+The package contains six files: its manifest, README, three panel files, and one
+browser runtime entry. It has no Node entry, networking, filesystem, secrets,
+storage, terminal, or command-execution permission. Its `commands` permission
+registers its own view callbacks. It cannot execute terminal commands.
+The six-file artifact at this checkpoint has SHA-256
+`8ef162d13d0a16878fb817462759c9221352d0565dcefebeb102ea3575a918e8`.
+
+## Start the deterministic fixture
+
+Start `node scripts/plugin-assistant-provider-fixture.mjs` from the repository.
+The server prints its loopback URL. It listens only on `127.0.0.1`; use a fresh
+unused port. Its response is fixed synthetic text, split into delayed SSE chunks.
+The response includes fixed usage metadata. It accepts no request tools or system
+messages. It keeps only request counts and prints no request content or headers.
+
+Launch the exact integrated app on the working desktop with a fresh disposable
+user-data directory. Preserve Chromium sandboxing. Do not use a real app profile,
+cloud account, credential, host, Note, or chat history.
+
+On that working desktop, use a separate shell for each long-running process:
+
+```sh
+node scripts/plugin-assistant-provider-fixture.mjs --port 9217
+```
+
+```sh
+netcattyAssistantQaProfile=$(mktemp -d /tmp/netcatty-assistant-qa.XXXXXX)
+env -u ELECTRON_RUN_AS_NODE node node_modules/electron/cli.js . --user-data-dir="$netcattyAssistantQaProfile"
+```
+
+The fixture's counts are available from `http://127.0.0.1:9217/fixture/status`.
+Use a different unused loopback port if 9217 is occupied and update the provider
+URL accordingly. These launch commands are for the working GUI machine; they do
+not override this executor's failed sandbox-helper check.
+
+In AI Settings, create a custom OpenAI-compatible provider with the fixture's
+`/v1` URL, model `deterministic-fixture`, and the literal synthetic credential marker
+`fixture-only`. This marker exercises the existing credential injection path
+without a real API credential. Select that
+provider and model through the host UI. Do not enable an external Agent or tools.
+
+Create one Note named `Synthetic retry plan` containing:
+
+```text
+Synthetic retry plan: add a retry button and show a connection status label.
+```
+
+## Record the installed-plugin path
+
+1. Import the package. Record its ID `com.netcatty.assistant`, version `0.1.0`,
+   source, SHA-256, browser runtime, required permissions, and optional permissions.
+   Installation must not grant optional access. Source labels do not imply that
+   an author or package is officially maintained.
+2. Enable the plugin and open its `Selected Note Assistant` modal from the plugin
+   view catalog. Allow only its required view and command registration permissions.
+3. Grant `ai.invoke` and `context.selected.list` when the host prompts. Record the
+   host-selected model label. The host's Note chooser must show app-owned chrome.
+   Verify the native plugin modal yields while this chooser is open and restores
+   after dismissal; the plugin must not cover the host's selection controls.
+   Select only `Synthetic retry plan` and click **Share selected summaries**.
+4. Verify that the plugin reference dropdown starts at **No reference**. Select
+   `Synthetic retry plan` explicitly, then click **Send**.
+5. Deny `context.selected.read`. No fixture request may be sent. The optional
+   model permission must not authorize Note access.
+6. Retry. Allow the single selected-context read. The separate host text dialog
+   must show the exact synthetic text, scope, and version, with **Cancel** selected
+   by default. Cancel once and confirm that no fixture request is sent.
+7. Retry and click **Share this text**. Record streamed text, completion, and token
+   usage. Capture the full host window, not only the plugin iframe.
+8. Click **Send** again, share the same synthetic text, and click **Stop** while
+   the delayed fixture is streaming. The text must stop changing; the fixture's
+   aborted-connection counter must increase. Record this sequence as video.
+9. Change the Note during a pending review and attempt to share the old dialog.
+   The expected-version check must reject the result. Do not send stale content.
+10. Revoke the plugin's AI/context permission while a turn is active. Disable,
+    re-enable, and close its view. Old handles and late results must not resume.
+    Lock/unlock the app and navigate or reload the main window in the isolated
+    profile. Record a fresh successful run after reauthorization.
+11. Keep the fixture request counter and aborted-connection counter in the
+    evidence. Do not include prompt bodies, headers, credentials, or Note content
+    other than the synthetic text above in logs.
+
+The automated suites cover source substitution, runtime identity, two-handle
+revocation after malformed input, late replies, byte/token/time bounds, and
+no-key serialization. Native execution must still verify the real prompts,
+installed runtime, configured provider transport, and UI lifecycle.
+
+## Record remaining limits
+
+Independent review found the malformed-context revocation bug. The regression
+reproduced and the repair passed focused tests. Further independent review was
+blocked by the review tool/model restriction. That review remains incomplete and
+has not been retried through another route. CI and native evidence do not replace
+that missing review.

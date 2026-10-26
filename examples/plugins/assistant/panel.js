@@ -27,6 +27,8 @@ async function initialize() {
     element('status').textContent = 'Ready';
     busy(false);
   } catch {
+    const failedChat = chat; chat = undefined;
+    if (failedChat) await invoke('close', { chatHandle: failedChat.chatHandle }).catch(() => {});
     element('status').textContent = 'Choose a model and grant access in Netcatty.';
   }
 }
@@ -73,5 +75,8 @@ element('stop').addEventListener('click', async () => {
 window.netcattyView.onDidReceiveMessage((message) => {
   if (message?.qaFixture === true) element('qa').textContent = 'Isolated QA · deterministic local provider · no model inference or paid API';
 });
-window.addEventListener('pagehide', () => { if (turn) invoke('stop', { turnHandle: turn }).catch(() => {}); });
+window.addEventListener('pagehide', () => {
+  if (turn) invoke('stop', { turnHandle: turn }).catch(() => {});
+  if (chat) invoke('close', { chatHandle: chat.chatHandle }).catch(() => {});
+});
 void initialize();

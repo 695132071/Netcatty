@@ -531,6 +531,140 @@ export type PluginAIContextLimits = {"contexts":4,"inputBytes":16384,"chunkBytes
 
 export type PluginAIEmptyParams = Record<string, never>;
 
+export type PluginAIHostContextRef = {
+  hostHandle: string;
+  version: string;
+};
+
+export type PluginAIHostHandleRef = {
+  hostHandle: string;
+};
+
+export type PluginAIHostModelEvent = ({
+  kind: "text";
+  text: string;
+}) | ({
+  kind: "usage";
+  inputTokens?: number;
+  outputTokens?: number;
+  totalTokens?: number;
+});
+
+export type PluginAIHostModelStart = {
+  hostHandle: string;
+  prompt: string;
+  contexts: Array<string>;
+  maxOutputTokens: number;
+  maxChunkBytes: number;
+};
+
+export type PluginAIHostRequest = ({
+  requestId: string;
+  actionToken: string;
+  runtimeId: string;
+  kind: "model.select";
+  payload: PluginAIEmptyParams;
+}) | ({
+  requestId: string;
+  actionToken: string;
+  runtimeId: string;
+  kind: "model.current";
+  payload: PluginAIHostHandleRef;
+}) | ({
+  requestId: string;
+  actionToken: string;
+  runtimeId: string;
+  kind: "model.start";
+  payload: PluginAIHostModelStart;
+}) | ({
+  requestId: string;
+  actionToken: string;
+  runtimeId: string;
+  kind: "model.next";
+  payload: PluginAIHostHandleRef;
+}) | ({
+  requestId: string;
+  actionToken: string;
+  runtimeId: string;
+  kind: "model.stop";
+  payload: PluginAIHostHandleRef;
+}) | ({
+  requestId: string;
+  actionToken: string;
+  runtimeId: string;
+  kind: "model.release";
+  payload: PluginAIHostHandleRef;
+}) | ({
+  requestId: string;
+  actionToken: string;
+  runtimeId: string;
+  kind: "context.select";
+  payload: PluginAIEmptyParams;
+}) | ({
+  requestId: string;
+  actionToken: string;
+  runtimeId: string;
+  kind: "context.current";
+  payload: PluginAIHostContextRef;
+}) | ({
+  requestId: string;
+  actionToken: string;
+  runtimeId: string;
+  kind: "context.read";
+  payload: PluginAIHostContextRef;
+}) | ({
+  requestId: string;
+  actionToken: string;
+  runtimeId: string;
+  kind: "runtime.release";
+  payload: PluginAIEmptyParams;
+}) | ({
+  requestId: string;
+  actionToken: string;
+  runtimeId: string;
+  kind: "request.cancel";
+  payload: {
+    requestId: string;
+  };
+});
+
+export type PluginAIHostResponse = ({
+  requestId: string;
+  actionToken: string;
+  result: PluginAIHostResult;
+}) | ({
+  requestId: string;
+  actionToken: string;
+  error: true;
+});
+
+export type PluginAIHostResult = ({
+  hostHandle: string;
+  label: string;
+}) | ({
+  hostHandle: string;
+}) | ({
+  current: boolean;
+}) | ({
+  done: true;
+}) | ({
+  done: false;
+  event: PluginAIHostModelEvent;
+}) | ({
+  items: Array<PluginAIHostSelectedSummary>;
+}) | ({
+  text: string;
+}) | ({
+  ok: boolean;
+});
+
+export type PluginAIHostSelectedSummary = {
+  hostHandle: string;
+  scope: "workspace" | "tab" | "session" | "host" | "note";
+  title: string;
+  version: string;
+};
+
 export type PluginAIModelInvocationFeature = "ai.model-invocation";
 
 export type PluginAIStartTurnParams = {

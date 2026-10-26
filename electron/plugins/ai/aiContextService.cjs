@@ -49,10 +49,16 @@ class PluginAIContextService {
   }
 
   async #guard(context) {
-    const owner = await this.resolveOwner(context);
-    await this.host.assertActive(context);
-    if (await this.resolveOwner(context) !== owner) throw fail("permissionDenied", "Plugin source changed");
-    return owner;
+    try {
+      const owner = await this.resolveOwner(context);
+      await this.host.assertActive(context);
+      if (await this.resolveOwner(context) !== owner) throw fail("permissionDenied", "Plugin source changed");
+      return owner;
+    } catch (error) {
+      const binding = this.source.bindings.get(context.runtimeId);
+      if (!context.signal?.aborted && binding?.pluginId === context.pluginId && binding.pluginVersion === context.pluginVersion) this.releaseRuntime(context.runtimeId);
+      throw error;
+    }
   }
 
   #authorization(permission, params) {

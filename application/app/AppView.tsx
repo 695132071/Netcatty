@@ -26,6 +26,7 @@ import { openQuickConnectFromInput } from '../quickConnectBridge';
 import { AppHostTreeLayer } from './AppHostTreeLayer';
 import { AppHostEditorLayer } from './AppHostEditorLayer';
 import { AppPluginKeybindingHost } from './AppPluginKeybindingHost';
+import { PluginAIContextHost } from '../../components/plugins/PluginAIContextHost';
 import { shouldOpenHostEditOnWorkSurface } from './workTabSurface';
 import { useConnectionLogsStore } from '../state/connectionLogsStore';
 import {
@@ -856,6 +857,7 @@ function AppViewInner({ domains }: AppViewProps) {
           sessions={sessions}
           workspaces={workspaces}
         />
+        <PluginAIContextHost sessions={sessions} workspaces={workspaces} />
       </div>
 
       {/* Global "quick add / edit snippet" modal, triggered by the
