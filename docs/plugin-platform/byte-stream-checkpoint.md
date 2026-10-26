@@ -1,7 +1,7 @@
 # Byte stream integration checkpoint
 
 The branch starts at #3978 `91b8927c56314e68c06e2c008e84559ddfb96d78`.
-It integrates source APIs from #3981 `ab8764a31752fd2d226c9d029c4d65498ba7b063`
+It integrates source APIs from #3981 `4213d8e6726c44e7a479418ece3adf16ea494782`
 and AI service/adapters from #3986 `264f1d983cd1ed83fe4873974a614fff2f47f989`.
 No source database or sync implementation is changed by the transport delta.
 
@@ -106,6 +106,6 @@ connection-management subsystem. See the example README for native setup.
   removes the container and network. Database transport is plain TCP inside
   that disposable network, not database TLS.
 
-Normal native BrowserWindow, full app/package checks, exact-head independent
-review, and screenshot/video acceptance remain separate required evidence.
-Do not disable the Chromium sandbox to obtain that evidence.
+See `byte-stream-acceptance.md` for the current checks, local packaging blocker,
+sample hash, and remaining native/exact-head review work. Do not disable the
+Chromium sandbox to obtain that evidence.
