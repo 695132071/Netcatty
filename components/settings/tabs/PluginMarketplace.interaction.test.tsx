@@ -90,3 +90,34 @@ test('responsive layout is scoped to marketplace content width, with a narrow de
   assert.match(css, /grid-template-columns: 248px minmax\(0, 1fr\)/);
   assert.match(css, /plugin-marketplace-browser--selected \.plugin-marketplace-catalog \{ display: none;/);
 });
+
+test('narrow detail starts at the top and back restores the settings scroll and card focus', async () => {
+  const previousRaf = globalThis.requestAnimationFrame;
+  globalThis.requestAnimationFrame = (callback) => { callback(0); return 0; };
+  const actGlobal = globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean };
+  const previousActEnvironment = actGlobal.IS_REACT_ACT_ENVIRONMENT;
+  actGlobal.IS_REACT_ACT_ENVIRONMENT = true;
+  const pane = { scrollTop: 450 };
+  let focused = false;
+  const list = { scrollTop: 0, closest: (selector: string) => selector === '.plugin-marketplace' ? { clientWidth: 700 } : pane,
+    querySelectorAll: () => [{ dataset: { pluginId: entries[0].id }, focus: () => { focused = true; } }] };
+  let renderer!: ReactTestRenderer;
+  function Harness() {
+    const [selected, setSelected] = useState<string | null>(null);
+    return <I18nProvider locale="en"><PluginMarketplaceContent catalog={catalog} selected={selected} onSelect={setSelected} installed={[]} /></I18nProvider>;
+  }
+  try {
+    await act(async () => { renderer = create(<Harness />, { createNodeMock: (element) => element.type === 'div' ? list : { scrollTo() {}, focus() {} } }); });
+    const card = renderer.root.findAll((node) => node.type === 'button' && node.props['data-plugin-id'] === entries[0].id)[0];
+    await act(async () => card.props.onClick());
+    assert.equal(pane.scrollTop, 0);
+    const back = renderer.root.findAllByType('button').find((node) => node.children.includes('All plugins'))!;
+    await act(async () => back.props.onClick());
+    assert.equal(pane.scrollTop, 450);
+    assert.equal(focused, true);
+    await act(async () => renderer.unmount());
+  } finally {
+    globalThis.requestAnimationFrame = previousRaf;
+    actGlobal.IS_REACT_ACT_ENVIRONMENT = previousActEnvironment;
+  }
+});

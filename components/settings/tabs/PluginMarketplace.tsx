@@ -27,15 +27,20 @@ export function PluginMarketplaceContent({ catalog, installed, selected, onSelec
   const detailRef = useRef<HTMLElement>(null);
   const lastSelection = useRef<string | null>(null);
   const listScroll = useRef(0);
+  const pageScroll = useRef(0);
   const entry = catalog.entries.find((item) => item.id === selected);
   const filtered = filterPluginCatalog(catalog.entries, search);
   const installedEntry = installed.find((item) => item.id === entry?.id);
   const choose = (id: string) => {
     listScroll.current = listRef.current?.scrollTop ?? 0;
+    if (!entry) pageScroll.current = listRef.current?.closest('[data-settings-scroll-pane]')?.scrollTop ?? 0;
     lastSelection.current = id;
     onSelect(id);
     requestAnimationFrame(() => {
       detailRef.current?.scrollTo?.(0, 0);
+      const container = listRef.current?.closest<HTMLElement>('.plugin-marketplace');
+      const pane = listRef.current?.closest('[data-settings-scroll-pane]');
+      if (container && container.clientWidth < 820 && pane) pane.scrollTop = 0;
       detailRef.current?.focus({ preventScroll: true });
     });
   };
@@ -44,6 +49,8 @@ export function PluginMarketplaceContent({ catalog, installed, selected, onSelec
     requestAnimationFrame(() => {
       if (listRef.current) {
         listRef.current.scrollTop = listScroll.current;
+        const pane = listRef.current.closest('[data-settings-scroll-pane]');
+        if (pane) pane.scrollTop = pageScroll.current;
         const button = Array.from(listRef.current.querySelectorAll<HTMLButtonElement>('[data-plugin-id]'))
           .find((item) => item.dataset.pluginId === lastSelection.current);
         button?.focus({ preventScroll: true });
