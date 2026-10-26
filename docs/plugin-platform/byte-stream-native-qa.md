@@ -108,10 +108,11 @@ Build the assistant and follow its existing
 [native QA recipe](assistant-native-qa.md). Use its deterministic local provider,
 synthetic credential marker, and synthetic Note. No paid model call is required.
 The original AI worker subsequently completed the bounded review after a single
-reconsideration using newer maintainer evidence. Source-budget repair is
-confirmed; selected-Note expiry recovery still needs the owner's verified
-follow-up. The [acceptance matrix](acceptance-candidate.md) records that hold.
-These transport tests do not substitute for fix verification or native consent.
+reconsideration using newer maintainer evidence. The parent reports its final
+bounded correction review clean at `ba094616`: source budgets and explicit
+selected-Note re-selection are repaired. The [acceptance matrix](acceptance-candidate.md)
+records aggregate checks and remaining native gates. These transport tests do
+not substitute for native consent or acceptance.
 
 ## Record the installed browser path
 

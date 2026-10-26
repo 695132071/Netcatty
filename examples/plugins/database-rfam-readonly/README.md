@@ -36,7 +36,7 @@ Package identity and permission scope:
 - Optional permission: `network.stream`, resource exactly
   `tcp://mysql-rfam-public.ebi.ac.uk:4497`.
 - Five-file package: 11,003 bytes. Two builds matched byte for byte with SHA-256
-  `434a7d506466f5b37f715436ada5707b48f4d6cbd0ef0fe9e71e8974f414b484`.
+  `aaca586669db454e91d61487e576ed524d1b7190eed182bc2cd0035e59caa0d3`.
   This is the dedicated acceptance candidate's package, rebuilt with its SDK.
   The earlier #3993 archive had a different hash; do not reuse an earlier
   artifact's authorization for this package.

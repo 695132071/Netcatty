@@ -18,9 +18,14 @@ sha256sum /tmp/terminal-selection-draft.ncpkg
 
 The two-file package is `com.netcatty.terminal-selection-draft@0.1.0`.
 Its SHA-256 is
-`f3b8ac268edbf616effe76110f372d2249e414675d877020a074c89f03c65950`.
+`4c9c2388b7f891156192a0b5ab7b23291beba3555e7ec8cf24fbe2dfe1242d5e`.
 Two independent builds match. Its content SHA-256 is
-`ede2b623a235771f7b4897155bcfd02e4b289295bea201bca14b6046476b41bf`.
+`99797d8679f34b96580076f922cbec067e511adc0f4ccf396ed129206acb6c4c`.
+These are the unified acceptance candidate's hashes after rebuilding with its
+combined SDK. The owner-head `8e7c28fe` archive had a different hash; use the
+current [acceptance record](../../../docs/plugin-platform/acceptance-candidate.md)
+and exact candidate commit for native preparation. Package validation is not
+permission activation or native acceptance.
 
 Required permissions are `commands` and `menus`. Optional permissions are
 `terminal.selection.read` and `terminal.input.propose`, each limited to one

@@ -80,8 +80,12 @@ HTTP 403 for the configured Electron header download under
 The download was not retried through a mirror. Exact-head platform CI remains the
 packaging verification surface; its result is recorded on the Draft PR.
 
-The sample archive is
+The original owner-head sample archive is
 `f3b8ac268edbf616effe76110f372d2249e414675d877020a074c89f03c65950`.
+The unified candidate rebuild has a different SDK and archive hash; its current
+hash, source checkpoints and review/native gates are in the
+[acceptance record](acceptance-candidate.md). Do not substitute the owner archive
+for that candidate's package.
 The parent-coordinated [native recipe](terminal-sharing-native-qa.md) remains
 pending on the reserved GUI machine. No GUI launch, sandbox bypass, helper
 permission change, paid provider call, or real-user resource was used.

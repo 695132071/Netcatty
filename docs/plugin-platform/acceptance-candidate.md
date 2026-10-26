@@ -3,7 +3,8 @@
 The dedicated branch is `integration/plugin-native-acceptance`. Its Draft PR
 records the exact current head and CI runs. Native AI, database, Host/Vault, and
 settings/logging checks use this candidate rather than separate feature trees.
-The existing feature branches and their published heads remain frozen.
+Only the dedicated acceptance branch is published by this integration task;
+the reported feature checkpoints are preserved through ordinary merges.
 
 The previous candidate `174c525cd45bdc1152e9feb21839a288706d3bd1` passed
 [test CI](https://github.com/binaricat/Netcatty/actions/runs/40381685282),
@@ -12,13 +13,12 @@ and [ET CI](https://github.com/binaricat/Netcatty/actions/runs/40381684810).
 No actionable CI regression was found. Its full test suite records 15,375 tests:
 15,325 passed, 50 skipped, zero failed or cancelled.
 
-The next candidate is provisional. It includes the published settings focus
-correction and the first AI corrections. The AI budget repair has been
-independently confirmed, but expired selected-Note handles still need an
-explicit refresh/re-selection path. AI native activation remains held until
-the owner publishes that follow-up and its verification completes. The real
-terminal Solo/Focus selection-ownership correction also awaits an exact
-published checkpoint. No uncommitted owner work is imported.
+The next candidate includes the published settings focus, AI budget/session/
+selected-Note recovery, and terminal Solo/Focus ownership corrections. The parent
+reports both correction reviews scoped clean at their exact source heads. Those
+reviews do not establish aggregate package verification or native acceptance.
+No uncommitted owner work is imported, and native activation is not performed
+by this coding task.
 
 ## Included source checkpoints
 
@@ -28,8 +28,8 @@ published checkpoint. No uncommitted owner work is imported.
 | Byte streams, source identity, connected AI, examples | #3993 `37df67256e7eedc1050f186bcf401dc376cb5e71` | Ordinary merge; both transport P2 fixes retained |
 | Host/Vault actions | #3990 `730fa643ba0589b8919368657dabc83428f577be` | Ordinary merge; metadata/action authority stays separate |
 | Settings and logging UI | #3994 `823db94cf34503417e3b7c19c6daab379f60530f` | Ordinary merge; retains dc6 alias repair and adds the natively verified gear-to-settings focus path |
-| AI corrections, provisional | #3986 `07eb68c5e7be5ed882f2c0daec75d3fa2792f880` | Ordinary merge; stable source budgets confirmed; model-chat recovery is not complete selected-Note expiry recovery |
-| Selected-terminal continuation | Task `01a1796d-29f4-7505-9746-444b929ab013` | Owner is fixing real Solo/Focus selection ownership; exact published correction pending |
+| AI corrections | #3986 `ba09461676f52b6b1853385ba61845b48cf5f5ac` | Ordinary merges preserve budget/model recovery and final `9e7c9df58` explicit Note re-selection; same reviewer reports the bounded correction clean |
+| Selected-terminal continuation | #3996 `8e7c28fe1bdbcdd76816d33ec926ba8e60eefe64` | Ordinary merge; independent correction review reports Solo/Focus ownership resolved; native acceptance pending |
 
 #3995 was squash-merged into main as `f0897c3c`. Its PR tip was rechecked at
 `921f51756eca564cef3d30152807a4649c2a0d3b`; both contain the same TERM-SSHD test
@@ -52,6 +52,12 @@ test-only repair. No production transfer cancellation change is introduced.
 - Canonical contract generation produces no drift after merging the shared
   schema. This worktree's `@netcatty/plugin-contract` and `@netcatty/plugin-sdk`
   resolve to its own `packages/` directories, not an older worktree.
+- The terminal merge unions canonical terminal and Vault prompt fields, trusted
+  preload methods, feature registration, and lifecycle cleanup. Terminal target
+  capture reuses the existing admission method and authorization guard. The
+  generic interaction UI continues to ignore Vault-only requests; Vault retains
+  its own handler. Inert terminal draft review returns a boolean receipt, never
+  edited text or terminal input.
 - The installed Host test fixture now supports multiple lock listeners, matching
   the production app-lock bridge's `Set` subscription contract. The old fixture
   stored one callback and timed out after both Host and AI services subscribed.
@@ -64,17 +70,19 @@ bridge. HOME, endpoint policy, and sandbox settings are unchanged.
 
 | Check | Local result |
 | --- | --- |
-| Registered plugin runtime | 654 tests: 653 passed, one native skip, zero failures |
-| Contract/SDK/CLI | 90 passed, zero failures |
-| Host installed entrypoint, action guards, draft UI/domain, production lock bridge | 82 passed, zero failures after correcting the subscription fixture |
-| Plugin settings/market/logging UI | 28 passed, zero failures |
-| Registered database examples | Four passed, one opt-in Docker skip |
-| Vite lazy-settings HTTP/native-ESM probe | Passed; alias fix and test are byte-identical to `dc6e645f` |
+| Registered plugin runtime | 676 tests: 674 passed, one missing-Electron failure, one native skip |
+| Final AI broker/context and real-handle sample panel | 27 passed, including explicit Note re-selection |
+| Contract/SDK/CLI | 91 passed, zero failures |
+| Host installed entrypoint/action isolation after terminal merge | 40 passed; earlier baseline Host/action/lock group passed 82 after correcting the subscription fixture |
+| Terminal selection, pane ownership/lifecycle, draft UI, palette failure | 19 passed |
+| Plugin settings/market/logging UI after gear correction | 36 passed, zero failures |
+| Registered database/terminal examples | Five passed, one opt-in Docker skip |
+| Vite lazy-settings HTTP/native-ESM probe | Passed after settings focus correction; dc6 alias repair retained |
 | Main TERM-SSHD file | All 32 cases passed, including both controlled arrival orders |
 | Contract/capability generation and drift, Codex schema | Passed |
 | Full lint | Zero errors, seven existing warnings |
-| Production build | Passed; Vite completed in 31.93 seconds |
-| Four sample packages | Validated; two builds of each match byte for byte |
+| Production build | Passed on the assembled source tree |
+| Five sample packages | Validated; two builds of each match byte for byte |
 
 The initial connected group is retained as a failed run: 39 passed, nine failed,
 and two cancelled. The mounted AI chooser test failed because this local
@@ -90,6 +98,13 @@ and failed with `TypeError: fetch failed`. No alternate download route, native
 rebuild bypass, Electron shim, or sandbox change was used. These local failures
 remain separate from the exact-head CI results recorded in the Draft PR.
 
+The final registered runtime failure is the installed terminal reference's
+worker-reconnect case: the real worker imports the unavailable Electron binary.
+The same case failed for this prerequisite before the final AI merge. The other
+674 registered cases pass. The final focused AI suite passes all 27 cases; the
+earlier connected adapter run retains two passes and one missing-Electron
+failure. These failures are not relabeled as passing or suppressed.
+
 ## Reproducible packages and exact permissions
 
 All package versions below are `0.1.0`. These hashes are for this candidate's
@@ -102,17 +117,21 @@ the Rfam candidate was not installed or granted permissions in any runtime.
 
 | Package ID | Files | SHA-256 |
 | --- | --- | --- |
-| `com.netcatty.assistant` (provisional; native held) | 6 | `c0f733697b8f43a8591f39c02aeea5d8b7b4bd544b642ed87e758e62d98696a5` |
-| `com.netcatty.database-minimal` | 5 | `0d8189e98b535c0d73d9043862bb83b67c8cab2281985083c1096835285ed5bb` |
-| `com.netcatty.database-rfam-readonly` | 5 | `434a7d506466f5b37f715436ada5707b48f4d6cbd0ef0fe9e71e8974f414b484` |
+| `com.netcatty.assistant` | 6 | `c7d784d5c3bd2feb463afd58eae3a9594615395b168174cb8a3d0677584ae395` |
+| `com.netcatty.database-minimal` | 5 | `f01c6a24382897d4b0bf4130941274abacb9a9a963f9b56ecaceb2c020f36874` |
+| `com.netcatty.database-rfam-readonly` | 5 | `aaca586669db454e91d61487e576ed524d1b7190eed182bc2cd0035e59caa0d3` |
 | `com.netcatty.host-actions` | 3 | `cf04f82dfe25ab5cda6f5f3dad0a8fb06c37bedf9924f556bee2b8402e542ef2` |
+| `com.netcatty.terminal-selection-draft` | 2 | `4c9c2388b7f891156192a0b5ab7b23291beba3555e7ec8cf24fbe2dfe1242d5e` |
 
-The assistant archive above is the intermediate `07eb68c5` sample. It is not
-approved for native activation or a claim of clean correction: expired
-selected-Note handles are still unrecoverable. The owner's verified explicit
-re-selection/refresh follow-up will require another package/hash record.
-The database and Host archive hashes are unchanged; Host activation remains
-blocked by the separate automatic-review denial.
+The assistant matches the final owner's reported archive hash. Both database
+archives and the terminal sample changed after rebuilding against the combined
+SDK. The terminal source and CLI are unchanged from `8e7c28fe`; the integrated
+SDK has additional exports. The measured terminal content hash is
+`99797d8679f34b96580076f922cbec067e511adc0f4ccf396ed129206acb6c4c`.
+These archives replace earlier acceptance artifacts. Repeat-build equality and
+CLI validation do not grant native permissions or establish independent
+aggregate/package security verification. Host activation remains blocked by
+the separate automatic-review denial.
 
 | Package | Required feature | Required permissions | Optional permissions/resources |
 | --- | --- | --- | --- |
@@ -120,6 +139,7 @@ blocked by the separate automatic-review denial.
 | Owned database | `network.byte-streams` | `commands`, `views` | `network.stream`: exactly `tcp://10.77.0.20:3306` |
 | Public Rfam | `network.byte-streams` | `commands`, `views` | `network.stream`: exactly `tcp://mysql-rfam-public.ebi.ac.uk:4497` |
 | Host actions | `vault.host-actions`, `commands.interactive` | `commands`, `menus` | `vault.metadata`, `vault.write`, `ui.interact` |
+| Terminal draft | `terminal.selection-sharing`, `terminal.input-drafts`, `commands.interactive` | `commands`, `menus` | `terminal.selection.read`, `terminal.input.propose`, each for one explicit operation |
 
 The owned database address is packaging-only. A different approved fixture
 endpoint requires a new package and hash. No route from the GUI to the coding
@@ -134,6 +154,7 @@ node packages/plugin-cli/dist/cli.js pack examples/plugins/assistant/.package --
 node examples/plugins/database-minimal/prepare.mjs tcp://10.77.0.20:3306 /tmp/database-owned.ncpkg
 node examples/plugins/database-rfam-readonly/prepare.mjs tcp://mysql-rfam-public.ebi.ac.uk:4497 /tmp/database-rfam-readonly.ncpkg
 node packages/plugin-cli/dist/cli.js pack examples/plugins/host-actions --out /tmp/host-actions.ncpkg
+node examples/plugins/terminal-selection-draft/prepare.mjs /tmp/terminal-selection-draft.ncpkg
 ```
 
 ## Native, review, and deployment gates
@@ -142,28 +163,21 @@ node packages/plugin-cli/dist/cli.js pack examples/plugins/host-actions --out /t
 | --- | --- |
 | Exact-head test/build CI | Recorded in the dedicated Draft PR; earlier feature-head CI is historical evidence |
 | Native settings UI | Parent reports dc6 layout/controls and 823 gear-to-settings focus passed; those source-head results do not certify every flow on the integrated head |
-| Native AI sample | Held: source budgets are confirmed repaired, but expired selected-Note references still need the owner's verified explicit refresh/re-selection follow-up. No silent re-share or inference retry is authorized |
+| Native AI sample | Final source correction review is scoped clean at `ba094616`; integrated native acceptance remains pending and activation is not performed here. Expiry requires fresh host selection, explicit dropdown choice, content grant and text review; no silent re-share or inference retry |
 | Native owned database | Pending a supported disposable fixture path; owned live regression remains opt-in and was not run here |
 | Public Rfam | Prepared only; no service DNS lookup, connection, query, installation, or permission activation. Parent coordinates exact hash/endpoint authorization. Only protocol 4.1/native-password is supported; auth/TLS compatibility is unverified and no fallback is added |
 | Native Host/Vault | Parent reports installation/details passed. Activation consent was denied by automatic review. Functional Host flows remain unrun pending specific user approval. Do not retry that activation or change permissions to bypass it |
-| Selected-terminal continuation | Owner is fixing the actual Solo/Focus selection path; published correction and integration verification are pending |
-| AI independent security review | The same worker reconsidered the earlier restriction once with newer maintainer evidence and completed review without recurrence. Fix verification is in progress; this integration task does not repeat the review |
+| Selected-terminal continuation | Correction review scoped clean at `8e7c28fe`; integrated checks recorded above; native acceptance pending. Input review remains inert and returns only a boolean receipt |
+| AI independent security review | The same worker reconsidered the earlier restriction once with newer maintainer evidence and completed review without recurrence. Parent reports the final bounded correction review clean at `ba094616`, including generation guards and old-handle invalidity. This task does not repeat that review or claim independent aggregate/package verification |
 | Main merge/release/deployment | Not authorized by this task; candidate remains Draft |
 
-## Next-candidate checks while owner follow-ups are pending
+## Native handoff
 
-The published settings correction passed all 36 local plugin settings UI tests,
-the Vite HTTP/native-ESM probe, contract drift check, lint (zero errors, seven
-existing warnings), and production build. The ordinary AI merge passed the 17
-source-budget broker tests and four existing model-session recovery panel
-tests. Two adapter tests passed; the connected transport test could not import
-the same missing local Electron binary. No new download route was attempted.
-
-Those passing panel tests do not cover the still-reproduced expired selected-
-Note handle case. The budget correction is independently confirmed; selected-
-Note recovery and the real Solo/Focus selection path remain owner follow-ups.
-No native Host activation retry, automatic re-sharing, or inference retry is
-part of this integration work.
+Use the exact head from the Draft PR and the current five-package manifest/hash
+record. Source-head review and native settings evidence remain separately
+attributed. Do not substitute earlier assistant or database archives. No native
+Host activation retry, automatic re-sharing, or inference retry is part of this
+integration work.
 
 Native evidence records the exact candidate commit, package hashes, source and
 permission prompts, denial/retry/cancel/revoke behavior, screenshots, and video.
