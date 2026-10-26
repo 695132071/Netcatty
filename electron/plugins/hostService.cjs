@@ -23,6 +23,7 @@ const { PackageStore } = require("./packageStore.cjs");
 const { createPluginPaths } = require("./paths.cjs");
 const { PluginManager } = require("./pluginManager.cjs");
 const { PluginNetworkBroker } = require("./networkBroker.cjs");
+const { HOST_INTERACTION_FEATURE, PluginHostInteractionService } = require("./hostInteractionService.cjs");
 const { PluginPermissionEngine } = require("./permissionEngine.cjs");
 const { PluginProtocol } = require("./pluginProtocol.cjs");
 const { PluginViewHost } = require("./pluginViewHost.cjs");
@@ -86,6 +87,7 @@ function createPluginHostService(options) {
   const appRoot = options.appRoot ?? options.app.getAppPath();
   const runtimeDirectory = options.runtimeDirectory ?? path.join(__dirname, "runtime");
   const database = new PluginDatabase(paths.database);
+  let interactionService;
   try {
     const packageStore = new PackageStore({
       allowAdvancedPlugins,
@@ -93,7 +95,7 @@ function createPluginHostService(options) {
       database,
       netcattyVersion: options.app.getVersion(),
       apiVersion: PLUGIN_API_VERSION,
-      supportedFeatures: [...new Set(["metadata.brand-icon", NETWORK_CREDENTIAL_LEASE_FEATURE, ...(options.supportedFeatures ?? [])])],
+      supportedFeatures: [...new Set(["metadata.brand-icon", NETWORK_CREDENTIAL_LEASE_FEATURE, HOST_INTERACTION_FEATURE, ...(options.supportedFeatures ?? [])])],
     });
     const contributionIconService = new PluginContributionIconService({
       database,
@@ -177,6 +179,14 @@ function createPluginHostService(options) {
       quotaManager,
       secretStore,
     });
+    interactionService = new PluginHostInteractionService({
+      database, permissionEngine, quotaManager,
+      clipboard: options.electron.clipboard,
+      getWindow: options.getInteractionWindow,
+      isLocked: options.isAppLocked,
+      subscribeLock: options.subscribeAppLock,
+    });
+    interactionService.registerRpcCapabilities(rpcRegistry);
     const configuredRegistry = options.configureRpcRegistry?.(rpcRegistry);
     if (configuredRegistry && typeof configuredRegistry.then === "function") {
       throw new TypeError("Plugin host RPC registry configuration must be synchronous");
@@ -224,7 +234,7 @@ function createPluginHostService(options) {
       paths,
       netcattyVersion: options.app.getVersion(),
       apiVersion: PLUGIN_API_VERSION,
-      supportedFeatures: [...new Set(["metadata.brand-icon", NETWORK_CREDENTIAL_LEASE_FEATURE, ...(options.supportedFeatures ?? [])])],
+      supportedFeatures: [...new Set(["metadata.brand-icon", NETWORK_CREDENTIAL_LEASE_FEATURE, HOST_INTERACTION_FEATURE, ...(options.supportedFeatures ?? [])])],
       runtimeDirectory,
       appRoot,
       rpcRegistry,
@@ -234,6 +244,7 @@ function createPluginHostService(options) {
       getInitialEnvironment: () => contributionService.getEnvironment(),
       runtimeResourceMonitor: quotaManager,
       runtimeCleanup: async (identity) => {
+        interactionService?.releaseRuntime(identity.runtimeId);
         leaseStore.revokeRuntime(identity.runtimeId);
         await companionSupervisor.releaseRuntime(identity.runtimeId);
       },
@@ -360,6 +371,7 @@ function createPluginHostService(options) {
       runtimeSupervisor,
       contributionService,
       beforeClose: async () => {
+        interactionService.shutdown();
         terminalDataPipelineService?.shutdown();
         extensionProviderService.shutdown();
         credentialResolver.shutdown?.();
@@ -371,6 +383,7 @@ function createPluginHostService(options) {
       },
     });
     return {
+      interactionService,
       catalogService: new RegistryCatalogService({ manager, fetch: options.electron.net?.fetch?.bind(options.electron.net) }),
       companionSupervisor,
       contributionIconService,
@@ -398,6 +411,7 @@ function createPluginHostService(options) {
       viewHost,
     };
   } catch (error) {
+    try { interactionService?.shutdown(); } catch {}
     database.close();
     throw error;
   }

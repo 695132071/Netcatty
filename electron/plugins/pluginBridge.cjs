@@ -16,6 +16,8 @@ const { assertSecretKey } = require("./secretStore.cjs");
 
 const CHANNELS = Object.freeze({
   status: "netcatty:plugins:status",
+  interactionReady: "netcatty:plugins:interaction-ready",
+  interactionResponse: "netcatty:plugins:interaction-response",
   list: "netcatty:plugins:list",
   permissions: "netcatty:plugins:permissions",
   revokePermissions: "netcatty:plugins:revoke-permissions",
@@ -660,6 +662,14 @@ function registerPluginBridge(ipcMain, options) {
   handle(CHANNELS.catalogInstall, async (_manager, payload) => {
     if (!options.catalogService) throw new Error("Plugin catalog unavailable");
     return options.catalogService.install(payload?.id, payload?.selectionToken);
+  });
+  handle(CHANNELS.interactionReady, async (_manager, payload, event) => {
+    if (!options.interactionService) throw new Error("Host interactions are unavailable");
+    return options.interactionService.setReady(event.sender, payload?.ready);
+  });
+  handle(CHANNELS.interactionResponse, async (_manager, payload, event) => {
+    if (!options.interactionService) throw new Error("Host interactions are unavailable");
+    return options.interactionService.respond(event.sender, payload);
   });
   handle(CHANNELS.list, async (activeManager) => activeManager.list());
   const assertManagedPluginId = (payload) => {

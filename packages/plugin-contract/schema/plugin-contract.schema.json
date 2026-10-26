@@ -178,6 +178,303 @@
       },
       "additionalProperties": false
     },
+    "HostInteractionLimits": {
+      "const": {
+        "textBytes": 4096,
+        "requestBytes": 65536,
+        "items": 100,
+        "pendingPerRuntime": 1,
+        "pendingTotal": 8,
+        "requestsPerMinute": 10,
+        "timeoutMs": 60000
+      }
+    },
+    "HostInteractionFeature": {
+      "const": "host.interactions"
+    },
+    "HostQuickPickItem": {
+      "type": "object",
+      "required": [
+        "id",
+        "label"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "label": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512
+        },
+        "description": {
+          "type": "string",
+          "maxLength": 512
+        }
+      },
+      "additionalProperties": false
+    },
+    "HostQuickPickRequest": {
+      "type": "object",
+      "required": [
+        "kind",
+        "title",
+        "items"
+      ],
+      "properties": {
+        "kind": {
+          "const": "quickPick"
+        },
+        "title": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[^\\u0000-\\u001f\\u007f]*$"
+        },
+        "items": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 100,
+          "items": {
+            "$ref": "#/$defs/HostQuickPickItem"
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "HostInputRequest": {
+      "type": "object",
+      "required": [
+        "kind",
+        "title"
+      ],
+      "properties": {
+        "kind": {
+          "const": "input"
+        },
+        "title": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[^\\u0000-\\u001f\\u007f]*$"
+        },
+        "initialValue": {
+          "type": "string",
+          "maxLength": 4096,
+          "pattern": "^[^\\u0000]*$"
+        }
+      },
+      "additionalProperties": false
+    },
+    "HostClipboardReadRequest": {
+      "type": "object",
+      "required": [
+        "kind",
+        "title"
+      ],
+      "properties": {
+        "kind": {
+          "const": "clipboard.read"
+        },
+        "title": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[^\\u0000-\\u001f\\u007f]*$"
+        }
+      },
+      "additionalProperties": false
+    },
+    "HostClipboardWriteRequest": {
+      "type": "object",
+      "required": [
+        "kind",
+        "title",
+        "text"
+      ],
+      "properties": {
+        "kind": {
+          "const": "clipboard.write"
+        },
+        "title": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[^\\u0000-\\u001f\\u007f]*$"
+        },
+        "text": {
+          "type": "string",
+          "maxLength": 4096,
+          "pattern": "^[^\\u0000]*$"
+        }
+      },
+      "additionalProperties": false
+    },
+    "HostInteractionRequest": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/HostQuickPickRequest"
+        },
+        {
+          "$ref": "#/$defs/HostInputRequest"
+        },
+        {
+          "$ref": "#/$defs/HostClipboardReadRequest"
+        },
+        {
+          "$ref": "#/$defs/HostClipboardWriteRequest"
+        }
+      ]
+    },
+    "HostInteractionResult": {
+      "oneOf": [
+        {
+          "type": "object",
+          "required": [
+            "cancelled"
+          ],
+          "properties": {
+            "cancelled": {
+              "const": true
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": [
+            "cancelled",
+            "value"
+          ],
+          "properties": {
+            "cancelled": {
+              "const": false
+            },
+            "value": {
+              "oneOf": [
+                {
+                  "type": "string",
+                  "maxLength": 4096,
+                  "pattern": "^[^\\u0000]*$"
+                },
+                {
+                  "const": true
+                }
+              ]
+            }
+          },
+          "additionalProperties": false
+        }
+      ]
+    },
+    "HostInteractionResponse": {
+      "type": "object",
+      "required": [
+        "requestId",
+        "actionToken",
+        "action"
+      ],
+      "properties": {
+        "requestId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "actionToken": {
+          "type": "string",
+          "minLength": 32,
+          "maxLength": 256
+        },
+        "action": {
+          "enum": [
+            "cancel",
+            "preview",
+            "submit"
+          ]
+        },
+        "value": {
+          "type": "string",
+          "maxLength": 4096,
+          "pattern": "^[^\\u0000]*$"
+        }
+      },
+      "additionalProperties": false
+    },
+    "HostInteractionClosed": {
+      "type": "object",
+      "required": [
+        "requestId",
+        "closed"
+      ],
+      "properties": {
+        "requestId": {
+          "type": "string",
+          "maxLength": 128
+        },
+        "closed": {
+          "const": true
+        }
+      },
+      "additionalProperties": false
+    },
+    "HostInteractionEvent": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/HostInteractionPrompt"
+        },
+        {
+          "$ref": "#/$defs/HostInteractionClosed"
+        }
+      ]
+    },
+    "HostInteractionPrompt": {
+      "type": "object",
+      "required": [
+        "requestId",
+        "actionToken",
+        "pluginId",
+        "pluginVersion",
+        "expiresAt",
+        "phase",
+        "request"
+      ],
+      "properties": {
+        "requestId": {
+          "type": "string",
+          "maxLength": 128
+        },
+        "actionToken": {
+          "type": "string",
+          "maxLength": 256
+        },
+        "pluginId": {
+          "$ref": "#/$defs/PluginId"
+        },
+        "pluginVersion": {
+          "$ref": "#/$defs/SemanticVersion"
+        },
+        "expiresAt": {
+          "$ref": "#/$defs/SafePositiveInteger"
+        },
+        "phase": {
+          "enum": [
+            "request",
+            "preview"
+          ]
+        },
+        "request": {
+          "$ref": "#/$defs/HostInteractionRequest"
+        },
+        "previewText": {
+          "type": "string",
+          "maxLength": 4096,
+          "pattern": "^[^\\u0000]*$"
+        }
+      },
+      "additionalProperties": false
+    },
     "NetworkCredentialLeaseFeature": {
       "const": "network.credential-lease"
     },
@@ -335,6 +632,7 @@
         "commands",
         "menus",
         "views",
+        "ui.interact",
         "clipboard.read",
         "clipboard.write",
         "terminal.metadata",
@@ -372,6 +670,7 @@
         "commands",
         "menus",
         "views",
+        "ui.interact",
         "clipboard.read",
         "clipboard.write",
         "terminal.metadata",

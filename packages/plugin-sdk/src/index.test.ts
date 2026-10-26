@@ -413,3 +413,19 @@ test("network requests expose canonical host-consumed credential leases without 
     void network.request({ url: 'https://example.invalid', authorization: { scheme: 'Digest' } });
   `);
 });
+
+test("host interaction SDK exposes bounded choice/input and explicit clipboard methods", () => {
+  assertSdkTypeChecks(`
+    import type { PluginContext } from './index.ts';
+    declare const context: PluginContext;
+    const choice: Promise<string | undefined> = context.ui.quickPick('Pick', [{ id: 'one', label: 'One' }]);
+    const input: Promise<string | undefined> = context.ui.input('Input', 'synthetic');
+    const text: Promise<string | undefined> = context.clipboard.readText('Share');
+    const copied: Promise<boolean> = context.clipboard.writeText('synthetic', 'Copy');
+    void [choice, input, text, copied];
+    // @ts-expect-error A plugin boolean cannot grant clipboard authority.
+    context.clipboard.readText('Share', { userGesture: true });
+    // @ts-expect-error No ambient clipboard watcher exists.
+    context.clipboard.watch(() => {});
+  `);
+});

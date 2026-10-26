@@ -165,6 +165,9 @@ function createBridgeRegistrar(context) {
           app,
           electron: electronModule,
           safeStorage,
+          getInteractionWindow: () => win,
+          isAppLocked: () => getAppLockController?.()?.getRuntimeState?.()?.locked !== false,
+          subscribeAppLock: (listener) => getAppLockController?.()?.subscribe?.(listener),
           requestPermissionDecision: createNativePermissionDecisionProvider({
             getLocale: () => getWindowManager().getCurrentLanguage?.() ?? "en",
             dialog: electronModule.dialog,
@@ -217,6 +220,7 @@ function createBridgeRegistrar(context) {
     });
     registerPluginBridge(ipcMain, {
       manager: pluginHostService?.manager,
+      interactionService: pluginHostService?.interactionService,
       permissionEngine: pluginHostService?.permissionEngine,
       runtimeSupervisor: pluginHostService?.runtimeSupervisor,
       database: pluginHostService?.database,

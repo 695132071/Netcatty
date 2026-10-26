@@ -1694,3 +1694,23 @@ test("grant classification uses only the current host activation and stops match
   await read({}, payload);
   assert.equal(contexts[3], null, "stopped and lazy plugins show saved grants as inactive");
 });
+
+test("host interaction ready and response channels reject untrusted senders before touching the adapter", async () => {
+  const ipcMain = createIpcMain(), calls = [];
+  const sender = { id: 7 };
+  registerPluginBridge(ipcMain, {
+    manager: { async initialize() {} }, isTrustedSender: (event) => event?.trusted === true,
+    interactionService: {
+      setReady(...args) { calls.push(args); return true; },
+      respond(...args) { calls.push(args); return true; },
+    },
+  });
+  for (const channel of [CHANNELS.interactionReady, CHANNELS.interactionResponse]) {
+    await assert.rejects(ipcMain.handlers.get(channel)({ sender }, {}), /Untrusted/);
+  }
+  assert.deepEqual(calls, []);
+  await ipcMain.handlers.get(CHANNELS.interactionReady)({ trusted: true, sender }, { ready: true });
+  const response = { requestId: "opaque", actionToken: "host-token", action: "cancel" };
+  await ipcMain.handlers.get(CHANNELS.interactionResponse)({ trusted: true, sender }, response);
+  assert.deepEqual(calls, [[sender, true], [sender, response]]);
+});

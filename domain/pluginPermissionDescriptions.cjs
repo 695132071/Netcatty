@@ -9,6 +9,7 @@ const PERMISSION_DESCRIPTIONS = {
   "settings.write": [false, "Change plugin settings", "Update this plugin's preferences.", "修改插件设置", "修改此插件自己的设置。"],
   commands: [false, "Plugin commands", "Register and run this plugin's own commands.", "插件命令", "注册和执行此插件自己的命令。"],
   menus: [false, "Menu entries", "Add this plugin's actions to host menus.", "菜单入口", "将此插件的操作加入应用菜单。"],
+  "ui.interact": [false, "Host prompts", "Ask the host to show bounded input and choice dialogs.", "宿主交互", "请求宿主显示有界的输入和选择对话框。"],
   views: [false, "Plugin panels", "Display plugin-owned panels inside the app.", "插件面板", "在应用中显示插件自己的面板。"],
   "clipboard.read": [true, "Read clipboard", "Read copied text, which may contain passwords or other sensitive data.", "读取剪贴板", "读取复制的文本，其中可能包含密码或其他敏感数据。"],
   "clipboard.write": [true, "Write clipboard", "Replace clipboard content that you may paste elsewhere.", "写入剪贴板", "替换剪贴板内容，可能影响你随后粘贴的数据。"],

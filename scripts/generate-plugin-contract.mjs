@@ -305,6 +305,11 @@ function schemaTypeToTs(node, level = 0) {
   return "unknown";
 }
 
+const hostInteractionLimits = schema.$defs.HostInteractionLimits?.const;
+if (!hostInteractionLimits || Object.values(hostInteractionLimits).some((value) => !Number.isSafeInteger(value) || value < 1)) {
+  throw new Error("HostInteractionLimits must contain positive bounded integers");
+}
+
 const definitionNames = Object.keys(schema.$defs).sort((left, right) =>
   left.localeCompare(right, "en"),
 );
@@ -327,6 +332,7 @@ const generatedLimits = [
   `export const PLUGIN_JSON_MAX_NODES = ${jsonValueLimits.maxNodes} as const;`,
   `export const PLUGIN_WIRE_MAX_SAFE_INTEGER = ${wireIntegerLimits.maxSafeInteger} as const;`,
   `export const PLUGIN_RPC_MAX_JSON_BYTES = ${rpcLimits.maxJsonBytes} as const;`,
+  `export const PLUGIN_HOST_INTERACTION_LIMITS = ${JSON.stringify(hostInteractionLimits)} as const;`,
   `export const PLUGIN_RPC_ERROR_CODES = ${JSON.stringify(rpcErrorCodes)} as const;`,
   `export const PLUGIN_STREAM_MAX_ID_LENGTH = ${streamLimits.maxStreamIdLength} as const;`,
   `export const PLUGIN_STREAM_MAX_CHUNK_BYTES = ${streamLimits.maxChunkBytes} as const;`,

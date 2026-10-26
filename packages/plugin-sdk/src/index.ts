@@ -109,6 +109,18 @@ export interface PluginCommands {
   executeCommand<T extends JsonValue = JsonValue>(commandId: string, args?: JsonValue): Promise<T>;
 }
 
+export interface PluginHostUI {
+  quickPick(title: string, items: readonly import("@netcatty/plugin-contract").HostQuickPickItem[]): Promise<string | undefined>;
+  input(title: string, initialValue?: string): Promise<string | undefined>;
+}
+
+export interface PluginClipboard {
+  /** The host previews text only after the user asks, then separately confirms sharing it. */
+  readText(title: string): Promise<string | undefined>;
+  /** The host shows the exact text and requires explicit confirmation before replacement. */
+  writeText(text: string, title: string): Promise<boolean>;
+}
+
 export interface PluginContextKeys {
   set(key: string, value: JsonValue): Promise<void>;
 }
@@ -723,6 +735,8 @@ export interface PluginContext {
   readonly storage: PluginKeyValueStore;
   readonly settings: PluginSettings;
   readonly commands: PluginCommands;
+  readonly ui: PluginHostUI;
+  readonly clipboard: PluginClipboard;
   readonly contextKeys: PluginContextKeys;
   readonly views: PluginViews;
   readonly providers: PluginProviders;
@@ -913,3 +927,5 @@ export function throwIfCancellationRequested(token: CancellationToken): void {
 }
 
 export { PLUGIN_NETWORK_CREDENTIAL_LEASE_FEATURE } from "@netcatty/plugin-contract";
+
+export { PLUGIN_HOST_INTERACTION_FEATURE } from "@netcatty/plugin-contract";

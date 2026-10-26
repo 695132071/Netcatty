@@ -167,6 +167,73 @@ export type CredentialRef = {
 
 export type FeatureId = string;
 
+export type HostClipboardReadRequest = {
+  kind: "clipboard.read";
+  title: string;
+};
+
+export type HostClipboardWriteRequest = {
+  kind: "clipboard.write";
+  title: string;
+  text: string;
+};
+
+export type HostInputRequest = {
+  kind: "input";
+  title: string;
+  initialValue?: string;
+};
+
+export type HostInteractionClosed = {
+  requestId: string;
+  closed: true;
+};
+
+export type HostInteractionEvent = (HostInteractionPrompt) | (HostInteractionClosed);
+
+export type HostInteractionFeature = "host.interactions";
+
+export type HostInteractionLimits = {"textBytes":4096,"requestBytes":65536,"items":100,"pendingPerRuntime":1,"pendingTotal":8,"requestsPerMinute":10,"timeoutMs":60000};
+
+export type HostInteractionPrompt = {
+  requestId: string;
+  actionToken: string;
+  pluginId: PluginId;
+  pluginVersion: SemanticVersion;
+  expiresAt: SafePositiveInteger;
+  phase: "request" | "preview";
+  request: HostInteractionRequest;
+  previewText?: string;
+};
+
+export type HostInteractionRequest = (HostQuickPickRequest) | (HostInputRequest) | (HostClipboardReadRequest) | (HostClipboardWriteRequest);
+
+export type HostInteractionResponse = {
+  requestId: string;
+  actionToken: string;
+  action: "cancel" | "preview" | "submit";
+  value?: string;
+};
+
+export type HostInteractionResult = ({
+  cancelled: true;
+}) | ({
+  cancelled: false;
+  value: (string) | (true);
+});
+
+export type HostQuickPickItem = {
+  id: string;
+  label: string;
+  description?: string;
+};
+
+export type HostQuickPickRequest = {
+  kind: "quickPick";
+  title: string;
+  items: Array<HostQuickPickItem>;
+};
+
 export type IconReference = (ThemeIcon) | (PackageIcon);
 
 export type ImporterDetectPayload = {
@@ -357,7 +424,7 @@ export type MenuLocation = "commandPalette" | "application" | "host/context" | "
 
 export type NetworkCredentialLeaseFeature = "network.credential-lease";
 
-export type NonResourceScopedPermission = "storage" | "runtime.advanced" | "settings.read" | "settings.write" | "commands" | "menus" | "views" | "clipboard.read" | "clipboard.write" | "terminal.metadata" | "terminal.output" | "terminal.input" | "terminal.decorate" | "terminal.complete" | "terminal.intercept.input" | "terminal.intercept.output" | "vault.metadata" | "vault.write" | "vault.credentials" | "sftp.read" | "sftp.write" | "secrets" | "provider.terminal" | "provider.connection" | "provider.authentication" | "provider.sync" | "provider.importer";
+export type NonResourceScopedPermission = "storage" | "runtime.advanced" | "settings.read" | "settings.write" | "commands" | "menus" | "views" | "ui.interact" | "clipboard.read" | "clipboard.write" | "terminal.metadata" | "terminal.output" | "terminal.input" | "terminal.decorate" | "terminal.complete" | "terminal.intercept.input" | "terminal.intercept.output" | "vault.metadata" | "vault.write" | "vault.credentials" | "sftp.read" | "sftp.write" | "secrets" | "provider.terminal" | "provider.connection" | "provider.authentication" | "provider.sync" | "provider.importer";
 
 export type NullableRpcId = (RpcId) | (null);
 
@@ -511,7 +578,7 @@ export type PluginNetworkResponse = {
   };
 };
 
-export type PluginPermission = "storage" | "runtime.advanced" | "settings.read" | "settings.write" | "commands" | "menus" | "views" | "clipboard.read" | "clipboard.write" | "terminal.metadata" | "terminal.output" | "terminal.input" | "terminal.decorate" | "terminal.complete" | "terminal.intercept.input" | "terminal.intercept.output" | "vault.metadata" | "vault.write" | "vault.credentials" | "sftp.read" | "sftp.write" | "network" | "filesystem.read" | "filesystem.write" | "secrets" | "companion.execute" | "provider.terminal" | "provider.connection" | "provider.authentication" | "provider.sync" | "provider.importer";
+export type PluginPermission = "storage" | "runtime.advanced" | "settings.read" | "settings.write" | "commands" | "menus" | "views" | "ui.interact" | "clipboard.read" | "clipboard.write" | "terminal.metadata" | "terminal.output" | "terminal.input" | "terminal.decorate" | "terminal.complete" | "terminal.intercept.input" | "terminal.intercept.output" | "vault.metadata" | "vault.write" | "vault.credentials" | "sftp.read" | "sftp.write" | "network" | "filesystem.read" | "filesystem.write" | "secrets" | "companion.execute" | "provider.terminal" | "provider.connection" | "provider.authentication" | "provider.sync" | "provider.importer";
 
 export type PluginWireErrorCode = -32001 | -32002 | -32003 | -32004 | -32005 | -32006 | -32007 | -32008 | -32009 | -32010 | -32011 | -32012 | -32013 | -32014 | -32015 | -32016;
 
