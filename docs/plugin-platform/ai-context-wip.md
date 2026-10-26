@@ -36,6 +36,7 @@ or arbitrary entity-ID lookup.
 | This task | Opt-in `requireBridge` and `maxStreamBytes` request context in `infrastructure/ai/sdk/providers.ts` |
 | This task | Additive trusted-host IPC types and generation, app preload methods/types, AppView host mount, AI-only hostService adapter construction/registration |
 | This task | Host security-dialog visibility hook in the modal/tab plugin view lifecycle |
+| This task, reassigned by parent | Four permission descriptions and the bounded `network.stream` contract test expectation |
 | Transport task | Public canonical schema, generated SDK, runtime forwarding, generic stream registration |
 | Market task | Source identity, private data-owner namespace, installer database, marketplace UI |
 | Transport task | Generic TCP and TLS streams |
@@ -188,23 +189,33 @@ Failed aggregate runs remain evidence, not passing acceptance records:
 | `netcatty-ai-final-runtime.log` | 610 tests: 607 passed, 1 failed, 2 skipped |
 | `netcatty-ai-connected-final-tests.log` | Connected code `42a982660`: 15,248 tests, 15,204 passed, 1 failed, 0 cancelled, 43 skipped |
 | `netcatty-ai-connected-final-runtime.log` | Connected code: 610 tests, 607 passed, 1 failed, 0 cancelled, 2 skipped |
+| `netcatty-ai-fixed-runtime.log` | After `0ba3ea606`: 610 tests, 608 passed, 0 failed, 0 cancelled, 2 skipped |
+| `netcatty-ai-fixed-contract-suite.log` | After `0ba3ea606`: all 88 contract/SDK/CLI tests passed |
 
 The ten Cursor failures in the second full run came from its missing SQLite
 native dependency. Rebuilding the existing dependency with the standard
 `node-gyp --devdir` option repaired them; the focused rerun passed 42 with 3
-skipped. The remaining full-run failure is a shared test expectation missing
-`network.stream` after `network`. The runtime failure is shared permission-copy
-coverage missing descriptions for `ai.invoke`, `context.selected.list`,
-`context.selected.read`, and `network.stream`. These shared files belong to the
-transport task. The final connected-head aggregates above confirm these are the
-only remaining test failures. The earlier failed runs must not be relabeled.
+skipped. The sole connected full-run failure was a test expectation missing
+`network.stream` after `network`. The runtime failure was permission-copy coverage
+missing descriptions for `ai.invoke`, `context.selected.list`,
+`context.selected.read`, and `network.stream`. The parent reassigned these two
+hunks here. Commit `0ba3ea606988e95df256d449395adb7190b46fa0` adds accurate English
+and Chinese descriptions and updates the resource-scope test. The test checks
+both bounded optional stream declarations and rejection of the unbounded stream
+shorthand. Transport can consume this isolated two-file commit.
+
+The permission-copy test, complete 88-test plugin contract/SDK/CLI suite, and
+610-test runtime aggregate now pass (with 2 existing runtime skips). The earlier
+whole-repository red totals remain historical records; no passing whole-repository
+rerun is claimed from these focused repairs. Exact-head CI is recorded on the PR.
 
 The final connected UI/visibility run passes all 3 tests. The 47 focused
 service/preload/runtime checks and 7 connected provider/renderer checks also pass.
 `npm run check:plugin-contract` passes. The six-file package validates and retains
 the SHA-256 recorded in the native recipe.
 
-The connected AppView production build passes. Full lint reports no errors and
+The connected AppView production build passes. Full lint after the permission
+repair reports no errors and
 seven existing warnings. The repository typecheck remains red with 773 diagnostics;
 the new adapter, component, hook, and visibility modules have no diagnostics. Native packaging's
 standard Electron rebuild stops at its hardcoded `/home/agent/.electron-gyp`
