@@ -56,3 +56,4 @@ export const PLUGIN_NETWORK_CREDENTIAL_LEASE_FEATURE = "network.credential-lease
 export const PLUGIN_HOST_INTERACTION_FEATURE = "host.interactions" as const satisfies import("./generated/plugin-contract.js").HostInteractionFeature;
 
 export const PLUGIN_VAULT_PAGES_FEATURE = "views.vault-pages" as const satisfies import("./generated/plugin-contract.js").VaultPagesFeature;
+export const PLUGIN_INTERACTIVE_COMMAND_FEATURE = "commands.interactive" as const satisfies import("./generated/plugin-contract.js").InteractiveCommandFeature;

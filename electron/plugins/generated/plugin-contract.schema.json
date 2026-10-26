@@ -245,6 +245,14 @@
     "HostInteractionFeature": {
       "const": "host.interactions"
     },
+    "InteractiveCommandFeature": {
+      "const": "commands.interactive"
+    },
+    "InteractiveCommandLimits": {
+      "const": {
+        "timeoutMs": 180000
+      }
+    },
     "HostQuickPickItem": {
       "type": "object",
       "required": [
@@ -1174,6 +1182,11 @@
         },
         "enablement": {
           "$ref": "#/$defs/ContextKeyExpression"
+        },
+        "interactive": {
+          "type": "boolean",
+          "default": false,
+          "description": "Require commands.interactive for this command's fixed bounded host interaction budget. Does not grant UI or clipboard permissions."
         }
       },
       "additionalProperties": false

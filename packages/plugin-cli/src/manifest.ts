@@ -371,6 +371,8 @@ function validateSemantics(manifest: PluginManifest): string[] {
     && !requiredFeatures.has('views.vault-pages')) {
     errors.push('Vault pages require views.vault-pages');
   }
+  if (manifest.contributes?.commands?.some((command) => command.interactive)
+    && !requiredFeatures.has('commands.interactive')) errors.push('Interactive commands require commands.interactive');
   if (manifest.icon) {
     if (!requiredFeatures.has('metadata.brand-icon')) errors.push('Brand icons require metadata.brand-icon');
     if (!validRange(manifest.engines.api) || !satisfies('0.1.0-internal.1', manifest.engines.api) || satisfies('0.1.0-internal', manifest.engines.api)) errors.push('Brand icons require API >=0.1.0-internal.1 excluding the legacy revision');
