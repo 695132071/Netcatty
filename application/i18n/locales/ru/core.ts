@@ -1140,6 +1140,7 @@ export const ruCoreMessages: Messages = {
   "settings.plugins.manager.disable": "Отключить",
   "settings.plugins.manager.remove": "Удалить",
   "settings.plugins.manager.removeNote": "Удаление очищает код пакета и локальные данные KV. Настройки пользователя, секреты и данные синхронизации сохраняются.",
+  "settings.plugins.permissions.statusUnknown": "Состояние неизвестно",
   "settings.plugins.permissions.current": "Соответствует текущему запуску",
   "settings.plugins.permissions.inactive": "Не действует для текущего запуска",
   "settings.plugins.permissions.title": "Сохранённые разрешения",

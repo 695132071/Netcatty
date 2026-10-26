@@ -68,3 +68,78 @@ test('permission panel refreshes real grants, revokes once, and keeps stale read
     }
   }
 });
+
+test('partial revocation failure refreshes actual manager and engine state without clearing the original error', async () => {
+  const dom = new JSDOM('<!doctype html><html><body><div id="root"></div></body></html>', { pretendToBeVisual: true, url: 'http://localhost' });
+  const previous = new Map<string, PropertyDescriptor | undefined>();
+  for (const key of ['window', 'document', 'navigator', 'HTMLElement', 'Element', 'Node', 'Event', 'MouseEvent', 'IS_REACT_ACT_ENVIRONMENT']) {
+    previous.set(key, Object.getOwnPropertyDescriptor(globalThis, key));
+    Object.defineProperty(globalThis, key, { configurable: true, writable: true, value: key === 'window' ? dom.window : key === 'IS_REACT_ACT_ENVIRONMENT' ? true : dom.window[key as keyof typeof dom.window] });
+  }
+  const { act } = await import('react');
+  const { createRoot } = await import('react-dom/client');
+  const { I18nProvider } = await import('../../../application/i18n/I18nProvider');
+  const { PluginPermissionPanel } = await import('./PluginPermissionPanel');
+  const { PluginManager } = await import('../../../electron/plugins/pluginManager.cjs');
+  const { PluginPermissionEngine } = await import('../../../electron/plugins/permissionEngine.cjs');
+  const { defaultSecurityPrincipal, normalizePermissionDeclarations, permissionDeclarationHash } = await import('../../../electron/plugins/permissionResources.cjs');
+  const manifest = { id: 'com.example.synthetic', publisher: 'example', permissions: { optional: ['storage'] } };
+  const principal = defaultSecurityPrincipal(manifest);
+  const grant = { pluginId: manifest.id, permission: 'storage', resource: '*', resourceKind: 'exact', grantedAt: 1,
+    declarationHash: permissionDeclarationHash(normalizePermissionDeclarations(manifest).get('storage'), principal) };
+  let enabled = true, running = true, stopped = false, readFails = false;
+  let grants = [grant];
+  let reads = 0, changed = 0;
+  const database = {
+    getActivePlugin: () => ({ id: manifest.id, enabled, manifest }),
+    listPlugins: () => [{ id: manifest.id, enabled, manifest }],
+    setEnabled(_id: string, value: boolean) { enabled = value; },
+    listPermissionGrants: () => grants,
+    deleteAllPermissionGrants() { grants = []; },
+    recordSecurityAudit() { throw new Error('synthetic audit write failed'); },
+  };
+  const engine = new PluginPermissionEngine({ database });
+  const manager = new PluginManager({ database, permissionEngine: engine,
+    packageStore: { async initialize() {} },
+    contributionService: { async initialize() {}, onPluginDisabled() {} },
+    runtimeSupervisor: { async stop() { running = false; stopped = true; } },
+  });
+  Object.assign(dom.window, { netcatty: {
+    async getPluginPermissions() {
+      reads++;
+      if (readFails) throw new Error('synthetic grants refresh failed');
+      const groups = engine.describeGrants(manifest.id, running ? { pluginId: manifest.id, manifest, securityPrincipal: principal } : null);
+      return { grants: groups.always, audit: [] };
+    },
+    async revokePluginPermissions(id: string) { return manager.revokePermissions(id); },
+  } });
+  const root = createRoot(document.getElementById('root')!);
+  const refreshManager = async () => { changed++; assert.equal((await manager.list())[0].enabled, false); };
+  const revoke = () => Array.from(document.querySelectorAll<HTMLButtonElement>('button')).find((item) => item.textContent === 'Disable and revoke all grants')!;
+  try {
+    await act(async () => root.render(<I18nProvider locale="en"><PluginPermissionPanel key="first" pluginId={manifest.id} onChanged={refreshManager} /></I18nProvider>));
+    assert.match(document.body.textContent!, /Matches the current activation/);
+    await act(async () => { revoke().click(); });
+    assert.equal(enabled, false); assert.equal(stopped, true);
+    assert.equal(changed, 1); assert.equal(reads, 2);
+    assert.match(document.querySelector('[role="alert"]')?.textContent ?? '', /synthetic audit write failed/);
+    assert.match(document.body.textContent!, /No saved grants/);
+    assert.doesNotMatch(document.body.textContent!, /Matches the current activation/);
+    // A failed state read must also remove the old grant snapshot while
+    // retaining the mutation error and reporting the refresh failure.
+    enabled = true; running = true; stopped = false; grants = [grant];
+    await act(async () => root.render(<I18nProvider locale="en"><PluginPermissionPanel key="second" pluginId={manifest.id} onChanged={async () => { await refreshManager(); readFails = true; throw new Error('synthetic manager refresh failed'); }} /></I18nProvider>));
+    assert.match(document.body.textContent!, /Matches the current activation/);
+    await act(async () => { revoke().click(); });
+    assert.equal(enabled, false); assert.equal(stopped, true);
+    assert.equal(changed, 2); assert.equal(reads, 4);
+    const error = document.querySelector('[role="alert"]')?.textContent ?? '';
+    assert.match(error, /synthetic audit write failed/);
+    assert.match(error, /synthetic manager refresh failed/);
+    assert.match(error, /synthetic grants refresh failed/);
+    assert.doesNotMatch(document.body.textContent!, /Matches the current activation/);
+  } finally {
+    await act(async () => root.unmount()); engine.shutdown(); dom.window.close();
+    for (const [key, descriptor] of previous) { if (descriptor) Object.defineProperty(globalThis, key, descriptor); else Reflect.deleteProperty(globalThis, key); }
+  }
+});

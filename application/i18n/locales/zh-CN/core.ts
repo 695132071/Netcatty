@@ -1160,6 +1160,7 @@ Vaults 标签保持扁平，不使用这块背景。
   "settings.plugins.manager.disable": "停用",
   "settings.plugins.manager.remove": "卸载",
   "settings.plugins.manager.removeNote": "卸载会移除插件代码和本地 KV 数据，保留用户设置、秘密存储和同步 sidecar。",
+  "settings.plugins.permissions.statusUnknown": "状态未知",
   "settings.plugins.permissions.current": "匹配当前运行实例",
   "settings.plugins.permissions.inactive": "对当前运行实例不生效",
   "settings.plugins.permissions.title": "已保存的授权",

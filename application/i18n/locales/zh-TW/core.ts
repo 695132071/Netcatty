@@ -1163,6 +1163,7 @@ Vaults 分頁維持扁平，不使用這塊背景。
   "settings.plugins.manager.disable": "停用",
   "settings.plugins.manager.remove": "卸載",
   "settings.plugins.manager.removeNote": "卸載會移除插件代碼和本地 KV 數據，保留用戶設置、秘密存儲和同步 sidecar。",
+  "settings.plugins.permissions.statusUnknown": "狀態不明",
   "settings.plugins.permissions.current": "符合目前執行個體",
   "settings.plugins.permissions.inactive": "對目前執行個體不生效",
   "settings.plugins.permissions.title": "已儲存的授權",

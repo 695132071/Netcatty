@@ -1245,6 +1245,7 @@ Highlight the focused split pane:
   "settings.plugins.manager.disable": "Disable",
   "settings.plugins.manager.remove": "Uninstall",
   "settings.plugins.manager.removeNote": "Uninstall removes package code and local KV data. User-owned settings, secrets and sync sidecars are retained.",
+  "settings.plugins.permissions.statusUnknown": "Status unknown",
   "settings.plugins.permissions.current": "Matches the current activation",
   "settings.plugins.permissions.inactive": "Inactive for the current activation",
   "settings.plugins.permissions.title": "Saved grants",

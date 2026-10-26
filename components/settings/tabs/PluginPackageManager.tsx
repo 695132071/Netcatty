@@ -91,13 +91,13 @@ export function PluginPackageManager({ manager, onSelectionChange }: { manager: 
 
         </button>
         <Button variant="ghost" size="sm" type="button"
-          className={`h-7 shrink-0 rounded-full border-0 px-3 text-xs focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background ${plugin.enabled ? 'bg-primary/10 hover:bg-primary/15' : 'bg-muted/60 text-muted-foreground hover:bg-muted hover:text-foreground'}`}
-          style={plugin.enabled ? { color: 'color-mix(in srgb, hsl(var(--primary)) 40%, hsl(var(--foreground)))' } : undefined}
-          aria-pressed={plugin.enabled} aria-busy={manager.busy}
-          aria-label={`${t(plugin.enabled ? 'settings.plugins.manager.disable' : 'settings.plugins.manager.enable')} ${plugin.manifest?.name ?? plugin.id}`}
-          title={t(plugin.enabled ? 'settings.plugins.manager.disable' : 'settings.plugins.manager.enable')}
-          disabled={manager.busy} onClick={() => void manager.setEnabled(plugin.id, !plugin.enabled)}>
-          {t(plugin.enabled ? 'settings.plugins.manager.enabled' : 'settings.plugins.manager.disabled')}
+          className={`h-7 shrink-0 rounded-full border-0 px-3 text-xs focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background ${manager.statusKnown !== false && plugin.enabled ? 'bg-primary/10 hover:bg-primary/15' : 'bg-muted/60 text-muted-foreground hover:bg-muted hover:text-foreground'}`}
+          style={manager.statusKnown !== false && plugin.enabled ? { color: 'color-mix(in srgb, hsl(var(--primary)) 40%, hsl(var(--foreground)))' } : undefined}
+          aria-pressed={manager.statusKnown === false ? undefined : plugin.enabled} aria-busy={manager.busy}
+          aria-label={`${t(manager.statusKnown === false ? 'settings.plugins.permissions.statusUnknown' : plugin.enabled ? 'settings.plugins.manager.disable' : 'settings.plugins.manager.enable')} ${plugin.manifest?.name ?? plugin.id}`}
+          title={t(manager.statusKnown === false ? 'settings.plugins.permissions.statusUnknown' : plugin.enabled ? 'settings.plugins.manager.disable' : 'settings.plugins.manager.enable')}
+          disabled={manager.busy || manager.statusKnown === false} onClick={() => void manager.setEnabled(plugin.id, !plugin.enabled)}>
+          {t(manager.statusKnown === false ? 'settings.plugins.permissions.statusUnknown' : plugin.enabled ? 'settings.plugins.manager.enabled' : 'settings.plugins.manager.disabled')}
         </Button>
       </div>
       {plugin.manifest?.publisher && <p className="break-words text-xs text-muted-foreground">{plugin.manifest.publisher}</p>}

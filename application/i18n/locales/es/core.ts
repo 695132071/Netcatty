@@ -1245,6 +1245,7 @@ Resalta el panel dividido enfocado:
   "settings.plugins.manager.disable": "Desactivar",
   "settings.plugins.manager.remove": "Desinstalar",
   "settings.plugins.manager.removeNote": "La desinstalación elimina el código y los datos KV locales. Se conservan los ajustes del usuario, los secretos y los datos auxiliares de sincronización.",
+  "settings.plugins.permissions.statusUnknown": "Estado desconocido",
   "settings.plugins.permissions.current": "Coincide con la ejecución actual",
   "settings.plugins.permissions.inactive": "No activa para la ejecución actual",
   "settings.plugins.permissions.title": "Autorizaciones guardadas",

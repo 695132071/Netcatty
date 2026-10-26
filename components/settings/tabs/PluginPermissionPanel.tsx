@@ -15,16 +15,20 @@ export function PluginPermissionPanel({ pluginId, onChanged }: {
   const [busy, setBusy] = useState(false);
   const generation = useRef(0);
   const pending = useRef(false);
-  const refresh = useCallback(async () => {
+  const refresh = useCallback(async (preserveError = false) => {
     const current = ++generation.current;
-    setError(null);
+    if (!preserveError) setError(null);
     try {
       const bridge = netcattyBridge.require();
       if (!bridge.getPluginPermissions) throw new Error(t('settings.plugins.permissions.unavailable'));
       const result = await bridge.getPluginPermissions(pluginId);
       if (current === generation.current) setSnapshot(result);
     } catch (cause) {
-      if (current === generation.current) setError(cause instanceof Error ? cause.message : String(cause));
+      if (current === generation.current) {
+        setSnapshot(null);
+        const message = cause instanceof Error ? cause.message : String(cause);
+        setError((previous) => preserveError && previous ? `${previous}\n${message}` : message);
+      }
     }
   }, [pluginId, t]);
   useEffect(() => {
@@ -41,10 +45,16 @@ export function PluginPermissionPanel({ pluginId, onChanged }: {
       const bridge = netcattyBridge.require();
       if (!bridge.revokePluginPermissions) throw new Error(t('settings.plugins.permissions.unavailable'));
       await bridge.revokePluginPermissions(pluginId);
-      await onChanged();
-      await refresh();
     } catch (cause) { setError(cause instanceof Error ? cause.message : String(cause)); }
-    finally { pending.current = false; setBusy(false); }
+    finally {
+      try { await onChanged(); }
+      catch (cause) {
+        const message = cause instanceof Error ? cause.message : String(cause);
+        setError((previous) => previous ? `${previous}\n${message}` : message);
+      }
+      await refresh(true);
+      pending.current = false; setBusy(false);
+    }
   };
   return <section className="space-y-3 border-t border-border/60 pt-4 text-sm" aria-label={t('settings.plugins.permissions.title')}>
     <div className="flex flex-wrap items-center justify-between gap-2">
