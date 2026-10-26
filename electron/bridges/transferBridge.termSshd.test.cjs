@@ -290,13 +290,28 @@ test("single-channel upload waits for the prior promotion before starting the ne
   await promotionStartedPromise;
   const openCountAtPromotion = fixture.openCount();
   const second = fixture.start("upload", "alias");
-  await new Promise((resolve) => setImmediate(resolve));
-
-  assert.equal(lstatCalls, 3, "the next file must not inspect its target during prior promotion");
-  assert.equal(fixture.openCount(), openCountAtPromotion, "the next file must not open a remote handle during prior promotion");
-
-  releasePromotion();
-  const [firstResult, secondResult] = await Promise.all([first, second]);
+  let firstResult;
+  let secondResult;
+  try {
+    // start() first writes its local source. Wait until the second upload
+    // actually queues, or incorrectly starts remote work, before asserting.
+    const deadline = Date.now() + 1_000;
+    while (
+      transferBridge._getSessionFastDownloadWaiterCountForTests(fixture.sftp) === 0
+      && lstatCalls === 3
+      && fixture.openCount() === openCountAtPromotion
+      && Date.now() < deadline
+    ) {
+      await new Promise((resolve) => setImmediate(resolve));
+    }
+    assert.equal(lstatCalls, 3, "the next file must not inspect its target during prior promotion");
+    assert.equal(fixture.openCount(), openCountAtPromotion, "the next file must not open a remote handle during prior promotion");
+    assert.equal(transferBridge._getSessionFastDownloadWaiterCountForTests(fixture.sftp), 1,
+      "the second upload must be waiting for the shared channel");
+  } finally {
+    releasePromotion();
+    [firstResult, secondResult] = await Promise.all([first, second]);
+  }
   assert.equal(firstResult.result.error, undefined);
   assert.equal(secondResult.result.error, undefined);
   assert.deepEqual(fixture.files.get(firstResult.targetPath), fixture.payload);
