@@ -2482,7 +2482,12 @@ function isSingleChannelSftpClient(client) {
 }
 
 function requiresExclusiveSftpTransferChannel(client, channel) {
-  return isSingleChannelSftpClient(client)
+  // Aliases stay on one authenticated/elevated channel, even on ordinary SSH
+  // servers. Only the owning peer's restriction requires serial transfers.
+  const peer = client?.__netcattySharedChannelAlias
+    ? sftpClients?.get(client.__netcattySharedChannelOwnerId) || client
+    : client;
+  return isSingleChannelSftpClient(peer)
     || getSftpTransferConcurrency(channel, DOWNLOAD_TRANSFER_CONCURRENCY) === 1;
 }
 
