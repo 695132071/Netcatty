@@ -202,6 +202,8 @@ Failed aggregate runs remain evidence, not passing acceptance records:
 | `netcatty-ai-fixed-final-tests.log` | Before the later review corrections, `173ef5abb`: 15,248 tests, 15,205 passed, 0 failed, 0 cancelled, 43 skipped |
 | `netcatty-ai-review-final-runtime.log` | After both review corrections: 614 tests, 612 passed, 0 failed, 0 cancelled, 2 skipped |
 | `netcatty-ai-review-final-tests.log` | Review-corrected head `d81896b0d`: 15,252 tests, 15,209 passed, 0 failed, 0 cancelled, 43 skipped, before the later base merge |
+| `netcatty-ai-review-merged-tests.log` | Integrated head `07eb68c5e`: 15,255 tests, 15,212 passed, 0 failed, 0 cancelled, 43 skipped, before the selected-Note expiry correction |
+| `netcatty-ai-note-expiry-runtime.log` | Selected-Note expiry correction: 625 tests, 624 passed, 0 failed, 0 cancelled, 1 skipped |
 
 The ten Cursor failures in the second full run came from its missing SQLite
 native dependency. Rebuilding the existing dependency with the standard
@@ -263,14 +265,43 @@ including an uncertain inference outcome and Stop during reopening. They use no
 network or paid provider. Failed-before logs are
 `/tmp/netcatty-ai-budget-review-before.log` and
 `/tmp/netcatty-ai-panel-review-before.log`; passing logs use the corresponding
-`-after.log` names. Independent rechecking of these corrections and native
-acceptance remain pending. CI is not a substitute for either.
+`-after.log` names. Correction review independently confirmed the stable budget
+fix, but found the remaining selected-Note expiry path at `07eb68c5e`.
 
 The corrected broker suite passes all 17 tests, the sample's controlled-time
 panel suite passes all 4, and the connected provider/UI suite passes all 4. Full
 lint still reports zero errors and seven existing warnings; codegen drift and
 the production build pass. Two independent package builds reproduce SHA-256
-`c0f733697b8f43a8591f39c02aeea5d8b7b4bd544b642ed87e758e62d98696a5`.
+`c0f733697b8f43a8591f39c02aeea5d8b7b4bd544b642ed87e758e62d98696a5`
+for that earlier sample checkpoint.
+
+Commit `9e7c9df58` adds explicit **Choose reference** recovery. The panel retains
+summary expiry locally, blocks an expired selection before Send, and never sends
+that local metadata as an authorization field. Refresh model never re-shares a
+Note. Re-selection opens the existing host chooser and resets the dropdown to
+No reference; the user selects the fresh handle and clicks Send explicitly.
+
+The service's identical-selection cache now reuses only complete live summaries.
+After an explicit host re-selection, expired/revoked handles remain invalid and
+fresh eligible handles are issued. No authority lifetime or revocation rule is
+changed. Summary selection does not read text. Every new content handle still
+requires the existing per-context grant and exact-text review.
+
+The new fake-clock panel regression uses the actual host service and selected
+context authority with a real synthetic Note handle. It covers expiry, model
+refresh without re-sharing, explicit re-selection, denial of the fresh content
+grant, cancellation of text review, and one successful explicit send with the
+draft preserved. It repeats the expiry/re-selection with both chat and Note
+lifetimes expired, then succeeds without a manual model refresh. A separate
+service regression reproduces the formerly empty
+same-Note cache after expiry. Both fail on `07eb68c5e`; failed-before evidence is
+`/tmp/netcatty-ai-note-expiry-panel-before.log` and
+`/tmp/netcatty-ai-note-expiry-service-before.log`. The combined panel/service
+suite now passes all 10 tests; the connected installed UI/provider suite passes
+all 4. The replacement six-file artifact has SHA-256
+`c7d784d5c3bd2feb463afd58eae3a9594615395b168174cb8a3d0677584ae395`.
+Independent verification of the latest correction and native acceptance remain
+pending. CI is not a substitute for either.
 
 Native Electron launch on this executor aborts because `chrome-sandbox` is not
 root-owned mode 4755. No sandbox bypass or native retry was attempted. Native

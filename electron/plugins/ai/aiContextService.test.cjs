@@ -64,3 +64,16 @@ test("cancelling one host request does not revoke another chat in the same runti
   await new Promise(setImmediate); controller.abort(); resolve([]); await cancelled;
   assert.equal(f.service.broker.chats.has(chat.chatHandle), true);
 });
+
+test("an explicit host re-selection issues fresh handles after identical selected Note summaries expire", async (t) => {
+  const f = fixture(); t.after(() => f.service.shutdown());
+  let now = 0; f.service.selected.clock = () => now;
+  const { items: [old] } = await f.service.list({}, f.context);
+  now = 300_001;
+  await assert.rejects(f.service.selected.assertCurrent({ handle: old.handle, version: old.version }, f.context));
+  const { items } = await f.service.list({}, f.context);
+  assert.equal(items.length, 1);
+  assert.notEqual(items[0].handle, old.handle); assert.equal(items[0].expiresAt, 600_001);
+  await assert.rejects(f.service.selected.assertCurrent({ handle: old.handle, version: old.version }, f.context));
+  assert.equal(f.reads(), 0); assert.equal(f.authorizations.length, 0); assert.equal(f.invoked(), 0);
+});

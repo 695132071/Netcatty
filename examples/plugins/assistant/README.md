@@ -10,6 +10,12 @@ then click **Send** yourself. Refresh keeps your draft and never retries model
 inference. If a request failed after reaching the provider, check its outcome
 before choosing to send it again.
 
+Selected references expire too. If a selected Note expires or changes, click
+**Choose reference**, confirm the Note in Netcatty, and select its fresh reference
+in the dropdown before clicking **Send**. Refresh model does not share a Note
+again. Re-selection keeps your draft and does not read content or run inference;
+the new reference still requires its own content permission and text review.
+
 The host must support `ai.model-invocation` and `context.selected-read`, with the
 trusted renderer adapter connected. AI invocation, selected-summary enumeration,
 and selected-content reading have separate optional permissions. The host shows
