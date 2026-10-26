@@ -331,7 +331,7 @@ function PluginManagementContent({ handoff, manager, initialSelectedId }: {
         <TabsContent forceMount hidden={pluginView !== 'marketplace'} value="marketplace" className="m-0 space-y-6"><PluginMarketplace installed={manager.plugins} toolbarContainer={pluginView === 'marketplace' ? catalogToolbar : undefined} noVault={manager.credentialStorageAvailable === false} /></TabsContent>
         <TabsContent forceMount hidden={pluginView !== 'thirdparty'} value="thirdparty" className="m-0 space-y-6"><PluginThirdPartyMarket installed={manager.plugins} toolbarContainer={pluginView === 'thirdparty' ? catalogToolbar : undefined} noVault={manager.credentialStorageAvailable === false} /></TabsContent>
         <TabsContent value="installed" className="m-0 space-y-6">
-        <PluginPackageManager manager={manager} initialSelectedId={initialSelectedId} onSelectionChange={setSelectedInstalled} />
+        <PluginPackageManager manager={manager} initialSelectedId={selectedInstalled} onSelectionChange={setSelectedInstalled} />
         {contextualScopes.size > 0 && (
           <section className="grid gap-3 rounded-lg border border-border/70 bg-muted/10 p-4 sm:grid-cols-2" aria-label={t('settings.plugins.scopeTargets')}>
             {[...contextualScopes].map((kind) => (

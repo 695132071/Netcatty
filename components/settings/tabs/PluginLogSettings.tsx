@@ -24,10 +24,10 @@ export function PluginLogSettings() {
       <SettingRow label={title} description={zh ? '选择是否在此设备保存审计记录和诊断日志。' : 'Choose whether to keep audit records and diagnostics on this device.'}>
         <div className="flex items-center gap-3">
           <span className="text-xs text-muted-foreground" role="status">{status ? (status.saveToDisk ? t('common.enabled') : t('common.disabled')) : error ? (zh ? '不可用' : 'Unavailable') : (zh ? '载入中' : 'Loading')}</span>
-          <DialogTrigger asChild><Button variant="outline" size="sm">{zh ? '配置' : 'Configure'}</Button></DialogTrigger>
+          <DialogTrigger asChild><Button className="focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2" variant="outline" size="sm">{zh ? '配置' : 'Configure'}</Button></DialogTrigger>
         </div>
       </SettingRow>
-      <DialogContent data-host-security-surface="" className="sm:max-w-xl">
+      <DialogContent data-host-security-surface="" className="max-h-[85vh] overflow-y-auto sm:max-w-xl">
         <DialogHeader>
           <DialogTitle>{title}</DialogTitle>
           <DialogDescription>{zh ? '默认不保存。仅保存在此设备，不上传或同步。权限面板中的有限安全历史独立保留。' : 'Saving is off by default. Files stay on this device with no upload or sync. The bounded security history in plugin permissions is separate.'}</DialogDescription>
@@ -44,12 +44,12 @@ export function PluginLogSettings() {
         {status && <p className="text-xs text-muted-foreground">{zh ? `最多 ${status.maxBytes / 1048576} MiB，最长保留 ${status.retentionDays} 天。丢弃 ${status.droppedRecords} 条，写入错误 ${status.writeErrors} 次。` : `Up to ${status.maxBytes / 1048576} MiB, up to ${status.retentionDays} days. Dropped: ${status.droppedRecords}. Write errors: ${status.writeErrors}.`}</p>}
         <DialogFooter className="gap-2 sm:justify-between">
           <div className="flex flex-wrap gap-2">
-            <Button variant="outline" size="sm" disabled={busy || !status} onClick={() => void run('open')}>{zh ? '打开文件夹' : 'Open folder'}</Button>
-            <Button variant="outline" size="sm" disabled={busy || !status} onClick={() => void run('export')}>{zh ? '导出' : 'Export'}</Button>
-            <Button variant="ghost" size="sm" disabled={busy || !status} onClick={() => void run('clear')}>{zh ? '清除日志…' : 'Clear logs…'}</Button>
-            <Button variant="ghost" size="sm" disabled={busy} onClick={() => void run('status')}>{zh ? '刷新' : 'Refresh'}</Button>
+            <Button className="focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2" variant="outline" size="sm" disabled={busy || !status} onClick={() => void run('open')}>{zh ? '打开文件夹' : 'Open folder'}</Button>
+            <Button className="focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2" variant="outline" size="sm" disabled={busy || !status} onClick={() => void run('export')}>{zh ? '导出' : 'Export'}</Button>
+            <Button className="focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2" variant="ghost" size="sm" disabled={busy || !status} onClick={() => void run('clear')}>{zh ? '清除日志…' : 'Clear logs…'}</Button>
+            <Button className="focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2" variant="ghost" size="sm" disabled={busy} onClick={() => void run('status')}>{zh ? '刷新' : 'Refresh'}</Button>
           </div>
-          <Button variant="outline" size="sm" onClick={() => setOpen(false)}>{t('common.close')}</Button>
+          <Button className="focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2" variant="outline" size="sm" onClick={() => setOpen(false)}>{t('common.close')}</Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>

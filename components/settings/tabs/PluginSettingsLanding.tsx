@@ -42,13 +42,13 @@ export function PluginSettingsLanding({ manager, settingsAvailable, settingsErro
     <SettingsSection title={t('settings.plugins.landing.options')}>
       <SettingCard divided>
         <SettingRow label={t('settings.plugins.landing.manager')} description={t('settings.plugins.landing.managerDescription')}>
-          <Button ref={managerButtonRef} variant="outline" size="sm" onClick={(event) => onManage(null, event.currentTarget)}>{t('settings.plugins.landing.browse')}</Button>
+          <Button ref={managerButtonRef} className="focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2" variant="outline" size="sm" onClick={(event) => onManage(null, event.currentTarget)}>{t('settings.plugins.landing.browse')}</Button>
         </SettingRow>
         <PluginLogSettings />
       </SettingCard>
     </SettingsSection>
     <SettingsSection title={`${t('settings.plugins.manager.installed')} · ${manager.plugins.length}`} actions={
-      <Button variant="ghost" size="icon" disabled={manager.busy} aria-label={t('settings.plugins.landing.refresh')} onClick={() => void manager.refresh().catch(() => {})}><RefreshCw size={16} /></Button>
+      <Button className="focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2" variant="ghost" size="icon" disabled={manager.busy} aria-label={t('settings.plugins.landing.refresh')} onClick={() => void manager.refresh().catch(() => {})}><RefreshCw size={16} /></Button>
     }>
       {settingsError && <p role="alert" className="text-sm text-destructive">{settingsError}</p>}
       {manager.error && <p role="alert" className="text-sm text-destructive">{manager.error}</p>}
@@ -70,7 +70,7 @@ export function PluginSettingsLanding({ manager, settingsAvailable, settingsErro
               {description && <span className="line-clamp-2 break-words">{description}</span>}
             </>}>
               <div className="flex items-center gap-3">
-                {declaredSettings && <Button variant="ghost" size="icon" disabled={manager.busy || !manager.statusKnown || !settingsAvailable.has(plugin.id)} aria-label={t('settings.plugins.landing.settingsFor').replace('{name}', name)} title={t(settingsAvailable.has(plugin.id) ? 'common.settings' : !plugin.enabled ? 'settings.plugins.landing.enableSettings' : 'settings.plugins.landing.settingsUnavailable')} onClick={(event) => onManage(plugin.id, event.currentTarget)}><Settings2 size={16} /></Button>}
+                {declaredSettings && <Button className="focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2" variant="ghost" size="icon" disabled={manager.busy || !manager.statusKnown || !settingsAvailable.has(plugin.id)} aria-label={t('settings.plugins.landing.settingsFor').replace('{name}', name)} title={t(settingsAvailable.has(plugin.id) ? 'common.settings' : !plugin.enabled ? 'settings.plugins.landing.enableSettings' : 'settings.plugins.landing.settingsUnavailable')} onClick={(event) => onManage(plugin.id, event.currentTarget)}><Settings2 size={16} /></Button>}
                 <Toggle checked={plugin.enabled} disabled={manager.busy || !manager.available || !manager.statusKnown} ariaLabel={`${t(plugin.enabled ? 'settings.plugins.manager.disable' : 'settings.plugins.manager.enable')} ${name}`} onChange={(enabled) => void manager.setEnabled(plugin.id, enabled)} />
               </div>
             </SettingRow>;
