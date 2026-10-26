@@ -1248,6 +1248,7 @@ export const useVaultState = (options?: UseVaultStateOptions) => {
     updateGroupConfigs?: (current: GroupConfig[]) => GroupConfig[],
     expectedHosts?: Host[],
     lock?: VaultLockHandle | null,
+    assertAuthorized?: () => void | Promise<void>,
   ): Promise<
     | {
       status: "persisted";
@@ -1322,6 +1323,10 @@ export const useVaultState = (options?: UseVaultStateOptions) => {
         encryptHosts(cleanedHosts),
         encryptGroupConfigs(nextGroupConfigs),
       ]);
+      // Optional plugin draft guard: runtime/source/revoke/lock authority must
+      // still hold after encryption, immediately before the existing atomic
+      // persistence boundary. Ordinary imports retain their existing behavior.
+      if (assertAuthorized) await assertAuthorized();
       if (
         version !== hostsWriteVersion.current
         || groupConfigsVersion !== groupConfigsWriteVersion.current

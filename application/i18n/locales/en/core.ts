@@ -1380,5 +1380,17 @@ Highlight the focused split pane:
   'plugins.authentication.responseFailed': 'Could not send the authentication response. Try again or cancel the request.',
   'plugins.authentication.responseFailedWithMessage': 'Could not send the authentication response: {message}. Try again or cancel the request.',
   'plugins.authentication.continue': 'Continue',
+  'plugins.hostActions.select': 'Share selected host metadata',
+  'plugins.hostActions.selectionNote': 'Select the current hosts to share. Group selection includes only the hosts selected now. Connecting requires a separate confirmation.',
+  'plugins.hostActions.create': 'Review host draft',
+  'plugins.hostActions.edit': 'Review host changes',
+  'plugins.hostActions.connect': 'Confirm connection',
+  'plugins.hostActions.fieldDiff': 'Changes to save',
+  'plugins.hostActions.defaultsWarning': 'Saved connection defaults apply. Changing a group can change inherited authentication, proxy settings and scripts.',
+  'plugins.hostActions.invalidDraft': 'Enter a valid host draft.',
+  'plugins.hostActions.scriptsRun': 'Saved startup, connect or output scripts may run with this connection.',
+  'plugins.hostActions.noScripts': 'No saved startup, connect or output scripts are configured for this host.',
+  'plugins.hostActions.connectionNote': 'Netcatty will open this connection using the saved settings. This does not share session content with the plugin.',
+  'plugins.hostActions.failed': 'The request expired, was revoked, or the host changed. Select the host again.',
 
 };

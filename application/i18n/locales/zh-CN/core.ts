@@ -1295,5 +1295,17 @@ Vaults 标签保持扁平，不使用这块背景。
   'plugins.authentication.responseFailed': '无法发送认证响应。请重试或取消此请求。',
   'plugins.authentication.responseFailedWithMessage': '无法发送认证响应：{message}。请重试或取消此请求。',
   'plugins.authentication.continue': '继续',
+  'plugins.hostActions.select': '分享所选主机的元数据',
+  'plugins.hostActions.selectionNote': '选择当前要分享的主机。选择分组仅包含本次选中的成员。连接主机需要单独确认。',
+  'plugins.hostActions.create': '预览主机草稿',
+  'plugins.hostActions.edit': '预览主机修改',
+  'plugins.hostActions.connect': '确认连接',
+  'plugins.hostActions.fieldDiff': '即将保存的修改',
+  'plugins.hostActions.defaultsWarning': '将应用已保存的连接默认设置。修改分组可能改变继承的认证、代理和脚本设置。',
+  'plugins.hostActions.invalidDraft': '请输入有效的主机草稿。',
+  'plugins.hostActions.scriptsRun': '此连接可能运行已保存的启动、连接或输出触发脚本。',
+  'plugins.hostActions.noScripts': '此主机未配置已保存的启动、连接或输出触发脚本。',
+  'plugins.hostActions.connectionNote': 'Netcatty 将使用已保存的设置打开连接。这不会向插件分享会话内容。',
+  'plugins.hostActions.failed': '请求已过期、被撤销或主机已改变。请重新选择主机。',
 
 };
