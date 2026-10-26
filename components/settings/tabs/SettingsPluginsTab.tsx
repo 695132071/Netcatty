@@ -3,6 +3,7 @@ import { PluginManagementDialog } from './PluginManagementDialog';
 import { PluginMarketplace } from './PluginMarketplace';
 import { PluginPackageManager } from './PluginPackageManager';
 import { FolderOpen } from 'lucide-react';
+import { PluginStatus } from './PluginStatus';
 import React, { useEffect, useMemo, useState } from 'react';
 
 import { normalizePluginKeyboardEvent } from '../../../application/state/pluginKeybindings';
@@ -286,6 +287,7 @@ export function PluginSettingField({
 function PluginManagementContent({ handoff }: { handoff: (action: () => void) => void }) {
   const { t } = useI18n();
   const manager = usePluginManager();
+  const [catalogToolbar, setCatalogToolbar] = useState<HTMLDivElement | null>(null);
   const [selectedInstalled, setSelectedInstalled] = useState<string | null>(null);
   const [pluginView, setPluginView] = useState<'installed' | 'marketplace'>('installed');
   const availableFonts = useAvailableFonts();
@@ -314,10 +316,13 @@ function PluginManagementContent({ handoff }: { handoff: (action: () => void) =>
             <TabsTrigger value="installed">{t('settings.plugins.manager.installed')} <span className="ml-2 text-muted-foreground">{manager.plugins.length}</span></TabsTrigger>
             <TabsTrigger value="marketplace">{t('settings.plugins.market.title')}</TabsTrigger>
           </TabsList>
+          <div className="flex items-center gap-2">
+          {pluginView === 'installed' && <PluginStatus noVault={manager.credentialStorageAvailable === false} />}
+          <div ref={setCatalogToolbar} className="flex items-center gap-2" />
           <Button variant="outline" size="sm" disabled={!manager.available || manager.busy} onClick={() => { setPluginView('installed'); void manager.importPackage(); }}><FolderOpen size={14} className="mr-2" />{t('settings.plugins.manager.import')}</Button>
+          </div>
         </div>
-        {manager.credentialStorageAvailable === false && <p role="status" className="text-xs text-muted-foreground">{t('settings.plugins.manager.noVault')}</p>}
-        <TabsContent value="marketplace" className="m-0 space-y-6"><PluginMarketplace installed={manager.plugins} /></TabsContent>
+        <TabsContent value="marketplace" className="m-0 space-y-6"><PluginMarketplace installed={manager.plugins} toolbarContainer={catalogToolbar} noVault={manager.credentialStorageAvailable === false} /></TabsContent>
         <TabsContent value="installed" className="m-0 space-y-6">
         <PluginPackageManager manager={manager} onSelectionChange={setSelectedInstalled} />
         {contextualScopes.size > 0 && (
