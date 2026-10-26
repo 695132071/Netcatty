@@ -17,6 +17,16 @@ function assertDownloadUrl(value) {
   }
   return url.href;
 }
+function pinnedReadmeUrl(entry) {
+  if (typeof entry.readme !== "string" || /[\u0000-\u001f\u007f\\%?#]/u.test(entry.readme)
+    || entry.readme.split("/").some((segment) => !segment || segment === "." || segment === "..")) {
+    throw new Error("Invalid or unpinned README path");
+  }
+  const prefix = `/${entry.repository}/${entry.commit}/`;
+  const url = new URL(`https://raw.githubusercontent.com${prefix}${entry.readme.split("/").map(encodeURIComponent).join("/")}`);
+  if (!url.pathname.startsWith(prefix)) throw new Error("README URL escapes the pinned commit");
+  return url.href;
+}
 function validateCatalog(entries) {
   if (!Array.isArray(entries) || entries.length > 1000) throw new Error("Invalid plugin catalog");
   const ids = new Set();
@@ -29,6 +39,7 @@ function validateCatalog(entries) {
       || entry.readme.split("/").some((p) => !p || p === "." || p === "..") || /[\\%?#\0]/u.test(entry.readme)) {
       throw new Error("Invalid or unpinned plugin catalog entry");
     }
+    pinnedReadmeUrl(entry);
     if (!validateManifest(entry.manifest)) throw new Error(`Catalog manifest is invalid: ${formatValidationErrors(validateManifest.errors)}`);
     assertCatalogManifest(entry.manifest, entry);
     ids.add(entry.id);
@@ -85,7 +96,7 @@ class PluginCatalogService {
   }
   async readme(id) {
     const entry = this.get(id);
-    const url = `https://raw.githubusercontent.com/${entry.repository}/${entry.commit}/${entry.readme}`;
+    const url = pinnedReadmeUrl(entry);
     return (await fetchBounded(url, 256 * 1024, this.fetch, 0)).toString("utf8");
   }
   async install(id) {
@@ -107,4 +118,4 @@ class PluginCatalogService {
     }
   }
 }
-module.exports = { PluginCatalogService, assertDownloadUrl, fetchBounded, validateCatalog };
+module.exports = { PluginCatalogService, assertDownloadUrl, fetchBounded, validateCatalog, pinnedReadmeUrl };

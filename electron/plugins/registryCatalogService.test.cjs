@@ -92,3 +92,22 @@ test("fresh unchanged selection installs only its pinned bytes and stays disable
   assert.deepEqual(requests, [REGISTRY_URL, REGISTRY_URL, entry.artifact.url]);
   assert.equal(installs, 1); assert.deepEqual(await fs.readdir(root), []);
 });
+
+
+test("URL-stripped README controls cannot escape a selected commit or replace the good snapshot", async () => {
+  let entries = structuredClone(builtin);
+  const requested = [];
+  const service = new RegistryCatalogService({ fetch: async (url) => {
+    requested.push(url); return new Response(JSON.stringify(entries));
+  } });
+  const good = await service.list();
+  for (const readme of ["\t../main/README.md", ".\n./main/README.md", "\r../main/README.md", "a/\t../../main/README.md", "README\u007f.md"]) {
+    entries = [{ ...builtin[0], readme }];
+    const snapshot = await service.list();
+    assert.equal(snapshot.source, "cached"); assert.match(snapshot.error, /unpinned/);
+    assert.deepEqual(snapshot.entries, good.entries);
+  }
+  entries = [{ ...builtin[0], repository: "example/.." }];
+  assert.match((await service.list()).error, /escapes the pinned commit/);
+  assert.ok(requested.every((url) => url === REGISTRY_URL));
+});
