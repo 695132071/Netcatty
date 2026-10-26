@@ -1275,6 +1275,7 @@ Highlight the focused split pane:
   "settings.plugins.market.noResults": "No matching plugins. Try another search.",
   "settings.plugins.market.manifest": "Compatibility and permissions",
   "settings.plugins.manager.unbounded": "No narrower resource scope is declared. Check the actual scope in the permission prompt.",
+  "settings.plugins.openManager": "Open plugin manager",
   "settings.plugins.title": "Plugins",
   "settings.plugins.description": "Manage your plugins and explore the catalog.",
   'settings.plugins.loading': 'Loading plugin settings…',

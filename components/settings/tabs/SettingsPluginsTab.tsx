@@ -1,4 +1,5 @@
 import { usePluginManager } from '../../../application/state/usePluginManager';
+import { PluginManagementDialog } from './PluginManagementDialog';
 import { PluginMarketplace } from './PluginMarketplace';
 import { PluginPackageManager } from './PluginPackageManager';
 import { FolderOpen } from 'lucide-react';
@@ -282,7 +283,7 @@ export function PluginSettingField({
   );
 }
 
-export default function SettingsPluginsTab() {
+function PluginManagementContent() {
   const { t } = useI18n();
   const manager = usePluginManager();
   const [pluginView, setPluginView] = useState<'installed' | 'marketplace'>('installed');
@@ -304,12 +305,7 @@ export default function SettingsPluginsTab() {
 
 
   return (
-    <SettingsTabContent value="plugins">
-      <SettingsAnchor anchorId="plugins-root" className="space-y-5">
-        <div>
-          <h2 className="text-xl font-semibold">{t('settings.plugins.title')}</h2>
-          <p className="mt-1 text-sm text-muted-foreground">{t('settings.plugins.description')}</p>
-        </div>
+    <div className="space-y-5">
         <Tabs value={pluginView} onValueChange={(value) => setPluginView(value as 'installed' | 'marketplace')} className="space-y-5">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <TabsList className="h-auto flex-wrap justify-start bg-muted/50">
@@ -382,6 +378,21 @@ export default function SettingsPluginsTab() {
         })}
         </TabsContent>
         </Tabs>
+    </div>
+  );
+}
+
+
+export default function SettingsPluginsTab() {
+  const { t } = useI18n();
+  return (
+    <SettingsTabContent value="plugins">
+      <SettingsAnchor anchorId="plugins-root" className="space-y-5">
+        <div>
+          <h2 className="text-xl font-semibold">{t('settings.plugins.title')}</h2>
+          <p className="mt-1 text-sm text-muted-foreground">{t('settings.plugins.description')}</p>
+        </div>
+        <PluginManagementDialog><PluginManagementContent /></PluginManagementDialog>
       </SettingsAnchor>
     </SettingsTabContent>
   );
