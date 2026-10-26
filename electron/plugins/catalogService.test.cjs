@@ -10,7 +10,7 @@ const { assertCatalogManifest } = require("./catalogPolicy.cjs");
 const entries = require("./catalog.json");
 
 test("curated catalog uses pinned public first-party source and rejects advanced manifests", () => {
-  assert.equal(validateCatalog(entries).length, 1);
+  assert.equal(validateCatalog(entries).length, 2);
   for (const main of [{ node: "index.js" }, { browser: "index.js", node: "node.js" }]) {
     const entry = structuredClone(entries[0]); entry.manifest.main = main;
     assert.throws(() => validateCatalog([entry]), /browser-only packages/);
