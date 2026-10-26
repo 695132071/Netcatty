@@ -43,11 +43,11 @@ test('installed sample entrypoint uses real SDK, source authority, signed host d
   const sender = Object.assign(new EventEmitter(), { id: 77, isDestroyed: () => false, send(_channel: string, event: HostInteractionEvent) { if (!('closed' in event)) prompts.push(event); for (const listener of listeners) listener(event); } });
   const owner = Object.assign(new EventEmitter(), { webContents: sender, isFocused: () => true, isVisible: () => true, isDestroyed: () => false });
   let locked = false;
-  let onLock: ((state: { locked: boolean }) => void) | undefined;
+  const lockListeners = new Set<(state: { locked: boolean }) => void>();
   const service = createPluginHostService({
     app: { getAppPath: () => process.cwd(), getPath: () => directory, getVersion: () => '0.0.0' }, electron: {}, env: {},
     getInteractionWindow: () => owner, isAppLocked: () => locked,
-    subscribeAppLock: (callback: typeof onLock) => { onLock = callback; return () => {}; },
+    subscribeAppLock: (callback: (state: { locked: boolean }) => void) => { lockListeners.add(callback); return () => lockListeners.delete(callback); },
     requestPermissionDecision: async (request: { requestId: string; permission: string }) => ({ requestId: request.requestId, decision: 'allow', scope: ['vault.metadata', 'vault.write', 'ui.interact'].includes(request.permission) ? 'once' : 'application' }),
   });
   let requestClock = Date.now();
@@ -180,7 +180,7 @@ test('installed sample entrypoint uses real SDK, source authority, signed host d
     await t.test('Vault lock cancels a pending connection', async () => {
       const run = await begin('connect'); await chooseGroup();
       await waitFor(() => button('Connect') !== undefined);
-      await act(async () => { locked = true; publish(); onLock?.({ locked: true }); await settle(); });
+      await act(async () => { locked = true; publish(); for (const listener of lockListeners) listener({ locked: true }); await settle(); });
       await assert.rejects(run.promise, /cancelled/); assert.equal(connections.length, 1);
       locked = false; publish();
     });

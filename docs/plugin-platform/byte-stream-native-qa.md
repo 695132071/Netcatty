@@ -1,5 +1,10 @@
 # Test integrated byte streams on the native desktop
 
+This record describes #3993 and its earlier package hashes. For the unified
+main, transport/AI, Host/Vault, and settings/logging candidate, use
+[the dedicated acceptance matrix](acceptance-candidate.md). Rebuild and verify
+that candidate's package hashes before native testing.
+
 Use `integration/plugin-byte-stream-handoff` from its integration PR. Record the
 exact commit with `git rev-parse HEAD`. The branch preserves transport #3988
 (`c4433d4961ecf4a81bea92b0a14f47b4ec12f679`), AI integration #3986
