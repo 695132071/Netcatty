@@ -60,6 +60,7 @@ export function PluginMarketplaceContent({ catalog, installed, selected, onSelec
   };
   return <section className="plugin-marketplace space-y-4" aria-label={t('settings.plugins.market.title')}>
     <p className="text-xs text-muted-foreground">{t('settings.plugins.market.note')}</p>
+    {catalog.listStatus === 'ready' && catalog.listError && <div role="status" className="space-y-2 rounded-lg border p-3 text-xs text-muted-foreground"><p>{t('settings.plugins.market.offline')}</p><p>{catalog.listError}</p><Button variant="outline" size="sm" onClick={catalog.retryList}>{t('settings.plugins.market.retry')}</Button></div>}
     {catalog.error && <p role="alert" className="text-xs text-destructive">{catalog.error}</p>}
     <div className={`plugin-marketplace-browser${entry ? ' plugin-marketplace-browser--selected' : ''}`}>
       <div className="plugin-marketplace-catalog space-y-3" ref={listRef}>
@@ -88,7 +89,7 @@ export function PluginMarketplaceContent({ catalog, installed, selected, onSelec
         {installedEntry?.runtime?.lastError && <p role="status" className="break-words text-xs text-destructive">{t('settings.plugins.manager.lastError')}: {installedEntry.runtime.lastError}</p>}
         <p className="text-sm leading-6 text-muted-foreground">{entry.description}</p>
         <a className="block break-all text-xs text-primary underline underline-offset-4" href={`https://github.com/${entry.repository}/tree/${entry.commit}`} target="_blank" rel="noopener noreferrer">{entry.repository} @ {entry.commit.slice(0, 12)}</a>
-        {entry.artifact ? <div className="space-y-2"><p className="text-xs text-muted-foreground">{t('settings.plugins.market.installNote')}</p><Button size="sm" disabled={catalog.busy} onClick={() => void catalog.install(entry.id)}>{t('settings.plugins.market.install')}</Button></div> : <p className="rounded-lg bg-muted/40 p-3 text-xs leading-5">{t('settings.plugins.market.sourceOnly')}</p>}
+        {entry.artifact ? <div className="space-y-2"><p className="text-xs text-muted-foreground">{t('settings.plugins.market.installNote')}</p><Button size="sm" disabled={catalog.busy || Boolean(catalog.listError)} onClick={() => void catalog.install(entry.id)}>{t('settings.plugins.market.install')}</Button></div> : <p className="rounded-lg bg-muted/40 p-3 text-xs leading-5">{t('settings.plugins.market.sourceOnly')}</p>}
         <SettingCard padded><h4 className="mb-3 text-sm font-semibold">{t('settings.plugins.market.manifest')}</h4><PluginPackageDetails plugin={{ id: entry.id, activeVersion: entry.version, enabled: false, manifest: entry.manifest, archiveSha256: entry.artifact?.sha256, runtime: { status: 'stopped', kind: null, lastError: null, quarantinedAt: null } }} /></SettingCard>
         <div className="min-w-0 border-t pt-4"><h4 className="text-sm font-semibold">README</h4><p className="mt-2 text-xs text-muted-foreground">{t('settings.plugins.market.readmeNote')}</p>{catalog.readmeStatus === 'loading' && <p className="mt-3 text-xs text-muted-foreground">{t('settings.plugins.loading')}</p>}
           {catalog.readmeStatus === 'error' && <div role="alert" className="mt-3 space-y-2 text-xs text-destructive"><p>{catalog.readmeError}</p><Button variant="outline" size="sm" onClick={catalog.retryReadme}>{t('settings.plugins.market.retry')}</Button></div>}

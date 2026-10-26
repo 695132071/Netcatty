@@ -647,14 +647,14 @@ function registerPluginBridge(ipcMain, options) {
         ? { credentialStorageAvailable: credentialResolver.isAvailable() } : {}),
     };
   });
-  handle(CHANNELS.catalog, async () => options.catalogService?.list() ?? []);
+  handle(CHANNELS.catalog, async () => options.catalogService?.list() ?? { entries: [], source: "builtin", error: "Plugin catalog unavailable" });
   handle(CHANNELS.catalogReadme, async (_manager, payload) => {
     if (!options.catalogService) throw new Error("Plugin catalog unavailable");
-    return options.catalogService.readme(payload?.id);
+    return options.catalogService.readme(payload?.id, payload?.selectionToken);
   });
   handle(CHANNELS.catalogInstall, async (_manager, payload) => {
     if (!options.catalogService) throw new Error("Plugin catalog unavailable");
-    return options.catalogService.install(payload?.id);
+    return options.catalogService.install(payload?.id, payload?.selectionToken);
   });
   handle(CHANNELS.list, async (activeManager) => activeManager.list());
   handle(CHANNELS.install, async (activeManager, payload) => activeManager.install(

@@ -21,7 +21,7 @@ function validateCatalog(entries) {
   if (!Array.isArray(entries) || entries.length > 1000) throw new Error("Invalid plugin catalog");
   const ids = new Set();
   for (const entry of entries) {
-    if (!entry || !/^[a-z0-9][a-z0-9.-]+$/u.test(entry.id) || ids.has(entry.id)
+    if (!entry || ["id", "version", "name", "description", "author", "repository", "commit", "license", "readme"].some((key) => typeof entry[key] !== "string" || entry[key].length > 4096) || !/^[a-z0-9][a-z0-9.-]+$/u.test(entry.id) || ids.has(entry.id)
       || !/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/u.test(entry.repository)
       || !/^[a-f0-9]{40}$/u.test(entry.commit)
       || !entry.license || !entry.author || !entry.name

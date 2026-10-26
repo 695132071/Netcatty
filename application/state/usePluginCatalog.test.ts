@@ -16,7 +16,7 @@ test('README failures clear on retry/switch and stale requests cannot replace th
   const calls: Array<{ id: string; request: ReturnType<typeof deferred<string>> }> = [];
   Object.defineProperty(globalThis, 'window', { configurable: true, value: {
     netcatty: {
-      listPluginCatalog: async () => [],
+      listPluginCatalog: async () => ({ entries: [], source: "builtin", error: null }),
       getPluginCatalogReadme: (id: string) => { const request = deferred<string>(); calls.push({ id, request }); return request.promise; },
     },
   } });
@@ -49,4 +49,36 @@ test('README failures clear on retry/switch and stale requests cannot replace th
   const unmountedRenders = renders;
   await act(async () => calls[4].request.resolve('late content'));
   assert.equal(renders, unmountedRenders);
+});
+
+test('offline snapshot stays browsable, retry clears warning, and operations bind the selected token', async (context) => {
+  const original = Object.getOwnPropertyDescriptor(globalThis, 'window');
+  const entry = { id: 'com.test.registry', selectionToken: 'first' } as NetcattyPluginCatalogEntry;
+  let offline = true;
+  const reads: unknown[][] = []; const installs: unknown[][] = [];
+  Object.defineProperty(globalThis, 'window', { configurable: true, value: {
+    dispatchEvent() {}, netcatty: {
+      listPluginCatalog: async () => ({ entries: [{ ...entry, selectionToken: offline ? 'first' : 'second' }], source: offline ? 'cached' : 'registry', error: offline ? 'offline' : null }),
+      getPluginCatalogReadme: async (...args: unknown[]) => { reads.push(args); return '# Pinned'; },
+      installCatalogPlugin: async (...args: unknown[]) => { installs.push(args); },
+    },
+  } });
+  (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+  context.after(() => {
+    if (original) Object.defineProperty(globalThis, 'window', original); else Reflect.deleteProperty(globalThis, 'window');
+    Reflect.deleteProperty(globalThis, 'IS_REACT_ACT_ENVIRONMENT');
+  });
+  let state!: ReturnType<typeof usePluginCatalog>;
+  function Probe() { state = usePluginCatalog(entry.id); return null; }
+  let renderer!: ReactTestRenderer;
+  await act(async () => { renderer = create(React.createElement(Probe)); });
+  assert.equal(state.entries.length, 1); assert.equal(state.listStatus, 'ready'); assert.equal(state.listError, 'offline');
+  assert.equal(state.source, 'cached');
+  offline = false;
+  await act(async () => state.retryList());
+  assert.equal(state.listError, null); assert.equal(state.source, 'registry');
+  assert.deepEqual(reads.at(-1), [entry.id, 'second']);
+  await act(async () => state.install(entry.id));
+  assert.deepEqual(installs, [[entry.id, 'second']]);
+  await act(async () => renderer.unmount());
 });

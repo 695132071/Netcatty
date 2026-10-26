@@ -17,7 +17,7 @@ const {
   createUtilityModuleMappings,
   normalizePluginModuleResources,
 } = require("./moduleResources.cjs");
-const { PluginCatalogService } = require("./catalogService.cjs");
+const { RegistryCatalogService } = require("./registryCatalogService.cjs");
 const { PackageStore } = require("./packageStore.cjs");
 const { createPluginPaths } = require("./paths.cjs");
 const { PluginManager } = require("./pluginManager.cjs");
@@ -369,7 +369,7 @@ function createPluginHostService(options) {
       },
     });
     return {
-      catalogService: new PluginCatalogService({ manager, fetch: options.electron.net?.fetch?.bind(options.electron.net) }),
+      catalogService: new RegistryCatalogService({ manager, fetch: options.electron.net?.fetch?.bind(options.electron.net) }),
       companionSupervisor,
       contributionIconService,
       contributionService,

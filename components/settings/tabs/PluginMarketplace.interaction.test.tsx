@@ -125,3 +125,15 @@ test('narrow detail starts at the top and back restores the settings scroll and 
     actGlobal.IS_REACT_ACT_ENVIRONMENT = previousActEnvironment;
   }
 });
+
+test('offline catalog warning keeps details visible and disables market installation', () => {
+  const downloadable = { ...entries[0], artifact: { url: 'https://github.com/example/plugin/releases/download/v1/plugin.ncpkg', sha256: 'a'.repeat(64) } };
+  const html = renderToStaticMarkup(<I18nProvider locale="en"><PluginMarketplaceContent
+    catalog={{ ...catalog, entries: [downloadable], listError: 'Registry offline', source: 'cached' }}
+    selected={downloadable.id} onSelect={() => {}} installed={[]} /></I18nProvider>);
+  assert.match(html, /Registry offline/);
+  assert.match(html, /Installation is unavailable until refresh succeeds/);
+  assert.match(html, /Compatibility and permissions/);
+  assert.match(html, /<button[^>]*disabled=""[^>]*>Install this version/);
+  assert.match(html, /Retry/);
+});

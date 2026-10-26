@@ -27,3 +27,5 @@ require("./plugins/utilityPluginRuntime.test.cjs");
 require('./plugins/brandIconService.test.cjs');
 
 require('./plugins/settingsViewFixture.test.cjs');
+
+require('./plugins/registryCatalogService.test.cjs');
