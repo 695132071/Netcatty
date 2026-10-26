@@ -351,7 +351,7 @@ class PluginContributionService {
         command: commandId,
         ...(args === undefined ? {} : { args }),
         invocation: freezeJson({ source: invocation.source ?? "host", context: invocation.context ?? {} }),
-      }, contribution.interactive ? { timeoutMs: InteractiveCommandLimits.const.timeoutMs, expectedIdentity: identity } : undefined);
+      }, { expectedIdentity: identity, ...(contribution.interactive ? { timeoutMs: InteractiveCommandLimits.const.timeoutMs } : {}) });
       failed = false;
       return result;
     } finally {
