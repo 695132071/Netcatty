@@ -5,10 +5,11 @@ const fs = require("node:fs");
 const path = require("node:path");
 const { DatabaseSync } = require("node:sqlite");
 
-const SCHEMA_VERSION = 3;
+const SCHEMA_VERSION = 4;
 const MAX_SECURITY_AUDIT_DETAILS_BYTES = 16 * 1024;
 const MAX_SECURITY_AUDIT_RECORDS_PER_PLUGIN = 1_000;
 const REQUIRED_SCHEMA_COLUMNS = Object.freeze({
+  plugin_host_preferences: ["key", "value_json", "updated_at"],
   plugins: ["id", "enabled", "active_version", "installed_at", "updated_at"],
   plugin_versions: ["plugin_id", "version", "manifest_json", "archive_sha256", "package_relative_path", "installed_at"],
   plugin_runtime_state: ["plugin_id", "plugin_version", "status", "runtime_kind", "last_error", "quarantined_at", "updated_at"],
@@ -212,6 +213,10 @@ class PluginDatabase {
         `);
       });
     }
+    if (version <= 3) this.transaction(() => this.db.exec(`
+      CREATE TABLE plugin_host_preferences (key TEXT PRIMARY KEY, value_json TEXT NOT NULL, updated_at INTEGER NOT NULL);
+      PRAGMA user_version = 4;
+    `));
     this.#assertSchemaLayout();
     // Legacy-map backfill is deferred until PackageStore.recover() has finished
     // (hostService seeds after package initialize). Running here would promote
@@ -1030,18 +1035,34 @@ class PluginDatabase {
         sha256: createHash("sha256").update(detailsJson).digest("hex"),
       });
     }
+    this.transaction(() => this.#appendSecurityAudit(pluginId, event, detailsJson));
+  }
+
+  #appendSecurityAudit(pluginId, event, detailsJson) {
+    this.db.prepare(`
+      INSERT INTO plugin_security_audit(plugin_id, event, details_json, created_at)
+      VALUES (?, ?, ?, ?)
+    `).run(pluginId, event, detailsJson, this.clock());
+    this.db.prepare(`
+      DELETE FROM plugin_security_audit
+      WHERE plugin_id = ? AND id NOT IN (
+        SELECT id FROM plugin_security_audit
+        WHERE plugin_id = ? ORDER BY id DESC LIMIT ${MAX_SECURITY_AUDIT_RECORDS_PER_PLUGIN}
+      )
+    `).run(pluginId, pluginId);
+  }
+
+  getHostThemeSelection() {
+    const row = this.db.prepare("SELECT value_json FROM plugin_host_preferences WHERE key = 'theme'").get();
+    return row ? parseJson(row.value_json, "host theme selection") : {formatVersion: 1, revision: 0, light: null, dark: null};
+  }
+
+  commitHostThemeSelection(expectedRevision, selection, pluginId) {
     this.transaction(() => {
-      this.db.prepare(`
-        INSERT INTO plugin_security_audit(plugin_id, event, details_json, created_at)
-        VALUES (?, ?, ?, ?)
-      `).run(pluginId, event, detailsJson, this.clock());
-      this.db.prepare(`
-        DELETE FROM plugin_security_audit
-        WHERE plugin_id = ? AND id NOT IN (
-          SELECT id FROM plugin_security_audit
-          WHERE plugin_id = ? ORDER BY id DESC LIMIT ${MAX_SECURITY_AUDIT_RECORDS_PER_PLUGIN}
-        )
-      `).run(pluginId, pluginId);
+      if (this.getHostThemeSelection().revision !== expectedRevision) throw new Error("Theme selection changed; refresh before applying");
+      this.db.prepare("INSERT INTO plugin_host_preferences(key,value_json,updated_at) VALUES('theme',?,?) ON CONFLICT(key) DO UPDATE SET value_json=excluded.value_json,updated_at=excluded.updated_at")
+        .run(JSON.stringify(selection), this.clock());
+      this.#appendSecurityAudit(pluginId ?? "$host.appearance", "theme-selection", JSON.stringify({revision:selection.revision, action:pluginId ? "apply" : "restore"}));
     });
   }
 

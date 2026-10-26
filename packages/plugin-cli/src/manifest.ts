@@ -310,6 +310,7 @@ function findDuplicateIds(manifest: PluginManifest): string[] {
     ["settings", manifest.contributes?.settings],
     ["commands", manifest.contributes?.commands],
     ["views", manifest.contributes?.views],
+    ["themes", manifest.contributes?.themes],
     ["providers", manifest.contributes?.providers],
     ["companionExecutables", manifest.companionExecutables],
   ] as const;
@@ -336,6 +337,7 @@ function validateOwnedContributionIds(manifest: PluginManifest): string[] {
     ["setting", manifest.contributes?.settings],
     ["command", manifest.contributes?.commands],
     ["view", manifest.contributes?.views],
+    ["theme", manifest.contributes?.themes],
     ["provider", manifest.contributes?.providers],
     ["companion executable", manifest.companionExecutables],
   ] as const;
@@ -367,6 +369,16 @@ function validateSemantics(manifest: PluginManifest): string[] {
   }
 
   const requiredFeatures = new Set(manifest.features?.required ?? []);
+  if ((manifest.main.data || manifest.contributes?.themes?.length) && !requiredFeatures.has('appearance.theme-packs')) errors.push('Theme packs require appearance.theme-packs');
+  for (const theme of manifest.contributes?.themes ?? []) if (!theme.entry.endsWith('.json')) errors.push('Theme palette entry must be JSON');
+  if (manifest.contributes?.views?.some((view) => view.location === 'terminal-sidebar')
+    && !requiredFeatures.has('views.terminal-sidebar')) errors.push('Terminal sidebar pages require views.terminal-sidebar');
+  if (manifest.contributes?.views?.some((view) => view.location === 'vault-page')
+    && !requiredFeatures.has('views.vault-pages')) {
+    errors.push('Vault pages require views.vault-pages');
+  }
+  if (manifest.contributes?.commands?.some((command) => command.interactive)
+    && !requiredFeatures.has('commands.interactive')) errors.push('Interactive commands require commands.interactive');
   if (manifest.icon) {
     if (!requiredFeatures.has('metadata.brand-icon')) errors.push('Brand icons require metadata.brand-icon');
     if (!validRange(manifest.engines.api) || !satisfies('0.1.0-internal.1', manifest.engines.api) || satisfies('0.1.0-internal', manifest.engines.api)) errors.push('Brand icons require API >=0.1.0-internal.1 excluding the legacy revision');
@@ -683,6 +695,7 @@ function validateSemantics(manifest: PluginManifest): string[] {
     manifest.main.browser,
     manifest.main.node,
     ...(manifest.contributes?.views ?? []).map(({ entry }) => entry),
+    ...(manifest.contributes?.themes ?? []).map(({ entry }) => entry),
     ...(manifest.contributes?.commands ?? []).flatMap(({ icon }) => packageIconPaths(icon)),
     ...(manifest.contributes?.menus ?? []).flatMap(({ icon }) => packageIconPaths(icon)),
     ...(manifest.contributes?.views ?? []).flatMap(({ icon }) => packageIconPaths(icon)),

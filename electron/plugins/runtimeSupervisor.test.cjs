@@ -12,6 +12,7 @@ const { createPluginPaths } = require("./paths.cjs");
 const { RPC_ERRORS } = require("./rpcRouter.cjs");
 const { RuntimeSupervisor } = require("./runtimeSupervisor.cjs");
 const { createContainmentError } = require("./utilityPluginRuntime.cjs");
+const { PluginContributionService } = require("./contributionService.cjs");
 
 function pluginManifest(overrides = {}) {
   return {
@@ -65,6 +66,31 @@ function createFixture(context, runtimeFactory, supervisorOptions = {}) {
   });
   return { database, manifest, runtimeOptions, supervisor };
 }
+
+test("ordinary command activation A cannot dispatch on replacement runtime B", async (t) => {
+  let executed = 0, activation;
+  const fixture = createFixture(t, () => ({ async start(config) { return { pluginId: config.pluginId, pluginVersion: config.pluginVersion,
+    apiVersion: config.apiVersion, enabledFeatures: config.enabledFeatures }; }, async stop() {}, async request() { executed++; return null; } }));
+  t.after(() => fixture.supervisor.shutdown());
+  const manifest = { ...fixture.manifest, contributes: { commands: [{ id: `${fixture.manifest.id}.ordinary`, title: "Ordinary" }] } };
+  const finished = [];
+  const service = new PluginContributionService({
+    database: { listPlugins: () => [{ id: manifest.id, manifest, activeVersion: manifest.version, enabled: true, runtime: {} }] },
+    onCommandFinished: (runtimeId) => finished.push(runtimeId),
+    runtimeSupervisor: {
+      async start(pluginId) {
+        activation = await fixture.supervisor.start(pluginId);
+        await fixture.supervisor.restart(pluginId);
+        return activation;
+      },
+      request: (...args) => fixture.supervisor.request(...args),
+    },
+  });
+  await assert.rejects(service.executeCommand(`${manifest.id}.ordinary`), /no longer matches the authorized activation/);
+  assert.notEqual(fixture.supervisor.getRuntimeIdentity(manifest.id).runtimeId, activation.runtimeId);
+  assert.equal(executed, 0, "replacement B receives no stale command");
+  assert.deepEqual(finished, [activation.runtimeId]);
+});
 
 test("supervisor prefers the ordinary browser runtime and enforces negotiated identity", async (context) => {
   const calls = [];
@@ -966,4 +992,13 @@ test('new host initializes an exact legacy API plugin with its negotiated legacy
   await fixture.supervisor.start(fixture.manifest.id);
   assert.deepEqual(observed, ['0.1.0-internal']);
   await fixture.supervisor.stop(fixture.manifest.id);
+});
+
+test('data-only themes never create a runtime on startup or explicit start',async(t)=>{
+ const fixture=createFixture(t,()=>{throw new Error('data pack must not execute');});
+ const manifest={...fixture.manifest,main:{data:'theme'},activationEvents:[],features:{required:['appearance.theme-packs']},contributes:{themes:[{id:fixture.manifest.id+'.light',label:'Light',variant:'light',entry:'light.json'}]}};
+ fixture.database.installVersion({pluginId:manifest.id,version:manifest.version,manifest,archiveSha256:'a'.repeat(64),packageRelativePath:'theme'}, {enable:true});
+ await fixture.supervisor.startEnabled();assert.equal(fixture.runtimeOptions.length,0);
+ await assert.rejects(fixture.supervisor.start(manifest.id),/no executable runtime/);assert.equal(fixture.runtimeOptions.length,0);
+ await fixture.supervisor.shutdown();
 });

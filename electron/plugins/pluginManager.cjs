@@ -11,6 +11,7 @@ class PluginManager {
       onPluginEnabled: (pluginId) => this.runtimeSupervisor.start(pluginId),
     };
     this.beforeClose = options.beforeClose ?? null;
+    this.permissionEngine = options.permissionEngine ?? null;
     this.initialized = false;
     this.initializePromise = null;
     this.mutationTail = Promise.resolve();
@@ -124,6 +125,26 @@ class PluginManager {
         this.contributionService.onPluginDisabled(pluginId);
         await this.runtimeSupervisor.stop(pluginId);
       }
+      return this.database.getActivePlugin(pluginId);
+    });
+  }
+
+  revokePermissions(pluginId) {
+    return this.#mutate(async () => {
+      await this.#ready();
+      if (!this.permissionEngine) throw new Error("Plugin permissions are unavailable");
+      if (!this.database.getActivePlugin(pluginId)) throw new Error("Plugin is not installed");
+      // Disable before revoking. Lazy activation cannot re-create authority while
+      // runtime shutdown cancels pending RPC, streams, leases and provider work.
+      const errors = [];
+      // Every containment stage must be attempted even when persistence,
+      // revocation audit, or contribution invalidation fails.
+      try { this.database.setEnabled(pluginId, false); } catch (error) { errors.push(error); }
+      try { this.permissionEngine.revokeAll(pluginId); } catch (error) { errors.push(error); }
+      try { this.contributionService.onPluginDisabled(pluginId); } catch (error) { errors.push(error); }
+      try { await this.runtimeSupervisor.stop(pluginId); } catch (error) { errors.push(error); }
+      if (errors.length === 1) throw errors[0];
+      if (errors.length > 1) throw new AggregateError(errors, "Plugin grant revocation or cleanup failed");
       return this.database.getActivePlugin(pluginId);
     });
   }

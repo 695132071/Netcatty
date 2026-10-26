@@ -40,8 +40,10 @@ async function checkDevImport() {
     }
     const managerResponse = await fetch(new URL("/components/settings/tabs/PluginPackageManager.tsx", origin));
     assert.equal(managerResponse.status, 200);
-    const managerSource = await managerResponse.text();
-    for (const [helper, exported] of [["pluginRuntimePolicy", "describePluginRuntime"], ["pluginPermissionDescriptions", "describePluginPermission"]]) {
+    const themeResponse = await fetch(new URL("/infrastructure/config/pluginThemeRegistry.ts", origin));
+    assert.equal(themeResponse.status, 200);
+    const managerSource = await managerResponse.text() + "\n" + await themeResponse.text();
+    for (const [helper, exported] of [["pluginRuntimePolicy", "describePluginRuntime"], ["pluginPermissionDescriptions", "describePluginPermission"], ["pluginThemePack", "resolveThemePalette"]]) {
       const match = managerSource.match(new RegExp('from "([^"\\n]*' + helper + '[^"\\n]*)"'));
       assert.ok(match, `Missing prebundled ${helper} import`);
       const module = await load(new URL(match[1], origin).href);

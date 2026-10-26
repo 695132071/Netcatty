@@ -1,6 +1,7 @@
 import { describePluginPermission } from '@/domain/pluginPermissionDescriptions.cjs';
 import { describePluginRuntime } from '@/domain/pluginRuntimePolicy.cjs';
 import React, { useRef, useState } from 'react';
+import { PluginPermissionPanel } from './PluginPermissionPanel';
 import { PluginBrandIcon } from '../../plugins/PluginBrandIcon';
 import { ArrowLeft } from 'lucide-react';
 import { usePluginManager } from '../../../application/state/usePluginManager';
@@ -27,7 +28,7 @@ export function PluginPackageDetails({ plugin }: { plugin: NetcattyInstalledPlug
       <dt className="text-muted-foreground">API</dt><dd>{manifest.engines.api}</dd>
       <dt className="text-muted-foreground">SHA-256</dt><dd className="break-all font-mono">{plugin.archiveSha256 ?? '-'}</dd>
     </dl>
-    <p className={!policy.browserOnly ? 'text-destructive' : 'text-muted-foreground'}>{t(`settings.plugins.manager.${runtimeLabel}`)}</p>
+    <p className={!policy.browserOnly && !policy.dataOnly ? 'text-destructive' : 'text-muted-foreground'}>{policy.dataOnly ? t('settings.plugins.manager.dataTheme') : t(`settings.plugins.manager.${runtimeLabel}`)}</p>
     <div className="space-y-2">
       <h4 className="font-medium">{t('settings.plugins.manager.permissions')}</h4>
       <p className="text-xs text-muted-foreground">{t('settings.plugins.manager.permissionNote')}</p>
@@ -89,13 +90,13 @@ export function PluginPackageManager({ manager, onSelectionChange }: { manager: 
 
         </button>
         <Button variant="ghost" size="sm" type="button"
-          className={`h-7 shrink-0 rounded-full border-0 px-3 text-xs focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background ${plugin.enabled ? 'bg-primary/10 hover:bg-primary/15' : 'bg-muted/60 text-muted-foreground hover:bg-muted hover:text-foreground'}`}
-          style={plugin.enabled ? { color: 'color-mix(in srgb, hsl(var(--primary)) 40%, hsl(var(--foreground)))' } : undefined}
-          aria-pressed={plugin.enabled} aria-busy={manager.busy}
-          aria-label={`${t(plugin.enabled ? 'settings.plugins.manager.disable' : 'settings.plugins.manager.enable')} ${plugin.manifest?.name ?? plugin.id}`}
-          title={t(plugin.enabled ? 'settings.plugins.manager.disable' : 'settings.plugins.manager.enable')}
-          disabled={manager.busy} onClick={() => void manager.setEnabled(plugin.id, !plugin.enabled)}>
-          {t(plugin.enabled ? 'settings.plugins.manager.enabled' : 'settings.plugins.manager.disabled')}
+          className={`h-7 shrink-0 rounded-full border-0 px-3 text-xs focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background ${manager.statusKnown !== false && plugin.enabled ? 'bg-primary/10 hover:bg-primary/15' : 'bg-muted/60 text-muted-foreground hover:bg-muted hover:text-foreground'}`}
+          style={manager.statusKnown !== false && plugin.enabled ? { color: 'color-mix(in srgb, hsl(var(--primary)) 40%, hsl(var(--foreground)))' } : undefined}
+          aria-pressed={manager.statusKnown === false ? undefined : plugin.enabled} aria-busy={manager.busy}
+          aria-label={`${t(manager.statusKnown === false ? 'settings.plugins.permissions.statusUnknown' : plugin.enabled ? 'settings.plugins.manager.disable' : 'settings.plugins.manager.enable')} ${plugin.manifest?.name ?? plugin.id}`}
+          title={t(manager.statusKnown === false ? 'settings.plugins.permissions.statusUnknown' : plugin.enabled ? 'settings.plugins.manager.disable' : 'settings.plugins.manager.enable')}
+          disabled={manager.busy || manager.statusKnown === false} onClick={() => void manager.setEnabled(plugin.id, !plugin.enabled)}>
+          {t(manager.statusKnown === false ? 'settings.plugins.permissions.statusUnknown' : plugin.enabled ? 'settings.plugins.manager.enabled' : 'settings.plugins.manager.disabled')}
         </Button>
       </div>
       {plugin.manifest?.publisher && <p className="break-words text-xs text-muted-foreground">{plugin.manifest.publisher}</p>}
@@ -107,6 +108,7 @@ export function PluginPackageManager({ manager, onSelectionChange }: { manager: 
       {plugin.runtime.lastError && <p role="status" className="break-words text-xs text-destructive">{t('settings.plugins.manager.lastError')}: {plugin.runtime.lastError}</p>}
       {selected === plugin.id && <>
         <PluginPackageDetails plugin={plugin} />
+        <PluginPermissionPanel key={plugin.id} pluginId={plugin.id} onChanged={async () => { await manager.refresh(); }} />
         {removing === plugin.id ? <div className="space-y-2 rounded-lg border border-destructive/30 p-3">
           <p className="text-xs">{t('settings.plugins.manager.removeNote')}</p>
           <Button variant="destructive" size="sm" disabled={manager.busy} onClick={() => { void manager.uninstall(plugin.id); setRemoving(null); }}>{t('settings.plugins.manager.remove')}</Button>

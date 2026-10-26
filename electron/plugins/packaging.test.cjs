@@ -23,6 +23,7 @@ test("packaged application declares every plugin host runtime dependency and res
   assert.match(builderSource, /electron\/plugins\/runtime\/\*\*\/\*/);
   assert.match(builderSource, /domain\/pluginRuntimePolicy\.cjs/);
   assert.match(builderSource, /domain\/pluginPermissionDescriptions\.cjs/);
+  assert.match(builderSource, /domain\/pluginThemePack\.cjs/);
   assert.match(builderSource, /!electron\/plugins\/fixtures\/\*\*\/\*/);
 });
 

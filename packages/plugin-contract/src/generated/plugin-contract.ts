@@ -80,6 +80,7 @@ export type CommandContribution = {
   description?: LocalizedText;
   icon?: IconReference;
   enablement?: ContextKeyExpression;
+  interactive?: boolean;
 };
 
 export type CompanionExecutable = {
@@ -166,6 +167,75 @@ export type CredentialRef = {
 };
 
 export type FeatureId = string;
+
+export type HostClipboardReadRequest = {
+  kind: "clipboard.read";
+  title: string;
+};
+
+export type HostClipboardWriteRequest = {
+  kind: "clipboard.write";
+  title: string;
+  text: string;
+};
+
+export type HostInputRequest = {
+  kind: "input";
+  title: string;
+  initialValue?: HostSingleLineInputText;
+};
+
+export type HostInteractionClosed = {
+  requestId: string;
+  closed: true;
+};
+
+export type HostInteractionEvent = (HostInteractionPrompt) | (HostInteractionClosed);
+
+export type HostInteractionFeature = "host.interactions";
+
+export type HostInteractionLimits = {"textBytes":4096,"requestBytes":65536,"items":100,"pendingPerRuntime":1,"pendingTotal":8,"requestsPerMinute":10,"timeoutMs":60000};
+
+export type HostInteractionPrompt = {
+  requestId: string;
+  actionToken: string;
+  pluginId: PluginId;
+  pluginVersion: SemanticVersion;
+  expiresAt: SafePositiveInteger;
+  phase: "request" | "preview";
+  request: HostInteractionRequest;
+  previewText?: string;
+};
+
+export type HostInteractionRequest = (HostQuickPickRequest) | (HostInputRequest) | (HostClipboardReadRequest) | (HostClipboardWriteRequest);
+
+export type HostInteractionResponse = {
+  requestId: string;
+  actionToken: string;
+  action: "cancel" | "preview" | "submit";
+  value?: string;
+};
+
+export type HostInteractionResult = ({
+  cancelled: true;
+}) | ({
+  cancelled: false;
+  value: (string) | (true);
+});
+
+export type HostQuickPickItem = {
+  id: string;
+  label: string;
+  description?: string;
+};
+
+export type HostQuickPickRequest = {
+  kind: "quickPick";
+  title: string;
+  items: Array<HostQuickPickItem>;
+};
+
+export type HostSingleLineInputText = string;
 
 export type IconReference = (ThemeIcon) | (PackageIcon);
 
@@ -319,6 +389,10 @@ export type ImporterSnippetDraft = {
   description?: string;
 };
 
+export type InteractiveCommandFeature = "commands.interactive";
+
+export type InteractiveCommandLimits = {"timeoutMs":180000};
+
 export type JsonPrimitive = (string) | (number) | (boolean) | (null);
 
 export type JsonRpcStandardErrorCode = -32700 | -32600 | -32601 | -32602 | -32603;
@@ -355,7 +429,9 @@ export type MenuContribution = {
 
 export type MenuLocation = "commandPalette" | "application" | "host/context" | "terminal/context" | "terminal/toolbar" | "statusBar";
 
-export type NonResourceScopedPermission = "storage" | "runtime.advanced" | "settings.read" | "settings.write" | "commands" | "menus" | "views" | "clipboard.read" | "clipboard.write" | "terminal.metadata" | "terminal.output" | "terminal.input" | "terminal.decorate" | "terminal.complete" | "terminal.intercept.input" | "terminal.intercept.output" | "vault.metadata" | "vault.write" | "vault.credentials" | "sftp.read" | "sftp.write" | "secrets" | "provider.terminal" | "provider.connection" | "provider.authentication" | "provider.sync" | "provider.importer";
+export type NetworkCredentialLeaseFeature = "network.credential-lease";
+
+export type NonResourceScopedPermission = "storage" | "runtime.advanced" | "settings.read" | "settings.write" | "commands" | "menus" | "views" | "ui.interact" | "clipboard.read" | "clipboard.write" | "terminal.metadata" | "terminal.output" | "terminal.input" | "terminal.decorate" | "terminal.complete" | "terminal.intercept.input" | "terminal.intercept.output" | "vault.metadata" | "vault.write" | "vault.credentials" | "sftp.read" | "sftp.write" | "secrets" | "provider.terminal" | "provider.connection" | "provider.authentication" | "provider.sync" | "provider.importer";
 
 export type NullableRpcId = (RpcId) | (null);
 
@@ -412,6 +488,7 @@ export type PermissionSet = {
 };
 
 export type PluginContributions = {
+  themes?: Array<ThemePackContribution>;
   settings?: Array<SettingContribution>;
   commands?: Array<CommandContribution>;
   keybindings?: Array<KeybindingContribution>;
@@ -433,6 +510,7 @@ export type PluginEngines = {
 export type PluginEntrypoints = {
   browser?: RelativePackagePath;
   node?: RelativePackagePath;
+  data?: "theme";
 };
 
 export type PluginErrorData = {
@@ -481,7 +559,41 @@ export type PluginManifestHeader = ({
   engines: PluginEngineHeader;
 } & Record<string, unknown>);
 
-export type PluginPermission = "storage" | "runtime.advanced" | "settings.read" | "settings.write" | "commands" | "menus" | "views" | "clipboard.read" | "clipboard.write" | "terminal.metadata" | "terminal.output" | "terminal.input" | "terminal.decorate" | "terminal.complete" | "terminal.intercept.input" | "terminal.intercept.output" | "vault.metadata" | "vault.write" | "vault.credentials" | "sftp.read" | "sftp.write" | "network" | "filesystem.read" | "filesystem.write" | "secrets" | "companion.execute" | "provider.terminal" | "provider.connection" | "provider.authentication" | "provider.sync" | "provider.importer";
+export type PluginNetworkAuthorization = {
+  scheme?: "Basic" | "Bearer";
+  username?: string;
+};
+
+export type PluginNetworkRequest = {
+  url: string;
+  method?: "GET" | "POST" | "PUT" | "PATCH" | "DELETE" | "HEAD";
+  headers?: { [key: string]: string };
+  body?: {
+    encoding: "utf8" | "base64";
+    data: string;
+  };
+  timeoutMs?: number;
+  credentialLease?: SecretLeaseRef;
+  authorization?: PluginNetworkAuthorization;
+};
+
+export type PluginNetworkResponse = {
+  url: string;
+  status: number;
+  headers: { [key: string]: string };
+  body: {
+    encoding: "base64";
+    data: string;
+  };
+};
+
+export type PluginPermission = "storage" | "runtime.advanced" | "settings.read" | "settings.write" | "commands" | "menus" | "views" | "ui.interact" | "clipboard.read" | "clipboard.write" | "terminal.metadata" | "terminal.output" | "terminal.input" | "terminal.decorate" | "terminal.complete" | "terminal.intercept.input" | "terminal.intercept.output" | "vault.metadata" | "vault.write" | "vault.credentials" | "sftp.read" | "sftp.write" | "network" | "filesystem.read" | "filesystem.write" | "secrets" | "companion.execute" | "provider.terminal" | "provider.connection" | "provider.authentication" | "provider.sync" | "provider.importer";
+
+export type PluginViewFocusEvent = {
+  instanceId: string;
+};
+
+export type PluginViewFocusRequest = PluginViewFocusEvent;
 
 export type PluginWireErrorCode = -32001 | -32002 | -32003 | -32004 | -32005 | -32006 | -32007 | -32008 | -32009 | -32010 | -32011 | -32012 | -32013 | -32014 | -32015 | -32016;
 
@@ -931,10 +1043,94 @@ export type TerminalSessionSnapshot = {
   alternateScreen?: boolean;
 };
 
+export type TerminalSidebarFeature = "views.terminal-sidebar";
+
 export type ThemeIcon = {
   kind: "theme";
   name: string;
 };
+
+export type ThemePackApplyRequest = {
+  expectedRevision: SafeUnsignedInteger;
+  mode: "light" | "dark";
+  choice: (ThemePackChoice) | (null);
+};
+
+export type ThemePackCatalog = {
+  selection: ThemePackSelection;
+  entries: Array<ThemePackEntry>;
+  diagnostics: Array<{
+    pluginId: PluginId;
+    themeId?: string;
+    code: "invalid" | "unavailable" | "capacity";
+  }>;
+};
+
+export type ThemePackChoice = {
+  ref: ThemePackReference;
+};
+
+export type ThemePackColors = {
+  background?: string;
+  foreground?: string;
+  card?: string;
+  cardForeground?: string;
+  popover?: string;
+  popoverForeground?: string;
+  secondary?: string;
+  secondaryForeground?: string;
+  muted?: string;
+  mutedForeground?: string;
+  accent?: string;
+  destructive?: string;
+  destructiveForeground?: string;
+  border?: string;
+  input?: string;
+};
+
+export type ThemePackContribution = {
+  id: ContributionId;
+  label: LocalizedText;
+  variant: ThemePackVariant;
+  entry: RelativePackagePath;
+};
+
+export type ThemePackEntry = {
+  ref: ThemePackReference;
+  label: string;
+  pluginName: string;
+  dataOnly: boolean;
+  palette: ThemePackPalette;
+};
+
+export type ThemePackFeature = "appearance.theme-packs";
+
+export type ThemePackLimits = {"jsonBytes":65536,"catalogEntries":256,"themesPerPackage":32};
+
+export type ThemePackPalette = {
+  formatVersion: 1;
+  base: "light" | "dark";
+  colors: ThemePackColors;
+};
+
+export type ThemePackReference = {
+  pluginId: PluginId;
+  themeId: ContributionId;
+  version: SemanticVersion;
+  digest: string;
+  variant: ThemePackVariant;
+};
+
+export type ThemePackSelection = {
+  formatVersion: 1;
+  revision: SafeUnsignedInteger;
+  light: (ThemePackChoice) | (null);
+  dark: (ThemePackChoice) | (null);
+};
+
+export type ThemePackVariant = "light" | "dark";
+
+export type VaultPagesFeature = "views.vault-pages";
 
 export type ViewContribution = {
   id: ContributionId;
@@ -947,6 +1143,6 @@ export type ViewContribution = {
   retainContextWhenHidden?: boolean;
 };
 
-export type ViewLocation = "aside" | "panel" | "tab" | "modal" | "settings";
+export type ViewLocation = "aside" | "panel" | "tab" | "modal" | "settings" | "vault-page" | "terminal-sidebar";
 
 export type WireIntegerLimits = {"maxSafeInteger":9007199254740991};

@@ -207,7 +207,7 @@ class RuntimeSupervisor {
 
   async startEnabled() {
     for (const plugin of this.database.listPlugins()) {
-      if (!plugin.enabled || plugin.runtime.quarantinedAt != null) continue;
+      if (!plugin.enabled || plugin.runtime.quarantinedAt != null || plugin.manifest?.main?.data) continue;
       try { await this.start(plugin.id); } catch {}
     }
   }
@@ -240,6 +240,7 @@ class RuntimeSupervisor {
     const plugin = this.database.getActivePlugin(pluginId);
     if (!plugin?.manifest || !plugin.packageRelativePath) throw new Error(`Plugin is not installed: ${pluginId}`);
     if (!plugin.enabled) throw new Error(`Plugin is disabled: ${pluginId}`);
+    if (plugin.manifest.main.data) throw new Error("Static theme packs have no executable runtime");
     if (plugin.runtime.quarantinedAt != null) throw new Error(`Plugin is quarantined: ${pluginId}`);
     const pluginCli = await import("@netcatty/plugin-cli");
     signal.throwIfAborted();

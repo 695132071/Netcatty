@@ -226,3 +226,33 @@ after durable user data can exist.
 - PR 9 supplies signed publisher principals and trust policy through placement;
   signed identity changes force a fresh grant instead of widening an unsigned
   grant silently.
+
+## Inspect and revoke actual grants
+
+The installed package detail separates declared permissions from **Saved
+grants**. The host-only panel lists resource, scope, session (when applicable),
+and grant time. Each row indicates whether its declaration hash and security
+principal match the host-owned current activation. Saved grants from an older
+package or a stopped/disabled activation remain visible as inactive. One-use decisions do not appear as retained grants. Refresh
+reads the engine again. Recent security events include at most 100 entries and
+project only event, time, permission, and scope. Arbitrary database details,
+operation IDs, terminal content, and credential material never cross this UI
+boundary.
+
+**Disable and revoke all grants** runs through the manager mutation queue. It
+persists disabled state before revoking grants, invalidates contributions, and
+waits for runtime shutdown. Existing runtime teardown cancels RPC, streams,
+leases, providers, and companions. Every cleanup stage is attempted if grant deletion, audit persistence, or
+contribution invalidation fails. Multiple errors are aggregated and reported;
+the UI never claims successful revocation when persistence or cleanup failed. Explicit enable requests fresh access.
+This management bridge is available only to the trusted app renderer. It is
+not a plugin RPC method and grants no plugin authority over another package.
+
+`PluginNetworkRequest` and `PluginNetworkResponse` now derive from the canonical
+schema. `credentialLease` and `authorization` describe the existing host lease
+injection path. Hosts advertise `network.credential-lease` for discovery without
+changing existing API versions or disabling legacy requests. Plugins may
+require that feature or handle its absence. Optional authorization defaults to
+Bearer. Basic authorization accepts a bounded username. Plaintext is redeemed
+only inside the host after origin permission and operation binding checks.
+See the [synthetic fixture](../../examples/plugins/lease-http/README.md).

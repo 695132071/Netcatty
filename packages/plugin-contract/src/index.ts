@@ -10,6 +10,7 @@ export {
   serializeJsonValue,
 } from "./jsonValue.js";
 export {
+  PLUGIN_HOST_INTERACTION_LIMITS,
   PLUGIN_IMPORTER_MAX_INPUT_BYTES,
   PLUGIN_IMPORTER_MAX_OUTPUT_BYTES,
   PLUGIN_IMPORTER_MAX_RECORD_BYTES,
@@ -49,3 +50,13 @@ export {
 } from "./streamTransport.js";
 
 export { inspectPluginBrandIcon, PLUGIN_BRAND_ICON_FEATURE, PLUGIN_BRAND_ICON_MAX_BYTES, PLUGIN_BRAND_ICON_MAX_EDGE } from './brandIcon.js';
+
+export const PLUGIN_NETWORK_CREDENTIAL_LEASE_FEATURE = "network.credential-lease" as const satisfies import("./generated/plugin-contract.js").NetworkCredentialLeaseFeature;
+
+export const PLUGIN_HOST_INTERACTION_FEATURE = "host.interactions" as const satisfies import("./generated/plugin-contract.js").HostInteractionFeature;
+
+export const PLUGIN_VAULT_PAGES_FEATURE = "views.vault-pages" as const satisfies import("./generated/plugin-contract.js").VaultPagesFeature;
+export const PLUGIN_TERMINAL_SIDEBAR_FEATURE = "views.terminal-sidebar" as const satisfies import("./generated/plugin-contract.js").TerminalSidebarFeature;
+export const PLUGIN_INTERACTIVE_COMMAND_FEATURE = "commands.interactive" as const satisfies import("./generated/plugin-contract.js").InteractiveCommandFeature;
+
+export const PLUGIN_THEME_PACK_FEATURE = "appearance.theme-packs" as const satisfies import("./generated/plugin-contract.js").ThemePackFeature;

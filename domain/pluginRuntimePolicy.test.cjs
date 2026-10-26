@@ -19,3 +19,9 @@ test('normal release admission rejects advanced declarations and privileged prov
   assert.equal(describePluginRuntime(manifest).defaultRuntimeKind, 'utility');
   assert.throws(() => assertBrowserOnlyPlugin(manifest), /developer mode/);
 });
+
+test('normal admission accepts only explicit non-executable theme-only data packages',()=>{
+ const manifest={main:{data:'theme'},features:{required:['appearance.theme-packs']},contributes:{themes:[{id:'com.example.theme.light'}]}};
+ assert.doesNotThrow(()=>assertBrowserOnlyPlugin(manifest));assert.equal(describePluginRuntime(manifest).dataOnly,true);assert.equal(describePluginRuntime(manifest).defaultRuntimeKind,'data');
+ for(const change of [{main:{data:'theme',browser:'index.js'}},{permissions:{required:['network']}},{activationEvents:['onStartupFinished']},{contributes:{themes:[],commands:[]}}])assert.throws(()=>assertBrowserOnlyPlugin({...manifest,...change}),/developer mode/);
+});

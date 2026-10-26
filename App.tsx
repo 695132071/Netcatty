@@ -12,6 +12,7 @@ import { ToastProvider } from './components/ui/toast';
 import { TooltipProvider } from './components/ui/tooltip';
 import { ScriptAutomationRoot } from './components/scripts/ScriptAutomationRoot';
 import { ExternalMcpApprovalsHost } from './components/ai/ExternalMcpApprovalsHost';
+import { PluginHostInteractionHost } from './components/plugins/PluginHostInteractionHost';
 import { PluginAuthenticationHost } from './components/plugins/PluginAuthenticationHost';
 import { MultilinePasteConfirmHost } from './components/terminal/MultilinePasteConfirmDialog';
 import { useExternalMcpGrantPersister } from './components/ai/useExternalMcpGrantPersister';
@@ -86,6 +87,7 @@ function AppWithProviders({ settings, appLock }: { settings: SettingsState; appL
               <ScriptAutomationRoot />
               <ExternalMcpApprovalsHost />
               <PluginAuthenticationHost />
+              <PluginHostInteractionHost />
               <MultilinePasteConfirmHost />
               <VaultPublisher>
                 <SessionPublisher persistSessionRestore={!isPeerSessionWindow}>

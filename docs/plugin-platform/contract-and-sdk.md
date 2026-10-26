@@ -630,3 +630,13 @@ negotiated API version and runtime initialization uses and verifies that exact
 version. Host version bounds remain independently enforced; unknown required
 features still fail closed. No old manifest is rewritten and no permission grant
 is migrated by this revision.
+
+## Declarative host color contributions
+
+`appearance.theme-packs` adds `contributes.themes` and generated palette/reference
+schemas. A pure package uses `main: { "data": "theme" }`, contributes only themes
+and omits permissions/activation/companions. It has no executable runtime. Normal
+admission accepts this data-only form alongside browser-only code packages; Node
+and arbitrary IPC remain advanced/unsupported public boundaries. Selection is a
+trusted host Appearance action, not an SDK setter or `appearance.write` grant.
+See [Theme packs](./theme-packs.md) for limits, preview, persistence and fallback.

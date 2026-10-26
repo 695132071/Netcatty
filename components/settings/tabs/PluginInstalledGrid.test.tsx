@@ -53,6 +53,11 @@ test('installed grid filters, opens one detail and restores search, scroll and c
     assert.equal(pane.scrollTop, 160); assert.equal(focus.at(-1), plugins[0].id);
     await act(async () => renderer.root.findByType('input').props.onChange({ target: { value: 'none' } }));
     assert.equal(cards().length, 0);
+    await act(async () => renderer.root.findByType('input').props.onChange({ target: { value: '' } }));
+    await act(async () => renderer.update(<I18nProvider locale="en"><PluginPackageManager manager={{ ...manager, statusKnown: false, error: 'synthetic state unavailable' }} onSelectionChange={(id) => selections.push(id)} /></I18nProvider>));
+    const unknown = renderer.root.findAllByType('button').filter((node) => node.children.includes('Status unknown'));
+    assert.equal(unknown.length, 2);
+    assert.ok(unknown.every((node) => node.props.disabled === true && node.props['aria-pressed'] === undefined));
     await act(async () => renderer.unmount());
   } finally { globals.IS_REACT_ACT_ENVIRONMENT = previous; globalThis.requestAnimationFrame = raf; }
 });

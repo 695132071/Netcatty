@@ -3,6 +3,10 @@
 const fs = require("node:fs/promises");
 const { randomUUID } = require("node:crypto");
 
+const { createDefinitionValidator } = require("./contractValidator.cjs");
+const validateManagedPluginId = createDefinitionValidator("PluginId");
+const validateViewFocus = createDefinitionValidator("PluginViewFocusRequest");
+
 const { raceWithAbort } = require("./rpcRouter.cjs");
 const {
   INLINE_SYNC_OBJECT_SAFE_BYTES,
@@ -12,8 +16,15 @@ const {
 const { assertSecretKey } = require("./secretStore.cjs");
 
 const CHANNELS = Object.freeze({
+  themeCatalog: "netcatty:plugins:theme-catalog",
+  themeApply: "netcatty:plugins:theme-apply",
+  themesChanged: "netcatty:plugins:themes-changed",
   status: "netcatty:plugins:status",
+  interactionReady: "netcatty:plugins:interaction-ready",
+  interactionResponse: "netcatty:plugins:interaction-response",
   list: "netcatty:plugins:list",
+  permissions: "netcatty:plugins:permissions",
+  revokePermissions: "netcatty:plugins:revoke-permissions",
   catalog: "netcatty:plugins:catalog",
   catalogReadme: "netcatty:plugins:catalog-readme",
   catalogInstall: "netcatty:plugins:catalog-install",
@@ -68,6 +79,7 @@ const CHANNELS = Object.freeze({
   importerProgress: "netcatty:plugins:importer-progress",
   openView: "netcatty:plugins:open-view",
   closeView: "netcatty:plugins:close-view",
+  focusView: "netcatty:plugins:focus-view",
   setViewBounds: "netcatty:plugins:set-view-bounds",
   setViewVisibility: "netcatty:plugins:set-view-visibility",
   viewMessage: "netcatty:plugins:view-message",
@@ -656,7 +668,54 @@ function registerPluginBridge(ipcMain, options) {
     if (!options.catalogService) throw new Error("Plugin catalog unavailable");
     return options.catalogService.install(payload?.id, payload?.selectionToken);
   });
+  handle(CHANNELS.interactionReady, async (_manager, payload, event) => {
+    if (!options.interactionService) throw new Error("Host interactions are unavailable");
+    return options.interactionService.setReady(event.sender, payload?.ready);
+  });
+  handle(CHANNELS.interactionResponse, async (_manager, payload, event) => {
+    if (!options.interactionService) throw new Error("Host interactions are unavailable");
+    return options.interactionService.respond(event.sender, payload);
+  });
   handle(CHANNELS.list, async (activeManager) => activeManager.list());
+  const assertManagedPluginId = (payload) => {
+    const id = payload?.pluginId;
+    if (!validateManagedPluginId(id)) {
+      throw new TypeError("Plugin ID is invalid");
+    }
+    return id;
+  };
+  handle(CHANNELS.permissions, async (_manager, payload) => {
+    const pluginId = assertManagedPluginId(payload);
+    if (!options.permissionEngine || !options.database) throw new Error("Plugin permissions are unavailable");
+    const plugin = options.database.getActivePlugin(pluginId);
+    const identity = options.runtimeSupervisor?.getRuntimeIdentity(pluginId);
+    // A stored grant is effective only for its matching host-owned activation.
+    // Disabled/lazy/stopped plugins retain saved grants without claiming they
+    // currently apply. Never infer a principal from plugin-provided metadata.
+    const context = plugin?.enabled && identity?.pluginVersion === plugin.activeVersion
+      ? { ...identity, manifest: plugin.manifest }
+      : null;
+    const groups = options.permissionEngine.describeGrants(pluginId, context);
+    // Host-only summaries: never return arbitrary audit details, reasons,
+    // operation IDs, credentials, terminal content or future database columns.
+    const grants = ["always", "application", "session"].flatMap((scope) => (
+      (groups[scope] ?? []).map((grant) => ({
+        permission: grant.permission, resource: grant.resource,
+        resourceKind: grant.resourceKind, scope,
+        sessionId: grant.sessionId ?? null, grantedAt: grant.grantedAt,
+        matchesCurrentActivation: grant.matchesCurrentActivation,
+      }))
+    ));
+    const audit = options.database.listSecurityAudit(pluginId, 100).map((entry) => ({
+      event: entry.event, createdAt: entry.createdAt,
+      ...(typeof entry.details?.permission === "string" ? { permission: entry.details.permission } : {}),
+      ...(typeof entry.details?.scope === "string" ? { scope: entry.details.scope } : {}),
+    }));
+    return { grants, audit };
+  });
+  handle(CHANNELS.revokePermissions, async (activeManager, payload) => (
+    activeManager.revokePermissions(assertManagedPluginId(payload))
+  ));
   handle(CHANNELS.install, async (activeManager, payload) => activeManager.install(
     payload?.archivePath,
     { enable: typeof payload?.enable === "boolean" ? payload.enable : undefined },
@@ -667,6 +726,15 @@ function registerPluginBridge(ipcMain, options) {
   ));
   handle(CHANNELS.restart, async (activeManager, payload) => activeManager.restart(payload?.pluginId));
   handle(CHANNELS.uninstall, async (activeManager, payload) => activeManager.uninstall(payload?.pluginId));
+  handle(CHANNELS.themeCatalog, async () => {
+    if (!options.themeService) throw new Error("Plugin themes are unavailable");
+    return options.themeService.catalog();
+  });
+  handle(CHANNELS.themeApply, async (_manager, request) => {
+    if (!options.themeService) throw new Error("Plugin themes are unavailable");
+    return options.themeService.apply(request);
+  });
+  options.themeService?.onDidChange?.(() => options.broadcast?.(CHANNELS.themesChanged, {}));
   handle(CHANNELS.contributions, async (_activeManager, payload) => {
     if (!contributionService) throw new Error("Plugin contributions are unavailable");
     return contributionService.snapshot(payload ?? {});
@@ -1549,6 +1617,12 @@ function registerPluginBridge(ipcMain, options) {
   handle(CHANNELS.closeView, async (_activeManager, payload, event) => {
     if (!viewHost) throw new Error("Plugin views are unavailable");
     await viewHost.close(payload?.instanceId, event.sender);
+    return null;
+  });
+  handle(CHANNELS.focusView, async (_activeManager, payload, event) => {
+    if (!viewHost) throw new Error("Plugin views are unavailable");
+    if (!validateViewFocus(payload)) throw new TypeError("Plugin view focus request is invalid");
+    viewHost.focus(payload.instanceId, event.sender);
     return null;
   });
   handle(CHANNELS.setViewBounds, async (_activeManager, payload, event) => {

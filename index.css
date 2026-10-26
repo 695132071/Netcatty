@@ -2199,3 +2199,29 @@ html[data-theme-transition] *::after {
 @container monitor-main (max-width: 760px) {
   .monitor-header-action-label { display: none; }
 }
+
+/* Host-owned security surfaces never inherit third-party theme colors. */
+:root[data-plugin-theme-active] :is([role="dialog"], [role="alertdialog"], [data-app-lock-overlay], [data-host-security-surface], [data-section="host-details-panel"], [data-section="keychain-security-panel"], [data-testid="password-credential-picker"], [data-port-forward-host-key-tray-prompt]) {
+  --background: var(--host-security-background) !important;
+  --foreground: var(--host-security-foreground) !important;
+  --card: var(--host-security-card) !important;
+  --card-foreground: var(--host-security-card-foreground) !important;
+  --popover: var(--host-security-popover) !important;
+  --popover-foreground: var(--host-security-popover-foreground) !important;
+  --primary: var(--host-security-primary) !important;
+  --primary-foreground: var(--host-security-primary-foreground) !important;
+  --secondary: var(--host-security-secondary) !important;
+  --secondary-foreground: var(--host-security-secondary-foreground) !important;
+  --muted: var(--host-security-muted) !important;
+  --muted-foreground: var(--host-security-muted-foreground) !important;
+  --accent: var(--host-security-accent) !important;
+  --accent-foreground: var(--host-security-accent-foreground) !important;
+  --destructive: var(--host-security-destructive) !important;
+  --destructive-foreground: var(--host-security-destructive-foreground) !important;
+  --border: var(--host-security-border) !important;
+  --input: var(--host-security-input) !important;
+  --ring: var(--host-security-ring) !important;
+  color: hsl(var(--foreground)) !important;
+  background-color: hsl(var(--background)) !important;
+  border-color: hsl(var(--border)) !important;
+}

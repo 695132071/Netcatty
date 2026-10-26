@@ -35,3 +35,5 @@ images does not activate the plugin or request permissions. This example now
 requires API `>=0.1.0-internal.1 <0.2.0` and `metadata.brand-icon`.
 Older Starter 0.1.1 packages remain compatible with the new host.
 See [brand icon author instructions](../../../docs/plugin-platform/plugin-icons.md).
+
+The page subscribes to `window.netcattyView.onDidChangeEnvironment()` in `theme.js`. It follows the seven public HSL theme variables, including accent changes, without reading host settings or DOM. The subscription is disposed on page hide.

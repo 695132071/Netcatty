@@ -172,3 +172,14 @@ test("network broker reports its own timeout as a stable deadline error", async 
     (error) => error.code === RPC_ERRORS.deadlineExceeded,
   );
 });
+
+test("credential field validation follows the canonical contract and keeps Bearer default", () => {
+  const broker = new PluginNetworkBroker({ permissionEngine: {} });
+  const lease = { kind: "secret-lease", id: "l".repeat(32), operationId: "network:https://example.invalid", expiresAt: 1000 };
+  const request = { url: "https://example.invalid", credentialLease: lease, authorization: {} };
+  assert.deepEqual(broker.validate(request).authorization, { scheme: "Bearer" });
+  for (const authorization of [{ scheme: "Digest" }, { scheme: "Basic", username: "name\n" }, { password: "synthetic" }]) {
+    assert.throws(() => broker.validate({ ...request, authorization }), /authorization is invalid/);
+  }
+  assert.throws(() => broker.validate({ ...request, credentialLease: { ...lease, id: "short" } }), /lease is invalid/);
+});

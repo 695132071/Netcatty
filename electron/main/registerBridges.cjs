@@ -165,6 +165,9 @@ function createBridgeRegistrar(context) {
           app,
           electron: electronModule,
           safeStorage,
+          getInteractionWindow: () => win,
+          isAppLocked: () => getAppLockController?.()?.getRuntimeState?.()?.locked !== false,
+          subscribeAppLock: (listener) => getAppLockController?.()?.subscribe?.(listener),
           requestPermissionDecision: createNativePermissionDecisionProvider({
             getLocale: () => getWindowManager().getCurrentLanguage?.() ?? "en",
             dialog: electronModule.dialog,
@@ -217,6 +220,10 @@ function createBridgeRegistrar(context) {
     });
     registerPluginBridge(ipcMain, {
       manager: pluginHostService?.manager,
+      interactionService: pluginHostService?.interactionService,
+      permissionEngine: pluginHostService?.permissionEngine,
+      runtimeSupervisor: pluginHostService?.runtimeSupervisor,
+      database: pluginHostService?.database,
       catalogService: pluginHostService?.catalogService,
       contributionService: pluginHostService?.contributionService,
       terminalProviderService: pluginHostService?.terminalProviderService,
@@ -237,6 +244,7 @@ function createBridgeRegistrar(context) {
       },
       resolveBrandIcon: (pluginId) => pluginHostService?.contributionIconService?.resolveBrand(pluginId),
       resolveContributionIcon: (payload) => pluginHostService?.contributionIconService?.resolve(payload),
+      themeService: pluginHostService?.themeService,
       viewHost: pluginHostService?.viewHost,
       env: process.env,
       isTrustedSender: createTrustedPluginBridgeSender({ devServerUrl: effectiveDevServerUrl }),

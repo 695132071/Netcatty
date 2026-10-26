@@ -395,3 +395,37 @@ test("CancellationTokenSource finishes disposal when a cancellation listener fai
   assert.throws(() => source.dispose(true), AggregateError);
   assert.doesNotThrow(() => source.dispose(true));
 });
+
+test("network requests expose canonical host-consumed credential leases without plaintext fields", () => {
+  assertSdkTypeChecks(`
+    import type { PluginNetworkRequest, PluginNetworkClient, SecretLeaseRef } from './index.ts';
+    declare const network: PluginNetworkClient;
+    declare const lease: SecretLeaseRef;
+    const request: PluginNetworkRequest = {
+      url: 'https://example.invalid', credentialLease: lease,
+      authorization: { scheme: 'Basic', username: 'synthetic' },
+    };
+    void network.request(request);
+    void network.request({ url: 'https://example.invalid' });
+    // @ts-expect-error Plaintext credential handoff is not supported.
+    void network.request({ url: 'https://example.invalid', authorization: { scheme: 'Bearer', password: 'secret' } });
+    // @ts-expect-error Unsupported authentication schemes fail at compile time.
+    void network.request({ url: 'https://example.invalid', authorization: { scheme: 'Digest' } });
+  `);
+});
+
+test("host interaction SDK exposes bounded choice/input and explicit clipboard methods", () => {
+  assertSdkTypeChecks(`
+    import type { PluginContext } from './index.ts';
+    declare const context: PluginContext;
+    const choice: Promise<string | undefined> = context.ui.quickPick('Pick', [{ id: 'one', label: 'One' }]);
+    const input: Promise<string | undefined> = context.ui.input('Input', 'synthetic');
+    const text: Promise<string | undefined> = context.clipboard.readText('Share');
+    const copied: Promise<boolean> = context.clipboard.writeText('synthetic', 'Copy');
+    void [choice, input, text, copied];
+    // @ts-expect-error A plugin boolean cannot grant clipboard authority.
+    context.clipboard.readText('Share', { userGesture: true });
+    // @ts-expect-error No ambient clipboard watcher exists.
+    context.clipboard.watch(() => {});
+  `);
+});

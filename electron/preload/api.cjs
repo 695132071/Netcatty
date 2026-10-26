@@ -102,7 +102,16 @@ function createPreloadApi(ctx) {
   listPluginCatalog: () => ipcRenderer.invoke("netcatty:plugins:catalog"),
   getPluginCatalogReadme: (id, selectionToken) => ipcRenderer.invoke("netcatty:plugins:catalog-readme", { id, selectionToken }),
   installCatalogPlugin: (id, selectionToken) => ipcRenderer.invoke("netcatty:plugins:catalog-install", { id, selectionToken }),
+  setPluginInteractionReady: (ready) => ipcRenderer.invoke("netcatty:plugins:interaction-ready", { ready }),
+  respondPluginInteraction: (response) => ipcRenderer.invoke("netcatty:plugins:interaction-response", response),
+  onPluginInteraction: (callback) => {
+    const listener = (_event, payload) => callback(payload);
+    ipcRenderer.on("netcatty:plugins:host-interaction", listener);
+    return () => ipcRenderer.removeListener("netcatty:plugins:host-interaction", listener);
+  },
   listPlugins: () => ipcRenderer.invoke("netcatty:plugins:list"),
+  getPluginPermissions: (pluginId) => ipcRenderer.invoke("netcatty:plugins:permissions", { pluginId }),
+  revokePluginPermissions: (pluginId) => ipcRenderer.invoke("netcatty:plugins:revoke-permissions", { pluginId }),
   installPluginPackage: (archivePath, options) => ipcRenderer.invoke("netcatty:plugins:install", {
     archivePath,
     enable: options?.enable === true,
@@ -113,6 +122,13 @@ function createPreloadApi(ctx) {
   }),
   restartPlugin: (pluginId) => ipcRenderer.invoke("netcatty:plugins:restart", { pluginId }),
   uninstallPlugin: (pluginId) => ipcRenderer.invoke("netcatty:plugins:uninstall", { pluginId }),
+  getPluginThemes: () => ipcRenderer.invoke("netcatty:plugins:theme-catalog"),
+  applyPluginTheme: (request) => ipcRenderer.invoke("netcatty:plugins:theme-apply", request),
+  onPluginThemesChanged: (callback) => {
+    const listener = () => callback();
+    ipcRenderer.on("netcatty:plugins:themes-changed", listener);
+    return () => ipcRenderer.removeListener("netcatty:plugins:themes-changed", listener);
+  },
   getPluginContributions: (options) => ipcRenderer.invoke("netcatty:plugins:contributions", options ?? {}),
   getPluginBrandIcon: (pluginId) => ipcRenderer.invoke("netcatty:plugins:brand-icon", { pluginId }),
   getPluginContributionIcon: (pluginId, icon) => ipcRenderer.invoke("netcatty:plugins:contribution-icon", { pluginId, icon }),
@@ -261,6 +277,7 @@ function createPreloadApi(ctx) {
   },
   openPluginView: (payload) => ipcRenderer.invoke("netcatty:plugins:open-view", payload),
   closePluginView: (instanceId) => ipcRenderer.invoke("netcatty:plugins:close-view", { instanceId }),
+  focusPluginView: (payload) => ipcRenderer.invoke("netcatty:plugins:focus-view", payload),
   setPluginViewBounds: (instanceId, bounds) => ipcRenderer.invoke("netcatty:plugins:set-view-bounds", { instanceId, bounds }),
   setPluginViewVisibility: (instanceId, visible) => ipcRenderer.invoke("netcatty:plugins:set-view-visibility", {
     instanceId,
@@ -280,6 +297,11 @@ function createPreloadApi(ctx) {
     const listener = (_event, payload) => callback(payload);
     ipcRenderer.on("netcatty:plugins:view-closed", listener);
     return () => ipcRenderer.removeListener("netcatty:plugins:view-closed", listener);
+  },
+  onPluginViewFocused: (callback) => {
+    const listener = (_event, payload) => callback(payload);
+    ipcRenderer.on("netcatty:plugins:view-focused", listener);
+    return () => ipcRenderer.removeListener("netcatty:plugins:view-focused", listener);
   },
   getPluginScopeCatalog: () => ipcRenderer.invoke("netcatty:plugins:get-scope-catalog"),
   setPluginScopeCatalog: (catalog) => ipcRenderer.invoke("netcatty:plugins:set-scope-catalog", catalog),

@@ -5,7 +5,7 @@ import {
   PLUGIN_ERROR_WIRE_CODES,
   pluginErrorToRpcError,
 } from "@netcatty/plugin-sdk";
-import { createMessagePortStreamEnvelope } from "@netcatty/plugin-contract";
+import { createMessagePortStreamEnvelope, PLUGIN_HOST_INTERACTION_LIMITS } from "@netcatty/plugin-contract";
 import { createPluginStreamEndpoint } from "./pluginStreamEndpoint.mjs";
 
 let terminalInterceptorTransportPromise;
@@ -365,6 +365,16 @@ function createPluginContext(config, client, runtimeApi) {
       ...(options?.ttlMs === undefined ? {} : { ttlMs: options.ttlMs }),
     }),
   };
+  const interact = (params) => client.request("ui.interact", params, { deadlineMs: PLUGIN_HOST_INTERACTION_LIMITS.timeoutMs })
+    .then((result) => result.cancelled ? undefined : result.value);
+  const ui = {
+    quickPick: (title, items) => interact({ kind: "quickPick", title, items }),
+    input: (title, initialValue) => interact({ kind: "input", title, ...(initialValue === undefined ? {} : { initialValue }) }),
+  };
+  const clipboard = {
+    readText: (title) => interact({ kind: "clipboard.read", title }),
+    writeText: (text, title) => interact({ kind: "clipboard.write", title, text }).then((value) => value === true),
+  };
   const network = {
     request: (request) => client.request("network.request", request, {
       deadlineMs: forwardedDeadline(request?.timeoutMs, 300_000),
@@ -543,6 +553,8 @@ function createPluginContext(config, client, runtimeApi) {
     secrets,
     credentials,
     network,
+    ui,
+    clipboard,
     filesystem,
     companions,
     streams,

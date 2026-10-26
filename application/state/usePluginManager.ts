@@ -4,6 +4,7 @@ import { netcattyBridge } from '../../infrastructure/services/netcattyBridge';
 export function usePluginManager() {
   const [plugins, setPlugins] = useState<NetcattyInstalledPlugin[]>([]);
   const [available, setAvailable] = useState(false);
+  const [statusKnown, setStatusKnown] = useState(false);
   const [credentialStorageAvailable, setCredentialStorageAvailable] = useState<boolean | undefined>();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -11,13 +12,22 @@ export function usePluginManager() {
   const mutation = useRef(false);
   const refresh = useCallback(async () => {
     const current = ++generation.current;
-    const bridge = netcattyBridge.get();
-    const status = await bridge?.getPluginRuntimeStatus?.();
-    const list = status?.available ? await bridge?.listPlugins?.() ?? [] : [];
-    if (current !== generation.current) return;
-    setAvailable(status?.available === true);
-    setCredentialStorageAvailable(status?.credentialStorageAvailable);
-    setPlugins(list);
+    try {
+      const bridge = netcattyBridge.get();
+      const status = await bridge?.getPluginRuntimeStatus?.();
+      const list = status?.available ? await bridge?.listPlugins?.() ?? [] : [];
+      if (current !== generation.current) return;
+      setAvailable(status?.available === true);
+      setStatusKnown(true);
+      setCredentialStorageAvailable(status?.credentialStorageAvailable);
+      setPlugins(list);
+    } catch (cause) {
+      if (current === generation.current) {
+        setStatusKnown(false);
+        setError(cause instanceof Error ? cause.message : String(cause));
+      }
+      throw cause;
+    }
   }, []);
   useEffect(() => {
     const update = () => { void refresh().catch((cause) => setError(String(cause))); };
@@ -41,7 +51,7 @@ export function usePluginManager() {
     }
   }, [refresh]);
   return {
-    plugins, available, busy, error, credentialStorageAvailable,
+    plugins, available, statusKnown, busy, error, credentialStorageAvailable, refresh,
     importPackage: () => run(async (bridge) => {
       if (!bridge.selectFile || !bridge.installPluginPackage) throw new Error('Plugin import unavailable');
       const path = await bridge.selectFile('Import plugin package', undefined, [{ name: 'Netcatty plugin', extensions: ['ncpkg'] }]);
