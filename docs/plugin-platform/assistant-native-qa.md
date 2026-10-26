@@ -29,7 +29,8 @@ browser runtime entry. It has no Node entry, networking, filesystem, secrets,
 storage, terminal, or command-execution permission. Its `commands` permission
 registers its own view callbacks. It cannot execute terminal commands.
 The six-file artifact at this checkpoint has SHA-256
-`8ef162d13d0a16878fb817462759c9221352d0565dcefebeb102ea3575a918e8`.
+`c0f733697b8f43a8591f39c02aeea5d8b7b4bd544b642ed87e758e62d98696a5`.
+This replaces the earlier `8ef162d1...` artifact after the session recovery repair.
 
 ## Start the deterministic fixture
 
@@ -105,6 +106,17 @@ Synthetic retry plan: add a retry button and show a connection status label.
 11. Keep the fixture request counter and aborted-connection counter in the
     evidence. Do not include prompt bodies, headers, credentials, or Note content
     other than the synthetic text above in logs.
+12. Type a synthetic draft and click **Refresh model** while idle. The model
+    session must reopen, the draft must remain, and the fixture request count
+    must not increase. Change the selected configured model in host Settings,
+    refresh again, and check the displayed model before explicitly sending.
+    Refresh and failed requests must never automatically resend inference.
+
+The expiry regression in `scripts/plugin-assistant-panel.test.cjs` controls the
+panel clock and advances past 300,000 ms without network calls. The broker budget
+regression controls its clock across runtime replacement and the minute boundary.
+Do not change the host clock or production limits to reproduce those cases in
+native QA.
 
 The automated suites cover source substitution, runtime identity, two-handle
 revocation after malformed input, late replies, byte/token/time bounds, and
@@ -114,7 +126,10 @@ installed runtime, configured provider transport, and UI lifecycle.
 ## Record remaining limits
 
 Independent review found the malformed-context revocation bug. The regression
-reproduced and the repair passed focused tests. Further independent review was
-blocked by the review tool/model restriction. That review remains incomplete and
-has not been retried through another route. CI and native evidence do not replace
-that missing review.
+reproduced and the repair passed focused tests. Further review was initially
+blocked; after newer exact maintainer security-task evidence, the same worker
+completed its bounded read-only review at `173ef5abb`, with no repeated restriction
+or alternate route/model. Two additional P2 findings were reproduced and repaired
+in `ee5a4a406` (stable source budgets) and `e1cb95ee8` (sample session recovery).
+Independent verification of those corrections is still pending. CI and native
+evidence do not replace that verification.

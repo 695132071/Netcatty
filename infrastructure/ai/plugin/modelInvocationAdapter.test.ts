@@ -101,7 +101,7 @@ test('broker -> existing model factory -> existing host HTTP transport -> loopba
   const contexts = new SelectedContextAuthority({ resolveDataOwner });
   const note = await contexts.share({ scope: 'note', version: '1', title: 'Synthetic Note', isCurrent: () => true,
     readText: () => 'Synthetic retry plan: add retry button.' }, context);
-  const broker = new ModelInvocationBroker({ resolveDataOwner, contexts, selectModel: () => model });
+  const broker = new ModelInvocationBroker({ resolveDataOwner, resolveBudgetOwner: () => 'synthetic-source-owner', contexts, selectModel: () => model });
   t.after(() => broker.shutdown());
   const chat = await broker.open(context);
   const turn = await broker.start({ chatHandle: chat.chatHandle, prompt: 'Summarize this Note.',

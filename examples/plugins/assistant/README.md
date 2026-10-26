@@ -4,6 +4,12 @@ A minimal browser plugin that uses Netcatty's selected configured model and one
 explicitly selected reference. It provides Send, streamed text, Stop, and usage.
 It has no tools, terminal commands, direct network access, Node runtime, or storage.
 
+An expired chat is reopened before the next explicit Send. If the configured
+model changes or a request fails, use **Refresh model** to reopen the session,
+then click **Send** yourself. Refresh keeps your draft and never retries model
+inference. If a request failed after reaching the provider, check its outcome
+before choosing to send it again.
+
 The host must support `ai.model-invocation` and `context.selected-read`, with the
 trusted renderer adapter connected. AI invocation, selected-summary enumeration,
 and selected-content reading have separate optional permissions. The host shows
