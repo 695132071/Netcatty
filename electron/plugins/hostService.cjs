@@ -2,6 +2,7 @@
 
 const path = require("node:path");
 const NETWORK_CREDENTIAL_LEASE_FEATURE = require("./generated/plugin-contract.schema.json").$defs.NetworkCredentialLeaseFeature.const;
+const INTERACTIVE_COMMAND_FEATURE = require("./generated/plugin-contract.schema.json").$defs.InteractiveCommandFeature.const;
 
 const { assertBrowserOnlyPlugin } = require("../../domain/pluginRuntimePolicy.cjs");
 const { isPluginDevelopmentEnabled, PLUGIN_API_VERSION } = require("./constants.cjs");
@@ -95,7 +96,7 @@ function createPluginHostService(options) {
       database,
       netcattyVersion: options.app.getVersion(),
       apiVersion: PLUGIN_API_VERSION,
-      supportedFeatures: [...new Set(["metadata.brand-icon", NETWORK_CREDENTIAL_LEASE_FEATURE, HOST_INTERACTION_FEATURE, ...(options.supportedFeatures ?? [])])],
+      supportedFeatures: [...new Set(["metadata.brand-icon", NETWORK_CREDENTIAL_LEASE_FEATURE, HOST_INTERACTION_FEATURE, INTERACTIVE_COMMAND_FEATURE, ...(options.supportedFeatures ?? [])])],
     });
     const contributionIconService = new PluginContributionIconService({
       database,
@@ -167,6 +168,7 @@ function createPluginHostService(options) {
       runtimeSupervisor: runtimeAccess,
       secretStore,
       getLocale: options.getLocale,
+      onCommandFinished: (runtimeId) => interactionService?.cancelRuntimeRequests(runtimeId),
     });
     contributionService.registerRpcCapabilities(rpcRegistry);
     registerSecurePluginCapabilities(rpcRegistry, {
@@ -234,7 +236,7 @@ function createPluginHostService(options) {
       paths,
       netcattyVersion: options.app.getVersion(),
       apiVersion: PLUGIN_API_VERSION,
-      supportedFeatures: [...new Set(["metadata.brand-icon", NETWORK_CREDENTIAL_LEASE_FEATURE, HOST_INTERACTION_FEATURE, ...(options.supportedFeatures ?? [])])],
+      supportedFeatures: [...new Set(["metadata.brand-icon", NETWORK_CREDENTIAL_LEASE_FEATURE, HOST_INTERACTION_FEATURE, INTERACTIVE_COMMAND_FEATURE, ...(options.supportedFeatures ?? [])])],
       runtimeDirectory,
       appRoot,
       rpcRegistry,

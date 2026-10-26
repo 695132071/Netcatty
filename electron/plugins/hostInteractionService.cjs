@@ -57,6 +57,7 @@ class PluginHostInteractionService {
     this.pending = new Map();
     this.rates = new Map();
     this.admissions = new WeakMap();
+    this.admissionGuards = new Map();
     this.admissionRevision = 0;
     this.focusRestoreMs = Math.min(options.focusRestoreMs ?? 1_000, 1_000);
     this.owner = null;
@@ -72,7 +73,9 @@ class PluginHostInteractionService {
       validateParams: assertInteractionRequest,
       authorization: (params, context) => {
         const sender = this.#admit(params, context);
-        this.admissions.set(params, { sender, runtimeId: context.runtimeId, revision: this.admissionRevision });
+        let guard = this.admissionGuards.get(context.runtimeId);
+        if (!guard) { guard = { active: true }; this.admissionGuards.set(context.runtimeId, guard); }
+        this.admissions.set(params, { sender, runtimeId: context.runtimeId, revision: this.admissionRevision, guard });
         return interactionAuthorization(params);
       },
     });
@@ -200,7 +203,7 @@ class PluginHostInteractionService {
       const deadline = Date.now() + this.focusRestoreMs;
       for (;;) {
         context.signal?.throwIfAborted();
-        if (admission.revision !== this.admissionRevision || admission.sender !== this.owner) {
+        if (!admission.guard.active || admission.revision !== this.admissionRevision || admission.sender !== this.owner) {
           throw fail("cancelled", "Host interaction admission was revoked");
         }
         const window = this.getWindow();
@@ -213,7 +216,7 @@ class PluginHostInteractionService {
         await new Promise((resolve) => setTimeout(resolve, Math.min(20, Math.max(1, deadline - Date.now()))));
       }
       await context.assertActive();
-      if (admission.revision !== this.admissionRevision) throw fail("cancelled", "Host interaction admission was revoked");
+      if (!admission.guard.active || admission.revision !== this.admissionRevision) throw fail("cancelled", "Host interaction admission was revoked");
       sender = this.#assertWindow(admission.sender);
     } else sender = this.#admit(params, context);
     if (this.pending.size >= LIMITS.pendingTotal || [...this.pending.values()].some((entry) => entry.context.runtimeId === context.runtimeId || entry.sender === sender)) {
@@ -308,11 +311,16 @@ class PluginHostInteractionService {
     }
   }
   releaseRuntime(runtimeId) {
-    this.admissionRevision++;
-    for (const entry of [...this.pending.values()]) {
-      if (entry.context.runtimeId === runtimeId) this.#finish(entry, null, fail("cancelled", "Plugin runtime stopped"));
-    }
+    this.cancelRuntimeRequests(runtimeId, "Plugin runtime stopped");
     this.rates.delete(runtimeId);
+  }
+  cancelRuntimeRequests(runtimeId, reason = "Host command finished") {
+    const guard = this.admissionGuards.get(runtimeId);
+    if (guard) guard.active = false;
+    this.admissionGuards.delete(runtimeId);
+    for (const entry of [...this.pending.values()]) {
+      if (entry.context.runtimeId === runtimeId) this.#finish(entry, null, fail("cancelled", reason));
+    }
   }
   cancelAll(invalidateAdmission = true) {
     if (invalidateAdmission) this.admissionRevision++;
@@ -322,7 +330,7 @@ class PluginHostInteractionService {
     if (this.closed) return;
     this.closed = true;
     if (this.owner) this.releaseWindow(this.owner);
-    this.cancelAll(); this.rates.clear();
+    this.cancelAll(); this.rates.clear(); this.admissionGuards.clear();
     this.revocation.dispose(); this.unsubscribeLock?.();
     this.key.fill(0);
   }
