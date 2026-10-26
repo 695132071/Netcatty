@@ -5,6 +5,21 @@ records the exact current head and CI runs. Native AI, database, Host/Vault, and
 settings/logging checks use this candidate rather than separate feature trees.
 The existing feature branches and their published heads remain frozen.
 
+The previous candidate `174c525cd45bdc1152e9feb21839a288706d3bd1` passed
+[test CI](https://github.com/binaricat/Netcatty/actions/runs/40381685282),
+[four-platform packages](https://github.com/binaricat/Netcatty/actions/runs/40381685946),
+and [ET CI](https://github.com/binaricat/Netcatty/actions/runs/40381684810).
+No actionable CI regression was found. Its full test suite records 15,375 tests:
+15,325 passed, 50 skipped, zero failed or cancelled.
+
+The next candidate is provisional. It includes the published settings focus
+correction and the first AI corrections. The AI budget repair has been
+independently confirmed, but expired selected-Note handles still need an
+explicit refresh/re-selection path. AI native activation remains held until
+the owner publishes that follow-up and its verification completes. The real
+terminal Solo/Focus selection-ownership correction also awaits an exact
+published checkpoint. No uncommitted owner work is imported.
+
 ## Included source checkpoints
 
 | Slice | Frozen checkpoint | Integration evidence |
@@ -12,8 +27,9 @@ The existing feature branches and their published heads remain frozen.
 | Main | `f0897c3c1711f60350f8d613696d387bcac464ed` | Includes #3991, #3983, #3992, and #3995 |
 | Byte streams, source identity, connected AI, examples | #3993 `37df67256e7eedc1050f186bcf401dc376cb5e71` | Ordinary merge; both transport P2 fixes retained |
 | Host/Vault actions | #3990 `730fa643ba0589b8919368657dabc83428f577be` | Ordinary merge; metadata/action authority stays separate |
-| Settings and logging UI | #3994 `dc6e645fab7cbd25e99b9cab7e87ab931926020e` | Ordinary merge; native Vite permission-helper alias fix and regression retained |
-| Selected-terminal continuation | Task `01a1796d-29f4-7505-9746-444b929ab013` | Pending a separately published checkpoint; no uncommitted work imported |
+| Settings and logging UI | #3994 `823db94cf34503417e3b7c19c6daab379f60530f` | Ordinary merge; retains dc6 alias repair and adds the natively verified gear-to-settings focus path |
+| AI corrections, provisional | #3986 `07eb68c5e7be5ed882f2c0daec75d3fa2792f880` | Ordinary merge; stable source budgets confirmed; model-chat recovery is not complete selected-Note expiry recovery |
+| Selected-terminal continuation | Task `01a1796d-29f4-7505-9746-444b929ab013` | Owner is fixing real Solo/Focus selection ownership; exact published correction pending |
 
 #3995 was squash-merged into main as `f0897c3c`. Its PR tip was rechecked at
 `921f51756eca564cef3d30152807a4649c2a0d3b`; both contain the same TERM-SSHD test
@@ -86,10 +102,17 @@ the Rfam candidate was not installed or granted permissions in any runtime.
 
 | Package ID | Files | SHA-256 |
 | --- | --- | --- |
-| `com.netcatty.assistant` | 6 | `8ef162d13d0a16878fb817462759c9221352d0565dcefebeb102ea3575a918e8` |
+| `com.netcatty.assistant` (provisional; native held) | 6 | `c0f733697b8f43a8591f39c02aeea5d8b7b4bd544b642ed87e758e62d98696a5` |
 | `com.netcatty.database-minimal` | 5 | `0d8189e98b535c0d73d9043862bb83b67c8cab2281985083c1096835285ed5bb` |
 | `com.netcatty.database-rfam-readonly` | 5 | `434a7d506466f5b37f715436ada5707b48f4d6cbd0ef0fe9e71e8974f414b484` |
 | `com.netcatty.host-actions` | 3 | `cf04f82dfe25ab5cda6f5f3dad0a8fb06c37bedf9924f556bee2b8402e542ef2` |
+
+The assistant archive above is the intermediate `07eb68c5` sample. It is not
+approved for native activation or a claim of clean correction: expired
+selected-Note handles are still unrecoverable. The owner's verified explicit
+re-selection/refresh follow-up will require another package/hash record.
+The database and Host archive hashes are unchanged; Host activation remains
+blocked by the separate automatic-review denial.
 
 | Package | Required feature | Required permissions | Optional permissions/resources |
 | --- | --- | --- | --- |
@@ -118,14 +141,29 @@ node packages/plugin-cli/dist/cli.js pack examples/plugins/host-actions --out /t
 | Gate | Status and next evidence |
 | --- | --- |
 | Exact-head test/build CI | Recorded in the dedicated Draft PR; earlier feature-head CI is historical evidence |
-| Native settings UI | Parent's current run is on `dc6e645f`; its screenshots do not certify this integrated head |
-| Native AI sample | Pending on this candidate; use the deterministic provider and synthetic Note in the existing recipe, with no paid model call |
+| Native settings UI | Parent reports dc6 layout/controls and 823 gear-to-settings focus passed; those source-head results do not certify every flow on the integrated head |
+| Native AI sample | Held: source budgets are confirmed repaired, but expired selected-Note references still need the owner's verified explicit refresh/re-selection follow-up. No silent re-share or inference retry is authorized |
 | Native owned database | Pending a supported disposable fixture path; owned live regression remains opt-in and was not run here |
 | Public Rfam | Prepared only; no service DNS lookup, connection, query, installation, or permission activation. Parent coordinates exact hash/endpoint authorization. Only protocol 4.1/native-password is supported; auth/TLS compatibility is unverified and no fallback is added |
-| Native Host/Vault | Pending on this candidate; synthetic hosts only. Review transport/script warnings and cancel any connection that is not separately authorized |
-| Selected-terminal continuation | Pending the separate task's published checkpoint and later integration checks |
-| AI independent security review | Previously denied; not retried through another route |
+| Native Host/Vault | Parent reports installation/details passed. Activation consent was denied by automatic review. Functional Host flows remain unrun pending specific user approval. Do not retry that activation or change permissions to bypass it |
+| Selected-terminal continuation | Owner is fixing the actual Solo/Focus selection path; published correction and integration verification are pending |
+| AI independent security review | The same worker reconsidered the earlier restriction once with newer maintainer evidence and completed review without recurrence. Fix verification is in progress; this integration task does not repeat the review |
 | Main merge/release/deployment | Not authorized by this task; candidate remains Draft |
+
+## Next-candidate checks while owner follow-ups are pending
+
+The published settings correction passed all 36 local plugin settings UI tests,
+the Vite HTTP/native-ESM probe, contract drift check, lint (zero errors, seven
+existing warnings), and production build. The ordinary AI merge passed the 17
+source-budget broker tests and four existing model-session recovery panel
+tests. Two adapter tests passed; the connected transport test could not import
+the same missing local Electron binary. No new download route was attempted.
+
+Those passing panel tests do not cover the still-reproduced expired selected-
+Note handle case. The budget correction is independently confirmed; selected-
+Note recovery and the real Solo/Focus selection path remain owner follow-ups.
+No native Host activation retry, automatic re-sharing, or inference retry is
+part of this integration work.
 
 Native evidence records the exact candidate commit, package hashes, source and
 permission prompts, denial/retry/cancel/revoke behavior, screenshots, and video.

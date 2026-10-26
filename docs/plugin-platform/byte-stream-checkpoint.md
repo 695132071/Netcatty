@@ -69,9 +69,12 @@ plugin disable, revocation through the service, and shutdown.
 The connected host renderer and shared permission descriptions from #3986 are
 preserved. Its owner documents the adapter and existing configured model path in
 [the AI checkpoint](ai-context-wip.md), with a
-[synthetic native assistant recipe](assistant-native-qa.md). No further
-independent review of AI internals was performed. The prior review denial remains
-unresolved and has not been retried through another route.
+[synthetic native assistant recipe](assistant-native-qa.md). The original AI
+worker later reconsidered the earlier review restriction once with newer
+maintainer evidence and completed the review. Published fixes and remaining
+verification/native holds are tracked in the current
+[acceptance matrix](acceptance-candidate.md). This integration task does not
+repeat that review.
 
 ## Database example
 

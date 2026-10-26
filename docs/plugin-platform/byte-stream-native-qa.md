@@ -107,8 +107,11 @@ and record that package's new hash. Preparation does not dial the endpoint.
 Build the assistant and follow its existing
 [native QA recipe](assistant-native-qa.md). Use its deterministic local provider,
 synthetic credential marker, and synthetic Note. No paid model call is required.
-The AI internals were integrated without another independent review. The earlier
-review denial remains in effect and is not replaced by these tests.
+The original AI worker subsequently completed the bounded review after a single
+reconsideration using newer maintainer evidence. Source-budget repair is
+confirmed; selected-Note expiry recovery still needs the owner's verified
+follow-up. The [acceptance matrix](acceptance-candidate.md) records that hold.
+These transport tests do not substitute for fix verification or native consent.
 
 ## Record the installed browser path
 
