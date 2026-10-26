@@ -54,3 +54,17 @@ AI wiring status nor their environment-specific broad-test failures replace the
 connected implementation and exact-head CI evidence on #3993. No main merge,
 force-push, endpoint-policy relaxation, AI internal review retry, or release is
 part of this reconciliation.
+
+## Check the reconciled source
+
+The merged transport source passed 627 registered runtime tests: 626 passed and
+one native Electron test skipped. Contract/SDK/CLI tests passed 90 of 90. The
+example panel passed; its opt-in database test remained skipped. The late attach
+regression failed against the old #3993 service with two cancel calls instead
+of one, then passed after the merge.
+
+A subsequent example-only Rfam candidate reuses the limited browser protocol
+through two fixed entrypoints. Its offline tests check the original owned
+fixture database/query and the fixed public database/query, plus rejection of
+an unsupported auth plugin. No general query API is exported and no host
+database code is introduced. The owned MariaDB live regression remains opt-in.

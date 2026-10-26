@@ -20,6 +20,15 @@ existing permitted network path. Do not install new software or create local
 forwarding exceptions as part of this recipe. If no fixture is available, record
 the database pass as pending.
 
+There is also a separately labeled
+[public Rfam candidate](../../examples/plugins/database-rfam-readonly/README.md).
+It fixes one public hostname, public account, database, and `SELECT 1 AS value`.
+It has only been prepared and checked offline. The parent must obtain exact
+package and endpoint authorization before any install, permission activation,
+or connection. Its authentication and TLS requirements remain unverified. This
+candidate does not replace the owned fixture regression or prove that the GUI
+can reach the coding container's private database.
+
 The registered automated fixture uses
 `mariadb:11.4@sha256:250e1609e93c0e6aecf64bfbab2d84d5e89d2481540fe77447ff6c855c3b1873`.
 It runs on an internal Docker network, publishes no host ports, generates a
@@ -30,8 +39,9 @@ executor with that recognized image, run:
 NETCATTY_BYTE_STREAM_DATABASE_TEST=1 node --test examples/plugins/database-minimal/protocol.live.test.cjs
 ```
 
-That test exercises the protocol and broker. It does not install the plugin or
-prove native GUI behavior. For the GUI fixture, have its operator create only
+That test exercises the protocol, broker, and installed package's SDK/RPC path
+in a Node harness. It does not prove native GUI behavior. For the GUI fixture,
+have its operator create only
 synthetic data and a dedicated SELECT-only account. Run this SQL using the
 fixture's administration channel, replacing the password placeholder with a
 fresh disposable password that is never included in screenshots or logs:
@@ -56,6 +66,7 @@ Use Node 22 or later and the lockfile. Run these commands in sequence:
 npm ci
 npm run test:plugin-runtime
 npm run test:plugin-contract
+npm run test:plugin-examples
 npm run generate:plugin-contract
 npm run check:plugin-contract
 npm run generate:capability-tools
@@ -76,8 +87,11 @@ sha256sum /tmp/database-example.ncpkg
 ```
 
 The two five-file packages built on Node 24.19.0 with the locked dependencies
-match byte for byte. Their SHA-256 is
-`88c1428343ef724b42a3b867a2d7645fb2b02c26e815ba5b9890e4c30dbc1af4`.
+match byte for byte. The current owned-fixture package SHA-256 is
+`588cb6766616c2f3057c7c8df1c20dbac947e0d5e9d01b2a928c7581b00a69c5`.
+The earlier `6a4fb178` package used hash `88c14283…dbc1af4`. The example-only
+protocol now has separate fixed owned-fixture and Rfam entrypoints; the owned
+fixture database, query, and opt-in live regression are retained.
 The six-file assistant package retains SHA-256
 `8ef162d13d0a16878fb817462759c9221352d0565dcefebeb102ea3575a918e8`.
 
@@ -133,17 +147,17 @@ The integration executor completed these checks in order on 2026-10-26:
 
 | Check | Result |
 | --- | --- |
-| `npm run test:plugin-runtime` | 624 tests: 622 passed, 2 skipped, 0 failed |
-| `npm run test:plugin-contract` | 88 passed, 0 skipped, 0 failed |
+| `npm run test:plugin-runtime` | 627 tests: 626 passed, 1 native skip, 0 failed |
+| `npm run test:plugin-contract` | 90 passed, 0 skipped, 0 failed |
+| `npm run test:plugin-examples` | 4 passed, 1 opt-in Docker skip, 0 failed |
 | Plugin contract generate and drift check | Passed, no generated changes |
 | Capability tool generation and drift check | Passed, no generated changes |
 | Codex App Server schema check | Passed |
 | `npm run lint` | Passed, 0 errors and 7 warnings outside the transport changes |
-| `npm run build` | Passed, Vite production build completed in 32 seconds |
+| `npm run build` | Passed, Vite production build completed in 40.23 seconds |
 | Database repeat packaging and both package validations | Passed |
 
-These totals describe the original integrated head `6a4fb178`. The late
-transport merge moves the opt-in database test into the example directory.
+The late transport merge moves the opt-in database test into the example directory.
 Run its panel and protocol tests explicitly with
 `node --test examples/plugins/database-minimal/*.test.cjs`. The database test
 still requires explicit opt-in and the native Electron suite remains separate.
@@ -152,3 +166,11 @@ is not cached. No image was installed and no new live database run is claimed.
 Native GUI acceptance remains pending on the occupied desktop. Full repository
 tests and platform packages run in the integration PR's exact-head CI. Record
 their final workflow conclusions separately from these local results.
+
+After the late transport merge and Rfam candidate preparation, the registered
+runtime suite has 626 passed and one native skip, contract/SDK/CLI has 90 passed,
+and `npm run test:plugin-examples` has four passed and one Docker skip. The
+example suite is now registered in CI. Public protocol checks use only synthetic
+packet bytes and package preparation; no Rfam connection or permission was
+activated. Final CI belongs to the current #3993 head, not the older `6a4fb178`
+head whose two workflows already succeeded.

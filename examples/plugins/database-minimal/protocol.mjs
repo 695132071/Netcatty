@@ -128,7 +128,7 @@ function greeting(bytes) {
 }
 
 /** stream is a plugin-owned browser adapter over the generic host byte stream. */
-export async function queryExample(stream, username, sessionPassword) {
+async function queryFixedExample(stream, username, sessionPassword, database, query) {
   if (!/^[A-Za-z0-9_]{1,32}$/u.test(username) || typeof sessionPassword !== "string" || sessionPassword.length > 256) {
     throw new Error("Enter the disposable fixture username and session password");
   }
@@ -139,10 +139,10 @@ export async function queryExample(stream, username, sessionPassword) {
     sessionPassword = "";
     try {
       await packets.write(concat(uint32(CLIENT_FLAGS), uint32(MAX_PACKET), Uint8Array.of(45), new Uint8Array(23),
-        zeroText(username), Uint8Array.of(token.length), token, zeroText("plugin_demo"), zeroText("mysql_native_password")), 1);
+        zeroText(username), Uint8Array.of(token.length), token, zeroText(database), zeroText("mysql_native_password")), 1);
     } finally { token.fill(0); nonce.fill(0); }
     if ((await packets.read(2))[0] !== 0) reject();
-    await packets.write(concat(Uint8Array.of(3), encoder.encode(READ_QUERY)), 0);
+    await packets.write(concat(Uint8Array.of(3), encoder.encode(query)), 0);
     const count = await packets.read(1);
     if (count.length !== 1 || count[0] !== 1) reject();
     const column = new Cursor(await packets.read(2));
@@ -160,4 +160,14 @@ export async function queryExample(stream, username, sessionPassword) {
     sessionPassword = "";
     await stream.close();
   }
+}
+
+export function queryExample(stream, username, sessionPassword) {
+  return queryFixedExample(stream, username, sessionPassword, "plugin_demo", READ_QUERY);
+}
+
+// This second fixed profile is a public third-party acceptance candidate.
+// No caller can supply a database, query, username, or password to this entry.
+export function queryRfamReadOnly(stream) {
+  return queryFixedExample(stream, "rfamro", "", "Rfam", "SELECT 1 AS value");
 }
