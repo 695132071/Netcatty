@@ -3,8 +3,9 @@
 The `terminal.selection-sharing` feature adds
 `context.terminals.shareSelection(title)`. It resolves to `undefined` on cancel,
 or a frozen `{text, handle, expiresAt}` snapshot after host Preview and Share.
-Text is limited to 4096 UTF-8 bytes. Only the focused, visible, connected terminal's
-current xterm selection is eligible. Empty, oversized, sensitive-input, detached,
+Text is limited to 4096 UTF-8 bytes. Only the visible, connected input owner's current xterm selection is eligible:
+a solo tab, the selected Focus-mode pane, or the selected split pane. Other
+visible split panes remain ineligible. Empty, oversized, sensitive-input, detached,
 and unavailable selections fail closed. The user's copy-normalization setting,
 including explicit `false`, remains in effect.
 

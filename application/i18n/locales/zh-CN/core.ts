@@ -1177,6 +1177,7 @@ Vaults 标签保持扁平，不使用这块背景。
   "plugins.interaction.share": "分享给插件",
   "plugins.interaction.copy": "复制到剪贴板",
   "plugins.interaction.failed": "此请求已过期或无法完成。",
+  "plugins.command.failed": "无法完成插件命令，请检查所需选区或所选对象及权限。",
   "plugins.interaction.terminalDisclosure": "仅分享此终端的当前选区，最多 4096 UTF-8 字节。终端文本可能包含密码、令牌或其他秘密。分享前请检查完整预览；不保证自动脱敏。",
   "plugins.interaction.terminalTarget": "所选终端",
   "plugins.interaction.terminalPreview": "预览终端选区",

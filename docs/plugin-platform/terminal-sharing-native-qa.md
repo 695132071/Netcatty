@@ -10,7 +10,9 @@ Keep the platform's normal sandbox and helper permissions.
 Use a disposable app profile and two local disposable terminal sessions, A and B.
 Do not use SSH credentials, remote services, paid providers, or user resources.
 Manually display only `synthetic terminal A` in A and `synthetic terminal B` in B.
-Select a small, distinct range in each terminal. Build and import the exact
+Run the flow once in a solo tab, once in workspace Focus mode, and once in the
+selected split pane. Other visible split panes and inactive tabs must remain
+ineligible. Select a small, distinct range in each terminal. Build and import the exact
 [two-file sample](../../examples/plugins/terminal-selection-draft/README.md).
 
 Its expected archive SHA-256 is
@@ -21,7 +23,9 @@ Check required `commands` and `menus`, and optional `terminal.selection.read` an
 ## Check disclosure and cancellation
 
 1. Focus A and invoke **Share selected terminal text**.
-2. Cancel the permission prompt. Confirm that no preview or draft opens.
+2. Cancel the permission prompt. Confirm that no preview or draft opens. If an
+   unavailable command cannot start, confirm that the palette shows its bounded
+   failure toast rather than silently closing.
 3. Invoke it again and allow the one-time selection permission. Before Preview,
    confirm that terminal text is absent from the dialog.
 4. Click **Preview terminal selection**. Confirm the A label and session ID,

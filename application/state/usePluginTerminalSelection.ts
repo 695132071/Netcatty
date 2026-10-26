@@ -8,7 +8,7 @@ type SelectionState = {
   bootEpoch: number;
   term: Terminal | null;
   visible: boolean;
-  focused: boolean;
+  isFocusedPane: boolean | undefined;
   connected: boolean;
   sensitive: boolean;
   normalize: boolean;
@@ -19,7 +19,8 @@ type SelectionState = {
 export function createPluginTerminalSelectionSource(readState: () => SelectionState, instanceId: string) {
   const target = () => {
     const state = readState();
-    if (state.visible !== true || state.focused !== true || state.connected !== true || state.sensitive !== false
+    // Undefined means solo/Focus mode; only a visible selected split pane may use true.
+    if (state.visible !== true || state.isFocusedPane === false || state.connected !== true || state.sensitive !== false
       || !state.sessionId || !state.term || state.term.element?.isConnected !== true) return null;
     return { sessionId: state.sessionId, rendererId: `${instanceId}:${state.bootEpoch}`, label: state.label.slice(0, 160) || 'Terminal' };
   };

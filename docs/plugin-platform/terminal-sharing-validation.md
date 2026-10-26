@@ -17,6 +17,7 @@ main branch, or release was rewritten or published.
 | Focused renderer, worker-manager, and #3991 popup input-mode tests | 119 passed |
 | Final selection reader, host-dialog, and manifest tests | Five passed |
 | Late runtime-mount regression, selection/dialog, and popup input-mode checks | 11 passed |
+| Pane ownership correction, real runtime mount, consent dialog, palette feedback, and compatibility checks | 40 passed |
 | Generated plugin contract, capability tools, Codex schema checks | Passed; tool catalogs unchanged |
 | `npm run lint` | Zero errors, seven existing warnings |
 | `npm run build` | Passed; existing chunk-size warning |
@@ -52,6 +53,23 @@ That earlier head passed [test CI](https://github.com/binaricat/Netcatty/actions
 with 15,316 tests, 15,266 passed, 50 skipped, and zero failures. All four
 [platform package jobs](https://github.com/binaricat/Netcatty/actions/runs/40380234655)
 also passed. The Draft PR records fresh exact-head results for the lifecycle fix.
+
+The subsequent pane-ownership regression failed on `3e5d450a1`: the actual solo
+snapshot `solo|solo|na` yields the legacy `isFocused: false`. Workspace Focus mode
+has the same `na` token. The new selection reader had incorrectly treated that
+legacy bit as effective input ownership. It now consumes the existing optional
+`isFocusedPane` semantics: undefined outside split contention, true for the
+selected split pane, false for other split panes. Visibility remains mandatory.
+The parser and the legacy focus bit are unchanged.
+
+The production pane-to-Terminal props are factored into
+`resolveTerminalPaneInputProps` without changing their values. Reader and real
+runtime-mount tests consume that same mapping for solo, Focus mode, selected and
+other split panes, inactive tabs/workspaces, and a hidden terminal layer. The host
+consent-dialog test also starts from the real solo props rather than a supplied
+`focused: true`. All existing source, connection, preview, and lifecycle guards
+remain in place. A rejected palette plugin command now uses the existing bounded
+localized toast; it exposes no raw diagnostic and performs no retry.
 
 ## Packaging and native acceptance
 

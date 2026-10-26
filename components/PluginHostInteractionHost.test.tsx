@@ -22,6 +22,7 @@ test('host dialog drives choice/input/copy and the two-phase clipboard share usi
   const { I18nProvider } = await import('../application/i18n/I18nProvider');
   const { PluginHostInteractionHost } = await import('./plugins/PluginHostInteractionHost');
   const { PluginHostInteractionService, assertInteractionRequest } = await import('../electron/plugins/hostInteractionService.cjs');
+  const { getTerminalPaneRenderSnapshot, parseTerminalPaneRenderSnapshot, resolveTerminalPaneInputProps } = await import('./terminalPaneVisibility');
   const { createPluginTerminalSelectionSource } = await import('../application/state/usePluginTerminalSelection');
   const { registerTerminalSelectionSource } = await import('../infrastructure/plugins/terminalSelectionRegistry');
   const { privateOwner, LOCAL_SOURCE } = await import('../electron/plugins/sourceIdentity.cjs');
@@ -92,7 +93,11 @@ test('host dialog drives choice/input/copy and the two-phase clipboard share usi
       getSelectionPosition: () => ({ start: { x: 0, y: 0 }, end: { x: 10, y: 0 } }),
       getSelection() { selectionReads++; return selectionText; },
     } as unknown as import('@xterm/xterm').Terminal;
-    const selectionState = { term: terminal, sessionId: 'terminal-a', bootEpoch: 1, visible: true, focused: true, connected: true, sensitive: false, normalize: false, label: 'Synthetic selected terminal' };
+    const inputProps = resolveTerminalPaneInputProps(parseTerminalPaneRenderSnapshot(getTerminalPaneRenderSnapshot({
+      activeTabId: 'terminal-a', sessionId: 'terminal-a', workspaceById: new Map(), isTerminalLayerVisible: true,
+    })));
+    assert.equal(inputProps.isFocused, false);
+    const selectionState = { term: terminal, sessionId: 'terminal-a', bootEpoch: 1, visible: inputProps.isVisible, isFocusedPane: inputProps.isFocusedPane, connected: true, sensitive: false, normalize: false, label: 'Synthetic selected terminal' };
     const cleanupSelection = registerTerminalSelectionSource('terminal-a', createPluginTerminalSelectionSource(() => selectionState, 'renderer-a'));
     try {
       const noShare = await begin({ kind: 'terminal.selection.read', title: 'Synthetic terminal share' });

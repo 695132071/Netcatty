@@ -1157,6 +1157,7 @@ export const ruCoreMessages: Messages = {
   "plugins.interaction.share": "Передать плагину",
   "plugins.interaction.copy": "Копировать в буфер обмена",
   "plugins.interaction.failed": "Запрос истёк или не выполнен.",
+  "plugins.command.failed": "Не удалось выполнить команду плагина. Проверьте необходимые выбранные объекты и разрешения.",
   "plugins.interaction.terminalDisclosure": "Only the current selection from this terminal is shared, up to 4096 UTF-8 bytes. Terminal text can contain passwords, tokens, and other secrets. Inspect the exact preview before sharing. No redaction guarantee is made.",
   "plugins.interaction.terminalTarget": "Selected terminal",
   "plugins.interaction.terminalPreview": "Preview terminal selection",

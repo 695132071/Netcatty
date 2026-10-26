@@ -1180,6 +1180,7 @@ Vaults 分頁維持扁平，不使用這塊背景。
   "plugins.interaction.share": "分享給外掛",
   "plugins.interaction.copy": "複製到剪貼簿",
   "plugins.interaction.failed": "此請求已過期或無法完成。",
+  "plugins.command.failed": "無法完成外掛指令，請檢查所需選取範圍或所選項目及權限。",
   "plugins.interaction.terminalDisclosure": "僅分享此終端的目前選取範圍，最多 4096 UTF-8 位元組。終端文字可能包含密碼、權杖或其他秘密。分享前請檢查完整預覽；不保證自動遮蔽。",
   "plugins.interaction.terminalTarget": "所選終端",
   "plugins.interaction.terminalPreview": "預覽終端選取範圍",

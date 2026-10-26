@@ -1262,6 +1262,7 @@ Resalta el panel dividido enfocado:
   "plugins.interaction.share": "Compartir con el complemento",
   "plugins.interaction.copy": "Copiar al portapapeles",
   "plugins.interaction.failed": "La solicitud caducó o no pudo completarse.",
+  "plugins.command.failed": "No se pudo completar el comando del complemento. Comprueba la selección requerida y los permisos.",
   "plugins.interaction.terminalDisclosure": "Only the current selection from this terminal is shared, up to 4096 UTF-8 bytes. Terminal text can contain passwords, tokens, and other secrets. Inspect the exact preview before sharing. No redaction guarantee is made.",
   "plugins.interaction.terminalTarget": "Selected terminal",
   "plugins.interaction.terminalPreview": "Preview terminal selection",

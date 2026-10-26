@@ -1262,6 +1262,7 @@ Highlight the focused split pane:
   "plugins.interaction.share": "Share with plugin",
   "plugins.interaction.copy": "Copy to clipboard",
   "plugins.interaction.failed": "This request expired or could not be completed.",
+  "plugins.command.failed": "The plugin command could not be completed. Check its required selection and permissions.",
   "plugins.interaction.terminalDisclosure": "Only the current selection from this terminal is shared, up to 4096 UTF-8 bytes. Terminal text can contain passwords, tokens, and other secrets. Inspect the exact preview before sharing. No redaction guarantee is made.",
   "plugins.interaction.terminalTarget": "Selected terminal",
   "plugins.interaction.terminalPreview": "Preview terminal selection",
