@@ -56,7 +56,7 @@ class PluginAIContextService {
       return owner;
     } catch (error) {
       const binding = this.source.bindings.get(context.runtimeId);
-      if (binding?.pluginId === context.pluginId && binding.pluginVersion === context.pluginVersion) this.releaseRuntime(context.runtimeId);
+      if (!context.signal?.aborted && binding?.pluginId === context.pluginId && binding.pluginVersion === context.pluginVersion) this.releaseRuntime(context.runtimeId);
       throw error;
     }
   }

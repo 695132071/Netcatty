@@ -53,3 +53,14 @@ test("permission revocation clears all handles for the plugin, including chats w
   f.revoke(); assert.equal(f.service.broker.turns.size, 0); assert.equal(f.service.selected.handles.size, 0);
   await assert.rejects(f.service.read(turn, f.context));
 });
+
+test("cancelling one host request does not revoke another chat in the same runtime", async (t) => {
+  const f = fixture(); t.after(() => f.service.shutdown());
+  const chat = await f.service.open({}, f.context);
+  let resolve; f.hostAdapter.listSelected = () => new Promise((done) => { resolve = done; });
+  const controller = new AbortController();
+  const listing = f.service.list({}, { ...f.context, signal: controller.signal });
+  const cancelled = assert.rejects(listing);
+  await new Promise(setImmediate); controller.abort(); resolve([]); await cancelled;
+  assert.equal(f.service.broker.chats.has(chat.chatHandle), true);
+});

@@ -75,3 +75,22 @@ test("text review tolerates native permission focus restoration without focusing
     assert.equal(focusCalls, 0);
   } finally { clearTimeout(timer); f.adapter.shutdown(); }
 });
+
+test("canonical trusted envelopes reject unknown requests, keys and provider diagnostics", async () => {
+  const { createDefinitionValidator } = require("../contractValidator.cjs");
+  const requestValid = createDefinitionValidator("PluginAIHostRequest");
+  const responseValid = createDefinitionValidator("PluginAIHostResponse");
+  const identity = { requestId: "00000000-0000-4000-8000-000000000001", actionToken: "A".repeat(32), runtimeId: "runtime" };
+  assert.equal(requestValid({ ...identity, kind: "model.select", payload: {} }), true);
+  assert.equal(requestValid({ ...identity, kind: "model.select", payload: { providerId: "arbitrary" } }), false);
+  assert.equal(requestValid({ ...identity, kind: "terminal.execute", payload: {} }), false);
+  assert.equal(responseValid({ requestId: identity.requestId, actionToken: identity.actionToken,
+    result: { hostHandle: identity.requestId, label: "Synthetic", apiKey: "forbidden" } }), false);
+  assert.equal(responseValid({ requestId: identity.requestId, actionToken: identity.actionToken, error: "raw diagnostics" }), false);
+  const handlers = new Map(); const f = fixture({ validateRequest: requestValid, validateResponse: responseValid });
+  f.adapter.registerIpc({ handle: (channel, handler) => handlers.set(channel, handler), removeHandler: (channel) => handlers.delete(channel) });
+  const pending = f.adapter.selectModel(f.context); await tick(); const request = f.messages.at(-1).payload;
+  assert.equal(await f.adapter.respond(f.sender, { requestId: request.requestId, actionToken: request.actionToken,
+    result: { hostHandle: identity.requestId, label: "Synthetic" } }), true);
+  assert.equal((await pending).label, "Synthetic"); f.adapter.shutdown(); assert.equal(handlers.size, 0);
+});

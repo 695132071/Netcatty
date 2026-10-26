@@ -1,3 +1,4 @@
+import type { PluginAIHostModelEvent, PluginAIHostResult } from '@netcatty/plugin-contract';
 import { createPluginModelAdapter } from './modelInvocationAdapter';
 import type { ProviderConfig } from '../types';
 
@@ -43,7 +44,7 @@ export function createTrustedPluginAIHostRuntime(options: {
   return {
     // The main-process bridge supplies canonical envelopes, validates the sender,
     // and binds each request to its current window and plugin runtime.
-    async handle(kind: string, payload: Record<string, unknown>, runtimeId: string, signal: AbortSignal = new AbortController().signal): Promise<unknown> {
+    async handle(kind: string, payload: Record<string, unknown>, runtimeId: string, signal: AbortSignal = new AbortController().signal): Promise<PluginAIHostResult> {
       if (kind === 'runtime.release') { releaseRuntime(runtimeId); return { ok: true }; }
       assertActive();
       if (kind === 'model.select') {
@@ -90,7 +91,19 @@ export function createTrustedPluginAIHostRuntime(options: {
           if (result.done) { turns.delete(String(payload.hostHandle)); return { done: true }; }
           // Unknown usage values are omitted before canonical JSON validation.
           if (!result.value || typeof result.value !== 'object') throw Error('Invalid model stream event');
-          const event = Object.fromEntries(Object.entries(result.value).filter(([, value]) => value !== undefined));
+          const value = result.value as Record<string, unknown>;
+          let event: PluginAIHostModelEvent;
+          if (value.kind === 'text' && typeof value.text === 'string') event = { kind: 'text', text: value.text };
+          else if (value.kind === 'usage') {
+            event = { kind: 'usage' };
+            for (const key of ['inputTokens', 'outputTokens', 'totalTokens'] as const) {
+              const tokens = value[key];
+              if (tokens !== undefined) {
+                if (typeof tokens !== 'number' || !Number.isSafeInteger(tokens) || tokens < 0) throw Error('Invalid model usage');
+                event[key] = tokens;
+              }
+            }
+          } else throw Error('Unsupported model event');
           return { done: false, event };
         } catch { cancel(String(payload.hostHandle)); throw Error('Model invocation failed'); }
         finally { turn.reading = false; signal.removeEventListener('abort', abort); }

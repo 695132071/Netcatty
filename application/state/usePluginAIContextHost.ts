@@ -8,21 +8,6 @@ import { getConfiguredPluginModel } from '../../infrastructure/ai/plugin/configu
 import { buildSelectedPluginSources } from '../../infrastructure/ai/plugin/selectedSources';
 import { netcattyBridge } from '../../infrastructure/services/netcattyBridge';
 
-// Canonical envelope methods are added to the app preload by the shared
-// transport task. They are intentionally absent from netcattyView.
-interface HostRequest {
-  requestId: string;
-  actionToken: string;
-  runtimeId: string;
-  kind: string;
-  payload: Record<string, unknown>;
-}
-interface HostBridge {
-  onPluginAIHostRequest(listener: (request: HostRequest) => void): () => void;
-  setPluginAIHostReady(ready: boolean): Promise<boolean>;
-  respondPluginAIHost(response: { requestId: string; actionToken: string; result?: unknown; error?: true }): Promise<boolean>;
-}
-
 export function usePluginAIContextHost({ sessions, workspaces }: { sessions: TerminalSession[]; workspaces: Workspace[] }) {
   const activeTabId = useActiveTabId();
   const latest = useRef({ activeTabId, sessions, workspaces });
@@ -31,8 +16,13 @@ export function usePluginAIContextHost({ sessions, workspaces }: { sessions: Ter
   const [noteId, setNoteId] = useState('');
   const [noteChoices, setNoteChoices] = useState<Array<{ id: string; title: string }>>([]);
   useEffect(() => {
-    const bridge = netcattyBridge.get() as unknown as HostBridge | null;
-    if (!bridge?.onPluginAIHostRequest || !bridge.setPluginAIHostReady || !bridge.respondPluginAIHost) return;
+    const api = netcattyBridge.get();
+    if (!api?.onPluginAIHostRequest || !api.setPluginAIHostReady || !api.respondPluginAIHost) return;
+    const bridge = {
+      onPluginAIHostRequest: api.onPluginAIHostRequest.bind(api),
+      setPluginAIHostReady: api.setPluginAIHostReady.bind(api),
+      respondPluginAIHost: api.respondPluginAIHost.bind(api),
+    };
     let selectedNoteId: string | null = null;
     let mounted = true;
     let chooser: { runtimeId: string; cancel: () => void } | null = null;
