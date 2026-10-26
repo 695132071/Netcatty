@@ -833,3 +833,14 @@ test("inferPluginIdForSyncProvider never guesses from credential key prefixes", 
   assert.equal(database.inferPluginIdForSyncProvider("com.missing.sync"), undefined);
   database.close();
 });
+
+test("sync sidecar enumeration preserves NUL-separated setting coordinates", (context) => {
+  const database = createDatabase(context);
+  context.after(() => database.close());
+  const key = "com.example.test.theme\0application\0application";
+  database.setSyncSidecar("com.example.test", "settings", key, "dark", 10);
+  assert.equal(database.listSyncSidecars("com.example.test")[0].key, key);
+  assert.equal(database.listAllSyncSidecars()[0].key, key);
+  database.replaceAllSyncSidecars(database.listAllSyncSidecars());
+  assert.equal(database.getSyncSidecar("com.example.test", "settings", key).value, "dark");
+});

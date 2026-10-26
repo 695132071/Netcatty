@@ -157,7 +157,10 @@ test("network response streaming stops above the byte cap", async () => {
   );
 });
 
-test("network broker reports its own timeout as a stable deadline error", async () => {
+test("network broker reports its own timeout as a stable deadline error", async (context) => {
+  // A real request owns a socket; this pending fake must also keep the loop alive.
+  const keepAlive = setInterval(() => {}, 1_000);
+  context.after(() => clearInterval(keepAlive));
   const broker = new PluginNetworkBroker({
     fetch: async (_url, options) => new Promise((_resolve, reject) => {
       options.signal.addEventListener("abort", () => reject(options.signal.reason), { once: true });

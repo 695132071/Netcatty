@@ -614,14 +614,15 @@ class PluginDatabase {
 
   listSyncSidecars(pluginId) {
     return this.db.prepare(`
-      SELECT plugin_id, kind, key, value_json, updated_at
+      SELECT plugin_id, kind, CAST(key AS BLOB) AS key_bytes, value_json, updated_at
       FROM plugin_sync_sidecars
       WHERE plugin_id = ?
       ORDER BY kind COLLATE BINARY, key COLLATE BINARY
     `).all(pluginId).map((row) => ({
       pluginId: row.plugin_id,
       kind: row.kind,
-      key: row.key,
+      // Node 22 truncates TEXT results at NUL; settings keys contain NUL separators.
+      key: Buffer.from(row.key_bytes).toString("utf8"),
       value: parseJson(row.value_json, "sync sidecar value"),
       updatedAt: Number(row.updated_at),
     }));
@@ -629,13 +630,14 @@ class PluginDatabase {
 
   listAllSyncSidecars() {
     return this.db.prepare(`
-      SELECT plugin_id, kind, key, value_json, updated_at
+      SELECT plugin_id, kind, CAST(key AS BLOB) AS key_bytes, value_json, updated_at
       FROM plugin_sync_sidecars
       ORDER BY plugin_id COLLATE BINARY, kind COLLATE BINARY, key COLLATE BINARY
     `).all().map((row) => ({
       pluginId: row.plugin_id,
       kind: row.kind,
-      key: row.key,
+      // Node 22 truncates TEXT results at NUL; settings keys contain NUL separators.
+      key: Buffer.from(row.key_bytes).toString("utf8"),
       value: parseJson(row.value_json, "sync sidecar value"),
       updatedAt: Number(row.updated_at),
     }));
