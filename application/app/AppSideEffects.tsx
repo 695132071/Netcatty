@@ -716,7 +716,7 @@ export function AppSideEffects() {
   }, [isVaultInitialized, pendingTrayPanelConnectHostIds]);
 
   // Handle keyboard-interactive submit
-  const handleKeyboardInteractiveSubmit = useCallback((requestId: string, responses: string[], savePassword?: string) => { return handleKeyboardInteractiveSubmitImpl(() => ({ hosts, hostsRef, keyboardInteractiveQueue, netcattyBridge, requestId, responses, savePassword, sessions, setKeyboardInteractiveQueue, t, toast, updateHosts }), requestId, responses, savePassword); }, [keyboardInteractiveQueue, sessions, hosts, t, updateHosts]);
+  const handleKeyboardInteractiveSubmit = useCallback((requestId: string, responses: string[], savePassword?: string) => { return handleKeyboardInteractiveSubmitImpl(() => ({ hosts, hostsRef, identities, keyboardInteractiveQueue, netcattyBridge, requestId, responses, savePassword, sessions, setKeyboardInteractiveQueue, t, toast, updateHosts }), requestId, responses, savePassword); }, [identities, keyboardInteractiveQueue, sessions, hosts, t, updateHosts]);
 
   // Handle keyboard-interactive cancel
   const handleKeyboardInteractiveCancel = useCallback((requestId: string) => { return handleKeyboardInteractiveCancelImpl(() => ({ netcattyBridge, requestId, setKeyboardInteractiveQueue, t, toast }), requestId); }, [t]);
