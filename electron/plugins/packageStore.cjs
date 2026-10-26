@@ -151,6 +151,35 @@ class PackageStore {
       .filter((value) => typeof value === "string" && value !== this.paths.database)
       .map((directory) => mkdir(directory, { recursive: true, mode: 0o700 })));
     await this.recover();
+    // Reconcile every installed manifest before lazy contributions are exposed.
+    // An application/API upgrade must not leave incompatible providers enabled.
+    for (const plugin of this.database.listPlugins()) {
+      if (!plugin.enabled) continue;
+      await this.assertCompatible(plugin).catch((error) => {
+        if (error.code !== "PLUGIN_INCOMPATIBLE") throw error;
+      });
+    }
+  }
+
+  async assertCompatible(plugin) {
+    const pluginCli = await loadPluginCli();
+    const result = pluginCli.checkPluginCompatibility(plugin.manifest, {
+      netcattyVersion: this.netcattyVersion,
+      apiVersion: this.apiVersion,
+      features: this.supportedFeatures,
+    });
+    if (result.compatible) return result;
+    const error = new Error(`Plugin is incompatible: ${result.errors.join("; ")}`);
+    error.code = "PLUGIN_INCOMPATIBLE";
+    const current = this.database.getActivePlugin(plugin.id);
+    if (current?.activeVersion === plugin.activeVersion) {
+      this.database.setEnabled(plugin.id, false);
+      this.database.setRuntimeState(plugin.id, "error", {
+        pluginVersion: plugin.activeVersion,
+        error: error.message,
+      });
+    }
+    throw error;
   }
 
   async install(archivePath, options = {}) {

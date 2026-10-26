@@ -370,3 +370,43 @@ test("failed package validation removes every extracted staging file", async (co
   assert.deepEqual(await fs.promises.readdir(fixture.paths.staging), []);
   assert.deepEqual(fixture.database.listPlugins(), []);
 });
+
+test("host upgrade disables incompatible lazy plugins before contributions and retains data", async (context) => {
+  const fixture = createStore(context);
+  await fixture.store.initialize();
+  const archive = await createPackage(fixture.root, {
+    manifest: { engines: { netcatty: "<1.0.0", api: ">=0.1.0-internal <0.2.0" } },
+  });
+  const installed = await fixture.store.install(archive.archive, { enable: true });
+  fixture.database.setValue(installed.id, "synthetic", { retained: true });
+  fixture.store.netcattyVersion = "1.0.0";
+  await fixture.store.initialize();
+  const disabled = fixture.database.getActivePlugin(installed.id);
+  assert.equal(disabled.enabled, false);
+  assert.match(disabled.runtime.lastError, /incompatible.*Netcatty/);
+  assert.equal(disabled.activeVersion, installed.activeVersion);
+  assert.deepEqual(fixture.database.getValue(installed.id, "synthetic"), { retained: true });
+  assert.equal(fs.existsSync(fixture.store.resolvePackageRoot(disabled)), true);
+  await assert.rejects(fixture.store.assertCompatible(disabled), { code: "PLUGIN_INCOMPATIBLE" });
+  fixture.store.netcattyVersion = "0.0.0";
+  await fixture.store.initialize();
+  assert.equal(fixture.database.getActivePlugin(installed.id).enabled, false,
+    "returning to a compatible host must not silently re-enable code");
+});
+
+for (const target of [
+  { apiVersion: "0.2.0" },
+  { supportedFeatures: [] },
+]) {
+  test(`startup checks API and required feature compatibility: ${JSON.stringify(target)}`, async (context) => {
+    const fixture = createStore(context, { supportedFeatures: ["example.feature"] });
+    await fixture.store.initialize();
+    const archive = await createPackage(fixture.root, {
+      manifest: { features: { required: ["example.feature"] } },
+    });
+    const installed = await fixture.store.install(archive.archive, { enable: true });
+    Object.assign(fixture.store, target);
+    await fixture.store.initialize();
+    assert.equal(fixture.database.getActivePlugin(installed.id).enabled, false);
+  });
+}

@@ -488,3 +488,26 @@ test("shutdown cancels an in-flight runtime mutation before waiting for its queu
     "database:close",
   ]);
 });
+
+test("explicit enable checks compatibility before clearing quarantine or exposing lazy contributions", async () => {
+  const calls = [];
+  const plugin = { id: "com.example.incompatible", enabled: false, runtime: { quarantinedAt: 1 } };
+  const manager = new PluginManager({
+    database: {
+      getActivePlugin: () => plugin,
+      clearQuarantine: () => calls.push("clear"),
+      setEnabled: () => calls.push("enable"),
+    },
+    packageStore: {
+      async initialize() {},
+      async assertCompatible() { throw new Error("Plugin is incompatible"); },
+    },
+    runtimeSupervisor: {},
+    contributionService: {
+      async initialize() {},
+      onPluginEnabled: () => calls.push("contribute"),
+    },
+  });
+  await assert.rejects(manager.setEnabled(plugin.id, true), /incompatible/);
+  assert.deepEqual(calls, []);
+});

@@ -107,6 +107,7 @@ class PluginManager {
       await this.#ready();
       if (enabled) {
         const plugin = this.database.getActivePlugin(pluginId);
+        if (plugin) await this.packageStore.assertCompatible?.(plugin);
         if (plugin?.runtime?.quarantinedAt != null) {
           this.database.clearQuarantine(pluginId, plugin.activeVersion);
         }
