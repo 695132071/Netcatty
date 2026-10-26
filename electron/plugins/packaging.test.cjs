@@ -12,7 +12,9 @@ test("packaged application declares every plugin host runtime dependency and res
     "@netcatty/plugin-contract",
     "@netcatty/plugin-sdk",
   ]) {
-    assert.equal(packageJson.dependencies[dependency], "0.1.0-internal");
+    const workspace = JSON.parse(fs.readFileSync(path.join(__dirname, "../../packages", dependency.split("/")[1], "package.json"), "utf8"));
+    assert.equal(packageJson.dependencies[dependency], workspace.version);
+    assert.equal(workspace.version, require("./constants.cjs").PLUGIN_API_VERSION);
   }
   const builderSource = fs.readFileSync(path.join(__dirname, "../../electron-builder.config.cjs"), "utf8");
   assert.match(builderSource, /node_modules\/@netcatty\/plugin-cli\/\*\*\/\*/);
