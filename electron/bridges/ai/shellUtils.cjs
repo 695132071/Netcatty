@@ -69,6 +69,11 @@ const CMD_PROMPT_PATTERN = /^[A-Za-z]:(?:\\[^<>"|]*)?>$/;
 //     the final `]` before `$`/`#` is the delimiter.
 const POSIX_PROMPT_PATTERN = /^(?:[^\s@]+@[^\s:]+(?::[^\n\r]*)?|\[[^\s@\]]+@[^\s\]:]+(?:\s+[^\n\r]+)?\])[#$]$/;
 
+// Host line of a two-line bash PS1 (`\u@\h: \w` then a following `$` or `#`).
+// Same user@host[:path] class as POSIX_PROMPT_PATTERN's first alternative,
+// without a prompt marker on this line. A bare `$`/`#` alone is not a prompt.
+const POSIX_PROMPT_HOST_LINE_PATTERN = /^[^\s@]+@[^\s:]+(?::[^\n\r]*)?$/;
+
 // Alpine's default ash PS1 omits the username: `\h:\w\$ ` -> `localhost:~# `.
 // Require a hostname and a home/absolute path, excluding prompt delimiters
 // within the path so partially entered commands do not count as idle prompts.
@@ -102,7 +107,8 @@ function extractTrailingIdlePrompt(output) {
   const normalized = stripAnsi(output).replace(/\r/g, "\n");
   if (!normalized || normalized.endsWith("\n")) return "";
 
-  const lastLine = normalized.split("\n").pop() || "";
+  const lines = normalized.split("\n");
+  const lastLine = lines.pop() || "";
   const rightTrimmed = lastLine.replace(/\s+$/, "");
   if (!rightTrimmed) return "";
 
@@ -116,6 +122,23 @@ function extractTrailingIdlePrompt(output) {
 
   if (isDefaultCmdPromptLine(rightTrimmed)) {
     return lastLine;
+  }
+
+  // Two-line PS1 (`export PS1="\u@\h: \w\n$ "`). Bash emits the newline as
+  // CR and the PTY's ONLCR adds another, so the bytes are `\r\r\n`. The
+  // CR-to-LF normalize above turns that into blank lines between the host
+  // line and `$`/`#`. Keep those blanks in the cache: getFreshIdlePrompt
+  // uses the same normalize, and a lone `$` must not satisfy endsWith.
+  if (rightTrimmed === "$" || rightTrimmed === "#") {
+    let hostIndex = lines.length - 1;
+    while (hostIndex >= 0 && lines[hostIndex].replace(/\s+$/, "") === "") {
+      hostIndex -= 1;
+    }
+    const previousLine = hostIndex >= 0 ? lines[hostIndex] : "";
+    const previousRightTrimmed = previousLine.replace(/\s+$/, "");
+    if (POSIX_PROMPT_HOST_LINE_PATTERN.test(previousRightTrimmed)) {
+      return `${lines.slice(hostIndex).join("\n")}\n${lastLine}`;
+    }
   }
 
   return "";
@@ -178,7 +201,8 @@ function trackSessionIdlePrompt(session, chunk) {
 // Return `session.lastIdlePrompt` only if the PTY's recent rolling tail
 // still ends with it. The cached prompt is updated only when
 // extractTrailingIdlePrompt recognizes a known shape (PowerShell, cmd.exe,
-// `user@host[:path][#$]`, RHEL `[user@host path][#$]`, or Alpine `host:path[#$]`);
+// `user@host[:path][#$]`, two-line `user@host[:path]` + `$`/`#`,
+// RHEL `[user@host path][#$]`, or Alpine `host:path[#$]`);
 // a remote shell switch into another shell, an oh-my-posh / starship / custom
 // PS1, or any unrecognized prompt would
 // otherwise leave a stale value behind, which `resolveEffectiveShellKind`

@@ -219,6 +219,53 @@ test("extracts a trailing RHEL-family bracketed idle prompt", () => {
   assert.equal(extractTrailingIdlePrompt("welcome\r\nroot@host ~#"), "");
 });
 
+test("extractTrailingIdlePrompt recognizes a two-line user@host then bare $/# PS1", () => {
+  // export PS1="\u@\h: \w\n$ " paints the host line, then a lone "$ ".
+  // The cached prompt must keep both lines so a lone "$" cannot satisfy endsWith.
+  assert.equal(
+    extractTrailingIdlePrompt("welcome\r\nuser@host: /home/foo\n$ "),
+    "user@host: /home/foo\n$ ",
+  );
+  assert.equal(
+    extractTrailingIdlePrompt("welcome\r\nroot@host: /root\n# "),
+    "root@host: /root\n# ",
+  );
+  // Live bash PTY: prompt CR plus ONLCR is `\r\r\n`, which this normalizer
+  // stores as blank lines. The cache must keep them so endsWith still matches.
+  assert.equal(
+    extractTrailingIdlePrompt("\x1b[?2004huser@host: /home/foo\r\r\n$ "),
+    "user@host: /home/foo\n\n\n$ ",
+  );
+  assert.equal(
+    extractTrailingIdlePrompt("\x1b[?2004hroot@host: /root\r\r\n# "),
+    "root@host: /root\n\n\n# ",
+  );
+  assert.equal(extractTrailingIdlePrompt("$ "), "");
+  assert.equal(extractTrailingIdlePrompt("# "), "");
+  assert.equal(extractTrailingIdlePrompt("welcome\r\n$ "), "");
+  assert.equal(extractTrailingIdlePrompt("not a host line\n$ "), "");
+  assert.equal(extractTrailingIdlePrompt("copied output\n# "), "");
+  assert.equal(isDefaultPosixPromptLine("$"), false);
+  assert.equal(isDefaultPosixPromptLine("#"), false);
+  assert.equal(isDefaultPosixPromptLine("$ "), false);
+  assert.equal(isDefaultPosixPromptLine("# "), false);
+});
+
+test("trackSessionIdlePrompt and getFreshIdlePrompt accept a two-line user@host PS1", () => {
+  const session = {};
+  const prompt = "user@host: /home/foo\n$ ";
+  trackSessionIdlePrompt(session, `welcome\r\n${prompt}`);
+  assert.equal(getFreshIdlePrompt(session), prompt);
+
+  const ptySession = {};
+  trackSessionIdlePrompt(ptySession, "\x1b[?2004huser@host: /home/foo\r\r\n$ ");
+  assert.equal(getFreshIdlePrompt(ptySession), "user@host: /home/foo\n\n\n$ ");
+});
+
+test("extractTrailingIdlePrompt still recognizes a classic single-line POSIX prompt", () => {
+  assert.equal(extractTrailingIdlePrompt("welcome\r\nuser@host:~$ "), "user@host:~$ ");
+});
+
 test("isDefaultPosixPromptLine accepts virtualenv, conda, and BT-panel env prefixes", () => {
   // Python venv / conda / BT-panel prepend "(name) " before the real prompt.
   // Recognition strips that prefix; a missing space after ")" is already
