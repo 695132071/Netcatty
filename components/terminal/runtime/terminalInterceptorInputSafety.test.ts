@@ -42,7 +42,7 @@ test("password-prompt input is classified before prompt state reset and cannot b
   );
   assert.match(
     runtimeSource,
-    /for \(const chunk of getTextInputWireChunks\(outData, options\?\.perCharacterWrites === true\)\) \{\s*ctx\.terminalBackend\.writeToSession\(id, chunk, \{\s*sensitive,\s*serialEraseChar,[\s\S]*?\}\);\s*\}/u,
+    /for \(const chunk of getTextInputWireChunks\(outData, usePerCharacterInput && options\?\.perCharacterWrites === true, \(ctx\.host\.protocol === undefined \|\| ctx\.host\.protocol === "ssh"\) && !ctx\.host\.moshEnabled && !ctx\.host\.etEnabled\)\) \{\s*ctx\.terminalBackend\.writeToSession\(id, chunk, \{\s*sensitive,\s*serialEraseChar,[\s\S]*?\}\);\s*\}/u,
   );
   assert.match(
     runtimeSource,

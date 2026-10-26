@@ -4063,7 +4063,7 @@ const TerminalComponent: React.FC<TerminalProps> = ({
         return;
       }
       finishReconnectPreparation();
-      xtermRuntimeRef.current?.resetKittyConnectionInputState();
+      xtermRuntimeRef.current?.resetConnectionInputState(host);
       resetKittyKeyboardModeStateForSession(terminalSettingsRef);
       if (effectiveTerminalProtocol.startsWith("plugin:")) {
         sessionStarters.startPluginConnection(term);

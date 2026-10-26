@@ -1570,6 +1570,7 @@ export const useVaultState = (options?: UseVaultStateOptions) => {
       group: "",
       tags: [],
       protocol: "ssh",
+      sshInputCompatibility: false,
       order: getNextVaultOrder(hosts),
     };
 
