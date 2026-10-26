@@ -62,9 +62,17 @@ export function PluginPackageManager({ manager }: { manager: ReturnType<typeof u
         <div className="rounded-lg bg-muted p-2"><PluginBrandIcon plugin={plugin} size={32} /></div>
         <button type="button" className="min-w-0 flex-1 text-left" aria-expanded={selected === plugin.id} onClick={() => setSelected(selected === plugin.id ? null : plugin.id)}>
           <div className="truncate text-sm font-medium">{typeof plugin.manifest?.displayName === 'string' ? plugin.manifest.displayName : plugin.manifest?.displayName?.[resolvedLocale] ?? plugin.manifest?.displayName?.en ?? plugin.manifest?.name ?? plugin.id}</div>
-          <div className="text-xs text-muted-foreground">{plugin.manifest?.publisher} · {plugin.activeVersion} · {t(plugin.enabled ? 'settings.plugins.manager.enabled' : 'settings.plugins.manager.disabled')}</div>
+          <div className="text-xs text-muted-foreground">{plugin.manifest?.publisher} · {plugin.activeVersion}</div>
         </button>
-        <Button variant="outline" size="sm" disabled={manager.busy} onClick={() => void manager.setEnabled(plugin.id, !plugin.enabled)}>{t(plugin.enabled ? 'settings.plugins.manager.disable' : 'settings.plugins.manager.enable')}</Button>
+        <Button variant="outline" size="sm" type="button"
+          className={`h-7 rounded-full border px-3 text-xs focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background ${plugin.enabled ? 'border-primary/40 bg-primary/10 hover:bg-primary/15' : 'border-border bg-muted/60 text-muted-foreground hover:bg-muted hover:text-foreground'}`}
+          style={plugin.enabled ? { color: 'color-mix(in srgb, hsl(var(--primary)) 40%, hsl(var(--foreground)))' } : undefined}
+          aria-pressed={plugin.enabled} aria-busy={manager.busy}
+          aria-label={`${t(plugin.enabled ? 'settings.plugins.manager.disable' : 'settings.plugins.manager.enable')} ${plugin.manifest?.name ?? plugin.id}`}
+          title={t(plugin.enabled ? 'settings.plugins.manager.disable' : 'settings.plugins.manager.enable')}
+          disabled={manager.busy} onClick={() => void manager.setEnabled(plugin.id, !plugin.enabled)}>
+          {t(plugin.enabled ? 'settings.plugins.manager.enabled' : 'settings.plugins.manager.disabled')}
+        </Button>
       </div>
       {plugin.runtime.lastError && <p role="status" className="break-words text-xs text-destructive">{t('settings.plugins.manager.lastError')}: {plugin.runtime.lastError}</p>}
       {selected === plugin.id && <>
