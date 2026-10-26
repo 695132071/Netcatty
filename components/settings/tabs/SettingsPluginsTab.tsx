@@ -1,4 +1,5 @@
 import { PluginThirdPartyMarket } from './PluginThirdPartyMarket';
+import { usePluginUpdateCheck } from '../../../application/state/usePluginUpdateCheck';
 import { usePluginManager } from '../../../application/state/usePluginManager';
 import { PluginManagementDialog } from './PluginManagementDialog';
 import { PluginMarketplace } from './PluginMarketplace';
@@ -399,6 +400,7 @@ function PluginManagementContent({ handoff, manager, initialSelectedId }: {
 
 export default function SettingsPluginsTab() {
   const manager = usePluginManager();
+  const updates = usePluginUpdateCheck(manager.plugins);
   const [open, setOpen] = useState(false);
   const [initialSelectedId, setInitialSelectedId] = useState<string | null>(null);
   const opener = useRef<HTMLElement | null>(null);
@@ -410,7 +412,7 @@ export default function SettingsPluginsTab() {
   return (
     <SettingsTabContent value="plugins">
       <SettingsAnchor anchorId="plugins-root" className="space-y-6">
-        <PluginSettingsLanding manager={manager} managerButtonRef={managerButton} settingsAvailable={settingsAvailable} settingsError={contributions.error?.message} onManage={(pluginId, element) => {
+        <PluginSettingsLanding manager={manager} updates={updates} managerButtonRef={managerButton} settingsAvailable={settingsAvailable} settingsError={contributions.error?.message} onManage={(pluginId, element) => {
           opener.current = element;
           setInitialSelectedId(pluginId);
           setOpen(true);

@@ -27,6 +27,7 @@ test('landing settings entry targets the declared plugin and a manager tab round
   Object.assign(dom.window, { netcatty: {
     async getPluginRuntimeStatus() { return { available: true, experimental: true, credentialStorageAvailable: true }; },
     async listPlugins() { return [plugin]; },
+    async setPluginEnabled() { throw new Error('Synthetic management failure'); },
     async getPluginLogStatus() { return { saveToDisk: false, verbose: false, droppedRecords: 0, writeErrors: 0, pendingBytes: 0, maxBytes: 3145728, retentionDays: 7 }; },
     async getPluginContributions() { return { locale: 'en', plugins: [{ id: plugin.id, version: '1.0.0', displayName: 'Alpha', description: 'Synthetic plugin', commands: [], keybindings: [], menus: [], views: [], settings: [{ id: 'com.example.alpha.setting', label: 'Alpha setting', control: 'text', scope: 'application', scopeId: 'application', value: 'synthetic', visible: true, configured: true }] }] }; },
     async getPluginScopeCatalog() { return { workspace: [], host: [], session: [], device: [] }; },
@@ -58,6 +59,13 @@ test('landing settings entry targets the declared plugin and a manager tab round
     await act(async () => { document.activeElement!.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })); await settle(); });
     assert.equal(document.querySelector('[role=dialog]'), null);
     assert.equal(document.activeElement, settings);
+    const toggle = document.querySelector<HTMLButtonElement>('button[aria-label="Disable Alpha"]')!;
+    await act(async () => { toggle.click(); await settle(); });
+    assert.match(document.querySelector('[role=alert]')!.textContent!, /Synthetic management failure/);
+    assert.equal(toggle.getAttribute('aria-checked'), 'true', 'failed mutation retains actual host state');
+    const refresh = document.querySelector<HTMLButtonElement>('button[aria-label="Refresh installed plugins"]')!;
+    await act(async () => { refresh.click(); await settle(); });
+    assert.equal(document.querySelector('[role=alert]'), null, 'explicit successful refresh clears an acknowledged manager error');
   } finally {
     await act(async () => root.unmount()); dom.window.close();
     for (const [key, descriptor] of previous) { if (descriptor) Object.defineProperty(globalThis, key, descriptor); else Reflect.deleteProperty(globalThis, key); }

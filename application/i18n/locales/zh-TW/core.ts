@@ -1,6 +1,12 @@
 import type { Messages } from '../types';
 
 export const zhTWCoreMessages: Messages = {
+  "settings.plugins.landing.checkUpdates": "檢查更新",
+  "settings.plugins.landing.checkingUpdates": "正在檢查…",
+  "settings.plugins.landing.updateSummary": "已檢查：{checked} · 已發佈更新：{updates} · 未檢查：{skipped}。",
+  "settings.plugins.landing.updateSourcesFailed": "無法使用的來源：{count}。",
+  "settings.plugins.landing.updateReview": "安裝前請在外掛管理器中查看更新詳情。",
+  "settings.plugins.landing.updateAvailable": "可更新至 {version}",
   "settings.plugins.landing.loading": "正在載入已安裝外掛…",
   "settings.plugins.landing.settingsUnavailable": "目前內容中沒有可用的外掛設定。",
   "settings.plugins.landing.options": "外掛選項",

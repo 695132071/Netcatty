@@ -1,6 +1,12 @@
 import type { Messages } from '../types';
 
 export const enCoreMessages: Messages = {
+  "settings.plugins.landing.checkUpdates": "Check for updates",
+  "settings.plugins.landing.checkingUpdates": "Checking…",
+  "settings.plugins.landing.updateSummary": "Checked: {checked} · Published updates: {updates} · Not checked: {skipped}.",
+  "settings.plugins.landing.updateSourcesFailed": "Unavailable sources: {count}.",
+  "settings.plugins.landing.updateReview": "Review updates in the plugin manager before installing.",
+  "settings.plugins.landing.updateAvailable": "Version {version} available",
   "settings.plugins.landing.loading": "Loading installed plugins…",
   "settings.plugins.landing.settingsUnavailable": "No plugin settings are available in this context.",
   "settings.plugins.landing.options": "Plugin options",

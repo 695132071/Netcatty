@@ -1,6 +1,12 @@
 import type { Messages } from '../types';
 
 export const zhCNCoreMessages: Messages = {
+  "settings.plugins.landing.checkUpdates": "检查更新",
+  "settings.plugins.landing.checkingUpdates": "正在检查…",
+  "settings.plugins.landing.updateSummary": "已检查：{checked} · 已发布更新：{updates} · 未检查：{skipped}。",
+  "settings.plugins.landing.updateSourcesFailed": "不可用来源：{count}。",
+  "settings.plugins.landing.updateReview": "安装前请在插件管理器中查看更新详情。",
+  "settings.plugins.landing.updateAvailable": "可更新至 {version}",
   "settings.plugins.landing.loading": "正在载入已安装插件…",
   "settings.plugins.landing.settingsUnavailable": "当前上下文中没有可用的插件设置。",
   "settings.plugins.landing.options": "插件选项",

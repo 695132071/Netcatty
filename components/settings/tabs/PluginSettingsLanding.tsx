@@ -1,6 +1,7 @@
 import React, { useCallback, useMemo, useState } from 'react';
 import { RefreshCw, Settings2 } from 'lucide-react';
 import { useI18n } from '../../../application/i18n/I18nProvider';
+import type { usePluginUpdateCheck } from '../../../application/state/usePluginUpdateCheck';
 import type { usePluginManager } from '../../../application/state/usePluginManager';
 import { Button } from '../../ui/button';
 import { Input } from '../../ui/input';
@@ -10,11 +11,12 @@ import { PluginLogSettings } from './PluginLogSettings';
 
 type Manager = ReturnType<typeof usePluginManager>;
 
-export function PluginSettingsLanding({ manager, settingsAvailable, settingsError, managerButtonRef, onManage }: {
+export function PluginSettingsLanding({ manager, settingsAvailable, settingsError, managerButtonRef, updates, onManage }: {
   manager: Manager;
   settingsAvailable: ReadonlySet<string>;
   settingsError?: string;
   managerButtonRef?: React.Ref<HTMLButtonElement>;
+  updates?: ReturnType<typeof usePluginUpdateCheck>;
   onManage: (pluginId: string | null, opener: HTMLElement) => void;
 }) {
   const { t, resolvedLocale } = useI18n();
@@ -47,9 +49,12 @@ export function PluginSettingsLanding({ manager, settingsAvailable, settingsErro
         <PluginLogSettings />
       </SettingCard>
     </SettingsSection>
-    <SettingsSection title={`${t('settings.plugins.manager.installed')} · ${manager.plugins.length}`} actions={
-      <Button className="focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2" variant="ghost" size="icon" disabled={manager.busy} aria-label={t('settings.plugins.landing.refresh')} onClick={() => void manager.refresh().catch(() => {})}><RefreshCw size={16} /></Button>
-    }>
+    <SettingsSection title={`${t('settings.plugins.manager.installed')} · ${manager.plugins.length}`} actions={<>
+      {updates && <Button className="focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2" variant="outline" size="sm" disabled={updates.busy || manager.busy || !manager.available || !manager.statusKnown || manager.plugins.length === 0} onClick={() => void updates.check()}>{t(updates.busy ? 'settings.plugins.landing.checkingUpdates' : 'settings.plugins.landing.checkUpdates')}</Button>}
+      <Button className="focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2" variant="ghost" size="icon" disabled={manager.busy} aria-label={t('settings.plugins.landing.refresh')} onClick={() => void manager.refresh({ clearError: true }).catch(() => {})}><RefreshCw size={16} /></Button>
+    </>}>
+      {updates?.error && <p role="alert" className="text-sm text-destructive">{updates.error}</p>}
+      {updates?.result && <p role="status" className="text-xs text-muted-foreground">{t('settings.plugins.landing.updateSummary').replace('{checked}', String(updates.result.checked)).replace('{updates}', String(updates.result.updates.length)).replace('{skipped}', String(updates.result.skipped))}{updates.result.failedSources > 0 && ` ${t('settings.plugins.landing.updateSourcesFailed').replace('{count}', String(updates.result.failedSources))}`} {t('settings.plugins.landing.updateReview')}</p>}
       {settingsError && <p role="alert" className="text-sm text-destructive">{settingsError}</p>}
       {manager.error && <p role="alert" className="text-sm text-destructive">{manager.error}</p>}
       {!manager.statusKnown && !manager.error && <p role="status" className="text-sm text-muted-foreground">{t('settings.plugins.landing.loading')}</p>}
@@ -61,12 +66,14 @@ export function PluginSettingsLanding({ manager, settingsAvailable, settingsErro
           {visible.map((plugin) => {
             const name = nameOf(plugin);
             const description = localized(plugin.manifest?.description);
+            const availableUpdate = updates?.result?.updates.find((item) => item.pluginId === plugin.id && item.sourceId === plugin.source?.id);
             const declaredSettings = Boolean(plugin.manifest?.contributes?.settings?.length || plugin.manifest?.contributes?.views?.some((view) => view.location === 'settings'));
             return <SettingRow key={plugin.id} leading={<PluginBrandIcon plugin={plugin} size={24} />} label={<span className="flex min-w-0 items-baseline gap-2">
               <span className="truncate" title={name}>{name}</span>
               {plugin.activeVersion && <span className="shrink-0 text-xs font-normal text-muted-foreground">{plugin.activeVersion}</span>}
             </span>} description={<>
               <span className="block break-words">{[plugin.manifest?.publisher, sourceOf(plugin), statusOf(plugin)].filter(Boolean).join(' · ')}</span>
+              {availableUpdate && <span className="block text-primary">{t('settings.plugins.landing.updateAvailable').replace('{version}', availableUpdate.availableVersion)}</span>}
               {description && <span className="line-clamp-2 break-words">{description}</span>}
             </>}>
               <div className="flex items-center gap-3">

@@ -10,7 +10,8 @@ export function usePluginManager() {
   const [error, setError] = useState<string | null>(null);
   const generation = useRef(0);
   const mutation = useRef(false);
-  const refresh = useCallback(async () => {
+  const refresh = useCallback(async (options?: { clearError?: boolean }) => {
+    if (options?.clearError) setError(null);
     const current = ++generation.current;
     try {
       const bridge = netcattyBridge.get();
