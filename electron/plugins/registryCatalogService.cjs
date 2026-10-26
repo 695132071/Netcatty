@@ -1,8 +1,8 @@
 "use strict";
 
 const { createHash } = require("node:crypto");
-const { PluginCatalogService, fetchBounded, validateCatalog, MAX_CATALOG_BYTES } = require("./catalogService.cjs");
-const REGISTRY_URL = "https://raw.githubusercontent.com/binaricat/netcatty-plugins/main/catalog.json";
+const { PluginCatalogService, fetchBounded, validateCatalog, MAX_CATALOG_BYTES, DISTRIBUTION_ORIGIN } = require("./catalogService.cjs");
+const REGISTRY_URL = `${DISTRIBUTION_ORIGIN}/catalog.json`;
 const tokenFor = (entry) => createHash("sha256").update(JSON.stringify(entry)).digest("hex");
 
 function prepareSnapshot(value) {
@@ -24,7 +24,7 @@ class RegistryCatalogService extends PluginCatalogService {
     this.refreshing = (async () => {
       try {
         // No redirects: only this exact registry endpoint can replace the catalog.
-        const bytes = await fetchBounded(REGISTRY_URL, MAX_CATALOG_BYTES, this.fetch, 0);
+        const bytes = await fetchBounded(REGISTRY_URL, MAX_CATALOG_BYTES, this.fetch);
         const next = prepareSnapshot(JSON.parse(bytes.toString("utf8")));
         // Publish only after full validation, clones and every token succeeded.
         this.entries = next.entries;

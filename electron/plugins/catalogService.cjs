@@ -10,25 +10,28 @@ const validateManifest = createDefinitionValidator("PluginManifest");
 const { assertCatalogManifest } = require("./catalogPolicy.cjs");
 const { assertPluginJsonValue } = require("./jsonBoundary.cjs");
 const MAX_CATALOG_BYTES = 2 * 1024 * 1024;
-const CATALOG_FIELDS = new Set(["id", "version", "name", "description", "author", "repository", "commit", "license", "readme", "manifest", "artifact"]);
+const CATALOG_FIELDS = new Set(["id", "version", "name", "description", "author", "repository", "commit", "license", "readme", "manifest", "artifact", "readmeAsset"]);
 
-const DOWNLOAD_HOSTS = new Set(["github.com", "raw.githubusercontent.com", "release-assets.githubusercontent.com", "objects.githubusercontent.com"]);
+const DISTRIBUTION_ORIGIN = "https://plugins.netcatty.app";
 function assertDownloadUrl(value) {
+  if (typeof value !== "string" || /[\u0000-\u0020\u007f\\%?#]/u.test(value)) {
+    throw new Error("Catalog download URL is not an approved HTTPS static distribution source");
+  }
   const url = new URL(value);
-  if (url.protocol !== "https:" || url.username || url.password || url.port || !DOWNLOAD_HOSTS.has(url.hostname)) {
-    throw new Error("Catalog download URL is not an approved HTTPS GitHub source");
+  if (url.origin !== DISTRIBUTION_ORIGIN || url.username || url.password || url.port
+    || url.href !== value || url.pathname.split("/").some((part) => part === "." || part === "..")) {
+    throw new Error("Catalog download URL is not an approved HTTPS static distribution source");
   }
   return url.href;
 }
-function pinnedReadmeUrl(entry) {
+function assertReadmeSource(entry) {
   if (typeof entry.readme !== "string" || /[\u0000-\u001f\u007f\\%?#]/u.test(entry.readme)
     || entry.readme.split("/").some((segment) => !segment || segment === "." || segment === "..")) {
     throw new Error("Invalid or unpinned README path");
   }
-  const prefix = `/${entry.repository}/${entry.commit}/`;
-  const url = new URL(`https://raw.githubusercontent.com${prefix}${entry.readme.split("/").map(encodeURIComponent).join("/")}`);
-  if (!url.pathname.startsWith(prefix)) throw new Error("README URL escapes the pinned commit");
-  return url.href;
+  if (entry.repository.split("/").some((part) => part === "." || part === "..")) {
+    throw new Error("README source escapes the pinned commit");
+  }
 }
 function validateCatalog(entries) {
   assertPluginJsonValue(entries, { maxBytes: MAX_CATALOG_BYTES });
@@ -43,51 +46,49 @@ function validateCatalog(entries) {
       || entry.readme.split("/").some((p) => !p || p === "." || p === "..") || /[\\%?#\0]/u.test(entry.readme)) {
       throw new Error("Invalid or unpinned plugin catalog entry");
     }
-    pinnedReadmeUrl(entry);
+    assertReadmeSource(entry);
     if (!validateManifest(entry.manifest)) throw new Error(`Catalog manifest is invalid: ${formatValidationErrors(validateManifest.errors)}`);
     assertCatalogManifest(entry.manifest, entry);
     ids.add(entry.id);
-    if (Object.hasOwn(entry, "artifact")) {
-      if (!entry.artifact || typeof entry.artifact !== "object" || Array.isArray(entry.artifact)
-        || Object.keys(entry.artifact).some((key) => key !== "url" && key !== "sha256")
-        || typeof entry.artifact.url !== "string" || typeof entry.artifact.sha256 !== "string") {
-        throw new Error("Invalid catalog artifact metadata");
+    for (const field of ["artifact", "readmeAsset"]) {
+      if (!Object.hasOwn(entry, field)) continue;
+      const asset = entry[field];
+      if (!asset || typeof asset !== "object" || Array.isArray(asset)
+        || Object.keys(asset).some((key) => key !== "url" && key !== "sha256")
+        || typeof asset.url !== "string" || typeof asset.sha256 !== "string") {
+        throw new Error(`Invalid catalog ${field} metadata`);
       }
-      assertDownloadUrl(entry.artifact.url);
-      if (!/^[a-f0-9]{64}$/u.test(entry.artifact.sha256)) throw new Error("Catalog artifact requires SHA-256");
+      assertDownloadUrl(asset.url);
+      if (!/^[a-f0-9]{64}$/u.test(asset.sha256)) throw new Error(`Catalog ${field} requires SHA-256`);
     }
   }
   return entries;
 }
-async function fetchBounded(url, limit, fetchImpl = fetch, maxRedirects = 4) {
+async function fetchBounded(url, limit, fetchImpl = fetch) {
   const signal = AbortSignal.timeout(30_000);
-  for (let redirects = 0; redirects <= maxRedirects; redirects++) {
-    const response = await fetchImpl(assertDownloadUrl(url), { redirect: "manual", signal, credentials: "omit", referrerPolicy: "no-referrer" });
-    if ([301, 302, 303, 307, 308].includes(response.status)) {
-      await response.body?.cancel();
-      url = new URL(response.headers.get("location"), url).href;
-      continue;
-    }
-    if (!response.ok) { await response.body?.cancel(); throw new Error(`Catalog download failed (${response.status})`); }
-    if (Number(response.headers.get("content-length")) > limit) {
-      await response.body?.cancel(); throw new Error("Catalog download exceeds size limit");
-    }
-    const reader = response.body?.getReader();
-    if (!reader) throw new Error("Catalog download has no body");
-    const chunks = [];
-    let size = 0;
-    try {
-      for (;;) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        size += value.byteLength;
-        if (size > limit) throw new Error("Catalog download exceeds size limit");
-        chunks.push(Buffer.from(value));
-      }
-      return Buffer.concat(chunks, size);
-    } finally { await reader.cancel(); }
+  const response = await fetchImpl(assertDownloadUrl(url), { redirect: "manual", signal, credentials: "omit", referrerPolicy: "no-referrer" });
+  if ([301, 302, 303, 307, 308].includes(response.status)) {
+    await response.body?.cancel();
+    throw new Error("Catalog redirects are not allowed");
   }
-  throw new Error("Too many catalog redirects");
+  if (!response.ok) { await response.body?.cancel(); throw new Error(`Catalog download failed (${response.status})`); }
+  if (Number(response.headers.get("content-length")) > limit) {
+    await response.body?.cancel(); throw new Error("Catalog download exceeds size limit");
+  }
+  const reader = response.body?.getReader();
+  if (!reader) throw new Error("Catalog download has no body");
+  const chunks = [];
+  let size = 0;
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      size += value.byteLength;
+      if (size > limit) throw new Error("Catalog download exceeds size limit");
+      chunks.push(Buffer.from(value));
+    }
+    return Buffer.concat(chunks, size);
+  } finally { await reader.cancel(); }
 }
 class PluginCatalogService {
   constructor(options) {
@@ -105,8 +106,10 @@ class PluginCatalogService {
   }
   async readme(id) {
     const entry = this.get(id);
-    const url = pinnedReadmeUrl(entry);
-    return (await fetchBounded(url, 256 * 1024, this.fetch, 0)).toString("utf8");
+    if (!entry.readmeAsset) throw new Error("This catalog entry has no published README snapshot. Refresh the catalog or open its source link.");
+    const bytes = await fetchBounded(entry.readmeAsset.url, 256 * 1024, this.fetch);
+    if (createHash("sha256").update(bytes).digest("hex") !== entry.readmeAsset.sha256) throw new Error("Catalog README SHA-256 mismatch");
+    return bytes.toString("utf8");
   }
   async install(id) {
     const entry = this.get(id);
@@ -127,4 +130,4 @@ class PluginCatalogService {
     }
   }
 }
-module.exports = { PluginCatalogService, assertDownloadUrl, fetchBounded, validateCatalog, pinnedReadmeUrl, MAX_CATALOG_BYTES };
+module.exports = { PluginCatalogService, assertDownloadUrl, fetchBounded, validateCatalog, assertReadmeSource, MAX_CATALOG_BYTES, DISTRIBUTION_ORIGIN };

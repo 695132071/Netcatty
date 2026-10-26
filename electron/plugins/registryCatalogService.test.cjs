@@ -42,6 +42,7 @@ test("offline first launch returns bundled source examples and never mutates ins
 
 test("selection binds manifest, README, version and artifact; refresh changes or withdrawal cannot silently install", async () => {
   let entries = structuredClone(builtin);
+  entries[0].readmeAsset = { url: "https://plugins.netcatty.app/readmes/synthetic.md", sha256: require("node:crypto").createHash("sha256").update("# Pinned README").digest("hex") };
   let requests = 0;
   const service = new RegistryCatalogService({ fetch: async (url) => {
     requests++;
@@ -77,7 +78,7 @@ test("fresh unchanged selection installs only its pinned bytes and stays disable
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "registry-test-"));
   context.after(() => fs.rm(root, { recursive: true, force: true }));
   const bytes = Buffer.from("synthetic validated-by-manager archive");
-  const entry = { ...structuredClone(builtin[0]), artifact: { url: "https://github.com/example/plugin/releases/download/v1/plugin.ncpkg", sha256: createHash("sha256").update(bytes).digest("hex") } };
+  const entry = { ...structuredClone(builtin[0]), artifact: { url: "https://plugins.netcatty.app/packages/synthetic.ncpkg", sha256: createHash("sha256").update(bytes).digest("hex") } };
   const requests = []; let installs = 0;
   const service = new RegistryCatalogService({
     getTempFilePath: (name) => path.join(root, name),
