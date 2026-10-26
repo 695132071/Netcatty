@@ -22,6 +22,7 @@ const CHANNELS = Object.freeze({
   restart: "netcatty:plugins:restart",
   uninstall: "netcatty:plugins:uninstall",
   contributions: "netcatty:plugins:contributions",
+  brandIcon: "netcatty:plugins:brand-icon",
   contributionIcon: "netcatty:plugins:contribution-icon",
   contributionsChanged: "netcatty:plugins:contributions-changed",
   executeCommand: "netcatty:plugins:execute-command",
@@ -669,6 +670,10 @@ function registerPluginBridge(ipcMain, options) {
   handle(CHANNELS.contributions, async (_activeManager, payload) => {
     if (!contributionService) throw new Error("Plugin contributions are unavailable");
     return contributionService.snapshot(payload ?? {});
+  });
+  handle(CHANNELS.brandIcon, async (_activeManager, payload) => {
+    if (!options.resolveBrandIcon) throw new Error("Plugin brand icons are unavailable");
+    return options.resolveBrandIcon(payload?.pluginId);
   });
   handle(CHANNELS.contributionIcon, async (_activeManager, payload) => {
     if (!options.resolveContributionIcon) throw new Error("Plugin contribution icons are unavailable");

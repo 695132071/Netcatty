@@ -434,6 +434,7 @@ declare global {
     restartPlugin?(pluginId: string): Promise<NetcattyInstalledPlugin>;
     uninstallPlugin?(pluginId: string): Promise<boolean>;
     getPluginContributions?(options?: NetcattyPluginContributionQuery): Promise<NetcattyPluginContributionSnapshot>;
+    getPluginBrandIcon?(pluginId: string): Promise<{ light: string; dark?: string } | null>;
     getPluginContributionIcon?(pluginId: string, icon: Extract<NetcattyPluginIconReference, { kind: 'package' }>): Promise<{ light: string; dark?: string }>;
     executePluginCommand?(command: string, args?: unknown, context?: Record<string, unknown>): Promise<unknown>;
     updatePluginSetting?(pluginId: string, settingId: string, value: unknown, scopeId?: string): Promise<{ restartRequired: boolean }>;

@@ -61,7 +61,7 @@ export async function initPlugin(
         private: true,
         type: "module",
         scripts: { build: "tsc -p tsconfig.json" },
-        dependencies: { "@netcatty/plugin-sdk": "0.1.0-internal" },
+        dependencies: { "@netcatty/plugin-sdk": "0.1.0-internal.1" },
         devDependencies: { typescript: "^5.9.0" },
       }, null, 2)}\n`,
       "utf8",

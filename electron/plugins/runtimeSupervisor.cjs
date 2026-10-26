@@ -351,7 +351,7 @@ class RuntimeSupervisor {
         pluginId,
         pluginVersion: plugin.activeVersion,
         netcattyVersion: this.netcattyVersion,
-        apiVersion: this.apiVersion,
+        apiVersion: compatibility.apiVersion,
         supportedFeatures: this.supportedFeatures,
         enabledFeatures: compatibility.enabledFeatures,
         environment,
@@ -362,7 +362,7 @@ class RuntimeSupervisor {
       if (
         initialized.pluginId !== pluginId
         || initialized.pluginVersion !== plugin.activeVersion
-        || initialized.apiVersion !== this.apiVersion
+        || initialized.apiVersion !== compatibility.apiVersion
         || JSON.stringify([...initialized.enabledFeatures].sort())
           !== JSON.stringify([...compatibility.enabledFeatures].sort())
       ) {

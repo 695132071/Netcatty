@@ -106,7 +106,7 @@ const schema = JSON.parse(schemaText);
 if (schema.$schema !== "https://json-schema.org/draft/2020-12/schema") {
   throw new Error("Plugin contract must use JSON Schema 2020-12");
 }
-if (!schema.$id?.includes("/0.1.0-internal/")) {
+if (!schema.$id?.includes("/0.1.0-internal.1/")) {
   throw new Error("Plugin contract $id must include the internal API version");
 }
 if (!schema.$defs || typeof schema.$defs !== "object") {

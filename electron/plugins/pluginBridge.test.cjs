@@ -1622,3 +1622,16 @@ test("missing OS vault does not block curated browsing and status exposes the li
   await ipcMain.handlers.get(CHANNELS.catalogInstall)(event, { id: "com.example.synthetic", url: "https://attacker.invalid", enable: true });
   assert.equal(selected, "com.example.synthetic");
 });
+
+test('brand metadata bridge accepts only trusted UI and forwards only the plugin ID', async () => {
+  const ipcMain = createIpcMain(); const seen = [];
+  registerPluginBridge(ipcMain, {
+    manager: { initialize: async () => {} },
+    isTrustedSender: (event) => event.trusted === true,
+    resolveBrandIcon: async (...args) => { seen.push(args); return { light: 'data:image/png;base64,fixture' }; },
+  });
+  await assert.rejects(ipcMain.handlers.get(CHANNELS.brandIcon)({ trusted: false }, { pluginId: 'com.test.brand' }), /Untrusted/);
+  assert.equal(seen.length, 0);
+  await ipcMain.handlers.get(CHANNELS.brandIcon)({ trusted: true }, { pluginId: 'com.test.brand', path: '/secret', url: 'https://attacker.invalid/' });
+  assert.deepEqual(seen, [['com.test.brand']]);
+});

@@ -229,6 +229,7 @@ function createBridgeRegistrar(context) {
         });
         return result.canceled ? null : result.filePaths[0] ?? null;
       },
+      resolveBrandIcon: (pluginId) => pluginHostService?.contributionIconService?.resolveBrand(pluginId),
       resolveContributionIcon: (payload) => pluginHostService?.contributionIconService?.resolve(payload),
       viewHost: pluginHostService?.viewHost,
       env: process.env,

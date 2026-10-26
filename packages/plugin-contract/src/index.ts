@@ -1,4 +1,4 @@
-export const PLUGIN_API_VERSION = "0.1.0-internal" as const;
+export const PLUGIN_API_VERSION = "0.1.0-internal.1" as const;
 export const PLUGIN_MANIFEST_FILE = "netcatty.plugin.json" as const;
 export const PLUGIN_PACKAGE_EXTENSION = ".ncpkg" as const;
 
@@ -47,3 +47,5 @@ export {
   type MaterializedStreamChunk,
   type MessagePortStreamEnvelope,
 } from "./streamTransport.js";
+
+export { inspectPluginBrandIcon, PLUGIN_BRAND_ICON_FEATURE, PLUGIN_BRAND_ICON_MAX_BYTES, PLUGIN_BRAND_ICON_MAX_EDGE } from './brandIcon.js';

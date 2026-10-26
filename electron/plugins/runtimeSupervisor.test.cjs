@@ -951,3 +951,19 @@ test("a stale runtime crash cannot quarantine or overwrite a replacement version
   assert.equal(priorVersion.runtime.status, "error");
   assert.match(priorVersion.runtime.lastError, /stale process crashed/);
 });
+
+test('new host initializes an exact legacy API plugin with its negotiated legacy revision', async (context) => {
+  const observed = [];
+  const fixture = createFixture(context, () => ({
+    async start(config) { observed.push(config.apiVersion); return { pluginId: config.pluginId, pluginVersion: config.pluginVersion, apiVersion: config.apiVersion, enabledFeatures: config.enabledFeatures }; },
+    async stop() {},
+  }), { apiVersion: '0.1.0-internal.1', supportedFeatures: ['metadata.brand-icon'] });
+  fixture.database.installVersion({
+    pluginId: fixture.manifest.id, version: fixture.manifest.version,
+    manifest: { ...fixture.manifest, engines: { netcatty: '>=0.0.0', api: '0.1.0-internal' } },
+    archiveSha256: 'a'.repeat(64), packageRelativePath: `${fixture.manifest.id}/${fixture.manifest.version}/package`,
+  }, { enable: true });
+  await fixture.supervisor.start(fixture.manifest.id);
+  assert.deepEqual(observed, ['0.1.0-internal']);
+  await fixture.supervisor.stop(fixture.manifest.id);
+});

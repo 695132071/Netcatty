@@ -23,3 +23,5 @@ require("./plugins/runtimeSupervisor.test.cjs");
 require("./plugins/shutdownCoordinator.test.cjs");
 require("./plugins/streamRouter.test.cjs");
 require("./plugins/utilityPluginRuntime.test.cjs");
+
+require('./plugins/brandIconService.test.cjs');

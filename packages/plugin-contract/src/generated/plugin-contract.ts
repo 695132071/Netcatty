@@ -461,6 +461,7 @@ export type PluginManifest = {
   version: SemanticVersion;
   publisher: string;
   license?: string;
+  icon?: IconReference;
   homepage?: string;
   repository?: string;
   engines: PluginEngines;

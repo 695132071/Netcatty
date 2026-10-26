@@ -92,7 +92,7 @@ function createPluginHostService(options) {
       database,
       netcattyVersion: options.app.getVersion(),
       apiVersion: PLUGIN_API_VERSION,
-      supportedFeatures: options.supportedFeatures ?? [],
+      supportedFeatures: [...new Set(["metadata.brand-icon", ...(options.supportedFeatures ?? [])])],
     });
     const contributionIconService = new PluginContributionIconService({
       database,
@@ -223,7 +223,7 @@ function createPluginHostService(options) {
       paths,
       netcattyVersion: options.app.getVersion(),
       apiVersion: PLUGIN_API_VERSION,
-      supportedFeatures: options.supportedFeatures ?? [],
+      supportedFeatures: [...new Set(["metadata.brand-icon", ...(options.supportedFeatures ?? [])])],
       runtimeDirectory,
       appRoot,
       rpcRegistry,

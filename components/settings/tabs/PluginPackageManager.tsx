@@ -1,7 +1,8 @@
 import { describePluginPermission } from '@/domain/pluginPermissionDescriptions.cjs';
 import { describePluginRuntime } from '@/domain/pluginRuntimePolicy.cjs';
 import React, { useState } from 'react';
-import { ArrowLeft, Package } from 'lucide-react';
+import { PluginBrandIcon } from '../../plugins/PluginBrandIcon';
+import { ArrowLeft } from 'lucide-react';
 import { usePluginManager } from '../../../application/state/usePluginManager';
 import { useI18n } from '../../../application/i18n/I18nProvider';
 import { Button } from '../../ui/button';
@@ -58,7 +59,7 @@ export function PluginPackageManager({ manager }: { manager: ReturnType<typeof u
     {!manager.plugins.length && <div className="rounded-xl border border-dashed border-border p-8 text-center text-sm text-muted-foreground">{t('settings.plugins.manager.empty')}</div>}
     {manager.plugins.filter((plugin) => !selected || plugin.id === selected).map((plugin) => <article key={plugin.id} className="space-y-4 rounded-xl border border-border/70 bg-background p-4">
       <div className="flex items-center gap-3">
-        <div className="rounded-lg bg-muted p-2"><Package size={20} /></div>
+        <div className="rounded-lg bg-muted p-2"><PluginBrandIcon plugin={plugin} size={32} /></div>
         <button type="button" className="min-w-0 flex-1 text-left" aria-expanded={selected === plugin.id} onClick={() => setSelected(selected === plugin.id ? null : plugin.id)}>
           <div className="truncate text-sm font-medium">{typeof plugin.manifest?.displayName === 'string' ? plugin.manifest.displayName : plugin.manifest?.displayName?.[resolvedLocale] ?? plugin.manifest?.displayName?.en ?? plugin.manifest?.name ?? plugin.id}</div>
           <div className="text-xs text-muted-foreground">{plugin.manifest?.publisher} · {plugin.activeVersion} · {t(plugin.enabled ? 'settings.plugins.manager.enabled' : 'settings.plugins.manager.disabled')}</div>

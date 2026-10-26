@@ -1,6 +1,6 @@
 # Netcatty plugin contract and SDK
 
-Status: internal preview (`0.1.0-internal`)
+Status: internal preview (`0.1.0-internal.1`; legacy `0.1.0-internal` remains offered)
 Tracking issue: [#2269](https://github.com/binaricat/Netcatty/issues/2269)
 
 Phases 2 and 3 consume this contract in the isolated host runtime and secure
@@ -615,3 +615,18 @@ npm run build:plugin-packages
 
 The complete application checks remain mandatory because workspace and root
 dependency changes affect installation and release builds.
+
+
+## Plugin brand icons (internal revision 0.1.0-internal.1)
+
+Optional top-level `icon` reuses `IconReference` from contributions. A package
+using it must require `metadata.brand-icon` and an API range accepting
+`0.1.0-internal.1` but excluding `0.1.0-internal`. See
+[the author guide](plugin-icons.md) for bounds and packaging commands.
+
+The host still offers the previous wire revision to plugins with no top-level
+icon whose range matches only that revision. Compatibility selection returns the
+negotiated API version and runtime initialization uses and verifies that exact
+version. Host version bounds remain independently enforced; unknown required
+features still fail closed. No old manifest is rewritten and no permission grant
+is migrated by this revision.

@@ -7,12 +7,12 @@
     "zh-CN": "插件入门"
   },
   "description": "First-party settings and command example. No terminal, network, filesystem or secret access.",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "publisher": "netcatty",
   "license": "GPL-3.0-or-later",
   "engines": {
     "netcatty": ">=0.0.0",
-    "api": ">=0.1.0-internal <0.2.0"
+    "api": ">=0.1.0-internal.1 <0.2.0"
   },
   "main": {
     "browser": "dist/index.js"
@@ -71,5 +71,15 @@
         "entry": "panel.html"
       }
     ]
+  },
+  "features": {
+    "required": [
+      "metadata.brand-icon"
+    ]
+  },
+  "icon": {
+    "kind": "package",
+    "light": "assets/logo-light.png",
+    "dark": "assets/logo-dark.png"
   }
 }

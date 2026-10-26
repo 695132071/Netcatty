@@ -1,6 +1,6 @@
 # Plugin manager window and brand icons
 
-Status: the manager dialog is implemented in this change. The brand-icon contract below is a proposal, not a supported manifest field yet.
+Status: historical design investigation. The manager dialog and the accepted brand-icon design are now implemented. See [the current author guide](plugin-icons.md) for the shipped contract and bounds. The sections below preserve the original investigation and recommendations.
 
 ## Manager window
 

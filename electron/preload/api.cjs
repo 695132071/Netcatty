@@ -114,6 +114,7 @@ function createPreloadApi(ctx) {
   restartPlugin: (pluginId) => ipcRenderer.invoke("netcatty:plugins:restart", { pluginId }),
   uninstallPlugin: (pluginId) => ipcRenderer.invoke("netcatty:plugins:uninstall", { pluginId }),
   getPluginContributions: (options) => ipcRenderer.invoke("netcatty:plugins:contributions", options ?? {}),
+  getPluginBrandIcon: (pluginId) => ipcRenderer.invoke("netcatty:plugins:brand-icon", { pluginId }),
   getPluginContributionIcon: (pluginId, icon) => ipcRenderer.invoke("netcatty:plugins:contribution-icon", { pluginId, icon }),
   executePluginCommand: (command, args, context) => ipcRenderer.invoke("netcatty:plugins:execute-command", {
     command,

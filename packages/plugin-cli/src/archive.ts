@@ -14,6 +14,7 @@ import {
 import path from "node:path";
 import { once } from "node:events";
 
+import { inspectPluginBrandIcon, PLUGIN_BRAND_ICON_MAX_BYTES } from "@netcatty/plugin-contract";
 import type { IconReference, PluginManifest } from "@netcatty/plugin-contract";
 import yauzl, { type Entry, type ZipFile } from "yauzl";
 
@@ -292,6 +293,7 @@ async function scanPackageDirectory(
   const packagedPaths = new Set(files.map(({ packagePath }) => packagePath));
   const requiredPaths = [
     "netcatty.plugin.json",
+    ...packageIconPaths(manifest.icon),
     manifest.main.browser,
     manifest.main.node,
     ...(manifest.contributes?.views ?? []).map(({ entry }) => entry),
@@ -304,6 +306,18 @@ async function scanPackageDirectory(
     if (!packagedPaths.has(requiredPath)) {
       throw new Error(`Manifest references a missing package file: ${requiredPath}`);
     }
+  }
+  for (const iconPath of packageIconPaths(manifest.icon)) {
+    const file = files.find((entry) => entry.packagePath === iconPath)!;
+    if (file.size > PLUGIN_BRAND_ICON_MAX_BYTES) throw new Error('Plugin brand icon exceeds size limit');
+    const handle = await open(file.absolutePath, constants.O_RDONLY | constants.O_NOFOLLOW);
+    try {
+      const stats = await handle.stat();
+      if (!stats.isFile() || stats.size !== file.size) throw new Error('Brand icon changed during packaging');
+      const bytes = await handle.readFile();
+      if (createHash('sha256').update(bytes).digest('hex') !== file.sha256) throw new Error('Brand icon changed during packaging');
+      inspectPluginBrandIcon(bytes, iconPath);
+    } finally { await handle.close(); }
   }
   return files.sort(sortPackagePaths);
 }
@@ -697,7 +711,7 @@ async function inspectPluginPackage(
           const result = await readEntry(
             zipFile,
             entry,
-            packagePath === "netcatty.plugin.json",
+            packagePath === "netcatty.plugin.json" || (/\.(png|webp)$/.test(packagePath) && entry.uncompressedSize <= PLUGIN_BRAND_ICON_MAX_BYTES),
             extractionDirectory ? path.join(extractionDirectory, ...packagePath.split("/")) : undefined,
           );
           if (result.bytes !== entry.uncompressedSize || result.crc32 !== entry.crc32) {
@@ -733,6 +747,7 @@ async function inspectPluginPackage(
     }
   }
   const requiredPaths = [
+    ...packageIconPaths(manifest.icon),
     manifest.main.browser,
     manifest.main.node,
     ...(manifest.contributes?.views ?? []).map(({ entry }) => entry),
@@ -744,6 +759,11 @@ async function inspectPluginPackage(
     if (!entries.has(requiredPath)) {
       throw new Error(`Manifest references a missing package file: ${requiredPath}`);
     }
+  }
+  for (const iconPath of packageIconPaths(manifest.icon)) {
+    const contents = entries.get(iconPath)?.contents;
+    if (!contents) throw new Error('Brand icon is missing or exceeds size limit');
+    inspectPluginBrandIcon(contents, iconPath);
   }
   for (const [companionPath, companion] of declaredCompanions) {
     const entry = entries.get(companionPath);

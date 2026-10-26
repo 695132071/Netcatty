@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://netcatty.com/schemas/plugins/0.1.0-internal/plugin-contract.schema.json",
+  "$id": "https://netcatty.com/schemas/plugins/0.1.0-internal.1/plugin-contract.schema.json",
   "title": "Netcatty Plugin Contract",
   "description": "Canonical public contract for Netcatty plugin manifests and host RPC messages.",
   "$ref": "#/$defs/PluginManifest",
@@ -1478,6 +1478,7 @@
         "version": { "$ref": "#/$defs/SemanticVersion" },
         "publisher": { "type": "string", "minLength": 1, "maxLength": 128 },
         "license": { "type": "string", "maxLength": 128 },
+        "icon": { "$ref": "#/$defs/IconReference" },
         "homepage": { "type": "string", "format": "uri" },
         "repository": { "type": "string", "format": "uri" },
         "engines": { "$ref": "#/$defs/PluginEngines" },

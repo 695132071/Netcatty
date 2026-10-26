@@ -15,7 +15,7 @@ import type {
 } from "@netcatty/plugin-contract";
 import Ajv2020, { type ErrorObject } from "ajv/dist/2020.js";
 import addFormats from "ajv-formats";
-import { valid, validRange } from "semver";
+import { satisfies, valid, validRange } from "semver";
 
 import { PACKAGE_LIMITS } from "./constants.js";
 import { assertSafePackagePath } from "./packagePath.js";
@@ -367,6 +367,13 @@ function validateSemantics(manifest: PluginManifest): string[] {
   }
 
   const requiredFeatures = new Set(manifest.features?.required ?? []);
+  if (manifest.icon) {
+    if (!requiredFeatures.has('metadata.brand-icon')) errors.push('Brand icons require metadata.brand-icon');
+    if (!validRange(manifest.engines.api) || !satisfies('0.1.0-internal.1', manifest.engines.api) || satisfies('0.1.0-internal', manifest.engines.api)) errors.push('Brand icons require API >=0.1.0-internal.1 excluding the legacy revision');
+    for (const iconPath of packageIconPaths(manifest.icon)) {
+      if (!/\.(png|webp)$/.test(iconPath)) errors.push('Brand icons require PNG or WebP paths');
+    }
+  }
   for (const feature of manifest.features?.optional ?? []) {
     if (requiredFeatures.has(feature)) {
       errors.push(`Feature cannot be both required and optional: ${feature}`);
@@ -672,6 +679,7 @@ function validateSemantics(manifest: PluginManifest): string[] {
   }
 
   for (const entryPath of [
+    ...packageIconPaths(manifest.icon),
     manifest.main.browser,
     manifest.main.node,
     ...(manifest.contributes?.views ?? []).map(({ entry }) => entry),
