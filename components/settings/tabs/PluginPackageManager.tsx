@@ -77,7 +77,7 @@ export function PluginPackageManager({ manager, onSelectionChange }: { manager: 
     {!selectedPlugin && manager.plugins.length > 0 && visible.length === 0 && <p className="p-6 text-center text-sm text-muted-foreground">{t('settings.plugins.market.noResults')}</p>}
     {manager.error && <p role="alert" className="text-sm text-destructive">{manager.error}</p>}
     {!manager.plugins.length && <div className="rounded-xl border border-dashed border-border p-8 text-center text-sm text-muted-foreground">{t('settings.plugins.manager.empty')}</div>}
-    <div className={selectedPlugin ? 'space-y-4' : 'grid grid-cols-[repeat(auto-fit,minmax(min(100%,280px),1fr))] gap-3'}>
+    <div className={selectedPlugin ? 'space-y-4' : 'grid grid-cols-[repeat(auto-fill,minmax(min(100%,280px),1fr))] gap-3'}>
     {visible.map((plugin) => <article key={plugin.id} data-plugin-detail={selectedPlugin ? true : undefined} tabIndex={selectedPlugin ? -1 : undefined} aria-label={nameOf(plugin)} className="min-w-0 space-y-4 rounded-lg border bg-card p-4 focus:outline-none">
       <div className="flex flex-wrap items-center gap-3">
         <div className="flex h-12 w-12 shrink-0 items-center justify-center"><PluginBrandIcon plugin={plugin} size={32} /></div>

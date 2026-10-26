@@ -31,7 +31,7 @@ test('installed grid filters, opens one detail and restores search, scroll and c
     const cards = () => renderer.root.findAllByType('button').filter((node) => node.props['data-plugin-card']);
     assert.equal(cards().length, 2);
     assert.match(JSON.stringify(renderer.toJSON()), /Incompatible version/);
-    assert.ok(renderer.root.findAllByType('div').some((node) => node.props.className?.includes('repeat(auto-fit')));
+    assert.ok(renderer.root.findAllByType('div').some((node) => node.props.className?.includes('repeat(auto-fill')));
     const pill = renderer.root.findAllByType('button').find((node) => node.props['aria-pressed'] !== undefined)!;
     await act(async () => pill.props.onClick());
     assert.deepEqual(toggles, [[plugins[0].id, true]]); assert.deepEqual(selections, []);
