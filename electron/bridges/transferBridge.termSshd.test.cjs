@@ -234,7 +234,7 @@ async function createSequentialTransferFixture(t) {
     payload, files, sftp, handles, clients,
     rejectedOpens: () => rejectedOpens,
     openCount: () => opens,
-    async start(direction, sftpId = "first", options = {}) {
+    async start(direction, sftpId = "first", options = {}, beforeTransfer = null) {
       const transferId = options.transferId || crypto.randomUUID();
       const localPath = tempDirBridge.getTempFilePath(`term-concurrent-${transferId}.bin`);
       paths.push(localPath);
@@ -250,6 +250,7 @@ async function createSequentialTransferFixture(t) {
         const remoteStage = `/.${path.basename(targetPath)}.netcatty-${transferId}.part`;
         files.set(remoteStage, payload.subarray(0, options.uploadCheckpointBytes || 0));
       }
+      if (beforeTransfer) await beforeTransfer;
       const result = await transferBridge.startTransfer({ sender: { send() {} } }, {
         transferId,
         sourcePath: direction === "upload" ? localPath : "/source.bin", targetPath,
@@ -367,22 +368,58 @@ test("TERM-SSHD queued cancellation releases its turn without closing the owner 
   assert.equal(transferBridge._getSessionFastDownloadWaiterCountForTests(fixture.sftp), 0);
 });
 
-test("TERM-SSHD failed transfer releases the physical channel for the next alias", async (t) => {
-  const fixture = await createSequentialTransferFixture(t);
-  const originalOpen = fixture.sftp.open;
-  let rejectFirst = true;
-  fixture.sftp.open = (...args) => {
-    if (rejectFirst) {
-      rejectFirst = false;
-      args.at(-1)(Object.assign(new Error("Permission denied"), { code: 3 }));
-    } else originalOpen(...args);
-  };
-  const [first, next] = await Promise.all([fixture.start("download"), fixture.start("download", "alias")]);
-  assert.match(first.result.error || "", /Permission denied/);
-  assert.equal(next.result.error, undefined);
-  assert.deepEqual(await fs.readFile(next.targetPath), fixture.payload);
-  assert.equal(fixture.rejectedOpens(), 0);
-});
+for (const firstArrival of ["first", "alias"]) {
+  test(`TERM-SSHD failed transfer releases the physical channel for the next alias (${firstArrival} arrives first)`, { timeout: 5_000 }, async (t) => {
+    const fixture = await createSequentialTransferFixture(t);
+    const originalOpen = fixture.sftp.open;
+    let signalFirstOpen;
+    let rejectFirstOpen;
+    let firstOpenPending = true;
+    const firstOpened = new Promise((resolve) => { signalFirstOpen = resolve; });
+    fixture.sftp.open = (...args) => {
+      if (firstOpenPending) {
+        firstOpenPending = false;
+        rejectFirstOpen = () => args.at(-1)(Object.assign(new Error("Permission denied"), { code: 3 }));
+        signalFirstOpen();
+      } else originalOpen(...args);
+    };
+    let releaseDelayed;
+    const delayed = new Promise((resolve) => { releaseDelayed = resolve; });
+    // Gate fixture admission to exercise both physical OPEN arrival orders
+    // while keeping calls-array order fixed. Local I/O can reorder real calls.
+    const calls = [
+      fixture.start("download", "first", {}, firstArrival === "alias" ? delayed : null),
+      fixture.start("download", "alias", {}, firstArrival === "first" ? delayed : null),
+    ];
+    const settled = Promise.allSettled(calls);
+    const failedIndex = firstArrival === "first" ? 0 : 1;
+    let transfers;
+    try {
+      await Promise.race([firstOpened, calls[failedIndex].then(() => {
+        throw new Error("Transfer finished before the controlled OPEN");
+      })]);
+      releaseDelayed();
+      const deadline = Date.now() + 1_000;
+      while (transferBridge._getSessionFastDownloadWaiterCountForTests(fixture.sftp) === 0 && Date.now() < deadline) {
+        await new Promise((resolve) => setImmediate(resolve));
+      }
+      assert.equal(transferBridge._getSessionFastDownloadWaiterCountForTests(fixture.sftp), 1,
+        "the other alias must queue before the first OPEN fails");
+    } finally {
+      releaseDelayed();
+      rejectFirstOpen?.();
+      transfers = await settled;
+    }
+    for (const transfer of transfers) assert.equal(transfer.status, "fulfilled");
+    const failed = transfers[failedIndex].value;
+    const succeeded = transfers[1 - failedIndex].value;
+    assert.match(failed.result.error || "", /Permission denied/);
+    assert.equal(succeeded.result.error, undefined);
+    assert.deepEqual(await fs.readFile(succeeded.targetPath), fixture.payload);
+    assert.equal(fixture.rejectedOpens(), 0);
+    assert.equal(transferBridge._getSessionFastDownloadWaiterCountForTests(fixture.sftp), 0);
+  });
+}
 
 
 for (const direction of ["download", "upload"]) {
