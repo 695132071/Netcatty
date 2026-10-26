@@ -43,7 +43,9 @@ test('source management requires consent and Escape restores either opener insid
       assert.equal(document.activeElement, opener);
     }
   } finally {
-    await act(async () => root.unmount());
+    // Radix schedules unmount autofocus on a timer. Drain it while the DOM's
+    // Event constructor is still installed (Node 22 has a distinct global Event).
+    await act(async () => { root.unmount(); await settle(); });
     dom.window.close();
     for (const [key, descriptor] of previous) {
       if (descriptor) Object.defineProperty(globalThis, key, descriptor);

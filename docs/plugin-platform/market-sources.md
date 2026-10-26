@@ -24,7 +24,7 @@ and retains its bundled source examples when unavailable.
 
 ## Publish a static source
 
-Use the existing snapshot protocol in the registry project’s
+Use the existing snapshot protocol in the registry project's
 `docs/STATIC-DISTRIBUTION.md`. Every source
 serves `/v1/snapshot.json`, pointing to hash/size-bound catalog, index and delivery
 JSON under `/snapshots/<delivery-sha256>/`. All resources remain on the source's

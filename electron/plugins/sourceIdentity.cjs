@@ -23,7 +23,7 @@ function canonicalSourceOrigin(value) {
 }
 
 function thirdPartySource(name, address) {
-  if (typeof name !== "string" || !name.trim() || name.length > 100 || /[\u0000-\u001f\u007f]/u.test(name)) throw new Error("Source name must contain 1–100 printable characters");
+  if (typeof name !== "string" || !name.trim() || name.length > 100 || /[\u0000-\u001f\u007f]/u.test(name)) throw new Error("Source name must contain 1-100 printable characters");
   const origin = canonicalSourceOrigin(address);
   if (origin === OFFICIAL_ORIGIN) throw new Error("The official source is already built in");
   return Object.freeze({ id: `third-party:${hash(origin)}`, kind: "third-party", name: name.trim(), origin });
