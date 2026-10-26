@@ -776,6 +776,10 @@ export const useVaultState = (options?: UseVaultStateOptions) => {
     }
   }, [waitForPendingVaultWrites]);
 
+  // Host-owned action guards need the synchronous mutation snapshot, including
+  // edits that React has not published yet. This accessor never crosses RPC.
+  const readCurrentHosts = useCallback(() => hostsRef.current, []);
+
   const updateKeys = useCallback((data: SSHKey[]) => {
     const cleaned = normalizeVaultOrder(data);
     setKeys(cleaned);
@@ -2524,6 +2528,7 @@ export const useVaultState = (options?: UseVaultStateOptions) => {
     groupConfigs,
     updateHosts,
     readPersistedHosts,
+    readCurrentHosts,
     updateKeys,
     importOrReuseKey,
     updateIdentities,
