@@ -79,6 +79,7 @@ function normalizeRuntimeIdentity(identity) {
     runtimeKind: identity.runtimeKind,
     ...(identity.manifest === undefined ? {} : { manifest: identity.manifest }),
     ...(identity.securityPrincipal === undefined ? {} : { securityPrincipal: identity.securityPrincipal }),
+    ...(identity.sourceOwner === undefined ? {} : { sourceOwner: identity.sourceOwner, sourceId: identity.sourceId }),
     ...(identity.packageRoot === undefined ? {} : { packageRoot: identity.packageRoot }),
     ...(identity.logger === undefined ? {} : { logger: identity.logger }),
   });

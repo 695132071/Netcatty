@@ -24,25 +24,17 @@ test("curated catalog uses pinned public first-party source and rejects advanced
   assert.throws(() => validateCatalog([{ ...entries[0], commit: "main" }]), /unpinned/);
 });
 
-test("README retrieval is bounded and pinned, never follows a redirect to latest", async () => {
-  const requested = [];
-  const service = new PluginCatalogService({ entries, fetch: async (url) => {
-    requested.push(url); return new Response("# First-party example");
-  } });
-  assert.equal(await service.readme(entries[0].id), "# First-party example");
-  assert.equal(requested[0], `https://raw.githubusercontent.com/${entries[0].repository}/${entries[0].commit}/${entries[0].readme}`);
-  service.fetch = async () => new Response(null, { status: 302, headers: { location: "https://raw.githubusercontent.com/a/b/main/README.md" } });
-  await assert.rejects(service.readme(entries[0].id), /redirects/);
-  await assert.rejects(fetchBounded("https://raw.githubusercontent.com/a/b/c", 3, async () => new Response("1234")), /size limit/);
+test("static downloader is bounded and never follows redirects", async () => {
+  await assert.rejects(fetchBounded("https://plugins.netcatty.app/a", 3, async () => new Response("1234")), /size limit/);
   await assert.rejects(fetchBounded("https://127.0.0.1/a", 10), /approved HTTPS/);
-  await assert.rejects(fetchBounded("https://github.com/a", 10, async () => new Response(null, { status: 302, headers: { location: "http://localhost/secret" } })), /approved HTTPS/);
+  await assert.rejects(fetchBounded("https://plugins.netcatty.app/a", 10, async () => new Response(null, { status: 302, headers: { location: "https://github.com/a" } })), /redirects/);
 });
 
 test("catalog install verifies the digest, shares manager installation, and never auto-enables", async (context) => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "netcatty-catalog-test-"));
   context.after(() => fs.rm(root, { recursive: true, force: true }));
   const bytes = Buffer.from("synthetic bytes: package validation belongs to PackageStore");
-  const entry = { ...structuredClone(entries[0]), artifact: { url: "https://github.com/example/repo/releases/download/v1/plugin.ncpkg", sha256: createHash("sha256").update(bytes).digest("hex") } };
+  const entry = { ...structuredClone(entries[0]), artifact: { url: "https://plugins.netcatty.app/packages/synthetic.ncpkg", sha256: createHash("sha256").update(bytes).digest("hex") } };
   let installs = 0;
   const service = new PluginCatalogService({ entries: [entry], getTempFilePath: (name) => {
     assert.equal(name, "plugin-catalog-");

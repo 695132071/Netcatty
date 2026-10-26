@@ -364,7 +364,15 @@ declare global {
     audit: Array<{ event: string; createdAt: number; permission?: string; scope?: string }>;
   }
 
+  interface NetcattyPluginSource {
+    id: string;
+    kind: 'official' | 'third-party' | 'local';
+    name: string;
+    origin: string | null;
+    enabled?: boolean;
+  }
   interface NetcattyInstalledPlugin {
+    source?: NetcattyPluginSource;
     id: string;
     enabled: boolean;
     activeVersion: string | null;
@@ -441,9 +449,15 @@ declare global {
 
   interface NetcattyBridge {
     getPluginRuntimeStatus?(): Promise<NetcattyPluginRuntimeStatus>;
-    listPluginCatalog?(): Promise<NetcattyPluginCatalogSnapshot>;
-    getPluginCatalogReadme?(id: string, selectionToken?: string): Promise<string>;
-    installCatalogPlugin?(id: string, selectionToken?: string): Promise<NetcattyInstalledPlugin>;
+    getPluginSourceBinding?(pluginId: string): Promise<NetcattyPluginSource | null>;
+    resetPluginSource?(pluginId: string, expectedSourceId: string): Promise<void>;
+    listPluginSources?(): Promise<NetcattyPluginSource[]>;
+    addPluginSource?(source: { name: string; address: string }): Promise<NetcattyPluginSource>;
+    updatePluginSource?(source: { id: string; name: string; enabled: boolean }): Promise<NetcattyPluginSource>;
+    removePluginSource?(id: string, disablePlugins: boolean): Promise<void>;
+    listPluginCatalog?(sourceId?: string): Promise<NetcattyPluginCatalogSnapshot>;
+    getPluginCatalogReadme?(id: string, selectionToken?: string, sourceId?: string): Promise<string>;
+    installCatalogPlugin?(id: string, selectionToken?: string, sourceId?: string, acceptedSourceId?: string): Promise<NetcattyInstalledPlugin>;
     setPluginInteractionReady?(ready: boolean): Promise<boolean>;
     respondPluginInteraction?(response: import("@netcatty/plugin-contract").HostInteractionResponse): Promise<boolean>;
     onPluginInteraction?(callback: (event: import("@netcatty/plugin-contract").HostInteractionEvent) => void): () => void;

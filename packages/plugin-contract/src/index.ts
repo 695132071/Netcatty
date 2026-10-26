@@ -11,6 +11,7 @@ export {
 } from "./jsonValue.js";
 export {
   PLUGIN_HOST_INTERACTION_LIMITS,
+  PLUGIN_BYTE_STREAM_LIMITS,
   PLUGIN_IMPORTER_MAX_INPUT_BYTES,
   PLUGIN_IMPORTER_MAX_OUTPUT_BYTES,
   PLUGIN_IMPORTER_MAX_RECORD_BYTES,
@@ -52,6 +53,9 @@ export {
 export { inspectPluginBrandIcon, PLUGIN_BRAND_ICON_FEATURE, PLUGIN_BRAND_ICON_MAX_BYTES, PLUGIN_BRAND_ICON_MAX_EDGE } from './brandIcon.js';
 
 export const PLUGIN_NETWORK_CREDENTIAL_LEASE_FEATURE = "network.credential-lease" as const satisfies import("./generated/plugin-contract.js").NetworkCredentialLeaseFeature;
+export const PLUGIN_BYTE_STREAM_FEATURE = "network.byte-streams" as const satisfies import("./generated/plugin-contract.js").ByteStreamFeature;
+export const PLUGIN_AI_MODEL_INVOCATION_FEATURE = "ai.model-invocation" as const satisfies import("./generated/plugin-contract.js").PluginAIModelInvocationFeature;
+export const PLUGIN_SELECTED_CONTEXT_FEATURE = "context.selected-read" as const satisfies import("./generated/plugin-contract.js").PluginSelectedContextFeature;
 
 export const PLUGIN_HOST_INTERACTION_FEATURE = "host.interactions" as const satisfies import("./generated/plugin-contract.js").HostInteractionFeature;
 

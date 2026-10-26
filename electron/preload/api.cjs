@@ -99,9 +99,15 @@ function createPreloadApi(ctx) {
   with (ctx) {
     return {
   getPluginRuntimeStatus: () => ipcRenderer.invoke("netcatty:plugins:status"),
-  listPluginCatalog: () => ipcRenderer.invoke("netcatty:plugins:catalog"),
-  getPluginCatalogReadme: (id, selectionToken) => ipcRenderer.invoke("netcatty:plugins:catalog-readme", { id, selectionToken }),
-  installCatalogPlugin: (id, selectionToken) => ipcRenderer.invoke("netcatty:plugins:catalog-install", { id, selectionToken }),
+  getPluginSourceBinding: (pluginId) => ipcRenderer.invoke("netcatty:plugins:source-binding", { pluginId }),
+  resetPluginSource: (pluginId, expectedSourceId) => ipcRenderer.invoke("netcatty:plugins:reset-source", { pluginId, expectedSourceId }),
+  listPluginSources: () => ipcRenderer.invoke("netcatty:plugins:sources"),
+  addPluginSource: (source) => ipcRenderer.invoke("netcatty:plugins:add-source", source),
+  updatePluginSource: (source) => ipcRenderer.invoke("netcatty:plugins:update-source", source),
+  removePluginSource: (id, disablePlugins) => ipcRenderer.invoke("netcatty:plugins:remove-source", { id, disablePlugins }),
+  listPluginCatalog: (sourceId) => ipcRenderer.invoke("netcatty:plugins:catalog", { sourceId }),
+  getPluginCatalogReadme: (id, selectionToken, sourceId) => ipcRenderer.invoke("netcatty:plugins:catalog-readme", { id, selectionToken, sourceId }),
+  installCatalogPlugin: (id, selectionToken, sourceId, acceptedSourceId) => ipcRenderer.invoke("netcatty:plugins:catalog-install", { id, selectionToken, sourceId, acceptedSourceId }),
   setPluginInteractionReady: (ready) => ipcRenderer.invoke("netcatty:plugins:interaction-ready", { ready }),
   respondPluginInteraction: (response) => ipcRenderer.invoke("netcatty:plugins:interaction-response", response),
   onPluginInteraction: (callback) => {

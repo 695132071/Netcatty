@@ -25,6 +25,12 @@ const CHANNELS = Object.freeze({
   list: "netcatty:plugins:list",
   permissions: "netcatty:plugins:permissions",
   revokePermissions: "netcatty:plugins:revoke-permissions",
+  resetSource: "netcatty:plugins:reset-source",
+  sourceBinding: "netcatty:plugins:source-binding",
+  sources: "netcatty:plugins:sources",
+  addSource: "netcatty:plugins:add-source",
+  updateSource: "netcatty:plugins:update-source",
+  removeSource: "netcatty:plugins:remove-source",
   catalog: "netcatty:plugins:catalog",
   catalogReadme: "netcatty:plugins:catalog-readme",
   catalogInstall: "netcatty:plugins:catalog-install",
@@ -659,14 +665,18 @@ function registerPluginBridge(ipcMain, options) {
         ? { credentialStorageAvailable: credentialResolver.isAvailable() } : {}),
     };
   });
-  handle(CHANNELS.catalog, async () => options.catalogService?.list() ?? { entries: [], source: "builtin", error: "Plugin catalog unavailable" });
+  handle(CHANNELS.sources, async () => options.catalogService?.listSources() ?? []);
+  handle(CHANNELS.addSource, async (_manager, payload) => options.catalogService.addSource(payload));
+  handle(CHANNELS.updateSource, async (_manager, payload) => options.catalogService.updateSource(payload));
+  handle(CHANNELS.removeSource, async (_manager, payload) => options.catalogService.removeSource(payload));
+  handle(CHANNELS.catalog, async (_manager, payload) => options.catalogService?.list(payload?.sourceId) ?? { entries: [], source: "builtin", error: "Plugin catalog unavailable" });
   handle(CHANNELS.catalogReadme, async (_manager, payload) => {
     if (!options.catalogService) throw new Error("Plugin catalog unavailable");
-    return options.catalogService.readme(payload?.id, payload?.selectionToken);
+    return options.catalogService.readme(payload?.id, payload?.selectionToken, payload?.sourceId);
   });
   handle(CHANNELS.catalogInstall, async (_manager, payload) => {
     if (!options.catalogService) throw new Error("Plugin catalog unavailable");
-    return options.catalogService.install(payload?.id, payload?.selectionToken);
+    return options.catalogService.install(payload?.id, payload?.selectionToken, payload?.sourceId, payload?.acceptedSourceId);
   });
   handle(CHANNELS.interactionReady, async (_manager, payload, event) => {
     if (!options.interactionService) throw new Error("Host interactions are unavailable");
@@ -677,6 +687,8 @@ function registerPluginBridge(ipcMain, options) {
     return options.interactionService.respond(event.sender, payload);
   });
   handle(CHANNELS.list, async (activeManager) => activeManager.list());
+  handle(CHANNELS.sourceBinding, async (activeManager, payload) => activeManager.database.getRetainedPluginSource(assertManagedPluginId(payload)));
+  handle(CHANNELS.resetSource, async (activeManager, payload) => activeManager.resetUninstalledSource(assertManagedPluginId(payload), payload?.expectedSourceId));
   const assertManagedPluginId = (payload) => {
     const id = payload?.pluginId;
     if (!validateManagedPluginId(id)) {

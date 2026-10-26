@@ -12,6 +12,7 @@ class PluginManager {
     };
     this.beforeClose = options.beforeClose ?? null;
     this.permissionEngine = options.permissionEngine ?? null;
+    this.secretStore = options.secretStore ?? null;
     this.initialized = false;
     this.initializePromise = null;
     this.mutationTail = Promise.resolve();
@@ -46,16 +47,37 @@ class PluginManager {
     return this.database.listPlugins();
   }
 
+  changeMarketSource(operation, disableSourceId) {
+    return this.#mutate(async () => {
+      await this.#ready();
+      const result = operation();
+      if (disableSourceId) {
+        const errors = [];
+        for (const plugin of this.database.listPlugins()) {
+          if (plugin.source?.id !== disableSourceId) continue;
+          try { this.database.setEnabled(plugin.id, false); } catch (error) { errors.push(error); }
+          try { this.contributionService.onPluginDisabled(plugin.id); } catch (error) { errors.push(error); }
+          try { await this.runtimeSupervisor.stop(plugin.id); } catch (error) { errors.push(error); }
+        }
+        if (errors.length) throw new AggregateError(errors, "Source removed, but some plugin shutdown steps failed");
+      }
+      return result;
+    });
+  }
+
   install(archivePath, options) {
     return this.#mutate(async () => {
       await this.#ready();
+      options?.sourceGuard?.();
       let stoppedPlugin = null;
       let plugin;
       try {
         plugin = await this.packageStore.install(archivePath, {
           enable: options?.enable,
           catalog: options?.catalog,
+          source: options?.source,
           beforeActivate: async ({ pluginId, previousPlugin }) => {
+            options?.sourceGuard?.();
             if (!previousPlugin?.enabled) return;
             this.database.setEnabled(pluginId, false);
             this.contributionService.onPluginDisabled(pluginId);
@@ -154,6 +176,19 @@ class PluginManager {
       await this.#ready();
       await this.runtimeSupervisor.restart(pluginId);
       return this.database.getActivePlugin(pluginId);
+    });
+  }
+
+  resetUninstalledSource(pluginId, expectedSourceId) {
+    return this.#mutate(async () => {
+      await this.#ready();
+      if (this.database.getActivePlugin(pluginId)) throw new Error("Uninstall the plugin before changing source");
+      if (this.database.getPluginSource(pluginId).id !== expectedSourceId) throw new Error("Plugin source changed; review the reset again");
+      await this.runtimeSupervisor.stop(pluginId);
+      this.permissionEngine?.revokeAll(pluginId);
+      this.secretStore?.clearPluginMemory(pluginId);
+      await this.packageStore.clearUninstalledPrivateFiles(pluginId);
+      this.database.clearUninstalledSourceData(pluginId, expectedSourceId);
     });
   }
 

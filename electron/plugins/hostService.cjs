@@ -21,12 +21,15 @@ const {
   createUtilityModuleMappings,
   normalizePluginModuleResources,
 } = require("./moduleResources.cjs");
-const { RegistryCatalogService } = require("./registryCatalogService.cjs");
+const { MarketSourcesService } = require("./marketSourcesService.cjs");
 const { PluginThemeService } = require("./themeService.cjs");
 const { PackageStore } = require("./packageStore.cjs");
 const { createPluginPaths } = require("./paths.cjs");
 const { PluginManager } = require("./pluginManager.cjs");
 const { PluginNetworkBroker } = require("./networkBroker.cjs");
+const { PluginByteStreamService, FEATURE: BYTE_STREAM_FEATURE } = require("./byteStreamService.cjs");
+const { PluginAIContextService, PLUGIN_AI_CONTEXT_FEATURES } = require("./ai/aiContextService.cjs");
+const { PluginRpcError, RPC_ERRORS } = require("./rpcRouter.cjs");
 const { HOST_INTERACTION_FEATURE, PluginHostInteractionService } = require("./hostInteractionService.cjs");
 const { PluginPermissionEngine } = require("./permissionEngine.cjs");
 const { PluginProtocol } = require("./pluginProtocol.cjs");
@@ -90,8 +93,11 @@ function createPluginHostService(options) {
   const paths = createPluginPaths(options.app.getPath("userData"));
   const appRoot = options.appRoot ?? options.app.getAppPath();
   const runtimeDirectory = options.runtimeDirectory ?? path.join(__dirname, "runtime");
+  const supportedFeatures = [...new Set(["appearance.theme-packs", "metadata.brand-icon", BYTE_STREAM_FEATURE, ...PLUGIN_AI_CONTEXT_FEATURES, NETWORK_CREDENTIAL_LEASE_FEATURE, HOST_INTERACTION_FEATURE, VAULT_PAGES_FEATURE, TERMINAL_SIDEBAR_FEATURE, INTERACTIVE_COMMAND_FEATURE, ...(options.supportedFeatures ?? [])])];
   const database = new PluginDatabase(paths.database);
   let interactionService;
+  let byteStreamService;
+  let aiContextService;
   try {
     const packageStore = new PackageStore({
       allowAdvancedPlugins,
@@ -99,7 +105,7 @@ function createPluginHostService(options) {
       database,
       netcattyVersion: options.app.getVersion(),
       apiVersion: PLUGIN_API_VERSION,
-      supportedFeatures: [...new Set(["appearance.theme-packs", "metadata.brand-icon", NETWORK_CREDENTIAL_LEASE_FEATURE, HOST_INTERACTION_FEATURE, VAULT_PAGES_FEATURE, TERMINAL_SIDEBAR_FEATURE, INTERACTIVE_COMMAND_FEATURE, ...(options.supportedFeatures ?? [])])],
+      supportedFeatures,
     });
     const contributionIconService = new PluginContributionIconService({
       database,
@@ -239,7 +245,7 @@ function createPluginHostService(options) {
       paths,
       netcattyVersion: options.app.getVersion(),
       apiVersion: PLUGIN_API_VERSION,
-      supportedFeatures: [...new Set(["appearance.theme-packs", "metadata.brand-icon", NETWORK_CREDENTIAL_LEASE_FEATURE, HOST_INTERACTION_FEATURE, VAULT_PAGES_FEATURE, TERMINAL_SIDEBAR_FEATURE, INTERACTIVE_COMMAND_FEATURE, ...(options.supportedFeatures ?? [])])],
+      supportedFeatures,
       runtimeDirectory,
       appRoot,
       rpcRegistry,
@@ -249,12 +255,31 @@ function createPluginHostService(options) {
       getInitialEnvironment: () => contributionService.getEnvironment(),
       runtimeResourceMonitor: quotaManager,
       runtimeCleanup: async (identity) => {
+        byteStreamService?.releaseRuntime(identity.runtimeId);
+        aiContextService?.releaseRuntime(identity.runtimeId);
         interactionService?.releaseRuntime(identity.runtimeId);
         leaseStore.revokeRuntime(identity.runtimeId);
         await companionSupervisor.releaseRuntime(identity.runtimeId);
       },
       utilityModuleMappings: options.utilityModuleMappings ?? createUtilityModuleMappings(moduleResources),
     });
+    byteStreamService = new PluginByteStreamService({ database, permissionEngine, quotaManager, runtimeSupervisor });
+    byteStreamService.register(rpcRegistry);
+    aiContextService = new PluginAIContextService({ database, permissionEngine,
+      getRuntimeIdentity: (pluginId) => runtimeSupervisor.getRuntimeIdentity(pluginId),
+      hostAdapter: options.pluginAIHostAdapter ?? {
+        assertActive: (context) => context.assertActive(),
+        selectModel: () => { throw new PluginRpcError(RPC_ERRORS.unavailable, "Plugin model adapter is unavailable"); },
+        listSelected: () => [],
+        reviewText: () => false,
+      },
+    });
+    aiContextService.registerRpcCapabilities(rpcRegistry);
+    const originalOnPluginDisabled = contributionService.onPluginDisabled.bind(contributionService);
+    contributionService.onPluginDisabled = (pluginId) => {
+      aiContextService.releasePlugin(pluginId);
+      return originalOnPluginDisabled(pluginId);
+    };
     runtimeSupervisor.onDidChangeRuntime((event) => contributionService.onRuntimeStateChanged(event));
     const terminalProviderService = new PluginTerminalProviderService({
       contributionService,
@@ -373,6 +398,7 @@ function createPluginHostService(options) {
       : null;
     const themeService = new PluginThemeService({database,packageStore,contributionService});
     const manager = new PluginManager({
+      secretStore,
       permissionEngine,
       database,
       packageStore,
@@ -381,6 +407,8 @@ function createPluginHostService(options) {
       beforeClose: async () => {
         themeService.shutdown();
         interactionService.shutdown();
+        byteStreamService.shutdown();
+        aiContextService.shutdown();
         terminalDataPipelineService?.shutdown();
         extensionProviderService.shutdown();
         credentialResolver.shutdown?.();
@@ -394,7 +422,7 @@ function createPluginHostService(options) {
     return {
       themeService,
       interactionService,
-      catalogService: new RegistryCatalogService({ manager, fetch: options.electron.net?.fetch?.bind(options.electron.net) }),
+      catalogService: new MarketSourcesService({ database, manager, fetch: options.electron.net?.fetch?.bind(options.electron.net) }),
       companionSupervisor,
       contributionIconService,
       contributionService,
@@ -411,6 +439,8 @@ function createPluginHostService(options) {
       paths,
       protocol,
       networkBroker,
+      byteStreamService,
+      aiContextService,
       permissionEngine,
       quotaManager,
       rpcRegistry,
@@ -422,6 +452,8 @@ function createPluginHostService(options) {
     };
   } catch (error) {
     try { interactionService?.shutdown(); } catch {}
+    try { byteStreamService?.shutdown(); } catch {}
+    try { aiContextService?.shutdown(); } catch {}
     database.close();
     throw error;
   }

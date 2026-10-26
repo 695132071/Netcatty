@@ -61,9 +61,14 @@ export function usePluginManager() {
       if (!bridge.setPluginEnabled) throw new Error('Plugin management unavailable');
       return bridge.setPluginEnabled(id, enabled);
     }),
-    uninstall: (id: string) => run(async (bridge) => {
+    uninstall: (id: string, clearSource = false) => run(async (bridge) => {
       if (!bridge.uninstallPlugin) throw new Error('Plugin management unavailable');
-      return bridge.uninstallPlugin(id);
+      const source = clearSource ? await bridge.getPluginSourceBinding?.(id) : null;
+      await bridge.uninstallPlugin(id);
+      if (clearSource && source) {
+        if (!bridge.resetPluginSource) throw new Error('Private source reset unavailable');
+        await bridge.resetPluginSource(id, source.id);
+      }
     }),
   };
 }
