@@ -21,6 +21,8 @@ const {
   resolveInstalledVersionDirectory,
 } = require("./paths.cjs");
 
+const { assertCatalogManifest } = require("./catalogPolicy.cjs");
+
 const INSTALL_METADATA_FILE = "install.json";
 const ARCHIVE_SNAPSHOT_FILE = "package.ncpkg";
 const PACKAGE_DIRECTORY = "package";
@@ -216,6 +218,13 @@ class PackageStore {
       const version = assertPluginStorageSegment(manifest.version, "version");
       const targetDirectory = resolveInstalledVersionDirectory(this.paths, pluginId, version);
       const previousPlugin = this.database.getActivePlugin(pluginId);
+      if (options.catalog) {
+        if (snapshot.sha256 !== options.catalog.artifact.sha256) throw new Error("Catalog package SHA-256 mismatch");
+        assertCatalogManifest(manifest, options.catalog);
+        // Detail-page permissions and engine ranges must describe these exact bytes.
+        const { isDeepStrictEqual } = require("node:util");
+        if (!isDeepStrictEqual(manifest, options.catalog.manifest)) throw new Error("Catalog manifest does not match package");
+      }
       const enableAfterActivation = options.enable === false
         ? false
         : options.enable === true || previousPlugin?.enabled === true;

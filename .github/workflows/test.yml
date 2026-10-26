@@ -49,6 +49,11 @@ jobs:
       - name: Verify Codex App Server schema
         run: npm run check:codex-app-server-schema
 
+      - name: Verify plugin contract and runtime boundaries
+        run: |
+          npm run check:plugin-contract
+          npm run test:plugin-runtime
+
       - name: Test
         run: npm test
 

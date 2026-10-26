@@ -4,6 +4,7 @@ import { netcattyBridge } from '../../infrastructure/services/netcattyBridge';
 export function usePluginManager() {
   const [plugins, setPlugins] = useState<NetcattyInstalledPlugin[]>([]);
   const [available, setAvailable] = useState(false);
+  const [credentialStorageAvailable, setCredentialStorageAvailable] = useState<boolean | undefined>();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const generation = useRef(0);
@@ -15,14 +16,16 @@ export function usePluginManager() {
     const list = status?.available ? await bridge?.listPlugins?.() ?? [] : [];
     if (current !== generation.current) return;
     setAvailable(status?.available === true);
+    setCredentialStorageAvailable(status?.credentialStorageAvailable);
     setPlugins(list);
   }, []);
   useEffect(() => {
     const update = () => { void refresh().catch((cause) => setError(String(cause))); };
     update();
     const unsubscribe = netcattyBridge.get()?.onPluginContributionsChanged?.(update);
+    window.addEventListener('netcatty:plugin-packages-changed', update);
     const refreshGeneration = generation;
-    return () => { refreshGeneration.current++; unsubscribe?.(); };
+    return () => { refreshGeneration.current++; unsubscribe?.(); window.removeEventListener('netcatty:plugin-packages-changed', update); };
   }, [refresh]);
   const run = useCallback(async (action: (bridge: NetcattyBridge) => Promise<unknown>) => {
     if (mutation.current) return;
@@ -38,7 +41,7 @@ export function usePluginManager() {
     }
   }, [refresh]);
   return {
-    plugins, available, busy, error,
+    plugins, available, busy, error, credentialStorageAvailable,
     importPackage: () => run(async (bridge) => {
       if (!bridge.selectFile || !bridge.installPluginPackage) throw new Error('Plugin import unavailable');
       const path = await bridge.selectFile('Import plugin package', undefined, [{ name: 'Netcatty plugin', extensions: ['ncpkg'] }]);

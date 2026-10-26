@@ -15,6 +15,9 @@ const { assertSecretKey } = require("./secretStore.cjs");
 const CHANNELS = Object.freeze({
   status: "netcatty:plugins:status",
   list: "netcatty:plugins:list",
+  catalog: "netcatty:plugins:catalog",
+  catalogReadme: "netcatty:plugins:catalog-readme",
+  catalogInstall: "netcatty:plugins:catalog-install",
   install: "netcatty:plugins:install",
   setEnabled: "netcatty:plugins:set-enabled",
   restart: "netcatty:plugins:restart",
@@ -641,7 +644,19 @@ function registerPluginBridge(ipcMain, options) {
       await resolveManager();
       available = true;
     } catch {}
-    return { available, experimental: true };
+    return { available, experimental: true,
+      ...(typeof credentialResolver?.isAvailable === "function"
+        ? { credentialStorageAvailable: credentialResolver.isAvailable() } : {}),
+    };
+  });
+  handle(CHANNELS.catalog, async () => options.catalogService?.list() ?? []);
+  handle(CHANNELS.catalogReadme, async (_manager, payload) => {
+    if (!options.catalogService) throw new Error("Plugin catalog unavailable");
+    return options.catalogService.readme(payload?.id);
+  });
+  handle(CHANNELS.catalogInstall, async (_manager, payload) => {
+    if (!options.catalogService) throw new Error("Plugin catalog unavailable");
+    return options.catalogService.install(payload?.id);
   });
   handle(CHANNELS.list, async (activeManager) => activeManager.list());
   handle(CHANNELS.install, async (activeManager, payload) => activeManager.install(

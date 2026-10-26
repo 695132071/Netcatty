@@ -1,3 +1,4 @@
+import { PluginMarketplace } from './PluginMarketplace';
 import { PluginPackageManager } from './PluginPackageManager';
 import { FolderOpen } from 'lucide-react';
 import React, { useEffect, useMemo, useState } from 'react';
@@ -309,6 +310,7 @@ export default function SettingsPluginsTab() {
           <p className="mt-1 text-sm text-muted-foreground">{t('settings.plugins.description')}</p>
         </div>
         <PluginPackageManager />
+        {contributions.available && <PluginMarketplace />}
         {contextualScopes.size > 0 && (
           <section className="grid gap-3 rounded-lg border border-border/70 bg-muted/10 p-4 sm:grid-cols-2" aria-label={t('settings.plugins.scopeTargets')}>
             {[...contextualScopes].map((kind) => (

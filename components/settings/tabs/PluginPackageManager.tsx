@@ -28,6 +28,7 @@ export function PluginPackageDetails({ plugin }: { plugin: NetcattyInstalledPlug
       {permissions.length === 0 && <p className="text-xs text-muted-foreground">{t('settings.plugins.manager.noPermissions')}</p>}
       {permissions.map(({ value, required }, index) => <div key={index} className="rounded-md bg-muted/40 p-3">
         <div className="flex justify-between gap-3"><code className="break-all text-xs">{typeof value === 'string' ? value : value.permission}</code><span className="text-xs text-muted-foreground">{t(required ? 'settings.plugins.manager.required' : 'settings.plugins.manager.optional')}</span></div>
+        {['runtime.advanced', 'vault.credentials', 'secrets', 'terminal.output', 'terminal.input', 'terminal.intercept.input', 'terminal.intercept.output', 'filesystem.read', 'filesystem.write', 'network', 'companion.execute'].includes(typeof value === 'string' ? value : value.permission) && <p className="mt-1 text-xs font-medium text-destructive">{t('settings.plugins.manager.sensitive')}</p>}
         {typeof value !== 'string' && <><p className="mt-1 whitespace-pre-wrap break-all text-xs">{value.resources.join('\n')}</p>{value.reason && <p className="mt-1 text-xs text-muted-foreground">{value.reason}</p>}</>}
       </div>)}
     </div>
@@ -47,6 +48,7 @@ export function PluginPackageManager() {
       <Button variant="outline" size="sm" disabled={manager.busy} onClick={() => void manager.importPackage()}><Upload size={14} className="mr-2" />{t('settings.plugins.manager.import')}</Button>
     </div>
     <p className="text-xs text-muted-foreground">{t('settings.plugins.manager.preview')}</p>
+    {manager.credentialStorageAvailable === false && <p role="status" className="rounded-lg bg-muted/40 p-3 text-xs text-muted-foreground">{t('settings.plugins.manager.noVault')}</p>}
     {manager.error && <p role="alert" className="text-sm text-destructive">{manager.error}</p>}
     {!manager.plugins.length && <div className="rounded-xl border border-dashed border-border p-8 text-center text-sm text-muted-foreground">{t('settings.plugins.manager.empty')}</div>}
     {manager.plugins.map((plugin) => <article key={plugin.id} className="space-y-4 rounded-xl border border-border/70 bg-background p-4">

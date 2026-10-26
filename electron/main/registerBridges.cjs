@@ -210,6 +210,7 @@ function createBridgeRegistrar(context) {
     });
     registerPluginBridge(ipcMain, {
       manager: pluginHostService?.manager,
+      catalogService: pluginHostService?.catalogService,
       contributionService: pluginHostService?.contributionService,
       terminalProviderService: pluginHostService?.terminalProviderService,
       terminalDataPipelineService: pluginHostService?.terminalDataPipelineService,

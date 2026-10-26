@@ -421,3 +421,20 @@ test("explicit disabled import never auto-enables an update of an enabled plugin
   assert.equal(installed.activeVersion, "1.1.0");
   assert.equal(installed.enabled, false);
 });
+
+test("catalog installation verifies actual package manifest and rejects Node before activation", async (context) => {
+  const fixture = createStore(context);
+  await fixture.store.initialize();
+  const archive = await createPackage(fixture.root, { manifest: { license: "MIT" } });
+  const sha256 = createHash("sha256").update(await fs.promises.readFile(archive.archive)).digest("hex");
+  const entry = { id: archive.manifest.id, version: archive.manifest.version, license: "MIT", manifest: archive.manifest, artifact: { sha256 } };
+  await assert.rejects(fixture.store.install(archive.archive, { catalog: { ...entry, version: "9.0.0" } }), /identity\/version/);
+  await assert.rejects(fixture.store.install(archive.archive, { catalog: { ...entry, artifact: { sha256: "0".repeat(64) } } }), /SHA-256/);
+  await assert.rejects(fixture.store.install(archive.archive, { catalog: { ...entry, manifest: { ...archive.manifest, description: "different" } } }), /manifest does not match/);
+  assert.equal(fixture.database.listPlugins().length, 0);
+  assert.equal((await fixture.store.install(archive.archive, { enable: false, catalog: entry })).enabled, false);
+  const advanced = await createPackage(fixture.root, { manifest: { version: "2.0.0", license: "MIT", main: { node: "dist/index.js" }, permissions: { required: ["runtime.advanced"] } } });
+  const advancedEntry = { ...entry, version: "2.0.0", manifest: advanced.manifest, artifact: { sha256: createHash("sha256").update(await fs.promises.readFile(advanced.archive)).digest("hex") } };
+  await assert.rejects(fixture.store.install(advanced.archive, { catalog: advancedEntry }), /browser runtime only/);
+  assert.equal(fixture.database.getActivePlugin(entry.id).activeVersion, "1.0.0");
+});

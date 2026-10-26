@@ -331,6 +331,21 @@ declare global {
   interface NetcattyPluginRuntimeStatus {
     available: boolean;
     experimental: true;
+    credentialStorageAvailable?: boolean;
+  }
+
+  interface NetcattyPluginCatalogEntry {
+    id: string;
+    version: string;
+    name: string;
+    description: string;
+    author: string;
+    repository: string;
+    commit: string;
+    license: string;
+    readme: string;
+    manifest: import("@netcatty/plugin-contract").PluginManifest;
+    artifact?: { url: string; sha256: string };
   }
 
   interface NetcattyInstalledPlugin {
@@ -410,6 +425,9 @@ declare global {
 
   interface NetcattyBridge {
     getPluginRuntimeStatus?(): Promise<NetcattyPluginRuntimeStatus>;
+    listPluginCatalog?(): Promise<NetcattyPluginCatalogEntry[]>;
+    getPluginCatalogReadme?(id: string): Promise<string>;
+    installCatalogPlugin?(id: string): Promise<NetcattyInstalledPlugin>;
     listPlugins?(): Promise<NetcattyInstalledPlugin[]>;
     installPluginPackage?(archivePath: string, options?: { enable?: boolean }): Promise<NetcattyInstalledPlugin>;
     setPluginEnabled?(pluginId: string, enabled: boolean): Promise<NetcattyInstalledPlugin>;

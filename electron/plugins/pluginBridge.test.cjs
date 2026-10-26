@@ -1599,3 +1599,26 @@ test("syncDeleteSecrets uses retained provider binding when contribution is miss
   assert.deepEqual(deleted, [["com.example", "prefix:sync-credential"]]);
   assert.deepEqual(unbound, [["com.example", "com.example.sync"]]);
 });
+
+test("missing OS vault does not block curated browsing and status exposes the limitation", async () => {
+  const ipcMain = createIpcMain();
+  let selected;
+  registerPluginBridge(ipcMain, {
+    manager: { async initialize() {} },
+    env: { NETCATTY_PLUGIN_DEV: "1" },
+    isTrustedSender: (event) => event.trusted === true,
+    credentialResolver: { isAvailable: () => false },
+    catalogService: {
+      list: () => [{ id: "com.example.synthetic" }],
+      install: async (id) => { selected = id; return { id }; },
+    },
+  });
+  const event = { trusted: true };
+  assert.deepEqual(await ipcMain.handlers.get(CHANNELS.status)(event), {
+    available: true, experimental: true, credentialStorageAvailable: false,
+  });
+  assert.equal((await ipcMain.handlers.get(CHANNELS.catalog)(event)).length, 1);
+  await assert.rejects(ipcMain.handlers.get(CHANNELS.catalog)({ trusted: false }), /Untrusted/);
+  await ipcMain.handlers.get(CHANNELS.catalogInstall)(event, { id: "com.example.synthetic", url: "https://attacker.invalid", enable: true });
+  assert.equal(selected, "com.example.synthetic");
+});
