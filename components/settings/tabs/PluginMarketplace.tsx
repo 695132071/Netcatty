@@ -59,7 +59,7 @@ export function PluginMarketplaceContent({ catalog, installed, selected, onSelec
     });
   };
   return <section className="plugin-marketplace space-y-4" aria-label={t('settings.plugins.market.title')}>
-    <p className="text-xs text-muted-foreground">{t('settings.plugins.market.note')}</p>
+    <div className="flex items-start justify-between gap-3"><p className="text-xs text-muted-foreground">{t('settings.plugins.market.note')}</p><Button variant="outline" size="sm" disabled={catalog.listStatus === 'loading'} onClick={catalog.retryList}>{t('common.refresh')}</Button></div>
     {catalog.listStatus === 'ready' && catalog.listError && <div role="status" className="space-y-2 rounded-lg border p-3 text-xs text-muted-foreground"><p>{t('settings.plugins.market.offline')}</p><p>{catalog.listError}</p><Button variant="outline" size="sm" onClick={catalog.retryList}>{t('settings.plugins.market.retry')}</Button></div>}
     {catalog.error && <p role="alert" className="text-xs text-destructive">{catalog.error}</p>}
     <div className={`plugin-marketplace-browser${entry ? ' plugin-marketplace-browser--selected' : ''}`}>

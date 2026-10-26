@@ -137,3 +137,10 @@ test('offline catalog warning keeps details visible and disables market installa
   assert.match(html, /<button[^>]*disabled=""[^>]*>Install this version/);
   assert.match(html, /Retry/);
 });
+
+test('manual refresh remains available after success and is disabled while loading', () => {
+  const ready = renderToStaticMarkup(<I18nProvider locale="en"><PluginMarketplaceContent catalog={catalog} selected={null} onSelect={() => {}} installed={[]} /></I18nProvider>);
+  assert.match(ready, />Refresh<\/button>/);
+  const loading = renderToStaticMarkup(<I18nProvider locale="en"><PluginMarketplaceContent catalog={{ ...catalog, listStatus: 'loading' }} selected={null} onSelect={() => {}} installed={[]} /></I18nProvider>);
+  assert.match(loading, /<button[^>]*disabled=""[^>]*>Refresh<\/button>/);
+});

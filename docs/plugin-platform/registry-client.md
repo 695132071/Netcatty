@@ -20,7 +20,8 @@ bundled and reviewed; arbitrary author image URLs are never loaded.
 Reads are anonymous HTTPS, redirect-free for the registry, bounded to 2 MiB,
 and time out after 30 seconds. All entries must validate before replacing the
 current snapshot. Invalid JSON/schema, network failure, and oversized responses
-leave the previous good snapshot intact. Errors and Retry remain visible.
+leave the previous good snapshot intact. Errors and Retry remain visible. The Community header also has Refresh, including
+when the last refresh succeeded; it is disabled while a request is pending.
 The last good catalog is retained **in memory for this application session**;
 a fresh offline launch uses bundled examples. There is no new disk cache,
 database migration, cloud sync record, or credential requirement.
