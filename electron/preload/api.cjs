@@ -611,10 +611,12 @@ function createPreloadApi(ctx) {
     passwordPromptActive,
     cwd,
     title,
+    perCharacterInput,
   ) => {
     ipcRenderer.send("netcatty:terminal:snapshot-response", {
       requestId,
       snapshot: typeof snapshot === "string" ? snapshot : "",
+      perCharacterInput: typeof perCharacterInput === "boolean" ? perCharacterInput : undefined,
       kittyKeyboardModeState: sanitizeKittyKeyboardModeState(kittyKeyboardModeState),
       kittyKeyboardProtocolEnabled: typeof kittyKeyboardProtocolEnabled === "boolean"
         ? kittyKeyboardProtocolEnabled
@@ -638,6 +640,9 @@ function createPreloadApi(ctx) {
         ? context.contextScrollbackSnapshot
         : "",
       alternateScreen: context?.alternateScreen === true,
+      perCharacterInput: typeof context?.perCharacterInput === "boolean"
+        ? context.perCharacterInput
+        : undefined,
       kittyKeyboardModeState: sanitizeKittyKeyboardModeState(context?.kittyKeyboardModeState),
       kittyKeyboardProtocolEnabled: typeof context?.kittyKeyboardProtocolEnabled === "boolean"
         ? context.kittyKeyboardProtocolEnabled

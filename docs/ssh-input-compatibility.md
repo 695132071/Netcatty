@@ -19,6 +19,8 @@ New host creation paths save `false`. Duplicates copy the source value. JSON vau
 
 The connection captures the host's setting under its session-owned terminal settings ref. This snapshot survives xterm disposal and the actual hibernate wake/reattach path. Reconnect refreshes the setting through `resetConnectionInputState(host)`, including reconnects that reuse the existing runtime.
 
+Attaching an observe popup transfers this captured choice through the existing terminal snapshot IPC. The popup restores it before attaching input to the live backend. Closing the popup returns it with the display snapshot. A hibernated home reads and restores the same session-owned state without consulting the current Vault preference. These handoffs do not reconnect or apply a newly saved choice.
+
 ## Historical evidence
 
 [Issue #3077](https://github.com/binaricat/Netcatty/issues/3077#issuecomment-5433744875) reports that individual hanzi worked in a Qianxin search prompt where multi-character input failed. The report also says Windows with Xshell worked. Those observations do not establish the remote parser's SSH-write semantics or Xshell's default implementation.
@@ -28,6 +30,8 @@ The [Xshell 7 manual](https://cdn.netsarang.net/docs/Xshell7_manual.pdf), sectio
 ## Verification boundaries
 
 `sshInputCompatibility.integration.test.ts` runs real xterm and `createXTermRuntime` callbacks under JSDOM. It covers raw paste, literal `insertText`, key code 229, composition events, composition fallback, long IME text, terminal controls, bracketed paste, Kitty text, reconnect with a reused runtime, and the actual `wakeTerminalFromHibernate` entry after a saved setting changes. Local, Telnet, serial, Mosh, and Eternal Terminal cases verify that the SSH field leaves their legacy text and control-containing payload behavior unchanged. Canvas measurement is stubbed. These tests do not exercise native input methods or application windows.
+
+`sshInputCompatibility.popup.test.ts` runs the actual popup host resolver, home snapshot callbacks, attach boot effect, popup close callback, and real xterm paste handlers. Both saved-setting directions are covered with a live or hibernated home, including input after returning and waking. `terminalBridge.rebindOutput.test.cjs` exercises the preload and authorized main-process snapshot round trip, preserving explicit `false` and rejecting invalid metadata. These automated popup checks do not constitute native multi-window or OS IME validation.
 
 `useVaultState.inputCompatibility.test.ts` exercises the actual vault hook's asynchronous save, reload, duplicate, JSON backup, local backup payload, and cloud payload apply paths. It uses test localStorage and no native safeStorage key. CSV and endpoint selection have separate round-trip and jump-host tests.
 
@@ -76,4 +80,4 @@ Independent review confirmed the three reported P2 findings resolved, with no ne
 
 ## CI result
 
-The `test` workflow completed successfully for documentation commit `38c5f4744cb5fc3ecdd4e624b323587a471e4333`: [run 40319492139](https://github.com/binaricat/Netcatty/actions/runs/40319492139). That workflow includes `npm run lint`, `npm test`, generated-spec checks, and `npm run build`. The production code is unchanged from the native-tested `bd5f27ff` commit. Subsequent acceptance-text edits change documentation only. The PR remains draft and unmerged.
+The `test` workflow completed successfully for documentation commit `38c5f4744cb5fc3ecdd4e624b323587a471e4333`: [run 40319492139](https://github.com/binaricat/Netcatty/actions/runs/40319492139). That workflow includes `npm run lint`, `npm test`, generated-spec checks, and `npm run build`. The production code is unchanged from the native-tested `bd5f27ff` commit. Subsequent acceptance-text edits change documentation only. The original feature was merged in [PR #3977](https://github.com/binaricat/Netcatty/pull/3977); those results predate the popup snapshot follow-up.

@@ -256,6 +256,14 @@ const kittyKeyboardStates = createKittyKeyboardSessionStateStore();
 // when hibernation destroys xterm. Only a real reconnect refreshes this choice.
 const inputCompatibilityStates = new WeakMap<object, boolean>();
 
+// The stable session owner survives xterm disposal while its home renderer sleeps.
+export const getTerminalPerCharacterInput = (owner: object): boolean | undefined =>
+  inputCompatibilityStates.get(owner);
+
+export const restoreTerminalPerCharacterInput = (owner: object, enabled: boolean): void => {
+  inputCompatibilityStates.set(owner, enabled);
+};
+
 const resolveKittyKeyboardModeState = (
   ctx: Pick<
     CreateXTermRuntimeContext,
@@ -312,6 +320,8 @@ export type XTermRuntime = {
   hasInlineImages: () => boolean;
   /** Reset keyboard state and snapshot endpoint settings for a fresh connection. */
   resetConnectionInputState: (host: Host) => void;
+  getPerCharacterInput: () => boolean;
+  restorePerCharacterInput: (enabled: boolean) => void;
   /** Emit any owed releases before detaching or closing this renderer. */
   flushKittyKeyboardReleases: () => void;
   /** Transfer negotiated keyboard state across renderer attach handoffs. */
@@ -3494,6 +3504,11 @@ export const createXTermRuntime = (ctx: CreateXTermRuntimeContext): XTermRuntime
       clearKittyConnectionInputState();
     },
     flushKittyKeyboardReleases: clearKittyTransientInputState,
+    getPerCharacterInput: () => usePerCharacterInput,
+    restorePerCharacterInput: (enabled) => {
+      usePerCharacterInput = enabled;
+      restoreTerminalPerCharacterInput(ctx.terminalSettingsRef, enabled);
+    },
     getKittyKeyboardModeState: () => snapshotKittyKeyboardModeState(kittyKeyboardMode),
     restoreKittyKeyboardModeState: (state) => restoreKittyKeyboardModeState(
       kittyKeyboardMode,

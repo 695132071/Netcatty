@@ -716,6 +716,11 @@ export function useTerminalEffects(ctx: TerminalEffectsContext) {
             if (!snap?.success) {
               throw new Error(snap?.error || "Failed to capture terminal snapshot");
             }
+            // Restore the active connection policy before the attached session
+            // accepts input. Saved host changes still require a reconnect.
+            if (typeof snap.perCharacterInput === "boolean") {
+              runtime.restorePerCharacterInput(snap.perCharacterInput);
+            }
             if (typeof snap.kittyKeyboardProtocolEnabled === "boolean") {
               runtime.setKittyKeyboardProtocolEnabled(snap.kittyKeyboardProtocolEnabled);
             }
