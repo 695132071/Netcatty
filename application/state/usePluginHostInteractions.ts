@@ -1,13 +1,14 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import type { HostInteractionPrompt, HostInteractionResponse } from '@netcatty/plugin-contract';
+import type { HostInteractionPrompt, HostInteractionRequest, HostInteractionResponse } from '@netcatty/plugin-contract';
 import { netcattyBridge } from '../../infrastructure/services/netcattyBridge';
 
 export function usePluginHostInteractions() {
-  const [prompt, setPrompt] = useState<HostInteractionPrompt | null>(null);
+  type UiPrompt = Omit<HostInteractionPrompt, 'request'> & { request: HostInteractionRequest };
+  const [prompt, setPrompt] = useState<UiPrompt | null>(null);
   const [value, setValue] = useState('');
   const [error, setError] = useState(false);
   const [busy, setBusy] = useState(false);
-  const current = useRef<HostInteractionPrompt | null>(null);
+  const current = useRef<UiPrompt | null>(null);
   const pending = useRef(false);
   useEffect(() => {
     const bridge = netcattyBridge.get();
@@ -17,7 +18,8 @@ export function usePluginHostInteractions() {
         if (current.current?.requestId !== event.requestId) return;
         current.current = null; setPrompt(null);
       } else {
-        current.current = event; setPrompt(event);
+        if (event.request.kind.startsWith('vault.')) return;
+        current.current = event as UiPrompt; setPrompt(event as UiPrompt);
         setValue(event.request.kind === 'input' ? event.request.initialValue ?? '' : '');
       }
       pending.current = false; setBusy(false); setError(false);

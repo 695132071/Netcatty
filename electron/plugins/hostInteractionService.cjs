@@ -61,6 +61,7 @@ class PluginHostInteractionService {
     this.admissionRevision = 0;
     this.focusRestoreMs = Math.min(options.focusRestoreMs ?? 1_000, 1_000);
     this.owner = null;
+    this.ownerGeneration = 0;
     this.ownerCleanup = null;
     this.closed = false;
     this.revocation = this.permissionEngine.onDidRevoke((event) => this.releasePlugin(event.pluginId));
@@ -72,13 +73,17 @@ class PluginHostInteractionService {
       metadata: { capability: "ui", mutating: true },
       validateParams: assertInteractionRequest,
       authorization: (params, context) => {
-        const sender = this.#admit(params, context);
-        let guard = this.admissionGuards.get(context.runtimeId);
-        if (!guard) { guard = { active: true }; this.admissionGuards.set(context.runtimeId, guard); }
-        this.admissions.set(params, { sender, runtimeId: context.runtimeId, revision: this.admissionRevision, guard });
+        this.admitRequest(params, context);
         return interactionAuthorization(params);
       },
     });
+  }
+
+  admitRequest(params, context) {
+    const sender = this.#admit(params, context);
+    let guard = this.admissionGuards.get(context.runtimeId);
+    if (!guard) { guard = { active: true }; this.admissionGuards.set(context.runtimeId, guard); }
+    this.admissions.set(params, { sender, runtimeId: context.runtimeId, revision: this.admissionRevision, guard });
   }
 
   setReady(sender, ready) {
@@ -92,6 +97,7 @@ class PluginHostInteractionService {
     if (this.owner === sender) return true;
     if (this.owner) this.releaseWindow(this.owner);
     this.owner = sender;
+    this.ownerGeneration++;
     const close = () => this.releaseWindow(sender);
     // A native permission dialog can temporarily blur its parent. Already
     // displayed interactions still cancel immediately; pre-prompt admission
@@ -144,6 +150,8 @@ class PluginHostInteractionService {
       pluginId: entry.context.pluginId, pluginVersion: entry.context.pluginVersion,
       expiresAt: entry.expiresAt, phase: entry.phase, request: entry.params,
       ...(entry.previewText === undefined ? {} : { previewText: entry.previewText }),
+      ...(this.vaultService?.isRequest(entry.params) ? this.vaultService.describePrompt(entry) : {}),
+      ...(entry.reviewedDraft === undefined ? {} : { reviewedDraft: entry.reviewedDraft }),
     });
   }
 
@@ -258,6 +266,25 @@ class PluginHostInteractionService {
         this.#audit(entry, "cancelled");
         return this.#finish(entry, { cancelled: true });
       }
+      if (this.vaultService?.isRequest(entry.params)) {
+        const outcome = await this.vaultService.respond(entry, response);
+        await entry.context.assertActive();
+        this.#assertWindow(sender);
+        if (this.pending.get(entry.id) !== entry) return false;
+        if (outcome.result) {
+          this.#audit(entry, "completed");
+          return this.#finish(entry, outcome.result);
+        }
+        this.#audit(entry, outcome.phase === "commit" ? "action-confirmed" : "action-claimed");
+        entry.phase = outcome.phase;
+        if (outcome.reviewedDraft !== undefined) entry.reviewedDraft = outcome.reviewedDraft;
+        if (entry.phase === "executing") {
+          entry.actionToken = this.#token(entry);
+          return { completionToken: entry.actionToken };
+        }
+        this.#present(entry);
+        return true;
+      }
       if (entry.params.kind === "clipboard.read" && entry.phase === "request") {
         if (response.action !== "preview") throw fail("invalidArgument", "Clipboard sharing requires a preview action");
         this.#audit(entry, "preview-confirmed");
@@ -298,6 +325,8 @@ class PluginHostInteractionService {
   releaseWindow(sender) {
     if (this.owner !== sender) return;
     this.admissionRevision++;
+    this.ownerGeneration++;
+    this.vaultService?.clearSelections();
     this.owner = null;
     this.ownerCleanup?.(); this.ownerCleanup = null;
     for (const entry of [...this.pending.values()]) {
@@ -306,6 +335,7 @@ class PluginHostInteractionService {
   }
   releasePlugin(pluginId) {
     this.admissionRevision++;
+    this.vaultService?.releasePlugin(pluginId);
     for (const entry of [...this.pending.values()]) {
       if (entry.context.pluginId === pluginId) this.#finish(entry, null, fail("cancelled", "Plugin access was revoked"));
     }
@@ -313,6 +343,7 @@ class PluginHostInteractionService {
   releaseRuntime(runtimeId) {
     this.cancelRuntimeRequests(runtimeId, "Plugin runtime stopped");
     this.rates.delete(runtimeId);
+    this.vaultService?.releaseRuntime(runtimeId);
   }
   cancelRuntimeRequests(runtimeId, reason = "Host command finished") {
     const guard = this.admissionGuards.get(runtimeId);
@@ -324,6 +355,7 @@ class PluginHostInteractionService {
   }
   cancelAll(invalidateAdmission = true) {
     if (invalidateAdmission) this.admissionRevision++;
+    if (invalidateAdmission) this.vaultService?.clearSelections();
     for (const entry of [...this.pending.values()]) this.#finish(entry, null, fail("cancelled", "Host interaction was cancelled"));
   }
   shutdown() {
@@ -333,6 +365,7 @@ class PluginHostInteractionService {
     this.cancelAll(); this.rates.clear(); this.admissionGuards.clear();
     this.revocation.dispose(); this.unsubscribeLock?.();
     this.key.fill(0);
+    this.vaultService?.shutdown();
   }
 }
 

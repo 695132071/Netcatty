@@ -380,6 +380,9 @@ function createPluginContext(config, client, runtimeApi) {
     quickPick: (title, items) => interact({ kind: "quickPick", title, items }),
     input: (title, initialValue) => interact({ kind: "input", title, ...(initialValue === undefined ? {} : { initialValue }) }),
   };
+  const vault = Object.fromEntries(["selectHosts", "requestHostDraft", "requestConnect"].map((method) => [
+    method, (params) => client.request(`vault.${method}`, params, { deadlineMs: PLUGIN_HOST_INTERACTION_LIMITS.timeoutMs }),
+  ]));
   const clipboard = {
     readText: (title) => interact({ kind: "clipboard.read", title }),
     writeText: (text, title) => interact({ kind: "clipboard.write", title, text }).then((value) => value === true),
@@ -574,6 +577,7 @@ function createPluginContext(config, client, runtimeApi) {
     ai,
     selectedContext,
     ui,
+    vault,
     clipboard,
     filesystem,
     companions,

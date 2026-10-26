@@ -115,6 +115,15 @@ export interface PluginHostUI {
   input(title: string, initialValue?: string): Promise<string | undefined>;
 }
 
+/** Saved-host selection does not grant editing, connecting or session access.
+ * Each action uses the host's separate review and confirmation UI. */
+export interface PluginVault {
+  selectHosts(params: import("@netcatty/plugin-contract").VaultSelectHostsParams): Promise<import("@netcatty/plugin-contract").VaultHostSelectionResult>;
+  /** Managed SSH-config drafts require the full Vault host editor. */
+  requestHostDraft(params: import("@netcatty/plugin-contract").VaultHostDraftParams): Promise<import("@netcatty/plugin-contract").VaultHostActionResult>;
+  requestConnect(params: import("@netcatty/plugin-contract").VaultHostConnectParams): Promise<import("@netcatty/plugin-contract").VaultHostActionResult>;
+}
+
 export interface PluginClipboard {
   /** The host previews text only after the user asks, then separately confirms sharing it. */
   readText(title: string): Promise<string | undefined>;
@@ -759,6 +768,7 @@ export interface PluginContext {
   readonly settings: PluginSettings;
   readonly commands: PluginCommands;
   readonly ui: PluginHostUI;
+  readonly vault: PluginVault;
   readonly clipboard: PluginClipboard;
   readonly contextKeys: PluginContextKeys;
   readonly views: PluginViews;
@@ -956,6 +966,7 @@ export { PLUGIN_BYTE_STREAM_FEATURE, PLUGIN_BYTE_STREAM_LIMITS } from "@netcatty
 export { PLUGIN_AI_MODEL_INVOCATION_FEATURE, PLUGIN_SELECTED_CONTEXT_FEATURE } from "@netcatty/plugin-contract";
 
 export { PLUGIN_HOST_INTERACTION_FEATURE } from "@netcatty/plugin-contract";
+export { PLUGIN_HOST_VAULT_FEATURE } from "@netcatty/plugin-contract";
 export { PLUGIN_VAULT_PAGES_FEATURE } from "@netcatty/plugin-contract";
 export { PLUGIN_TERMINAL_SIDEBAR_FEATURE } from "@netcatty/plugin-contract";
 export { PLUGIN_INTERACTIVE_COMMAND_FEATURE } from "@netcatty/plugin-contract";

@@ -31,6 +31,9 @@ const { PluginByteStreamService, FEATURE: BYTE_STREAM_FEATURE } = require("./byt
 const { PluginAIContextService, PLUGIN_AI_CONTEXT_FEATURES } = require("./ai/aiContextService.cjs");
 const { PluginAITrustedHostAdapter } = require("./ai/trustedHostAdapter.cjs");
 const { HOST_INTERACTION_FEATURE, PluginHostInteractionService } = require("./hostInteractionService.cjs");
+const { PluginHostVaultService } = require("./hostVaultService.cjs");
+const { PluginAISourceBinding } = require("./ai/sourceBinding.cjs");
+const HOST_VAULT_FEATURE = require("./generated/plugin-contract.schema.json").$defs.HostVaultFeature.const;
 const { PluginPermissionEngine } = require("./permissionEngine.cjs");
 const { PluginProtocol } = require("./pluginProtocol.cjs");
 const { PluginViewHost } = require("./pluginViewHost.cjs");
@@ -93,7 +96,7 @@ function createPluginHostService(options) {
   const paths = createPluginPaths(options.app.getPath("userData"));
   const appRoot = options.appRoot ?? options.app.getAppPath();
   const runtimeDirectory = options.runtimeDirectory ?? path.join(__dirname, "runtime");
-  const supportedFeatures = [...new Set(["appearance.theme-packs", "metadata.brand-icon", BYTE_STREAM_FEATURE, ...PLUGIN_AI_CONTEXT_FEATURES, NETWORK_CREDENTIAL_LEASE_FEATURE, HOST_INTERACTION_FEATURE, VAULT_PAGES_FEATURE, TERMINAL_SIDEBAR_FEATURE, INTERACTIVE_COMMAND_FEATURE, ...(options.supportedFeatures ?? [])])];
+  const supportedFeatures = [...new Set(["appearance.theme-packs", "metadata.brand-icon", BYTE_STREAM_FEATURE, ...PLUGIN_AI_CONTEXT_FEATURES, NETWORK_CREDENTIAL_LEASE_FEATURE, HOST_INTERACTION_FEATURE, HOST_VAULT_FEATURE, VAULT_PAGES_FEATURE, TERMINAL_SIDEBAR_FEATURE, INTERACTIVE_COMMAND_FEATURE, ...(options.supportedFeatures ?? [])])];
   const database = new PluginDatabase(paths.database);
   let interactionService;
   let byteStreamService;
@@ -199,6 +202,11 @@ function createPluginHostService(options) {
       subscribeLock: options.subscribeAppLock,
     });
     interactionService.registerRpcCapabilities(rpcRegistry);
+    const hostVaultService = new PluginHostVaultService({
+      interactionService,
+      sourceBinding: new PluginAISourceBinding({ database, getRuntimeIdentity: (pluginId) => runtimeSupervisor.getRuntimeIdentity(pluginId) }),
+    });
+    hostVaultService.registerRpcCapabilities(rpcRegistry);
     const configuredRegistry = options.configureRpcRegistry?.(rpcRegistry);
     if (configuredRegistry && typeof configuredRegistry.then === "function") {
       throw new TypeError("Plugin host RPC registry configuration must be synchronous");
@@ -425,6 +433,7 @@ function createPluginHostService(options) {
     return {
       themeService,
       interactionService,
+      hostVaultService,
       catalogService: new MarketSourcesService({ database, manager, fetch: options.electron.net?.fetch?.bind(options.electron.net) }),
       companionSupervisor,
       contributionIconService,

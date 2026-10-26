@@ -178,6 +178,565 @@
       },
       "additionalProperties": false
     },
+    "HostVaultFeature": {
+      "const": "vault.host-actions"
+    },
+    "VaultHostRef": {
+      "type": "object",
+      "required": [
+        "kind",
+        "scope",
+        "handle",
+        "revision",
+        "expiresAt"
+      ],
+      "properties": {
+        "kind": {
+          "const": "host.selection"
+        },
+        "scope": {
+          "const": "metadata"
+        },
+        "handle": {
+          "type": "string",
+          "minLength": 32,
+          "maxLength": 256
+        },
+        "revision": {
+          "type": "string",
+          "maxLength": 128,
+          "pattern": "^[^\\u0000-\\u001f\\u007f]*$",
+          "minLength": 1
+        },
+        "expiresAt": {
+          "$ref": "#/$defs/SafePositiveInteger"
+        }
+      },
+      "additionalProperties": false,
+      "description": "Host-signed source/runtime/window-bound metadata selection. Identifies an exact saved host and revision; edit and connect require separate host confirmation and one-use action authority. AI text handles are not Host targets."
+    },
+    "VaultHostMetadata": {
+      "type": "object",
+      "required": [
+        "label",
+        "hostname",
+        "username",
+        "group",
+        "tags",
+        "protocol"
+      ],
+      "properties": {
+        "label": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512
+        },
+        "hostname": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 1024
+        },
+        "username": {
+          "type": "string",
+          "maxLength": 512
+        },
+        "port": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 65535
+        },
+        "group": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 512
+        },
+        "tags": {
+          "type": "array",
+          "maxItems": 128,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          }
+        },
+        "protocol": {
+          "type": "string",
+          "maxLength": 199,
+          "pattern": "^[^\\u0000-\\u001f\\u007f]*$",
+          "minLength": 1
+        }
+      },
+      "additionalProperties": false
+    },
+    "VaultHostCreateFields": {
+      "type": "object",
+      "required": [
+        "hostname"
+      ],
+      "properties": {
+        "label": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512
+        },
+        "hostname": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 1024
+        },
+        "username": {
+          "type": "string",
+          "maxLength": 512
+        },
+        "port": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 65535
+        },
+        "group": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 512
+        },
+        "tags": {
+          "type": "array",
+          "maxItems": 128,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "VaultHostEditFields": {
+      "type": "object",
+      "required": [],
+      "properties": {
+        "label": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512
+        },
+        "group": {
+          "type": "string",
+          "minLength": 0,
+          "maxLength": 512
+        },
+        "tags": {
+          "type": "array",
+          "maxItems": 128,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          }
+        }
+      },
+      "additionalProperties": false,
+      "minProperties": 1
+    },
+    "VaultSelectHostsParams": {
+      "type": "object",
+      "required": [
+        "title"
+      ],
+      "properties": {
+        "title": {
+          "type": "string",
+          "maxLength": 128,
+          "pattern": "^[^\\u0000-\\u001f\\u007f]*$",
+          "minLength": 1
+        }
+      },
+      "additionalProperties": false
+    },
+    "VaultHostDraftParams": {
+      "oneOf": [
+        {
+          "type": "object",
+          "required": [
+            "draft"
+          ],
+          "properties": {
+            "draft": {
+              "$ref": "#/$defs/VaultHostCreateFields"
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": [
+            "target",
+            "expectedRevision",
+            "draft"
+          ],
+          "properties": {
+            "target": {
+              "$ref": "#/$defs/VaultHostRef"
+            },
+            "expectedRevision": {
+              "type": "string",
+              "maxLength": 128,
+              "pattern": "^[^\\u0000-\\u001f\\u007f]*$",
+              "minLength": 1
+            },
+            "draft": {
+              "$ref": "#/$defs/VaultHostEditFields"
+            }
+          },
+          "additionalProperties": false
+        }
+      ]
+    },
+    "VaultHostConnectParams": {
+      "type": "object",
+      "required": [
+        "target",
+        "expectedRevision"
+      ],
+      "properties": {
+        "target": {
+          "$ref": "#/$defs/VaultHostRef"
+        },
+        "expectedRevision": {
+          "type": "string",
+          "maxLength": 128,
+          "pattern": "^[^\\u0000-\\u001f\\u007f]*$",
+          "minLength": 1
+        }
+      },
+      "additionalProperties": false
+    },
+    "VaultHostActionRequest": {
+      "oneOf": [
+        {
+          "type": "object",
+          "required": [
+            "kind",
+            "title"
+          ],
+          "properties": {
+            "kind": {
+              "const": "vault.selectHosts"
+            },
+            "title": {
+              "type": "string",
+              "maxLength": 128,
+              "pattern": "^[^\\u0000-\\u001f\\u007f]*$",
+              "minLength": 1
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": [
+            "kind",
+            "draft"
+          ],
+          "properties": {
+            "kind": {
+              "const": "vault.requestHostDraft"
+            },
+            "draft": {
+              "$ref": "#/$defs/VaultHostCreateFields"
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": [
+            "kind",
+            "target",
+            "expectedRevision",
+            "draft"
+          ],
+          "properties": {
+            "kind": {
+              "const": "vault.requestHostDraft"
+            },
+            "target": {
+              "$ref": "#/$defs/VaultHostRef"
+            },
+            "expectedRevision": {
+              "type": "string",
+              "maxLength": 128,
+              "pattern": "^[^\\u0000-\\u001f\\u007f]*$",
+              "minLength": 1
+            },
+            "draft": {
+              "$ref": "#/$defs/VaultHostEditFields"
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": [
+            "kind",
+            "target",
+            "expectedRevision"
+          ],
+          "properties": {
+            "kind": {
+              "const": "vault.requestConnect"
+            },
+            "target": {
+              "$ref": "#/$defs/VaultHostRef"
+            },
+            "expectedRevision": {
+              "type": "string",
+              "maxLength": 128,
+              "pattern": "^[^\\u0000-\\u001f\\u007f]*$",
+              "minLength": 1
+            }
+          },
+          "additionalProperties": false
+        }
+      ]
+    },
+    "VaultHostSelectedResources": {
+      "description": "Trusted host-renderer reply only. Never accepted from a plugin request.",
+      "type": "array",
+      "maxItems": 50,
+      "items": {
+        "type": "object",
+        "required": [
+          "resourceId",
+          "revision",
+          "label",
+          "hostname",
+          "username",
+          "group",
+          "tags",
+          "protocol"
+        ],
+        "properties": {
+          "resourceId": {
+            "type": "string",
+            "maxLength": 256,
+            "pattern": "^[^\\u0000-\\u001f\\u007f]*$",
+            "minLength": 1
+          },
+          "revision": {
+            "type": "string",
+            "maxLength": 128,
+            "pattern": "^[^\\u0000-\\u001f\\u007f]*$",
+            "minLength": 1
+          },
+          "label": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 512
+          },
+          "hostname": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1024
+          },
+          "username": {
+            "type": "string",
+            "maxLength": 512
+          },
+          "port": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 65535
+          },
+          "group": {
+            "type": "string",
+            "minLength": 0,
+            "maxLength": 512
+          },
+          "tags": {
+            "type": "array",
+            "maxItems": 128,
+            "uniqueItems": true,
+            "items": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 256
+            }
+          },
+          "protocol": {
+            "type": "string",
+            "maxLength": 199,
+            "pattern": "^[^\\u0000-\\u001f\\u007f]*$",
+            "minLength": 1
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "VaultHostSelectedResult": {
+      "type": "object",
+      "required": [
+        "cancelled",
+        "hosts",
+        "groups"
+      ],
+      "properties": {
+        "cancelled": {
+          "const": false
+        },
+        "hosts": {
+          "type": "array",
+          "maxItems": 50,
+          "items": {
+            "type": "object",
+            "required": [
+              "target",
+              "metadata"
+            ],
+            "properties": {
+              "target": {
+                "$ref": "#/$defs/VaultHostRef"
+              },
+              "metadata": {
+                "$ref": "#/$defs/VaultHostMetadata"
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "groups": {
+          "type": "array",
+          "maxItems": 50,
+          "items": {
+            "type": "object",
+            "required": [
+              "path",
+              "members"
+            ],
+            "properties": {
+              "path": {
+                "type": "string",
+                "maxLength": 512,
+                "pattern": "^[^\\u0000-\\u001f\\u007f]*$",
+                "minLength": 1
+              },
+              "members": {
+                "type": "array",
+                "maxItems": 50,
+                "items": {
+                  "$ref": "#/$defs/VaultHostRef"
+                }
+              }
+            },
+            "additionalProperties": false
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "VaultHostSelectionResult": {
+      "oneOf": [
+        {
+          "type": "object",
+          "required": [
+            "cancelled"
+          ],
+          "properties": {
+            "cancelled": {
+              "const": true
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "$ref": "#/$defs/VaultHostSelectedResult"
+        }
+      ]
+    },
+    "VaultHostActionAccepted": {
+      "type": "object",
+      "required": [
+        "cancelled",
+        "status"
+      ],
+      "properties": {
+        "cancelled": {
+          "const": false
+        },
+        "status": {
+          "enum": [
+            "saved",
+            "requested"
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    "VaultHostActionResult": {
+      "oneOf": [
+        {
+          "type": "object",
+          "required": [
+            "cancelled"
+          ],
+          "properties": {
+            "cancelled": {
+              "const": true
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "$ref": "#/$defs/VaultHostActionAccepted"
+        }
+      ]
+    },
+    "VaultHostLocalTarget": {
+      "description": "Trusted host renderer target only; resource IDs never cross the plugin API.",
+      "type": "object",
+      "required": [
+        "resourceId",
+        "revision"
+      ],
+      "properties": {
+        "resourceId": {
+          "type": "string",
+          "maxLength": 256,
+          "pattern": "^[^\\u0000-\\u001f\\u007f]*$",
+          "minLength": 1
+        },
+        "revision": {
+          "type": "string",
+          "maxLength": 128,
+          "pattern": "^[^\\u0000-\\u001f\\u007f]*$",
+          "minLength": 1
+        }
+      },
+      "additionalProperties": false
+    },
+    "HostInteractionReceipt": {
+      "oneOf": [
+        {
+          "type": "boolean"
+        },
+        {
+          "type": "object",
+          "required": [
+            "completionToken"
+          ],
+          "properties": {
+            "completionToken": {
+              "type": "string",
+              "minLength": 32,
+              "maxLength": 256
+            }
+          },
+          "additionalProperties": false
+        }
+      ]
+    },
     "HostInteractionLimits": {
       "const": {
         "textBytes": 4096,
@@ -374,6 +933,12 @@
             }
           },
           "additionalProperties": false
+        },
+        {
+          "$ref": "#/$defs/VaultHostSelectedResult"
+        },
+        {
+          "$ref": "#/$defs/VaultHostActionAccepted"
         }
       ]
     },
@@ -399,13 +964,32 @@
           "enum": [
             "cancel",
             "preview",
-            "submit"
+            "submit",
+            "commit",
+            "complete",
+            "fail"
           ]
         },
         "value": {
           "type": "string",
           "maxLength": 4096,
           "pattern": "^[^\\u0000]*$"
+        },
+        "resources": {
+          "$ref": "#/$defs/VaultHostSelectedResources"
+        },
+        "draft": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/VaultHostCreateFields"
+            },
+            {
+              "$ref": "#/$defs/VaultHostEditFields"
+            }
+          ]
+        },
+        "scriptsRun": {
+          "type": "boolean"
         }
       },
       "additionalProperties": false
@@ -469,16 +1053,37 @@
         "phase": {
           "enum": [
             "request",
-            "preview"
+            "preview",
+            "commit"
           ]
         },
         "request": {
-          "$ref": "#/$defs/HostInteractionRequest"
+          "oneOf": [
+            {
+              "$ref": "#/$defs/HostInteractionRequest"
+            },
+            {
+              "$ref": "#/$defs/VaultHostActionRequest"
+            }
+          ]
         },
         "previewText": {
           "type": "string",
           "maxLength": 4096,
           "pattern": "^[^\\u0000]*$"
+        },
+        "vaultTarget": {
+          "$ref": "#/$defs/VaultHostLocalTarget"
+        },
+        "reviewedDraft": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/VaultHostCreateFields"
+            },
+            {
+              "$ref": "#/$defs/VaultHostEditFields"
+            }
+          ]
         }
       },
       "additionalProperties": false
