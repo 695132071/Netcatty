@@ -73,6 +73,28 @@ test('information previews on hover/focus, pins on click and Escape returns focu
     assert.equal(pane.scrollTop, 450);
     assert.equal(document.activeElement?.getAttribute('data-plugin-id'), entry.id);
     assert.match(document.querySelector('[data-toolbar]')?.textContent ?? '', /Refresh/);
+
+    const { PluginStatus } = await import('./PluginStatus');
+    function StatusHarness() {
+      const [offline, setOffline] = useState(true);
+      const [noVault, setNoVault] = useState(true);
+      return <I18nProvider locale="en"><PluginStatus noVault={noVault} offlineError={offline ? 'Network unavailable' : null} retry={() => setOffline(false)} /><button onClick={() => setNoVault(false)}>Restore vault</button></I18nProvider>;
+    }
+    await act(async () => { root.render(<StatusHarness />); await settle(); });
+    const status = document.querySelector<HTMLButtonElement>('button[aria-label="Notices: 2"]')!;
+    await act(async () => { status.focus(); await settle(); });
+    assert.match(document.querySelector('[role="tooltip"]')?.textContent ?? '', /Network unavailable/);
+    assert.equal(document.querySelector('[role="tooltip"] button'), null, 'hover preview never contains an interactive Retry');
+    await act(async () => { status.click(); await settle(); });
+    const retry = document.querySelector<HTMLButtonElement>('[role="dialog"] button')!;
+    assert.equal(retry.textContent, 'Retry');
+    await act(async () => { retry.click(); await settle(); });
+    assert.ok(document.querySelector('button[aria-label="Notices: 1"]'));
+    assert.doesNotMatch(document.querySelector('[role="dialog"]')?.textContent ?? '', /Network unavailable/);
+    await act(async () => { document.querySelector('[role="dialog"]')!.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true })); await settle(); });
+    assert.equal(document.activeElement?.getAttribute('aria-label'), 'Notices: 1');
+    await act(async () => { Array.from(document.querySelectorAll('button')).find((button) => button.textContent === 'Restore vault')!.click(); await settle(); });
+    assert.equal(document.querySelector('button[aria-label^="Notices:"]'), null, 'healthy state leaves no empty status control');
   } finally {
     await act(async () => root.unmount());
     dom.window.close();

@@ -1258,6 +1258,7 @@ Highlight the focused split pane:
   "settings.plugins.market.offline": "Registry unavailable. Showing the last valid catalog or bundled examples. Installation is unavailable until refresh succeeds.",
   "settings.plugins.manager.details": "View details",
   "settings.plugins.manager.noDescription": "No description provided.",
+  "settings.plugins.status": "Notices: {count}",
   "settings.plugins.info": "Plugin information",
   "settings.plugins.manager.noVaultShort": "Secret storage unavailable",
   "settings.plugins.market.offlineShort": "Offline catalog · installation unavailable",

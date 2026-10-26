@@ -3,6 +3,7 @@ import { PluginManagementDialog } from './PluginManagementDialog';
 import { PluginMarketplace } from './PluginMarketplace';
 import { PluginPackageManager } from './PluginPackageManager';
 import { FolderOpen } from 'lucide-react';
+import { PluginStatus } from './PluginStatus';
 import { PluginInfo } from './PluginInfo';
 import React, { useEffect, useMemo, useState } from 'react';
 
@@ -318,12 +319,12 @@ function PluginManagementContent({ handoff }: { handoff: (action: () => void) =>
           </TabsList>
           <div className="flex items-center gap-2">
           <PluginInfo label={t('settings.plugins.info')}><p>{t('settings.plugins.manager.preview')}</p><p>{t('settings.plugins.market.note')}</p></PluginInfo>
-          <div ref={setCatalogToolbar} />
+          {pluginView === 'installed' && <PluginStatus noVault={manager.credentialStorageAvailable === false} />}
+          <div ref={setCatalogToolbar} className="flex items-center gap-2" />
           <Button variant="outline" size="sm" disabled={!manager.available || manager.busy} onClick={() => { setPluginView('installed'); void manager.importPackage(); }}><FolderOpen size={14} className="mr-2" />{t('settings.plugins.manager.import')}</Button>
           </div>
         </div>
-        {manager.credentialStorageAvailable === false && <div className="flex items-center gap-1 text-xs text-muted-foreground"><span role="status">{t('settings.plugins.manager.noVaultShort')}</span><PluginInfo label={t('settings.plugins.manager.noVaultShort')}>{t('settings.plugins.manager.noVault')}</PluginInfo></div>}
-        <TabsContent value="marketplace" className="m-0 space-y-6"><PluginMarketplace installed={manager.plugins} toolbarContainer={catalogToolbar} /></TabsContent>
+        <TabsContent value="marketplace" className="m-0 space-y-6"><PluginMarketplace installed={manager.plugins} toolbarContainer={catalogToolbar} noVault={manager.credentialStorageAvailable === false} /></TabsContent>
         <TabsContent value="installed" className="m-0 space-y-6">
         <PluginPackageManager manager={manager} onSelectionChange={setSelectedInstalled} />
         {contextualScopes.size > 0 && (

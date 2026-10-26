@@ -144,7 +144,7 @@ test('offline catalog warning keeps details visible and disables market installa
   assert.match(html, /Offline catalog · installation unavailable/);
   assert.match(html, /Compatibility and permissions/);
   assert.match(html, /<button[^>]*disabled=""[^>]*>Install this version/);
-  assert.match(html, /Retry/);
+  assert.match(html, /Notices: 1/);
 });
 
 test('manual refresh remains available after success and is disabled while loading', () => {
