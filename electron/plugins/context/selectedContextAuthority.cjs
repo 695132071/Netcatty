@@ -147,7 +147,11 @@ class SelectedContextAuthority {
   }
   release(handle) {
     if (!this.handles.delete(handle)) return;
-    for (const listener of this.listeners) listener(handle);
+    for (const listener of [...this.listeners]) {
+      // Revocation must finish even when an observer fails. Never log selected
+      // text or let an observer exception retain another runtime handle.
+      try { listener(handle); } catch {}
+    }
   }
   releaseRuntime(runtimeId) {
     for (const [handle, entry] of this.handles) if (entry.runtimeId === runtimeId) this.release(handle);

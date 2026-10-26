@@ -187,3 +187,25 @@ test("event and handle caps prevent cheap empty streams and unbounded allocation
   assert.equal((await f.broker.read(turn.turnHandle, f.context)).text, "");
   await assert.rejects(f.broker.read(turn.turnHandle, f.context), (e) => e.code === RPC_ERRORS.resourceExhausted); f.broker.shutdown();
 });
+
+test("malformed context cannot publish a turn or interrupt two-handle runtime revocation", async (t) => {
+  const entered = deferred(); const resume = deferred(); let checks = 0;
+  const f = fixture({ model: { isCurrent: async () => { if (++checks === 3) { entered.resolve(); await resume.promise; } return true; } } });
+  t.after(() => { resume.resolve(); f.broker.shutdown(); });
+  const selection = { scope: "note", title: "Synthetic", version: "1", readText: () => "Synthetic", isCurrent: () => true };
+  await f.contexts.share(selection, f.context); await f.contexts.share(selection, f.context);
+  const chat = await f.broker.open(f.context);
+  const start = f.broker.start({ chatHandle: chat.chatHandle, prompt: "Hi", contexts: [null] }, f.context);
+  const outcome = start.then(() => "accepted", (error) => error);
+  // On the old implementation, reach the reported post-publication model guard.
+  // On the fixed implementation, validation rejects before that await exists.
+  await Promise.race([entered.promise, outcome]);
+  assert.doesNotThrow(() => f.contexts.releaseRuntime("r1"));
+  assert.equal(f.contexts.handles.size, 0);
+  resume.resolve();
+  const error = await outcome;
+  assert.equal(error.code, RPC_ERRORS.invalidArgument);
+  assert.equal(f.broker.turns.size, 0);
+  assert.equal(f.calls.length, 0);
+  f.broker.shutdown();
+});

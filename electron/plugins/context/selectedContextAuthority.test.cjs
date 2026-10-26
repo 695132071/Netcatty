@@ -75,3 +75,13 @@ test("content reader has a deadline and respects request cancellation", async ()
   const controller = new AbortController(); const reading = authority.read(note, { ...context, signal: controller.signal });
   controller.abort(); await assert.rejects(reading); authority.shutdown();
 });
+
+test("one failing invalidation listener cannot interrupt other listeners or handle cleanup", async () => {
+  const f = fixture(); const first = await f.authority.share(f.selection, f.context); const second = await f.authority.share(f.selection, f.context);
+  const notified = [];
+  f.authority.onDidInvalidate(() => { throw Error("listener failed"); });
+  f.authority.onDidInvalidate((handle) => notified.push(handle));
+  assert.doesNotThrow(() => f.authority.releaseRuntime("r1"));
+  assert.equal(f.authority.handles.size, 0);
+  assert.deepEqual(notified, [first.handle, second.handle]);
+});
