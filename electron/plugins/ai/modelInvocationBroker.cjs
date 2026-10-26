@@ -105,12 +105,20 @@ class ModelInvocationBroker {
       || contexts.length > this.limits.contexts || Buffer.byteLength(prompt) > this.limits.inputBytes) {
       throw fail("invalidArgument", "Invalid model input");
     }
+    const references = contexts.map((reference) => {
+      if (!reference || Array.isArray(reference) || Object.keys(reference).some((key) => !["handle", "version"].includes(key))
+        || typeof reference.handle !== "string" || !reference.handle || reference.handle.length > 128
+        || typeof reference.version !== "string" || !reference.version || reference.version.length > 128) {
+        throw fail("invalidArgument", "Invalid context reference");
+      }
+      return Object.freeze({ handle: reference.handle, version: reference.version });
+    });
     const chat = this.chats.get(chatHandle);
     if (!chat) throw fail("permissionDenied", "Plugin chat is unavailable");
     await this.#check(chat, context);
     if (chat.turn) throw fail("resourceExhausted", "A turn is already active");
     const controller = new AbortController();
-    const turn = { handle: randomUUID(), chat, controller, reading: false, bytes: 0, sequence: 0, iterator: null, references: structuredClone(contexts) };
+    const turn = { handle: randomUUID(), chat, controller, reading: false, bytes: 0, sequence: 0, iterator: null, references: Object.freeze(references) };
     chat.turn = turn;
     this.turns.set(turn.handle, turn);
     const abort = () => this.#end(turn, fail("cancelled", "Model turn cancelled"));
@@ -121,8 +129,7 @@ class ModelInvocationBroker {
       await this.#guard(turn, context);
       const selected = [];
       let bytes = Buffer.byteLength(prompt);
-      for (const reference of contexts) {
-        if (!reference || Object.keys(reference).some((key) => !["handle", "version"].includes(key))) throw fail("invalidArgument", "Invalid context reference");
+      for (const reference of references) {
         const result = await abortable(this.contexts.read(reference, { ...context, signal: controller.signal }), controller.signal);
         bytes += Buffer.byteLength(result.text);
         if (bytes > this.limits.inputBytes) throw fail("resourceExhausted", "Model input byte budget exceeded");
