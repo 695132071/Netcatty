@@ -1,0 +1,13 @@
+/* Container breakpoints account for the Settings sidebar, unlike viewport breakpoints. */
+.plugin-marketplace { container-type: inline-size; }
+.plugin-marketplace-browser { display: grid; gap: 16px; min-width: 0; }
+.plugin-marketplace-catalog { min-width: 0; }
+.plugin-marketplace-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 280px), 1fr)); gap: 12px; }
+.plugin-marketplace-browser--selected .plugin-marketplace-catalog { display: none; }
+.plugin-marketplace-detail { overflow-wrap: anywhere; }
+@container (min-width: 820px) {
+  .plugin-marketplace-browser--selected { grid-template-columns: 248px minmax(0, 1fr); align-items: start; }
+  .plugin-marketplace-browser--selected .plugin-marketplace-catalog { display: block; max-height: min(680px, 65vh); overflow-y: auto; padding: 2px; }
+  .plugin-marketplace-browser--selected .plugin-marketplace-grid { grid-template-columns: minmax(0, 1fr); }
+  .plugin-marketplace-browser--selected .plugin-marketplace-detail { max-height: min(680px, 65vh); overflow-y: auto; }
+}

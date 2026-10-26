@@ -1,4 +1,5 @@
 @import "tailwindcss";
+@import "./components/settings/tabs/plugin-marketplace.css";
 @import "@mdxeditor/editor/style.css";
 
 /* Bundled icon-only fallback so terminals show Nerd Font glyphs (powerline,

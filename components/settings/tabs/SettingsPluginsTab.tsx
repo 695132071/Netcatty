@@ -319,7 +319,7 @@ export default function SettingsPluginsTab() {
           <Button variant="outline" size="sm" disabled={!manager.available || manager.busy} onClick={() => { setPluginView('installed'); void manager.importPackage(); }}><FolderOpen size={14} className="mr-2" />{t('settings.plugins.manager.import')}</Button>
         </div>
         {manager.credentialStorageAvailable === false && <p role="status" className="text-xs text-muted-foreground">{t('settings.plugins.manager.noVault')}</p>}
-        <TabsContent value="marketplace" className="m-0 space-y-6"><PluginMarketplace /></TabsContent>
+        <TabsContent value="marketplace" className="m-0 space-y-6"><PluginMarketplace installed={manager.plugins} /></TabsContent>
         <TabsContent value="installed" className="m-0 space-y-6">
         <PluginPackageManager manager={manager} />
         {contextualScopes.size > 0 && (
