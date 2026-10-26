@@ -1,6 +1,6 @@
 # Session Scratchpad
 
-Fixture ID: `com.netcatty.session-scratchpad`, version `0.1.0`.
+Fixture ID: `com.netcatty.session-scratchpad`, version `0.1.1`.
 Required permission: **views**, for this plugin's own pages only. Required
 feature: `views.terminal-sidebar`. No terminal/session read, clipboard, network,
 Vault, filesystem, credential or shell permission is requested.
@@ -28,3 +28,5 @@ deletion. Close the pane, press Escape, disable/revoke, and verify cleanup.
 Settings/permission dialogs and overlapping menus must stay above native
 content. No new native target or persistent grant should be inferred from this
 README; parent coordinates the exact test and records source SHA/package hash.
+
+The page subscribes to `window.netcattyView.onDidChangeEnvironment()` in `theme.js`. It follows the seven public HSL theme variables, including accent changes, without reading host settings or DOM. The subscription is disposed on page hide.

@@ -16,6 +16,9 @@ const {
 const { assertSecretKey } = require("./secretStore.cjs");
 
 const CHANNELS = Object.freeze({
+  themeCatalog: "netcatty:plugins:theme-catalog",
+  themeApply: "netcatty:plugins:theme-apply",
+  themesChanged: "netcatty:plugins:themes-changed",
   status: "netcatty:plugins:status",
   interactionReady: "netcatty:plugins:interaction-ready",
   interactionResponse: "netcatty:plugins:interaction-response",
@@ -723,6 +726,15 @@ function registerPluginBridge(ipcMain, options) {
   ));
   handle(CHANNELS.restart, async (activeManager, payload) => activeManager.restart(payload?.pluginId));
   handle(CHANNELS.uninstall, async (activeManager, payload) => activeManager.uninstall(payload?.pluginId));
+  handle(CHANNELS.themeCatalog, async () => {
+    if (!options.themeService) throw new Error("Plugin themes are unavailable");
+    return options.themeService.catalog();
+  });
+  handle(CHANNELS.themeApply, async (_manager, request) => {
+    if (!options.themeService) throw new Error("Plugin themes are unavailable");
+    return options.themeService.apply(request);
+  });
+  options.themeService?.onDidChange?.(() => options.broadcast?.(CHANNELS.themesChanged, {}));
   handle(CHANNELS.contributions, async (_activeManager, payload) => {
     if (!contributionService) throw new Error("Plugin contributions are unavailable");
     return contributionService.snapshot(payload ?? {});

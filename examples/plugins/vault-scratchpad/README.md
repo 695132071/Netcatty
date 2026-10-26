@@ -25,3 +25,5 @@ modal or overlapping menu must hide the native view while it is present.
 
 This source example is not independent/native acceptance evidence. Parent QA
 records the precise tested commit and package hash separately.
+
+The page subscribes to `window.netcattyView.onDidChangeEnvironment()` in `theme.js`. It follows the seven public HSL theme variables, including accent changes, without reading host settings or DOM. The subscription is disposed on page hide.

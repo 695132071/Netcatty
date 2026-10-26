@@ -28,7 +28,7 @@ export function PluginPackageDetails({ plugin }: { plugin: NetcattyInstalledPlug
       <dt className="text-muted-foreground">API</dt><dd>{manifest.engines.api}</dd>
       <dt className="text-muted-foreground">SHA-256</dt><dd className="break-all font-mono">{plugin.archiveSha256 ?? '-'}</dd>
     </dl>
-    <p className={!policy.browserOnly ? 'text-destructive' : 'text-muted-foreground'}>{t(`settings.plugins.manager.${runtimeLabel}`)}</p>
+    <p className={!policy.browserOnly && !policy.dataOnly ? 'text-destructive' : 'text-muted-foreground'}>{policy.dataOnly ? t('settings.plugins.manager.dataTheme') : t(`settings.plugins.manager.${runtimeLabel}`)}</p>
     <div className="space-y-2">
       <h4 className="font-medium">{t('settings.plugins.manager.permissions')}</h4>
       <p className="text-xs text-muted-foreground">{t('settings.plugins.manager.permissionNote')}</p>

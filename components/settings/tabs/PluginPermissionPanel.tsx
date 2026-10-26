@@ -56,7 +56,7 @@ export function PluginPermissionPanel({ pluginId, onChanged }: {
       pending.current = false; setBusy(false);
     }
   };
-  return <section className="space-y-3 border-t border-border/60 pt-4 text-sm" aria-label={t('settings.plugins.permissions.title')}>
+  return <section data-host-security-surface="" className="space-y-3 border-t border-border/60 pt-4 text-sm" aria-label={t('settings.plugins.permissions.title')}>
     <div className="flex flex-wrap items-center justify-between gap-2">
       <h4 className="font-medium">{t('settings.plugins.permissions.title')}</h4>
       <Button variant="ghost" size="sm" disabled={busy} onClick={() => void refresh()}>{t('settings.plugins.permissions.refresh')}</Button>

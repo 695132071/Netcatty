@@ -22,6 +22,7 @@ const {
   normalizePluginModuleResources,
 } = require("./moduleResources.cjs");
 const { RegistryCatalogService } = require("./registryCatalogService.cjs");
+const { PluginThemeService } = require("./themeService.cjs");
 const { PackageStore } = require("./packageStore.cjs");
 const { createPluginPaths } = require("./paths.cjs");
 const { PluginManager } = require("./pluginManager.cjs");
@@ -98,7 +99,7 @@ function createPluginHostService(options) {
       database,
       netcattyVersion: options.app.getVersion(),
       apiVersion: PLUGIN_API_VERSION,
-      supportedFeatures: [...new Set(["metadata.brand-icon", NETWORK_CREDENTIAL_LEASE_FEATURE, HOST_INTERACTION_FEATURE, VAULT_PAGES_FEATURE, TERMINAL_SIDEBAR_FEATURE, INTERACTIVE_COMMAND_FEATURE, ...(options.supportedFeatures ?? [])])],
+      supportedFeatures: [...new Set(["appearance.theme-packs", "metadata.brand-icon", NETWORK_CREDENTIAL_LEASE_FEATURE, HOST_INTERACTION_FEATURE, VAULT_PAGES_FEATURE, TERMINAL_SIDEBAR_FEATURE, INTERACTIVE_COMMAND_FEATURE, ...(options.supportedFeatures ?? [])])],
     });
     const contributionIconService = new PluginContributionIconService({
       database,
@@ -238,7 +239,7 @@ function createPluginHostService(options) {
       paths,
       netcattyVersion: options.app.getVersion(),
       apiVersion: PLUGIN_API_VERSION,
-      supportedFeatures: [...new Set(["metadata.brand-icon", NETWORK_CREDENTIAL_LEASE_FEATURE, HOST_INTERACTION_FEATURE, VAULT_PAGES_FEATURE, TERMINAL_SIDEBAR_FEATURE, INTERACTIVE_COMMAND_FEATURE, ...(options.supportedFeatures ?? [])])],
+      supportedFeatures: [...new Set(["appearance.theme-packs", "metadata.brand-icon", NETWORK_CREDENTIAL_LEASE_FEATURE, HOST_INTERACTION_FEATURE, VAULT_PAGES_FEATURE, TERMINAL_SIDEBAR_FEATURE, INTERACTIVE_COMMAND_FEATURE, ...(options.supportedFeatures ?? [])])],
       runtimeDirectory,
       appRoot,
       rpcRegistry,
@@ -370,6 +371,7 @@ function createPluginHostService(options) {
           subscribeLock: options.subscribeAppLock,
         })
       : null;
+    const themeService = new PluginThemeService({database,packageStore,contributionService});
     const manager = new PluginManager({
       permissionEngine,
       database,
@@ -377,6 +379,7 @@ function createPluginHostService(options) {
       runtimeSupervisor,
       contributionService,
       beforeClose: async () => {
+        themeService.shutdown();
         interactionService.shutdown();
         terminalDataPipelineService?.shutdown();
         extensionProviderService.shutdown();
@@ -389,6 +392,7 @@ function createPluginHostService(options) {
       },
     });
     return {
+      themeService,
       interactionService,
       catalogService: new RegistryCatalogService({ manager, fetch: options.electron.net?.fetch?.bind(options.electron.net) }),
       companionSupervisor,

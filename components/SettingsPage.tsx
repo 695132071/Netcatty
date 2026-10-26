@@ -1,3 +1,5 @@
+import { useAppThemeStyle } from "../application/app/useAppThemeStyle";
+import { selectPluginThemeTokens } from "../application/state/pluginContributionEnvironment";
 /**
  * Settings Page - Standalone settings window content
  * This component is rendered in a separate Electron window
@@ -322,6 +324,9 @@ const SettingsSyncTabWithVault: React.FC<{ onSettingsApplied?: () => void }> = (
 };
 
 const SettingsPageContent: React.FC<{ settings: SettingsState; appLock?: AppLockState }> = ({ settings, appLock }) => {
+    // This publisher also runs in detached Settings: never broadcast a local preview.
+    const committedAppThemeStyle = useAppThemeStyle(false);
+    const pluginThemeTokens = useMemo(() => selectPluginThemeTokens(committedAppThemeStyle as Record<string, unknown>), [committedAppThemeStyle]);
     const { t } = useI18n();
     const { request, clearFocus, openSearch } = useSettingsFocus();
     const { notifyRendererReady, closeSettingsWindow, onWindowCommandCloseRequested } = useWindowControls();
@@ -715,7 +720,7 @@ const SettingsPageContent: React.FC<{ settings: SettingsState; appLock?: AppLock
             </Tabs>
         </div>
         <ExternalMcpApprovalsHost />
-        <PluginContributionHost locale={settings.uiLanguage} theme={settings.resolvedTheme} />
+        <PluginContributionHost locale={settings.uiLanguage} theme={settings.resolvedTheme} themeTokens={pluginThemeTokens} />
         </>
     );
 };

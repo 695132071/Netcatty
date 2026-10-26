@@ -488,6 +488,7 @@ export type PermissionSet = {
 };
 
 export type PluginContributions = {
+  themes?: Array<ThemePackContribution>;
   settings?: Array<SettingContribution>;
   commands?: Array<CommandContribution>;
   keybindings?: Array<KeybindingContribution>;
@@ -509,6 +510,7 @@ export type PluginEngines = {
 export type PluginEntrypoints = {
   browser?: RelativePackagePath;
   node?: RelativePackagePath;
+  data?: "theme";
 };
 
 export type PluginErrorData = {
@@ -1047,6 +1049,86 @@ export type ThemeIcon = {
   kind: "theme";
   name: string;
 };
+
+export type ThemePackApplyRequest = {
+  expectedRevision: SafeUnsignedInteger;
+  mode: "light" | "dark";
+  choice: (ThemePackChoice) | (null);
+};
+
+export type ThemePackCatalog = {
+  selection: ThemePackSelection;
+  entries: Array<ThemePackEntry>;
+  diagnostics: Array<{
+    pluginId: PluginId;
+    themeId?: string;
+    code: "invalid" | "unavailable" | "capacity";
+  }>;
+};
+
+export type ThemePackChoice = {
+  ref: ThemePackReference;
+};
+
+export type ThemePackColors = {
+  background?: string;
+  foreground?: string;
+  card?: string;
+  cardForeground?: string;
+  popover?: string;
+  popoverForeground?: string;
+  secondary?: string;
+  secondaryForeground?: string;
+  muted?: string;
+  mutedForeground?: string;
+  accent?: string;
+  destructive?: string;
+  destructiveForeground?: string;
+  border?: string;
+  input?: string;
+};
+
+export type ThemePackContribution = {
+  id: ContributionId;
+  label: LocalizedText;
+  variant: ThemePackVariant;
+  entry: RelativePackagePath;
+};
+
+export type ThemePackEntry = {
+  ref: ThemePackReference;
+  label: string;
+  pluginName: string;
+  dataOnly: boolean;
+  palette: ThemePackPalette;
+};
+
+export type ThemePackFeature = "appearance.theme-packs";
+
+export type ThemePackLimits = {"jsonBytes":65536,"catalogEntries":256,"themesPerPackage":32};
+
+export type ThemePackPalette = {
+  formatVersion: 1;
+  base: "light" | "dark";
+  colors: ThemePackColors;
+};
+
+export type ThemePackReference = {
+  pluginId: PluginId;
+  themeId: ContributionId;
+  version: SemanticVersion;
+  digest: string;
+  variant: ThemePackVariant;
+};
+
+export type ThemePackSelection = {
+  formatVersion: 1;
+  revision: SafeUnsignedInteger;
+  light: (ThemePackChoice) | (null);
+  dark: (ThemePackChoice) | (null);
+};
+
+export type ThemePackVariant = "light" | "dark";
 
 export type VaultPagesFeature = "views.vault-pages";
 

@@ -70,6 +70,7 @@ module.exports = {
         'domain/terminalPromptSecurity.shared.cjs',
         'domain/pluginRuntimePolicy.cjs',
         'domain/pluginPermissionDescriptions.cjs',
+        'domain/pluginThemePack.cjs',
         // Main-process SSH, SFTP, and port-forward bridges share this matcher.
         // TypeScript under domain/ is excluded below, so the .cjs must be listed.
         'domain/systemManager/containerRuntime.shared.cjs',

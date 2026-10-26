@@ -6,7 +6,7 @@
     "en": "Session Scratchpad",
     "zh-CN": "会话草稿板"
   },
-  "version": "0.1.0",
+  "version": "0.1.1",
   "publisher": "netcatty",
   "license": "GPL-3.0-or-later",
   "engines": {

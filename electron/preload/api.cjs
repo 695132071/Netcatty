@@ -122,6 +122,13 @@ function createPreloadApi(ctx) {
   }),
   restartPlugin: (pluginId) => ipcRenderer.invoke("netcatty:plugins:restart", { pluginId }),
   uninstallPlugin: (pluginId) => ipcRenderer.invoke("netcatty:plugins:uninstall", { pluginId }),
+  getPluginThemes: () => ipcRenderer.invoke("netcatty:plugins:theme-catalog"),
+  applyPluginTheme: (request) => ipcRenderer.invoke("netcatty:plugins:theme-apply", request),
+  onPluginThemesChanged: (callback) => {
+    const listener = () => callback();
+    ipcRenderer.on("netcatty:plugins:themes-changed", listener);
+    return () => ipcRenderer.removeListener("netcatty:plugins:themes-changed", listener);
+  },
   getPluginContributions: (options) => ipcRenderer.invoke("netcatty:plugins:contributions", options ?? {}),
   getPluginBrandIcon: (pluginId) => ipcRenderer.invoke("netcatty:plugins:brand-icon", { pluginId }),
   getPluginContributionIcon: (pluginId, icon) => ipcRenderer.invoke("netcatty:plugins:contribution-icon", { pluginId, icon }),

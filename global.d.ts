@@ -454,6 +454,9 @@ declare global {
     setPluginEnabled?(pluginId: string, enabled: boolean): Promise<NetcattyInstalledPlugin>;
     restartPlugin?(pluginId: string): Promise<NetcattyInstalledPlugin>;
     uninstallPlugin?(pluginId: string): Promise<boolean>;
+    getPluginThemes?(): Promise<import("@netcatty/plugin-contract").ThemePackCatalog>;
+    applyPluginTheme?(request: import("@netcatty/plugin-contract").ThemePackApplyRequest): Promise<import("@netcatty/plugin-contract").ThemePackCatalog>;
+    onPluginThemesChanged?(callback: () => void): () => void;
     getPluginContributions?(options?: NetcattyPluginContributionQuery): Promise<NetcattyPluginContributionSnapshot>;
     getPluginBrandIcon?(pluginId: string): Promise<{ light: string; dark?: string } | null>;
     getPluginContributionIcon?(pluginId: string, icon: Extract<NetcattyPluginIconReference, { kind: 'package' }>): Promise<{ light: string; dark?: string }>;

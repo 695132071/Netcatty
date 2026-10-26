@@ -167,7 +167,8 @@ function AppPluginKeybindingThemeHost({
   sessions: any[];
   workspaces: any[];
 }) {
-  const appThemeStyle = useAppThemeStyle();
+  // View environment is global in the current host: publish committed colors only.
+  const appThemeStyle = useAppThemeStyle(false);
   const { resolvedTheme, uiLanguage } = useSettingsChromeStore();
   const pluginThemeTokens = useMemo(
     () => selectPluginThemeTokens(appThemeStyle as Record<string, unknown>),

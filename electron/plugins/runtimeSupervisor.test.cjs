@@ -993,3 +993,12 @@ test('new host initializes an exact legacy API plugin with its negotiated legacy
   assert.deepEqual(observed, ['0.1.0-internal']);
   await fixture.supervisor.stop(fixture.manifest.id);
 });
+
+test('data-only themes never create a runtime on startup or explicit start',async(t)=>{
+ const fixture=createFixture(t,()=>{throw new Error('data pack must not execute');});
+ const manifest={...fixture.manifest,main:{data:'theme'},activationEvents:[],features:{required:['appearance.theme-packs']},contributes:{themes:[{id:fixture.manifest.id+'.light',label:'Light',variant:'light',entry:'light.json'}]}};
+ fixture.database.installVersion({pluginId:manifest.id,version:manifest.version,manifest,archiveSha256:'a'.repeat(64),packageRelativePath:'theme'}, {enable:true});
+ await fixture.supervisor.startEnabled();assert.equal(fixture.runtimeOptions.length,0);
+ await assert.rejects(fixture.supervisor.start(manifest.id),/no executable runtime/);assert.equal(fixture.runtimeOptions.length,0);
+ await fixture.supervisor.shutdown();
+});

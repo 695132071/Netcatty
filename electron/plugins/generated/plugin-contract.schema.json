@@ -902,10 +902,27 @@
         },
         "node": {
           "$ref": "#/$defs/RelativePackagePath"
+        },
+        "data": {
+          "const": "theme"
         }
       },
       "minProperties": 1,
-      "additionalProperties": false
+      "additionalProperties": false,
+      "if": {
+        "required": [
+          "data"
+        ],
+        "type": "object",
+        "properties": {
+          "data": {
+            "const": "theme"
+          }
+        }
+      },
+      "then": {
+        "maxProperties": 1
+      }
     },
     "PluginEngines": {
       "type": "object",
@@ -3295,6 +3312,14 @@
     "PluginContributions": {
       "type": "object",
       "properties": {
+        "themes": {
+          "type": "array",
+          "maxItems": 32,
+          "items": {
+            "$ref": "#/$defs/ThemePackContribution"
+          },
+          "minItems": 1
+        },
         "settings": {
           "type": "array",
           "maxItems": 512,
@@ -3457,7 +3482,51 @@
           }
         }
       },
-      "additionalProperties": false
+      "additionalProperties": false,
+      "if": {
+        "properties": {
+          "main": {
+            "required": [
+              "data"
+            ],
+            "type": "object",
+            "properties": {
+              "data": {
+                "const": "theme"
+              }
+            }
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "contributes": {
+            "required": [
+              "themes"
+            ],
+            "maxProperties": 1,
+            "type": "object",
+            "properties": {
+              "themes": true
+            }
+          },
+          "permissions": {
+            "maxProperties": 0,
+            "type": "object"
+          },
+          "activationEvents": {
+            "maxItems": 0,
+            "type": "array"
+          },
+          "companionExecutables": {
+            "maxItems": 0,
+            "type": "array"
+          }
+        },
+        "required": [
+          "contributes"
+        ]
+      }
     },
     "RpcId": {
       "oneOf": [
@@ -4771,6 +4840,328 @@
           },
           "additionalProperties": false
         }
+      ]
+    },
+    "ThemePackFeature": {
+      "const": "appearance.theme-packs"
+    },
+    "ThemePackLimits": {
+      "const": {
+        "jsonBytes": 65536,
+        "catalogEntries": 256,
+        "themesPerPackage": 32
+      }
+    },
+    "ThemePackVariant": {
+      "type": "string",
+      "enum": [
+        "light",
+        "dark"
+      ]
+    },
+    "ThemePackContribution": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/ContributionId"
+        },
+        "label": {
+          "$ref": "#/$defs/LocalizedText"
+        },
+        "variant": {
+          "$ref": "#/$defs/ThemePackVariant"
+        },
+        "entry": {
+          "$ref": "#/$defs/RelativePackagePath"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "label",
+        "variant",
+        "entry"
+      ]
+    },
+    "ThemePackColors": {
+      "type": "object",
+      "properties": {
+        "background": {
+          "type": "string",
+          "pattern": "^#[0-9A-Fa-f]{6}$"
+        },
+        "foreground": {
+          "type": "string",
+          "pattern": "^#[0-9A-Fa-f]{6}$"
+        },
+        "card": {
+          "type": "string",
+          "pattern": "^#[0-9A-Fa-f]{6}$"
+        },
+        "cardForeground": {
+          "type": "string",
+          "pattern": "^#[0-9A-Fa-f]{6}$"
+        },
+        "popover": {
+          "type": "string",
+          "pattern": "^#[0-9A-Fa-f]{6}$"
+        },
+        "popoverForeground": {
+          "type": "string",
+          "pattern": "^#[0-9A-Fa-f]{6}$"
+        },
+        "secondary": {
+          "type": "string",
+          "pattern": "^#[0-9A-Fa-f]{6}$"
+        },
+        "secondaryForeground": {
+          "type": "string",
+          "pattern": "^#[0-9A-Fa-f]{6}$"
+        },
+        "muted": {
+          "type": "string",
+          "pattern": "^#[0-9A-Fa-f]{6}$"
+        },
+        "mutedForeground": {
+          "type": "string",
+          "pattern": "^#[0-9A-Fa-f]{6}$"
+        },
+        "accent": {
+          "type": "string",
+          "pattern": "^#[0-9A-Fa-f]{6}$"
+        },
+        "destructive": {
+          "type": "string",
+          "pattern": "^#[0-9A-Fa-f]{6}$"
+        },
+        "destructiveForeground": {
+          "type": "string",
+          "pattern": "^#[0-9A-Fa-f]{6}$"
+        },
+        "border": {
+          "type": "string",
+          "pattern": "^#[0-9A-Fa-f]{6}$"
+        },
+        "input": {
+          "type": "string",
+          "pattern": "^#[0-9A-Fa-f]{6}$"
+        }
+      },
+      "additionalProperties": false,
+      "minProperties": 1
+    },
+    "ThemePackPalette": {
+      "type": "object",
+      "properties": {
+        "formatVersion": {
+          "const": 1
+        },
+        "base": {
+          "type": "string",
+          "enum": [
+            "light",
+            "dark"
+          ]
+        },
+        "colors": {
+          "$ref": "#/$defs/ThemePackColors"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "formatVersion",
+        "base",
+        "colors"
+      ]
+    },
+    "ThemePackReference": {
+      "type": "object",
+      "properties": {
+        "pluginId": {
+          "$ref": "#/$defs/PluginId"
+        },
+        "themeId": {
+          "$ref": "#/$defs/ContributionId"
+        },
+        "version": {
+          "$ref": "#/$defs/SemanticVersion"
+        },
+        "digest": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "variant": {
+          "$ref": "#/$defs/ThemePackVariant"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "pluginId",
+        "themeId",
+        "version",
+        "digest",
+        "variant"
+      ]
+    },
+    "ThemePackChoice": {
+      "type": "object",
+      "properties": {
+        "ref": {
+          "$ref": "#/$defs/ThemePackReference"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "ref"
+      ]
+    },
+    "ThemePackSelection": {
+      "type": "object",
+      "properties": {
+        "formatVersion": {
+          "const": 1
+        },
+        "revision": {
+          "$ref": "#/$defs/SafeUnsignedInteger"
+        },
+        "light": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/ThemePackChoice"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "dark": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/ThemePackChoice"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "formatVersion",
+        "revision",
+        "light",
+        "dark"
+      ]
+    },
+    "ThemePackApplyRequest": {
+      "type": "object",
+      "properties": {
+        "expectedRevision": {
+          "$ref": "#/$defs/SafeUnsignedInteger"
+        },
+        "mode": {
+          "type": "string",
+          "enum": [
+            "light",
+            "dark"
+          ]
+        },
+        "choice": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/ThemePackChoice"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "expectedRevision",
+        "mode",
+        "choice"
+      ]
+    },
+    "ThemePackEntry": {
+      "type": "object",
+      "properties": {
+        "ref": {
+          "$ref": "#/$defs/ThemePackReference"
+        },
+        "label": {
+          "type": "string",
+          "maxLength": 512
+        },
+        "pluginName": {
+          "type": "string",
+          "maxLength": 512
+        },
+        "dataOnly": {
+          "type": "boolean"
+        },
+        "palette": {
+          "$ref": "#/$defs/ThemePackPalette"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "ref",
+        "label",
+        "pluginName",
+        "dataOnly",
+        "palette"
+      ]
+    },
+    "ThemePackCatalog": {
+      "type": "object",
+      "properties": {
+        "selection": {
+          "$ref": "#/$defs/ThemePackSelection"
+        },
+        "entries": {
+          "type": "array",
+          "maxItems": 256,
+          "items": {
+            "$ref": "#/$defs/ThemePackEntry"
+          }
+        },
+        "diagnostics": {
+          "type": "array",
+          "maxItems": 256,
+          "items": {
+            "type": "object",
+            "properties": {
+              "pluginId": {
+                "$ref": "#/$defs/PluginId"
+              },
+              "themeId": {
+                "type": "string",
+                "maxLength": 192
+              },
+              "code": {
+                "type": "string",
+                "enum": [
+                  "invalid",
+                  "unavailable",
+                  "capacity"
+                ]
+              }
+            },
+            "additionalProperties": false,
+            "required": [
+              "pluginId",
+              "code"
+            ]
+          }
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "selection",
+        "entries",
+        "diagnostics"
       ]
     }
   }

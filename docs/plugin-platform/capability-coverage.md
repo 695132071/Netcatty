@@ -27,7 +27,7 @@ mean complete. Existing APIs remain available.
 | Vault and keychain | Credential references and import preview/commit | Metadata/write enums do not grant a generic Vault SDK | Only user-selected whitelist DTOs and drafts | Notes, environmentVariables, startupCommand, keys and credentials | Selected object plus field/direction | Explicit preview, identity checks, redacted audit | Full Vault export and secret reads deferred indefinitely. No agent field-exclusion DTO reuse |
 | System manager and Docker | No plugin system API | Agent/MCP adapters are separate authority | Typed read-only summaries excluding args/env/inspect | Process command lines and Docker inspect can expose secrets | Selected live session and summary kind | Bounded result, endpoint identity, cancellation | Planned evaluation. Arbitrary process/inspect forwarding deferred |
 | Port forwarding | No generic plugin API | Existing agent start is write-sensitive | Selected rule status and open host form | Rule endpoints and local exposure | Selected rule plus host action | Bounded DTO, session close and revoke | Planned evaluation. Direct start deferred until binding/listener approval design |
-| Themes, settings, appearance, i18n | Terminal theme/background Providers, isolated view CSS, scoped settings and environment updates | No host global theme contribution. Personal customCSS is not plugin authority | Accepted ThemePack stage: static palette registry, selector, local preview, revision-safe apply/cancel/reset, terminal linkage | Unreadable palettes and misleading security UI. Nineteen UiThemeTokens fields are not independent: accent derives primary/ring/foregrounds | User explicitly selects a theme; static contribution enablement separate from code permissions | Immutable version/hash, bounded JSON, contrast/security-surface gates, preview owner/revision and safe fallback | Planned independent implementation after current controlled workflow/navigation. No arbitrary DOM/CSS, remote assets, layout replacement or security UI customization |
+| Themes, settings, appearance, i18n | Terminal theme/background Providers, isolated view CSS, scoped settings and environment updates | No host global theme contribution. Personal customCSS is not plugin authority | Accepted ThemePack stage: static palette registry, selector, local preview, revision-safe apply/cancel/reset, terminal linkage | Unreadable palettes and misleading security UI. Nineteen UiThemeTokens fields are not independent: accent derives primary/ring/foregrounds | User explicitly selects a theme; static contribution enablement separate from code permissions | Immutable version/hash, bounded JSON, contrast/security-surface gates, preview owner/revision and safe fallback | First host color layer implemented; [contract/lifecycle/evidence](./theme-packs.md). Exact-SHA CI, independent review and native acceptance pending. Static terminal linkage not yet accepted; no arbitrary DOM/CSS, remote assets, layout replacement or security UI customization |
 | Transfer center | Host transfer queue exists, no plugin entry | No ownership-bound task API | Observe and cancel only plugin-created tasks | Paths and host endpoints reveal user data. Cancel may leave partial files | Own transfer handle plus source/destination authority | Shared backpressure, cancel/close cleanup, honest partial status | Planned with batch 2. Do not broadcast or cancel other tasks |
 | AI, MCP, automation | Host agent catalog and harness exist separately | No generic plugin AI or tool forwarding | Selection-to-proposal workflow through the same controlled primitives | Content disclosure, account authority and model cost | Explicit content sharing plus service origin/budget | No inherited history, tools, account, or hidden cron | Controlled workflow planned. Generic host AI and visible schedules deferred to distinct product decision |
 | Known hosts, app lock and global security | Host security management UI | No plugin management API | Future allowlisted security-page navigation | Host-key trust, unlock, keys and security policy affect all sessions | Host navigation action only | No mutation or sensitive DTO | Security policy mutation, private-key reads, auto-trust and unlocking deferred indefinitely |
@@ -111,3 +111,56 @@ This stage builds on ordinary merges containing #3960 8e4dd0c and the #3971
 stale-layout callback fix. Prior QA heads and PR bases are not rewritten. The
 ThemePack implementation, selected-context/drafts and file handles remain
 unfinished; parent review/native gates still apply to each delivered head.
+
+## Color-pack and remaining workflow checkpoint
+
+The first [ThemePack color layer](./theme-packs.md) now has an implemented host
+catalog, data-only admission, Appearance selector, local preview, revision-safe
+application/reset, missing-version fallback and host security palette boundary.
+It is not native-accepted until the new exact head is independently reviewed,
+built by CI and exercised through normal Settings. Terminal palette linkage is
+not accepted by this contract yet, so a declared but ignored linkage cannot be
+counted as coverage. Font/density/icon/background packs remain separate product
+and accessibility decisions, rather than arbitrary CSS permissions.
+
+Parent native evidence for sidebar `a8adeb86` now covers the original Local
+Terminal blocker, own-views Once, save, magnify/restore, a split with empty Notes,
+and side/bottom docking. `733f44c` adds only the production bridge projection
+regression. The older `0c097a1` CI run `40308057623` remains **failed and
+unattributed**: 9447 top-level TAP results are `ok`, the aggregate footer is
+missing and the process exits 1. A newer passing run does not change that record.
+The native Vault success retains its original `0c097a1` evidence label.
+
+The next implementation stages are bounded by useful workflows:
+
+1. **Selected terminal sharing and drafts (A).** Reuse host-signed action
+   contexts for an explicit selection preview/share, then let the plugin submit
+   a bounded input draft to the host compose surface. No Enter, raw PTY, history
+   enumeration or background terminal listener. First add a host-selected
+   session handle with a minimal from-scratch DTO and independent lifecycle
+   watch; navigation alone grants no content. Bind handles to actual session and
+   connection identity, runtime/version, owner, mode and TTL. Cover cancel,
+   reconnect, close, revoke and late draft results with synthetic terminals.
+2. **Selected file conversion/transfer (A).** The host picker issues read or
+   explicit-destination write handles. Start with one file, stat/read and saveAs
+   or upload, not recursive traversal or arbitrary paths. Require destination
+   preview/overwrite confirmation, byte/concurrency limits, cancellation,
+   session/endpoint identity and final active checks. Observe/cancel only the
+   plugin's own transfer. Real native SFTP targets require parent-coordinated
+   concrete approval; local tests use isolated fixtures.
+3. **Versioned document proposals (selected B).** Reuse snapshot/handle and host
+   review primitives for one explicitly shared editor document or Note. Apply
+   only an expected-version patch to its buffer after a visible diff; saving a
+   remote file remains a separate file operation. Reuse the draft path for a
+   selected snippet or new snippet template; do not run scripts or add onConnect
+   bindings. Cover edits after snapshot, detached ownership, closure and revoke.
+4. **Final reassessment.** Recheck the matrix by actual workflow and eight gates.
+   Read-only system aggregates, selected port-rule status and bounded navigation
+   may be added only where the shared primitives leave a concrete useful gap.
+   Full process arguments/env/inspect, tunnel start, arbitrary AI/MCP tools,
+   background jobs, general KV sync and raw high-privilege access remain deferred
+   or retained boundaries. Do not invent new C work to prolong the task.
+
+These stages remain unfinished work, not API-name coverage. Exact schemas and
+ordering will follow the existing brokers/adapters rather than a parallel RPC
+stack or one namespace per product module.

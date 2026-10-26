@@ -3,7 +3,7 @@
   "id": "com.netcatty.vault-scratchpad",
   "name": "vault-scratchpad",
   "displayName": { "en": "Vault Scratchpad", "zh-CN": "Vault 草稿板" },
-  "version": "0.1.0",
+  "version": "0.1.1",
   "publisher": "netcatty",
   "license": "GPL-3.0-or-later",
   "engines": { "netcatty": ">=0.0.0", "api": ">=0.1.0-internal.1 <0.2.0" },

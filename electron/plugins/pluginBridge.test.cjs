@@ -1714,3 +1714,10 @@ test("host interaction ready and response channels reject untrusted senders befo
   await ipcMain.handlers.get(CHANNELS.interactionResponse)({ trusted: true, sender }, response);
   assert.deepEqual(calls, [[sender, true], [sender, response]]);
 });
+
+test('theme catalog and selection remain trusted app management channels',async()=>{
+ const ipc=createIpcMain();let calls=0;
+ registerPluginBridge(ipc,{manager:{initialize:async()=>{}},isTrustedSender:event=>event?.trusted===true,themeService:{catalog:async()=>{calls++;return{};},apply:async()=>{calls++;return{};}}});
+ for(const channel of [CHANNELS.themeCatalog,CHANNELS.themeApply])await assert.rejects(ipc.handlers.get(channel)({trusted:false},{}),/Untrusted/);
+ assert.equal(calls,0);await ipc.handlers.get(CHANNELS.themeCatalog)({trusted:true});await ipc.handlers.get(CHANNELS.themeApply)({trusted:true},{});assert.equal(calls,2);
+});
