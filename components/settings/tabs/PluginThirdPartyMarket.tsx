@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useRef, useState } from 'react';
 import { usePluginSources } from '../../../application/state/usePluginSources';
 import { useI18n } from '../../../application/i18n/I18nProvider';
 import { Button } from '../../ui/button';
@@ -14,6 +14,8 @@ export function PluginThirdPartyMarket({ installed, toolbarContainer, noVault }:
   const [selected, setSelected] = useState('');
   const [visited, setVisited] = useState<string[]>([]);
   const [managing, setManaging] = useState(false);
+  const opener = useRef<HTMLButtonElement | null>(null);
+  const openManager = (event: React.MouseEvent<HTMLButtonElement>) => { opener.current = event.currentTarget; setManaging(true); };
   const [name, setName] = useState('');
   const [address, setAddress] = useState('');
   const [accepted, setAccepted] = useState(false);
@@ -29,14 +31,14 @@ export function PluginThirdPartyMarket({ installed, toolbarContainer, noVault }:
         <option value="">{t('settings.plugins.sources.select')}</option>
         {sources.filter((item) => item.enabled).map((item) => <option key={item.id} value={item.id}>{item.name} — {new URL(item.origin!).hostname}</option>)}
       </select>
-      <Button variant="outline" size="sm" onClick={() => setManaging(true)}>{t('settings.plugins.sources.manage')}</Button>
+      <Button variant="outline" size="sm" onClick={openManager}>{t('settings.plugins.sources.manage')}</Button>
     </div>
-    {!source && <div className="py-8 text-center text-sm text-muted-foreground"><p>{t('settings.plugins.sources.empty')}</p><Button className="mt-3" variant="outline" onClick={() => setManaging(true)}>{t('settings.plugins.sources.add')}</Button></div>}
+    {!source && <div className="py-8 text-center text-sm text-muted-foreground"><p>{t('settings.plugins.sources.empty')}</p><Button className="mt-3" variant="outline" onClick={openManager}>{t('settings.plugins.sources.add')}</Button></div>}
     {/* Keep each visited source mounted to preserve its own selection/search/scroll. */}
     {sources.filter((item) => item.enabled && (item.id === selected || visited.includes(item.id))).map((item) => {
       return <div key={item.id} hidden={item.id !== source?.id}><PluginMarketplace source={item} installed={installed} toolbarContainer={item.id === source?.id ? toolbarContainer : undefined} noVault={noVault} /></div>;
     })}
-    <Dialog open={managing} onOpenChange={setManaging}><DialogContent className="max-h-[85vh] overflow-y-auto">
+    <Dialog open={managing} onOpenChange={setManaging}><DialogContent className="max-h-[85vh] overflow-y-auto" onCloseAutoFocus={(event) => { event.preventDefault(); opener.current?.focus(); }}>
       <DialogTitle>{t('settings.plugins.sources.manage')}</DialogTitle><DialogDescription>{t('settings.plugins.sources.risk')}</DialogDescription>
       {model.error && <p role="alert" className="text-sm text-destructive">{model.error}</p>}
       <div className="space-y-3">{sources.map((item) => <div key={item.id} className="space-y-2 rounded-lg bg-muted/30 p-3">
