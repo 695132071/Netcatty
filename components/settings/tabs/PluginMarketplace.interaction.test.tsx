@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
-import test from 'node:test';
+import test, { before, after } from 'node:test';
+import { JSDOM } from 'jsdom';
 import React, { useState } from 'react';
 import { act, create, type ReactTestRenderer } from 'react-test-renderer';
 import { renderToStaticMarkup } from 'react-dom/server';
@@ -7,6 +8,19 @@ import { readFileSync } from 'node:fs';
 import { I18nProvider } from '../../../application/i18n/I18nProvider';
 import { PluginMarketplaceContent } from './PluginMarketplace';
 import type { usePluginCatalog } from '../../../application/state/usePluginCatalog';
+
+const infoDom = new JSDOM('<!doctype html><html><body></body></html>');
+const previousWindow = Object.getOwnPropertyDescriptor(globalThis, 'window');
+const previousDocument = Object.getOwnPropertyDescriptor(globalThis, 'document');
+before(() => {
+  Object.defineProperty(globalThis, 'window', { configurable: true, value: infoDom.window });
+  Object.defineProperty(globalThis, 'document', { configurable: true, value: infoDom.window.document });
+});
+after(() => {
+  infoDom.window.close();
+  if (previousWindow) Object.defineProperty(globalThis, 'window', previousWindow); else Reflect.deleteProperty(globalThis, 'window');
+  if (previousDocument) Object.defineProperty(globalThis, 'document', previousDocument); else Reflect.deleteProperty(globalThis, 'document');
+});
 
 const entries = ['Alpha', 'Beta'].map((name) => ({
   id: `com.example.${name.toLowerCase()}`, name, author: 'Example', version: '1.0.0', license: 'MIT',
@@ -39,16 +53,13 @@ test('catalog keeps search during selection/back, switches detail, and displays 
     assert.equal(cards().length, 1);
     await act(async () => cards()[0].props.onClick());
     assert.equal(renderer.root.findByType('article').props['aria-label'], 'Alpha');
-    assert.equal(cards()[0].props['aria-current'], 'true');
+    assert.equal(cards().length, 0, 'detail replaces the entire grid at every width');
+    assert.equal(renderer.root.findAllByType('input').length, 0);
     const detailText = JSON.stringify(renderer.toJSON());
     assert.match(detailText, /0.9.0/);
     assert.match(detailText, /Disabled/);
     assert.match(detailText, /Incompatible with this host/);
     assert.match(detailText, /Last recorded error/);
-    assert.match(cards()[0].props.className, /bg-primary\/10/);
-    assert.match(cards()[0].props.className, /border-primary\/40/);
-    assert.doesNotMatch(cards()[0].props.className, /bg-accent|text-accent-foreground/);
-    assert.match(detailText, /1 plugins/);
     assert.equal(renderer.root.findAllByType('details').length, 0, 'permissions are not hidden in a disclosure');
     assert.equal(renderer.root.findAll((node) => node.type === 'button' && node.children.includes('Install this version (disabled)')).length, 0, 'source-only cards have no install action');
     const back = () => renderer.root.findAllByType('button').find((node) => node.children.includes('All plugins'))!;
@@ -56,15 +67,12 @@ test('catalog keeps search during selection/back, switches detail, and displays 
     assert.equal(renderer.root.findAllByType('article').length, 0);
     assert.equal(input().props.value, 'Alpha');
     await act(async () => input().props.onChange({ target: { value: '' } }));
-    await act(async () => cards()[0].props.onClick());
     await act(async () => cards()[1].props.onClick());
     assert.equal(renderer.root.findByType('article').props['aria-label'], 'Beta');
-    assert.equal(cards()[1].props['aria-current'], 'true');
-    assert.equal(cards()[0].props['aria-current'], undefined);
+    assert.equal(cards().length, 0);
+    await act(async () => back().props.onClick());
     await act(async () => input().props.onChange({ target: { value: 'no match' } }));
     assert.equal(cards().length, 0);
-    assert.equal(renderer.root.findByType('article').props['aria-label'], 'Beta', 'filtering does not erase the selected detail');
-    await act(async () => back().props.onClick());
     assert.equal(input().props.value, 'no match');
     await act(async () => renderer.unmount());
   } finally {
@@ -81,29 +89,29 @@ test('README failure leaves the permissions and source visible, before the failu
   assert.match(html, /Compatibility and permissions/);
   assert.match(html, /settings.read/);
   assert.match(html, /not a grant/);
-  assert.match(html, /Build with the local CLI/);
+  assert.match(html, /Source example/);
   assert.ok(html.indexOf('settings.read') < html.indexOf('Network unavailable'));
   assert.match(html, /Retry/);
   assert.doesNotMatch(html, /<details/);
 });
 
-test('responsive layout is scoped to marketplace content width, with a narrow detail-only fallback', () => {
+test('cards use subtle shadows and details have no breakpoint-specific columns or nested scroller', () => {
   const css = readFileSync(new URL('./plugin-marketplace.css', import.meta.url), 'utf8');
-  assert.match(css, /\.plugin-marketplace \{ container-type: inline-size;/);
-  assert.match(css, /@container \(min-width: 820px\)/);
-  assert.match(css, /grid-template-columns: 248px minmax\(0, 1fr\)/);
-  assert.match(css, /plugin-marketplace-browser--selected \.plugin-marketplace-catalog \{ display: none;/);
+  assert.match(css, /box-shadow: 0 1px 4px/);
+  assert.match(css, /\.dark \.plugin-card/);
+  assert.doesNotMatch(css, /@container|248px|max-height|overflow-y/);
 });
 
-test('narrow detail starts at the top and back restores the settings scroll and card focus', async () => {
+test('full-page detail starts at the top and back restores the settings scroll and card focus', async () => {
   const previousRaf = globalThis.requestAnimationFrame;
-  globalThis.requestAnimationFrame = (callback) => { callback(0); return 0; };
+  const frames: FrameRequestCallback[] = [];
+  globalThis.requestAnimationFrame = (callback) => { frames.push(callback); return frames.length; };
   const actGlobal = globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean };
   const previousActEnvironment = actGlobal.IS_REACT_ACT_ENVIRONMENT;
   actGlobal.IS_REACT_ACT_ENVIRONMENT = true;
   const pane = { scrollTop: 450 };
   let focused = false;
-  const list = { scrollTop: 0, closest: (selector: string) => selector === '.plugin-marketplace' ? { clientWidth: 700 } : pane,
+  const list = { scrollTop: 0, closest: (selector: string) => selector === '.plugin-marketplace' ? { clientWidth: 1100 } : pane,
     querySelectorAll: () => [{ dataset: { pluginId: entries[0].id }, focus: () => { focused = true; } }] };
   let renderer!: ReactTestRenderer;
   function Harness() {
@@ -111,12 +119,14 @@ test('narrow detail starts at the top and back restores the settings scroll and 
     return <I18nProvider locale="en"><PluginMarketplaceContent catalog={catalog} selected={selected} onSelect={setSelected} installed={[]} /></I18nProvider>;
   }
   try {
-    await act(async () => { renderer = create(<Harness />, { createNodeMock: (element) => element.type === 'div' ? list : { scrollTo() {}, focus() {} } }); });
+    await act(async () => { renderer = create(<Harness />, { createNodeMock: (element) => element.type === 'div' && (element.props as { className?: string }).className?.includes('plugin-marketplace-catalog') ? list : null }); });
     const card = renderer.root.findAll((node) => node.type === 'button' && node.props['data-plugin-id'] === entries[0].id)[0];
     await act(async () => card.props.onClick());
+    frames.splice(0).forEach((frame) => frame(0));
     assert.equal(pane.scrollTop, 0);
     const back = renderer.root.findAllByType('button').find((node) => node.children.includes('All plugins'))!;
     await act(async () => back.props.onClick());
+    frames.splice(0).forEach((frame) => frame(0));
     assert.equal(pane.scrollTop, 450);
     assert.equal(focused, true);
     await act(async () => renderer.unmount());
@@ -131,8 +141,7 @@ test('offline catalog warning keeps details visible and disables market installa
   const html = renderToStaticMarkup(<I18nProvider locale="en"><PluginMarketplaceContent
     catalog={{ ...catalog, entries: [downloadable], listError: 'Registry offline', source: 'cached' }}
     selected={downloadable.id} onSelect={() => {}} installed={[]} /></I18nProvider>);
-  assert.match(html, /Registry offline/);
-  assert.match(html, /Installation is unavailable until refresh succeeds/);
+  assert.match(html, /Offline catalog · installation unavailable/);
   assert.match(html, /Compatibility and permissions/);
   assert.match(html, /<button[^>]*disabled=""[^>]*>Install this version/);
   assert.match(html, /Retry/);

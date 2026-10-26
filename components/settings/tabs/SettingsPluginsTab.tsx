@@ -3,6 +3,7 @@ import { PluginManagementDialog } from './PluginManagementDialog';
 import { PluginMarketplace } from './PluginMarketplace';
 import { PluginPackageManager } from './PluginPackageManager';
 import { FolderOpen } from 'lucide-react';
+import { PluginInfo } from './PluginInfo';
 import React, { useEffect, useMemo, useState } from 'react';
 
 import { normalizePluginKeyboardEvent } from '../../../application/state/pluginKeybindings';
@@ -286,6 +287,7 @@ export function PluginSettingField({
 function PluginManagementContent({ handoff }: { handoff: (action: () => void) => void }) {
   const { t } = useI18n();
   const manager = usePluginManager();
+  const [catalogToolbar, setCatalogToolbar] = useState<HTMLDivElement | null>(null);
   const [selectedInstalled, setSelectedInstalled] = useState<string | null>(null);
   const [pluginView, setPluginView] = useState<'installed' | 'marketplace'>('installed');
   const availableFonts = useAvailableFonts();
@@ -314,10 +316,14 @@ function PluginManagementContent({ handoff }: { handoff: (action: () => void) =>
             <TabsTrigger value="installed">{t('settings.plugins.manager.installed')} <span className="ml-2 text-muted-foreground">{manager.plugins.length}</span></TabsTrigger>
             <TabsTrigger value="marketplace">{t('settings.plugins.market.title')}</TabsTrigger>
           </TabsList>
+          <div className="flex items-center gap-2">
+          <PluginInfo label={t('settings.plugins.info')}><p>{t('settings.plugins.manager.preview')}</p><p>{t('settings.plugins.market.note')}</p></PluginInfo>
+          <div ref={setCatalogToolbar} />
           <Button variant="outline" size="sm" disabled={!manager.available || manager.busy} onClick={() => { setPluginView('installed'); void manager.importPackage(); }}><FolderOpen size={14} className="mr-2" />{t('settings.plugins.manager.import')}</Button>
+          </div>
         </div>
-        {manager.credentialStorageAvailable === false && <p role="status" className="text-xs text-muted-foreground">{t('settings.plugins.manager.noVault')}</p>}
-        <TabsContent value="marketplace" className="m-0 space-y-6"><PluginMarketplace installed={manager.plugins} /></TabsContent>
+        {manager.credentialStorageAvailable === false && <div className="flex items-center gap-1 text-xs text-muted-foreground"><span role="status">{t('settings.plugins.manager.noVaultShort')}</span><PluginInfo label={t('settings.plugins.manager.noVaultShort')}>{t('settings.plugins.manager.noVault')}</PluginInfo></div>}
+        <TabsContent value="marketplace" className="m-0 space-y-6"><PluginMarketplace installed={manager.plugins} toolbarContainer={catalogToolbar} /></TabsContent>
         <TabsContent value="installed" className="m-0 space-y-6">
         <PluginPackageManager manager={manager} onSelectionChange={setSelectedInstalled} />
         {contextualScopes.size > 0 && (
