@@ -128,7 +128,8 @@ function extractTrailingIdlePrompt(output) {
   // CR and the PTY's ONLCR adds another, so the bytes are `\r\r\n`. The
   // CR-to-LF normalize above turns that into blank lines between the host
   // line and `$`/`#`. Keep those blanks in the cache: getFreshIdlePrompt
-  // uses the same normalize, and a lone `$` must not satisfy endsWith.
+  // uses the same normalize, and hasExpectedPromptSuffix compares this
+  // CR-as-LF form against live PTY bytes. A lone `$` must not satisfy endsWith.
   if (rightTrimmed === "$" || rightTrimmed === "#") {
     let hostIndex = lines.length - 1;
     while (hostIndex >= 0 && lines[hostIndex].replace(/\s+$/, "") === "") {
