@@ -1380,5 +1380,18 @@ Resalta el panel dividido enfocado:
   'plugins.authentication.responseFailed': 'No se pudo enviar la respuesta de autenticación. Inténtalo de nuevo o cancela la solicitud.',
   'plugins.authentication.responseFailedWithMessage': 'No se pudo enviar la respuesta de autenticación: {message}. Inténtalo de nuevo o cancela la solicitud.',
   'plugins.authentication.continue': 'Continuar',
+  'plugins.hostActions.select': 'Compartir metadatos de los equipos seleccionados',
+  'plugins.hostActions.selectionNote': 'Comparte nombres, direcciones, usuarios, protocolos, grupos y etiquetas guardados con este complemento. Los grupos solo incluyen los equipos seleccionados ahora. Conectar requiere otra confirmación.',
+  'plugins.hostActions.create': 'Revisar borrador de equipo',
+  'plugins.hostActions.edit': 'Revisar cambios del equipo',
+  'plugins.hostActions.connect': 'Confirmar conexión',
+  'plugins.hostActions.fieldDiff': 'Cambios que se guardarán',
+  'plugins.hostActions.defaultsWarning': 'Se aplican los ajustes de conexión guardados. Cambiar el grupo puede cambiar la autenticación, el proxy y los scripts heredados.',
+  'plugins.hostActions.invalidDraft': 'Introduce un borrador de equipo válido.',
+  'plugins.hostActions.scriptsRun': 'Esta conexión puede ejecutar scripts guardados de inicio, conexión o salida.',
+  'plugins.hostActions.noScripts': 'Este equipo no tiene scripts guardados de inicio, conexión o salida.',
+  'plugins.hostActions.connectionNote': 'Netcatty abrirá la conexión con los ajustes guardados. Esto no comparte el contenido de la sesión con el complemento.',
+  'plugins.hostActions.failed': 'La solicitud caducó, se revocó o el equipo cambió. Selecciona el equipo de nuevo.',
+  'plugins.hostActions.selectionLimit': 'Selecciona hasta 50 equipos actuales.',
 
 };
