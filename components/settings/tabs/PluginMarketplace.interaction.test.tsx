@@ -153,3 +153,12 @@ test('manual refresh remains available after success and is disabled while loadi
   const loading = renderToStaticMarkup(<I18nProvider locale="en"><PluginMarketplaceContent catalog={{ ...catalog, listStatus: 'loading' }} selected={null} onSelect={() => {}} installed={[]} /></I18nProvider>);
   assert.match(loading, /<button[^>]*disabled=""[^>]*>Refresh<\/button>/);
 });
+
+test('replacing an installed plugin discloses that its running version will stop beside the install action', () => {
+  const downloadable = { ...entries[0], artifact: { url: 'https://github.com/example/plugin/releases/download/v1/plugin.ncpkg', sha256: 'a'.repeat(64) } };
+  const html = renderToStaticMarkup(<I18nProvider locale="en"><PluginMarketplaceContent
+    catalog={{ ...catalog, entries: [downloadable] }} selected={downloadable.id} onSelect={() => {}}
+    installed={[{ id: downloadable.id, activeVersion: '0.9.0', enabled: true } as NetcattyInstalledPlugin]} /></I18nProvider>);
+  assert.match(html, /<p[^>]*>This replaces and stops the installed version\./);
+  assert.ok(html.indexOf('This replaces and stops') < html.indexOf('Install this version (disabled)'));
+});
