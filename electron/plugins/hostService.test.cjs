@@ -401,3 +401,83 @@ test("normal release blocks a custom utility placement before permission prompts
   }), /requires developer mode/);
   assert.equal(prompts, 0);
 });
+
+test("host service logs revocation with injected provenance and drains through manager shutdown", async (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "netcatty-synthetic-log-host-"));
+  let seen;
+  const service = createPluginHostService({ ...createOptions(root), resolvePluginProvenance(input) {
+    seen = input;
+    return { sourceId: "synthetic-host-source", namespace: "test", sourceKind: "local" };
+  } });
+  t.after(async () => { await service.manager.shutdown(); fs.rmSync(root, { recursive: true, force: true }); });
+  const manifest = { manifestVersion: 1, id: "com.example.synthetic-audit", version: "1.0.0", name: "Synthetic", publisher: "example", engines: { netcatty: ">=0.0.0", api: ">=0.1.0-internal <0.2.0" }, main: { browser: "index.js" } };
+  service.database.installVersion({ pluginId: manifest.id, version: manifest.version, manifest, archiveSha256: "b".repeat(64), packageRelativePath: `${manifest.id}/${manifest.version}/package` }, { enable: true });
+  await service.logService.ready;
+  assert.equal(service.logService.status().saveToDisk, false);
+  await service.logService.configure({ saveToDisk: true, verbose: false });
+  service.permissionEngine.revokeAll(manifest.id);
+  await service.logService.sink.flush();
+  const record = JSON.parse(await fsp.readFile(service.logService.sink.file(0), "utf8"));
+  assert.equal(record.operation, "permission.revoked");
+  assert.equal(record.sourceId, "synthetic-host-source");
+  assert.equal(record.archiveSha256, "b".repeat(64));
+  assert.equal(record.pluginVersion, "1.0.0");
+  assert.equal(record.runtimeId, null);
+  assert.equal(seen.pluginId, manifest.id);
+  assert.equal(seen.archiveSha256, "b".repeat(64));
+  await service.manager.shutdown();
+  assert.equal(service.logService.sink.closed, true);
+});
+
+test("logging always drains before database close when another shutdown stage rejects", async (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "netcatty-synthetic-log-shutdown-failure-"));
+  const host = createPluginHostService(createOptions(root));
+  t.after(async () => { await host.manager.shutdown().catch(() => {}); fs.rmSync(root, { recursive: true, force: true }); });
+  await host.logService.ready;
+  await host.logService.configure({ saveToDisk: true, verbose: false });
+  let resume;
+  const gate = new Promise((resolve) => { resume = resolve; });
+  host.logService.sink.queue = host.logService.sink.queue.then(() => gate);
+  const logger = host.logService.createLogger({ pluginId: "com.example.synthetic", pluginVersion: "1.0.0", runtimeId: "host-shutdown", runtimeKind: "browser" }, {});
+  logger.audit({ operation: "synthetic.before-shutdown", result: "ok" });
+  host.companionSupervisor.shutdown = async () => { throw new Error("synthetic companion shutdown failure"); };
+  let settled = false;
+  const shutdown = host.manager.shutdown().finally(() => { settled = true; });
+  // Attach the rejection assertion before yielding so the expected failure is handled.
+  const rejected = assert.rejects(shutdown, /synthetic companion shutdown failure/);
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(settled, false);
+  assert.doesNotThrow(() => host.database.db.prepare("SELECT 1").get());
+  resume();
+  await rejected;
+  assert.equal(host.logService.sink.closed, true);
+  assert.equal(host.logService.retentionTimer._destroyed, true);
+  const record = JSON.parse(await fsp.readFile(host.logService.sink.file(0), "utf8"));
+  assert.equal(record.operation, "synthetic.before-shutdown");
+});
+
+test("activation permission denial is audited before a runtime logger exists", async (t) => {
+  const { defaultSecurityPrincipal } = require("./permissionResources.cjs");
+  const { RPC_ERRORS } = require("./rpcRouter.cjs");
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "netcatty-synthetic-activation-log-"));
+  const host = createPluginHostService(createOptions(root));
+  t.after(async () => { await host.manager.shutdown(); fs.rmSync(root, { recursive: true, force: true }); });
+  const manifest = { manifestVersion: 1, id: "com.example.synthetic-activation", version: "1.0.0", name: "Synthetic", publisher: "example", engines: { netcatty: ">=0.0.0", api: ">=0.1.0-internal <0.2.0" }, main: { browser: "index.js" }, permissions: { required: ["commands"] } };
+  const archiveSha256 = "a".repeat(64);
+  host.database.installVersion({ pluginId: manifest.id, version: manifest.version, manifest, archiveSha256, packageRelativePath: `${manifest.id}/${manifest.version}/package` }, { enable: true });
+  await host.logService.ready;
+  await host.logService.configure({ saveToDisk: true, verbose: false });
+  await assert.rejects(host.runtimeSupervisor.resolveRuntimeKind({
+    plugin: host.database.getActivePlugin(manifest.id), availableKinds: ["browser"], signal: new AbortController().signal,
+    securityPrincipal: defaultSecurityPrincipal(manifest, archiveSha256),
+  }), { code: RPC_ERRORS.permissionDenied });
+  await host.logService.sink.flush();
+  const record = JSON.parse(await fsp.readFile(host.logService.sink.file(0), "utf8"));
+  assert.equal(record.operation, "runtime.authorization");
+  assert.equal(record.authorization, "denied");
+  assert.equal(record.runtimeId, null);
+  assert.equal(record.errorCode, RPC_ERRORS.permissionDenied);
+  assert.equal(record.archiveSha256, archiveSha256);
+  assert.equal(Object.hasOwn(record, "message"), false);
+  assert.equal(host.runtimeSupervisor.getRuntimeIdentity(manifest.id), null);
+});

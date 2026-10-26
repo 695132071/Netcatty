@@ -1,6 +1,8 @@
 "use strict";
 
 const path = require("node:path");
+const { PluginLogService } = require("./pluginLogService.cjs");
+const { createPluginLogProvenanceResolver } = require("./pluginLogProvenance.cjs");
 const NETWORK_CREDENTIAL_LEASE_FEATURE = require("./generated/plugin-contract.schema.json").$defs.NetworkCredentialLeaseFeature.const;
 const VAULT_PAGES_FEATURE = require("./generated/plugin-contract.schema.json").$defs.VaultPagesFeature.const;
 const TERMINAL_SIDEBAR_FEATURE = require("./generated/plugin-contract.schema.json").$defs.TerminalSidebarFeature.const;
@@ -37,6 +39,7 @@ const {
   resolveDefaultRuntimeKind,
 } = require("./runtimeSupervisor.cjs");
 const { PluginQuotaManager } = require("./quotaManager.cjs");
+const { RPC_ERRORS } = require("./rpcRouter.cjs");
 const { registerSecurePluginCapabilities } = require("./secureCapabilities.cjs");
 const { PluginSecretStore } = require("./secretStore.cjs");
 const { SecretLeaseStore } = require("./secretLease.cjs");
@@ -92,6 +95,7 @@ function createPluginHostService(options) {
   const runtimeDirectory = options.runtimeDirectory ?? path.join(__dirname, "runtime");
   const database = new PluginDatabase(paths.database);
   let interactionService;
+  const logService = new PluginLogService({ paths, electron: options.electron, resolveProvenance: options.resolvePluginProvenance ?? createPluginLogProvenanceResolver(database) });
   try {
     const packageStore = new PackageStore({
       allowAdvancedPlugins,
@@ -139,6 +143,8 @@ function createPluginHostService(options) {
     const filesystemBroker = new PluginFilesystemBroker({
       quotaManager,
       openDirectoryHandle: options.openPluginDirectoryHandle,
+      protectedDirectories: [paths.logs],
+      protectedFiles: [logService.preferencesPath, `${logService.preferencesPath}.tmp`],
     });
     const networkBroker = new PluginNetworkBroker({
       fetch: options.fetch ?? (options.electron.net?.fetch
@@ -205,25 +211,36 @@ function createPluginHostService(options) {
         || !context.availableKinds.includes(kind)
       ) throw new Error(`Plugin runtime selection is unavailable: ${String(kind)}`);
       if (!allowAdvancedPlugins && kind !== "browser") throw new Error("Advanced plugin runtime requires developer mode");
-      await permissionEngine.authorizeRequired(context.plugin, {
-        securityPrincipal: context.securityPrincipal,
-        signal: context.signal,
-        skipPermissions: ["runtime.advanced"],
-      });
-      if (kind === "utility") {
-        await permissionEngine.authorize({
-          pluginId: context.plugin.id,
-          pluginVersion: context.plugin.activeVersion,
-          runtimeId: null,
-          manifest: context.plugin.manifest,
+      try {
+        await permissionEngine.authorizeRequired(context.plugin, {
           securityPrincipal: context.securityPrincipal,
           signal: context.signal,
-        }, {
-          permission: "runtime.advanced",
-          resources: ["*"],
-          reason: "Start an advanced runtime with full Node, filesystem, and network authority",
-          operationId: `runtime.advanced:${context.plugin.activeVersion}`,
+          skipPermissions: ["runtime.advanced"],
         });
+        if (kind === "utility") {
+          await permissionEngine.authorize({
+            pluginId: context.plugin.id,
+            pluginVersion: context.plugin.activeVersion,
+            runtimeId: null,
+            manifest: context.plugin.manifest,
+            securityPrincipal: context.securityPrincipal,
+            signal: context.signal,
+          }, {
+            permission: "runtime.advanced",
+            resources: ["*"],
+            reason: "Start an advanced runtime with full Node, filesystem, and network authority",
+            operationId: `runtime.advanced:${context.plugin.activeVersion}`,
+          });
+        }
+      } catch (error) {
+        const identity = logService.identity({
+          pluginId: context.plugin.id, pluginVersion: context.plugin.activeVersion,
+          runtimeId: null, runtimeKind: kind, securityPrincipal: context.securityPrincipal,
+        }, context.plugin);
+        logService.audit(identity, { operation: "runtime.authorization", result: "error",
+          authorization: error?.code === RPC_ERRORS.permissionDenied ? "denied" : "unknown",
+          errorCode: error?.code });
+        throw error;
       }
       return kind;
     };
@@ -233,6 +250,7 @@ function createPluginHostService(options) {
     };
     runtimeSupervisor = new RuntimeSupervisor({
       electron: options.electron,
+      logService,
       database,
       packageStore,
       protocol,
@@ -256,6 +274,16 @@ function createPluginHostService(options) {
       utilityModuleMappings: options.utilityModuleMappings ?? createUtilityModuleMappings(moduleResources),
     });
     runtimeSupervisor.onDidChangeRuntime((event) => contributionService.onRuntimeStateChanged(event));
+    permissionEngine.onDidRevoke((event) => {
+      const plugin = database.getActivePlugin(event.pluginId);
+      const identity = runtimeSupervisor.getRuntimeIdentity(event.pluginId) ?? {
+        pluginId: event.pluginId, pluginVersion: plugin?.activeVersion,
+      };
+      logService.audit(logService.identity(identity, plugin), {
+        operation: "permission.revoked", authorization: "not-required", result: "ok",
+        resources: event.resource ? [event.resource] : [],
+      });
+    });
     const terminalProviderService = new PluginTerminalProviderService({
       contributionService,
       permissionEngine,
@@ -380,19 +408,24 @@ function createPluginHostService(options) {
       runtimeSupervisor,
       contributionService,
       beforeClose: async () => {
-        themeService.shutdown();
-        interactionService.shutdown();
-        terminalDataPipelineService?.shutdown();
-        extensionProviderService.shutdown();
-        credentialResolver.shutdown?.();
-        await viewHost?.shutdown();
-        await companionSupervisor.shutdown();
-        leaseStore.shutdown();
-        permissionEngine.shutdown();
-        quotaManager.shutdown();
+        try {
+          themeService.shutdown();
+          interactionService.shutdown();
+          terminalDataPipelineService?.shutdown();
+          extensionProviderService.shutdown();
+          credentialResolver.shutdown?.();
+          await viewHost?.shutdown();
+          await companionSupervisor.shutdown();
+          leaseStore.shutdown();
+          permissionEngine.shutdown();
+          quotaManager.shutdown();
+        } finally {
+          await logService.close();
+        }
       },
     });
     return {
+      logService,
       themeService,
       interactionService,
       catalogService: new MarketSourcesService({ database, manager, fetch: options.electron.net?.fetch?.bind(options.electron.net) }),
@@ -423,6 +456,7 @@ function createPluginHostService(options) {
     };
   } catch (error) {
     try { interactionService?.shutdown(); } catch {}
+    void logService.close();
     database.close();
     throw error;
   }

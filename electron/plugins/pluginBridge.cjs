@@ -20,6 +20,11 @@ const CHANNELS = Object.freeze({
   themeApply: "netcatty:plugins:theme-apply",
   themesChanged: "netcatty:plugins:themes-changed",
   status: "netcatty:plugins:status",
+  logStatus: "netcatty:plugins:log-status",
+  logConfigure: "netcatty:plugins:log-configure",
+  logOpen: "netcatty:plugins:log-open",
+  logExport: "netcatty:plugins:log-export",
+  logClear: "netcatty:plugins:log-clear",
   interactionReady: "netcatty:plugins:interaction-ready",
   interactionResponse: "netcatty:plugins:interaction-response",
   list: "netcatty:plugins:list",
@@ -696,6 +701,14 @@ function registerPluginBridge(ipcMain, options) {
     }
     return id;
   };
+  for (const [channel, action] of [
+    [CHANNELS.logStatus, "status"], [CHANNELS.logConfigure, "configure"],
+    [CHANNELS.logOpen, "openFolder"], [CHANNELS.logExport, "exportLogs"], [CHANNELS.logClear, "clear"],
+  ]) handle(channel, async (_manager, payload) => {
+    if (!options.logService) throw new Error("Local plugin logging is unavailable");
+    await options.logService.ready;
+    return options.logService[action](payload);
+  });
   handle(CHANNELS.permissions, async (_manager, payload) => {
     const pluginId = assertManagedPluginId(payload);
     if (!options.permissionEngine || !options.database) throw new Error("Plugin permissions are unavailable");

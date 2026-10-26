@@ -5,6 +5,7 @@ import { PluginMarketplace } from './PluginMarketplace';
 import { PluginPackageManager } from './PluginPackageManager';
 import { FolderOpen } from 'lucide-react';
 import { PluginStatus } from './PluginStatus';
+import { PluginLogSettings } from './PluginLogSettings';
 import React, { useEffect, useMemo, useState } from 'react';
 
 import { normalizePluginKeyboardEvent } from '../../../application/state/pluginKeybindings';
@@ -403,6 +404,7 @@ export default function SettingsPluginsTab() {
           <p className="mt-1 text-sm text-muted-foreground">{t('settings.plugins.description')}</p>
         </div>
         <PluginManagementDialog>{(handoff) => <PluginManagementContent handoff={handoff} />}</PluginManagementDialog>
+        <PluginLogSettings />
       </SettingsAnchor>
     </SettingsTabContent>
   );
