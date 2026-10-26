@@ -60,6 +60,15 @@ test('plugin manager is single-instance, closes with Escape, restores focus and 
     assert.equal(document.querySelector('[role="dialog"]'), null);
     assert.equal(document.activeElement, trigger);
     assert.equal(unmounts, 2);
+    let handedOff = false;
+    await act(async () => root.render(<I18nProvider locale="en"><PluginManagementDialog>{(handoff) => <button onClick={() => handoff(() => {
+      handedOff = true;
+      assert.equal(document.querySelector('[role="dialog"]'), null);
+      assert.notEqual(document.body.style.pointerEvents, 'none');
+    })}>Open contributed settings view</button>}</PluginManagementDialog></I18nProvider>));
+    await click(trigger);
+    await click(document.querySelector<HTMLButtonElement>('[role="dialog"] button:not([data-dialog-close])')!);
+    assert.equal(handedOff, true, 'external view opens only after modal ownership is released');
   } finally {
     await act(async () => root.unmount());
     dom.window.close();

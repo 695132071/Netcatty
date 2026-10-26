@@ -283,7 +283,7 @@ export function PluginSettingField({
   );
 }
 
-function PluginManagementContent() {
+function PluginManagementContent({ handoff }: { handoff: (action: () => void) => void }) {
   const { t } = useI18n();
   const manager = usePluginManager();
   const [pluginView, setPluginView] = useState<'installed' | 'marketplace'>('installed');
@@ -367,10 +367,10 @@ function PluginManagementContent() {
                     <div className="font-mono text-[10px] text-muted-foreground">{view.id}</div>
                     </div>
                   </div>
-                  <Button type="button" variant="outline" size="sm" onClick={() => requestOpenPluginView({
+                  <Button type="button" variant="outline" size="sm" onClick={() => handoff(() => requestOpenPluginView({
                     viewId: view.id,
                     context: { 'netcatty.surface': 'settings' },
-                  })}>{t('common.open')}</Button>
+                  }))}>{t('common.open')}</Button>
                 </div>
               ))}
             </section>
@@ -392,7 +392,7 @@ export default function SettingsPluginsTab() {
           <h2 className="text-xl font-semibold">{t('settings.plugins.title')}</h2>
           <p className="mt-1 text-sm text-muted-foreground">{t('settings.plugins.description')}</p>
         </div>
-        <PluginManagementDialog><PluginManagementContent /></PluginManagementDialog>
+        <PluginManagementDialog>{(handoff) => <PluginManagementContent handoff={handoff} />}</PluginManagementDialog>
       </SettingsAnchor>
     </SettingsTabContent>
   );
