@@ -1,9 +1,12 @@
 # Byte stream integration checkpoint
 
-The branch starts at #3978 `91b8927c56314e68c06e2c008e84559ddfb96d78`.
-It integrates source APIs from #3981 `ab8764a31752fd2d226c9d029c4d65498ba7b063`
-and AI service/adapters from #3986 `264f1d983cd1ed83fe4873974a614fff2f47f989`.
-No source database or sync implementation is changed by the transport delta.
+The original transport checkpoint is #3988
+`c4433d4961ecf4a81bea92b0a14f47b4ec12f679`. The separate integration branch
+`integration/plugin-byte-stream-handoff` preserves that history and ordinarily
+merges source identity #3981 `4213d8e6726c44e7a479418ece3adf16ea494782`
+and connected AI #3986 `173ef5abbb1f8cea4e2c409c5791186926b778e1`.
+The original transport branch remains untouched. Follow the
+[current native handoff](byte-stream-native-qa.md) for the integrated package.
 
 ## Registered transport
 
@@ -51,7 +54,7 @@ Plugins cannot set custom CAs, SNI, or validation exceptions. STARTTLS is not
 implemented. Generic audit records contain endpoint, runtime, handle, and byte
 counts. The host does not inspect SQL or record payloads or credentials.
 
-## Additive AI interface for the parallel owner
+## Integrated AI interface
 
 The same canonical schema defines the relayed `AI_CONTEXT_ROUTES` types.
 The SDK/runtime expose `context.ai.openChat/startTurn/readTurn/stopTurn/closeChat`
@@ -59,13 +62,12 @@ and `context.selectedContext.list/read`. Host registration advertises
 `ai.model-invocation` and `context.selected-read`, and wires runtime cleanup,
 plugin disable, revocation through the service, and shutdown.
 
-The trusted host adapter constructor option is `pluginAIHostAdapter`. It has
-the service owner's `assertActive`, `selectModel`, `listSelected`, `reviewText`,
-and optional lifecycle callbacks. These callbacks are never exposed to plugin
-views. The default adapter rejects model invocation, returns no selected
-resources, and refuses text review. The AI owner still owns real renderer
-wiring and model/context UX. A registered synthetic adapter test is not proof
-of that remaining production wiring.
+The connected host renderer and shared permission descriptions from #3986 are
+preserved. Its owner documents the adapter and existing configured model path in
+[the AI checkpoint](ai-context-wip.md), with a
+[synthetic native assistant recipe](assistant-native-qa.md). No further
+independent review of AI internals was performed. The prior review denial remains
+unresolved and has not been retried through another route.
 
 ## Database example
 
@@ -106,6 +108,18 @@ connection-management subsystem. See the example README for native setup.
   removes the container and network. Database transport is plain TCP inside
   that disposable network, not database TLS.
 
-Normal native BrowserWindow, full app/package checks, exact-head independent
-review, and screenshot/video acceptance remain separate required evidence.
-Do not disable the Chromium sandbox to obtain that evidence.
+The integration fixes own-machine comparison across IPv4 and mapped IPv6.
+Its regression mocks interface lookup and uses a fake dialer. It does not retry
+the reviewer's failed EPERM interface lookup. Other private peers remain allowed.
+
+Cancellation now discards buffered browser bytes, settles producer-cancelled
+credit once, and retains terminal producer state only until outstanding credit
+arrives. Existing sequence, schema, and negotiated-window checks still reject
+unknown, duplicate, out-of-order, and excess credit. Incoming cleanup runs even
+if a cancellation refund cannot be sent. This uses the existing stream lifecycle
+and runtime shutdown, without another scheduler.
+
+Normal native BrowserWindow and screenshot/video acceptance remain pending.
+The native GUI machine lacks Docker and is occupied with SSH acceptance. See
+the handoff for fixture prerequisites. Do not disable the Chromium sandbox or
+relax endpoint restrictions to obtain that evidence.

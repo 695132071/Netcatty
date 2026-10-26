@@ -25,7 +25,7 @@ export async function prepareDatabaseExample(targetEndpoint, outputPath) {
     for (const file of ["browser.js", "protocol.mjs", "panel.html", "panel.css", "panel.js"]) await fs.copyFile(path.join(root, file), path.join(temporary, file));
     await fs.writeFile(path.join(temporary, "fixture-config.mjs"), `export const endpoint = ${JSON.stringify(endpoint)};\n`);
     const bundle = await build({ entryPoints: [path.join(temporary, "browser.js")], write: false,
-      bundle: true, platform: "browser", format: "esm", nodePaths: [path.resolve(root, "../../../node_modules")] });
+      bundle: true, minify: true, platform: "browser", format: "esm", nodePaths: [path.resolve(root, "../../../node_modules")] });
     await fs.writeFile(path.join(temporary, "browser.js"), bundle.outputFiles[0].contents);
     await fs.rm(path.join(temporary, "protocol.mjs"));
     await fs.rm(path.join(temporary, "fixture-config.mjs"));
