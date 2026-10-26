@@ -55,6 +55,13 @@ existing 128-character single-line limit. Draft field lengths use
 Creates produce saved SSH drafts. An empty group clears the saved group. Edits
 preserve connection endpoints and credentials. Changing a group can change
 inherited authentication, proxies, and scripts; the draft review states this.
+Drafts involving managed SSH-config hosts or SSH destinations inside managed
+groups are explicitly unavailable in this small API. The review disables saving
+and directs the user to the Vault host editor. The execution adapter enforces the
+same restriction before claiming action authority, using the existing
+`applyVaultHostUpdate` ownership rules. It also checks the live and persisted
+managed-source catalog for changes before writing. This API does not initiate
+managed-file sync or expose plugin file access.
 
 The API excludes Vault and renderer stores, the internal MCP catalog, plaintext
 credentials, private keys, TOTP configuration, startup scripts, and arbitrary
@@ -88,6 +95,10 @@ request. It claims action authority after the final asynchronous preparation,
 immediately before persistence or dispatch. This claim is the action's commit
 point. Completion only acknowledges the committed action. Automation changes
 during connection review require fresh confirmation.
+The connection label uses the same `resolveEffectiveTerminalProtocol` helper as
+the launcher, including Mosh/ET flags and implicit localhost shells. Local
+execution displays an explicit on-device shell notice and omits the remote SSH
+username and port.
 
 ## Sample and validation
 
@@ -103,6 +114,11 @@ revoke, source replacement, runtime removal, and connection confirmation. Regist
 checks reject text handles, tampered references, caller owners, and mismatched
 expected revisions. Only synthetic resources are used. The Node transport fixture
 does not certify the operating-system sandbox.
+Focused action tests compare Mosh, ET, and localhost confirmations with the real
+`handleConnectToHostImpl` dispatcher while replacing terminal creation with a
+synthetic recorder. Managed A-to-B/outside moves, managed destinations, ordinary
+unmanaged saves, and catalog changes use synthetic source records; no SSH config
+files are read or written.
 
 Native screenshots and video run on the parent's existing cloud GUI. This branch
 does not change Electron sandbox or helper permissions. Tests use synthetic hosts

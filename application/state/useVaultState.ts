@@ -780,6 +780,7 @@ export const useVaultState = (options?: UseVaultStateOptions) => {
   // edits that React has not published yet. This accessor never crosses RPC.
   const readCurrentHostActionState = useCallback(() => ({
     hosts: hostsRef.current, groupConfigs: groupConfigsRef.current, snippets: snippetsRef.current,
+    managedSources: managedSourcesRef.current,
   }), []);
 
   const updateKeys = useCallback((data: SSHKey[]) => {

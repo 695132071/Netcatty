@@ -119,6 +119,7 @@ export interface PluginHostUI {
  * Each action uses the host's separate review and confirmation UI. */
 export interface PluginVault {
   selectHosts(params: import("@netcatty/plugin-contract").VaultSelectHostsParams): Promise<import("@netcatty/plugin-contract").VaultHostSelectionResult>;
+  /** Managed SSH-config drafts require the full Vault host editor. */
   requestHostDraft(params: import("@netcatty/plugin-contract").VaultHostDraftParams): Promise<import("@netcatty/plugin-contract").VaultHostActionResult>;
   requestConnect(params: import("@netcatty/plugin-contract").VaultHostConnectParams): Promise<import("@netcatty/plugin-contract").VaultHostActionResult>;
 }

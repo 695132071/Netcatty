@@ -1309,6 +1309,8 @@ Vaults 分頁維持扁平，不使用這塊背景。
   'plugins.hostActions.scriptsRun': '此連線可能執行已儲存的啟動、連線或輸出觸發指令碼。',
   'plugins.hostActions.noScripts': '此主機未設定已儲存的啟動、連線或輸出觸發指令碼。',
   'plugins.hostActions.connectionNote': 'Netcatty 將使用已儲存的設定開啟連線。這不會向外掛分享工作階段內容。',
+  'plugins.hostActions.localExecution': '本機執行：這會在此裝置上開啟 Shell。',
+  'plugins.hostActions.managedUnsupported': '受管理的 SSH 設定變更需在 Vault 主機編輯器中完成。',
   'plugins.hostActions.failed': '請求已過期、被撤銷或主機已變更。請重新選擇主機。',
   'plugins.hostActions.selectionLimit': '最多選擇 50 部目前的主機。',
 };

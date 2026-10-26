@@ -1306,6 +1306,8 @@ Vaults 标签保持扁平，不使用这块背景。
   'plugins.hostActions.scriptsRun': '此连接可能运行已保存的启动、连接或输出触发脚本。',
   'plugins.hostActions.noScripts': '此主机未配置已保存的启动、连接或输出触发脚本。',
   'plugins.hostActions.connectionNote': 'Netcatty 将使用已保存的设置打开连接。这不会向插件分享会话内容。',
+  'plugins.hostActions.localExecution': '本地执行：这将在此设备上打开一个 Shell。',
+  'plugins.hostActions.managedUnsupported': '受管理的 SSH 配置变更需在 Vault 主机编辑器中完成。',
   'plugins.hostActions.failed': '请求已过期、被撤销或主机已改变。请重新选择主机。',
   'plugins.hostActions.selectionLimit': '最多选择 50 个当前主机。',
 

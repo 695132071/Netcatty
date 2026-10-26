@@ -6,7 +6,7 @@ import { getAppAppLockRuntime, getAppVaultRuntime } from './appRuntimeBridge';
 import { PluginHostActionResources } from './pluginHostActionResources';
 import { executePluginHostAction, type PluginHostAction } from './pluginHostActionExecution';
 import { pluginHostRunsSavedScripts, type PluginHostDraftFields } from '../../domain/pluginHostActions';
-import type { Host, GroupConfig, Snippet } from '../../domain/models';
+import type { Host, GroupConfig, ManagedSource, Snippet } from '../../domain/models';
 
 export type VaultHostPrompt = Omit<HostInteractionPrompt, 'request'> & { request: VaultHostActionRequest };
 type Review = {
@@ -17,6 +17,7 @@ type Review = {
   host?: Host;
   groups: GroupConfig[];
   snippets: Snippet[];
+  managedSources: ManagedSource[];
   scriptsRun: boolean;
   claimed: boolean;
   completionToken?: string;
@@ -48,6 +49,7 @@ export function usePluginHostActions() {
     if (entry.prompt.request.kind === 'vault.requestConnect' && (vault.groupConfigs !== entry.groups || vault.snippets !== entry.snippets)) {
       throw new Error('Saved connection settings changed');
     }
+    if (entry.prompt.request.kind === 'vault.requestHostDraft' && vault.managedSources !== entry.managedSources) throw new Error('Managed sources changed during draft review');
   }, [getVault]);
 
   const fail = useCallback(async (entry: Review) => {
@@ -120,6 +122,7 @@ export function usePluginHostActions() {
         const entry: Review = {
           prompt, candidates, candidateRevisions: new Map(candidates.map((candidate) => [candidate.id, resources.current.metadata(candidate.id).revision])),
           customGroups: vault.customGroups, host, groups: vault.groupConfigs, snippets: vault.snippets,
+          managedSources: vault.managedSources,
           scriptsRun: host ? pluginHostRunsSavedScripts(host, vault.groupConfigs, vault.snippets) : false,
           claimed: false,
         };

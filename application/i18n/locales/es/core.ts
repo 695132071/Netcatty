@@ -1391,6 +1391,8 @@ Resalta el panel dividido enfocado:
   'plugins.hostActions.scriptsRun': 'Esta conexión puede ejecutar scripts guardados de inicio, conexión o salida.',
   'plugins.hostActions.noScripts': 'Este equipo no tiene scripts guardados de inicio, conexión o salida.',
   'plugins.hostActions.connectionNote': 'Netcatty abrirá la conexión con los ajustes guardados. Esto no comparte el contenido de la sesión con el complemento.',
+  'plugins.hostActions.localExecution': 'Ejecución local: esto abre una shell en este dispositivo.',
+  'plugins.hostActions.managedUnsupported': 'Los cambios de configuración SSH administrada requieren el editor de equipos de Vault.',
   'plugins.hostActions.failed': 'La solicitud caducó, se revocó o el equipo cambió. Selecciona el equipo de nuevo.',
   'plugins.hostActions.selectionLimit': 'Selecciona hasta 50 equipos actuales.',
 

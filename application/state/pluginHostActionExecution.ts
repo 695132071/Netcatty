@@ -1,6 +1,6 @@
 import type { Host, GroupConfig, Snippet, ManagedSource } from '../../domain/models';
 import { canonicalJsonString, normalizeJsonValue } from '../../domain/convergentSync/json';
-import { applyPluginHostEdit, normalizePluginHostDraft, type PluginHostDraftFields } from '../../domain/pluginHostActions';
+import { applyPluginHostEdit, normalizePluginHostDraft, pluginHostDraftTouchesManagedSource, type PluginHostDraftFields } from '../../domain/pluginHostActions';
 import { applyVaultHostCreates } from '../../domain/vaultHostCreate';
 import type { PluginHostActionResources } from './pluginHostActionResources';
 import type { AppVaultRuntime } from './appRuntimeBridge';
@@ -16,6 +16,7 @@ export interface PluginHostActionVault {
   customGroups: string[];
   groupConfigs: GroupConfig[];
   snippets: Snippet[];
+  managedSources: ManagedSource[];
   isInitialized: boolean;
   readPersistedHosts: () => Promise<Host[]>;
   commitVaultImportTransaction: AppVaultRuntime['commitVaultImportTransaction'];
@@ -46,6 +47,7 @@ export async function executePluginHostAction(action: PluginHostAction, options:
   const initialVault = current();
   const reviewedGroups = initialVault.groupConfigs;
   const reviewedSnippets = initialVault.snippets;
+  const reviewedSources = initialVault.managedSources;
   const selected = action.kind === 'create' ? undefined : options.resources.resolve(action.target.resourceId, action.target.revision);
   const assertSelected = () => {
     const vault = current();
@@ -57,6 +59,7 @@ export async function executePluginHostAction(action: PluginHostAction, options:
     if (action.kind === 'connect' && (vault.groupConfigs !== reviewedGroups || vault.snippets !== reviewedSnippets)) {
       throw new Error('Saved connection settings changed');
     }
+    if (action.kind !== 'connect' && vault.managedSources !== reviewedSources) throw new Error('Managed sources changed during draft review');
     return vault;
   };
   const persisted = await initialVault.readPersistedHosts();
@@ -76,13 +79,21 @@ export async function executePluginHostAction(action: PluginHostAction, options:
   const nextHost = action.kind === 'create'
     ? normalizePluginHostDraft(action.draft, crypto.randomUUID())
     : applyPluginHostEdit(selected!, action.draft);
+  if (pluginHostDraftTouchesManagedSource(nextHost, reviewedSources)) {
+    throw new Error('Managed SSH config changes require the Vault host editor');
+  }
   const nextHosts = action.kind === 'create'
     ? applyVaultHostCreates(persisted, [], [nextHost]).hosts
     : persisted.map((host) => host.id === nextHost.id ? nextHost : host);
   if (action.kind === 'create' && nextHosts.length !== persisted.length + 1) throw new Error('Host already exists');
   const updateGroups = (groups: string[]) => nextHost.group && !groups.includes(nextHost.group) ? [...groups, nextHost.group] : groups;
+  const sourceSnapshot = canonicalJsonString(normalizeJsonValue(reviewedSources));
+  const keepSources = (sources: ManagedSource[]) => {
+    if (canonicalJsonString(normalizeJsonValue(sources)) !== sourceSnapshot) throw new Error('Managed sources changed during draft review');
+    return sources;
+  };
   const result = await initialVault.commitVaultImportTransaction(
-    nextHosts, updateGroups, (sources: ManagedSource[]) => sources,
+    nextHosts, updateGroups, keepSources,
     undefined, persisted, undefined,
     async () => { assertSelected(); await options.authorizeCommit(); assertSelected(); },
   );

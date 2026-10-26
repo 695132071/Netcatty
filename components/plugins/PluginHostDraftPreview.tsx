@@ -1,17 +1,18 @@
 import { useMemo, useState } from 'react';
 import { useI18n } from '../../application/i18n/I18nProvider';
-import { applyPluginHostEdit, normalizePluginHostDraft, pluginHostFieldDiff, PLUGIN_HOST_CREATE_FIELDS, PLUGIN_HOST_EDIT_FIELDS, type PluginHostDraftFields } from '../../domain/pluginHostActions';
-import type { Host } from '../../domain/models';
+import { applyPluginHostEdit, normalizePluginHostDraft, pluginHostDraftTouchesManagedSource, pluginHostFieldDiff, PLUGIN_HOST_CREATE_FIELDS, PLUGIN_HOST_EDIT_FIELDS, type PluginHostDraftFields } from '../../domain/pluginHostActions';
+import type { Host, ManagedSource } from '../../domain/models';
 import { Button } from '../ui/button';
 import { Input } from '../ui/input';
 
 /** Host-owned editable draft and exact normalized field diff. The containing
  * dialog owns confirmation, expiry and cancellation; this body has no IPC. */
-export function PluginHostDraftPreview({ before, draft, busy, onConfirm }: {
+export function PluginHostDraftPreview({ before, draft, busy, onConfirm, managedSources = [] }: {
   before?: Host;
   draft: PluginHostDraftFields;
   busy: boolean;
   onConfirm: (draft: PluginHostDraftFields) => void;
+  managedSources?: ManagedSource[];
 }) {
   const { t } = useI18n();
   const [fields, setFields] = useState<Record<string, string>>(() => ({
@@ -31,9 +32,9 @@ export function PluginHostDraftPreview({ before, draft, busy, onConfirm }: {
       return { value: {
         label: after.label, group: after.group ?? '', tags: after.tags,
         ...(!before ? { hostname: after.hostname, username: after.username, port: after.port } : {}),
-      }, diff: pluginHostFieldDiff(before, after) };
+      }, diff: pluginHostFieldDiff(before, after), managed: pluginHostDraftTouchesManagedSource(after, managedSources) };
     } catch { return null; }
-  }, [before, fields]);
+  }, [before, fields, managedSources]);
   return <div className="space-y-4">
     <div className="grid grid-cols-2 gap-3">
       {(before ? PLUGIN_HOST_EDIT_FIELDS : PLUGIN_HOST_CREATE_FIELDS).map((field) => <label key={field} className="space-y-1 text-sm">
@@ -42,6 +43,7 @@ export function PluginHostDraftPreview({ before, draft, busy, onConfirm }: {
       </label>)}
     </div>
     <p className="text-xs text-muted-foreground">{t('plugins.hostActions.defaultsWarning')}</p>
+    {preview?.managed && <p role="alert" className="text-sm text-destructive">{t('plugins.hostActions.managedUnsupported')}</p>}
     {preview ? <div className="max-h-48 overflow-auto rounded-md border p-3">
       <p className="mb-2 text-sm font-medium">{t('plugins.hostActions.fieldDiff')}</p>
       <dl className="space-y-2 text-xs">
@@ -51,6 +53,6 @@ export function PluginHostDraftPreview({ before, draft, busy, onConfirm }: {
         </div>)}
       </dl>
     </div> : <p role="alert" className="text-sm text-destructive">{t('plugins.hostActions.invalidDraft')}</p>}
-    <Button className="w-full" disabled={busy || !preview || preview.diff.length === 0} onClick={() => { if (preview) onConfirm(preview.value); }}>{t('hostForm.saveHost')}</Button>
+    <Button className="w-full" disabled={busy || !preview || preview.managed || preview.diff.length === 0} onClick={() => { if (preview && !preview.managed) onConfirm(preview.value); }}>{t('hostForm.saveHost')}</Button>
   </div>;
 }

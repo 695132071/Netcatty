@@ -1286,6 +1286,8 @@ export const ruCoreMessages: Messages = {
   'plugins.hostActions.scriptsRun': 'При подключении могут выполняться сохранённые скрипты запуска, подключения или вывода.',
   'plugins.hostActions.noScripts': 'Для этого хоста не настроены сохранённые скрипты запуска, подключения или вывода.',
   'plugins.hostActions.connectionNote': 'Netcatty откроет подключение с сохранёнными настройками. Содержимое сеанса не передаётся плагину.',
+  'plugins.hostActions.localExecution': 'Локальное выполнение: откроется оболочка на этом устройстве.',
+  'plugins.hostActions.managedUnsupported': 'Изменяйте управляемые настройки SSH в редакторе хостов Vault.',
   'plugins.hostActions.failed': 'Запрос истёк, был отозван или хост изменился. Выберите хост заново.',
   'plugins.hostActions.selectionLimit': 'Выберите не более 50 текущих хостов.',
 };

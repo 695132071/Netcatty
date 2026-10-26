@@ -7,7 +7,8 @@ import path from 'node:path';
 import { tmpdir } from 'node:os';
 import { JSDOM } from 'jsdom';
 import { sanitizeHost } from '../domain/host';
-import type { Host } from '../domain/models';
+import type { ConnectionLog, Host, ManagedSource } from '../domain/models';
+import { applyGroupDefaults, resolveGroupDefaults } from '../domain/groupConfig';
 import type { HostInteractionEvent, HostInteractionPrompt, VaultHostSelectionResult, VaultHostActionResult, VaultHostRef } from '@netcatty/plugin-contract';
 
 const require = createRequire(import.meta.url);
@@ -31,6 +32,7 @@ test('installed sample entrypoint uses real SDK, source authority, signed host d
   const { createRoot } = await import('react-dom/client');
   const { I18nProvider } = await import('../application/i18n/I18nProvider');
   const { PluginHostActionHost } = await import('./plugins/PluginHostActionHost');
+  const { handleConnectToHostImpl } = await import('../application/app/AppHandlers');
   const runtime = await import('../application/state/appRuntimeBridge');
   const { registerAppHandlers } = await import('../application/app/appHandlersBridge');
   const { createPluginHostService } = require('../electron/plugins/hostService.cjs');
@@ -63,14 +65,15 @@ test('installed sample entrypoint uses real SDK, source authority, signed host d
   let saves = 0;
   const connections: Host[] = [];
   const vault = {
-    hosts, customGroups: ['Synthetic'], groupConfigs: [], snippets: [], isInitialized: true,
-    readCurrentHostActionState: () => ({ hosts, groupConfigs: vault.groupConfigs, snippets: vault.snippets }),
+    hosts, customGroups: ['Synthetic'], groupConfigs: [], snippets: [], managedSources: [] as ManagedSource[], isInitialized: true,
+    readCurrentHostActionState: () => ({ hosts, groupConfigs: vault.groupConfigs, snippets: vault.snippets, managedSources: vault.managedSources }),
     async readPersistedHosts() { return persisted.map((host) => structuredClone(host)); },
-    async commitVaultImportTransaction(next: Host[], groups: (groups: string[]) => string[], _sources: unknown, _configs: unknown, _expected: unknown, _lock: unknown, authorize: () => Promise<void>) {
+    async commitVaultImportTransaction(next: Host[], groups: (groups: string[]) => string[], sources: (sources: ManagedSource[]) => ManagedSource[], _configs: unknown, _expected: unknown, _lock: unknown, authorize: () => Promise<void>) {
+      const nextSources = sources(vault.managedSources);
       await beforeCommit?.();
       await authorize();
       saves++; hosts = next; persisted = next.map((host) => structuredClone(host));
-      return { status: 'persisted', groups: groups(vault.customGroups), sources: [], groupConfigs: [] };
+      return { status: 'persisted', groups: groups(vault.customGroups), sources: nextSources, groupConfigs: [] };
     },
   };
   const publish = () => {
@@ -200,6 +203,73 @@ test('installed sample entrypoint uses real SDK, source authority, signed host d
       try { await click(button('Save Host')); await assert.rejects(run.promise, /source binding/); }
       finally { service.database.getRetainedPluginSource = original; }
       assert.equal(saves, 1); assert.equal(connections.length, 1);
+    });
+
+    await t.test('managed A to B stays in the Vault editor and cannot acquire file-write effects', async () => {
+      const candidate = sanitizeHost({ ...first, group: 'A', managedSourceId: 'synthetic-source-a' });
+      hosts = [candidate]; persisted = hosts.map((host) => structuredClone(host));
+      vault.managedSources = [
+        { id: 'synthetic-source-a', type: 'ssh_config', filePath: '/synthetic/a.conf', groupName: 'A', lastSyncedAt: 0 },
+        { id: 'synthetic-source-b', type: 'ssh_config', filePath: '/synthetic/b.conf', groupName: 'B', lastSyncedAt: 0 },
+      ];
+      const run = await begin('edit'); await chooseGroup();
+      await waitFor(() => button('Save Host') !== undefined);
+      const group = Array.from(document.querySelectorAll('label')).find((label) => label.querySelector('span')?.textContent === 'Group')?.querySelector('input');
+      assert.ok(group);
+      const setValue = Object.getOwnPropertyDescriptor(dom.window.HTMLInputElement.prototype, 'value')!.set!;
+      await act(async () => { setValue.call(group, 'B'); group.dispatchEvent(new dom.window.Event('input', { bubbles: true })); await settle(); });
+      assert.match(document.querySelector('[role="dialog"]')?.textContent ?? '', /"A"\s*\u2192\s*"B"/u);
+      assert.match(document.querySelector('[role="alert"]')?.textContent ?? '', /Managed SSH config changes require the Vault host editor/);
+      assert.equal(button('Save Host').disabled, true);
+      await click(button('Save Host')); assert.equal(saves, 1);
+      await click(button('Cancel')); assert.deepEqual(await run.promise, { cancelled: true });
+      assert.equal(hosts[0].group, 'A'); assert.equal(hosts[0].managedSourceId, 'synthetic-source-a');
+      vault.managedSources = [];
+    });
+
+    await t.test('creating into a managed group is explicitly unavailable in the small draft UI', async () => {
+      vault.managedSources = [{ id: 'synthetic-source-b', type: 'ssh_config', filePath: '/synthetic/b.conf', groupName: 'Samples', lastSyncedAt: 0 }];
+      const run = await begin('create');
+      assert.match(document.querySelector('[role="alert"]')?.textContent ?? '', /Managed SSH config changes require the Vault host editor/);
+      assert.equal(button('Save Host').disabled, true);
+      await click(button('Cancel')); assert.deepEqual(await run.promise, { cancelled: true });
+      assert.equal(saves, 1); vault.managedSources = [];
+    });
+
+    for (const transport of [
+      { name: 'Mosh', expected: 'mosh', overrides: { moshEnabled: true } },
+      { name: 'ET', expected: 'et', overrides: { etEnabled: true } },
+      { name: 'implicit localhost shell', expected: 'local', overrides: { hostname: 'localhost' } },
+    ] as const) await t.test(`${transport.name} confirmation matches the real connection handler`, async () => {
+      const candidate = sanitizeHost({ ...second, id: `synthetic-${transport.expected}`, label: `Synthetic ${transport.expected}`, ...transport.overrides });
+      hosts = [candidate]; persisted = hosts.map((host) => structuredClone(host));
+      const dispatched: Host[] = [];
+      const logs: Array<Pick<ConnectionLog, 'protocol'>> = [];
+      registerAppHandlers({ handleConnectToHost: (host: Host) => handleConnectToHostImpl(() => ({
+        resolveEffectiveHost: (saved: Host) => applyGroupDefaults(saved, saved.group ? resolveGroupDefaults(saved.group, vault.groupConfigs) : {}),
+        discoveredShells: [], terminalSettings: {}, resolveShellSetting: () => null,
+        systemInfoRef: { current: { username: 'synthetic-local-user', hostname: 'synthetic-device' } },
+        keys: [], identities: [], resolveHostAuth: () => ({ username: 'synthetic-user' }),
+        connectToHost: (resolved: Host) => { dispatched.push(resolved); return 'synthetic-transport-session'; },
+        addConnectionLog: (entry: Pick<ConnectionLog, 'protocol'>) => logs.push(entry),
+      }), host) });
+      const run = await begin('connect');
+      try {
+        await chooseGroup(); await waitFor(() => button('Connect') !== undefined);
+        const confirmation = document.querySelector('[role="dialog"]')?.textContent ?? '';
+        assert.match(confirmation, new RegExp(`\\(${transport.expected}\\)`));
+        assert.equal(confirmation.includes('Local execution: this opens a shell on this device.'), transport.expected === 'local');
+        if (transport.expected === 'local') assert.doesNotMatch(confirmation, /test@localhost:22/u);
+        assert.equal(dispatched.length, 0);
+        await click(button('Connect'));
+        assert.deepEqual(await run.promise, { cancelled: false, status: 'requested' });
+        assert.equal(dispatched.length, 1);
+        assert.equal(logs[0].protocol, transport.expected);
+      } finally {
+        if (button('Cancel')) await click(button('Cancel'));
+        await run.promise.catch(() => {});
+        registerAppHandlers({ handleConnectToHost: (host: Host) => { connections.push(host); return 'private-session-id'; } });
+      }
     });
 
     await t.test('runtime removal rejects old signed replies', async () => {

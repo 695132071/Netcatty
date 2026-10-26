@@ -1,9 +1,9 @@
 import type { ImporterHostDraft } from '@netcatty/plugin-contract';
-import type { GroupConfig, Host, Snippet } from './models';
+import type { GroupConfig, Host, ManagedSource, Snippet } from './models';
 import { applyGroupDefaults, resolveGroupDefaults } from './groupConfig';
 import { hasHostConnectAutomation } from './hostConnectScripts';
 import { normalizePluginImporterRecords } from './pluginImporter';
-import { buildVaultHostFromDraft } from './vaultHostCreate';
+import { applyVaultHostUpdate, buildVaultHostFromDraft } from './vaultHostCreate';
 import { isScriptSnippet } from './snippetScript';
 import { snippetAppliesToOutputTrigger } from './snippetTargets';
 
@@ -55,6 +55,16 @@ export function pluginHostFieldDiff(before: Host | undefined, after: Host) {
       field, before: previous ?? null, after: value ?? null,
     }];
   });
+}
+
+/** Managed SSH-config writes stay in the full Vault editor. Reuse its group
+ * ownership rules without opening or syncing any managed file here. */
+export function pluginHostDraftTouchesManagedSource(host: Host, managedSources: ManagedSource[]): boolean {
+  if (host.managedSourceId) return true;
+  if (managedSources.length === 0) return false;
+  const reconciled = applyVaultHostUpdate([host], [], host.id, { group: host.group ?? '' }, { managedSources });
+  if (!reconciled.ok) throw new Error('Host draft is invalid');
+  return Boolean(reconciled.updatedHost.managedSourceId);
 }
 
 /** Only the host UI consumes this disclosure; script text never crosses RPC. */

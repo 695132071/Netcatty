@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { executePluginHostAction, type PluginHostAction, type PluginHostActionVault } from './pluginHostActionExecution';
 import { PluginHostActionResources } from './pluginHostActionResources';
-import type { Host } from '../../domain/models';
+import type { Host, ManagedSource } from '../../domain/models';
 
 const synthetic: Host = { id: 'synthetic', label: 'Synthetic', hostname: 'synthetic.invalid', username: 'test', tags: [], os: 'linux', password: 'synthetic-only', startupCommand: 'synthetic-script' };
 
@@ -12,14 +12,16 @@ function fixture() {
   let beforeRead: (() => void) | undefined;
   let beforeCommit: (() => void) | undefined;
   let duringAuthorize: (() => void) | undefined;
+  let storedSources: ManagedSource[] | undefined;
   const vault: PluginHostActionVault = {
-    hosts: [synthetic], customGroups: [], groupConfigs: [], snippets: [], isInitialized: true,
+    hosts: [synthetic], customGroups: [], groupConfigs: [], snippets: [], managedSources: [], isInitialized: true,
     async readPersistedHosts() { beforeRead?.(); return [structuredClone(synthetic)]; },
     async commitVaultImportTransaction(next, groups, sources, _configs, _expected, _lock, authorize) {
+      const nextSources = sources(storedSources ?? vault.managedSources);
       beforeCommit?.();
       await authorize?.();
       writes++; vault.hosts = next;
-      return { status: 'persisted', groups: groups([]), sources: sources([]), groupConfigs: [] };
+      return { status: 'persisted', groups: groups([]), sources: nextSources, groupConfigs: [] };
     },
   };
   resources.observe(vault.hosts);
@@ -32,6 +34,7 @@ function fixture() {
   };
   return { vault, target, options, get authorized() { return authorized; }, get connections() { return connections; }, get writes() { return writes; },
     cancel() { active = false; }, beforeRead(fn: () => void) { beforeRead = fn; }, beforeCommit(fn: () => void) { beforeCommit = fn; }, duringAuthorize(fn: () => void) { duringAuthorize = fn; },
+    storedSources(value: ManagedSource[]) { storedSources = value; },
   };
 }
 
@@ -75,4 +78,51 @@ test('create produces a saved SSH draft without executable or credential injecti
   const created = f.vault.hosts[1];
   assert.notEqual(created.id, synthetic.id);
   assert.equal(created.password, undefined); assert.equal(created.startupCommand, undefined);
+});
+
+const managedSources: ManagedSource[] = [
+  { id: 'synthetic-source-a', type: 'ssh_config', filePath: '/synthetic/a.conf', groupName: 'A', lastSyncedAt: 0 },
+  { id: 'synthetic-source-b', type: 'ssh_config', filePath: '/synthetic/b.conf', groupName: 'B', lastSyncedAt: 0 },
+];
+
+for (const destination of ['B', 'Unmanaged', ''] as const) test(`managed A to ${destination || 'no group'} is refused before action authority or persistence`, async () => {
+  const f = fixture();
+  const host = { ...synthetic, group: 'A', managedSourceId: managedSources[0].id };
+  f.vault.hosts = [host]; f.vault.managedSources = managedSources;
+  f.vault.readPersistedHosts = async () => [structuredClone(host)];
+  f.options.resources.observe(f.vault.hosts);
+  const target = f.options.resources.metadata(host.id);
+  await assert.rejects(executePluginHostAction({ kind: 'edit', target, draft: { group: destination } }, f.options), /Managed.*Vault/);
+  assert.equal(f.writes, 0); assert.equal(f.authorized, 0);
+  assert.equal(f.vault.hosts[0].managedSourceId, managedSources[0].id);
+});
+
+for (const kind of ['create', 'edit'] as const) test(`${kind} into a managed destination is refused`, async () => {
+  const f = fixture(); f.vault.managedSources = managedSources;
+  const action: PluginHostAction = kind === 'create'
+    ? { kind, draft: { hostname: 'new.invalid', group: 'B/Child' } }
+    : { kind, target: f.target, draft: { group: 'B/Child' } };
+  await assert.rejects(executePluginHostAction(action, f.options), /Managed.*Vault/);
+  assert.equal(f.writes, 0); assert.equal(f.authorized, 0);
+});
+
+test('ordinary unmanaged moves preserve the managed-source catalog without taking ownership', async () => {
+  const f = fixture(); f.vault.managedSources = managedSources;
+  assert.equal(await executePluginHostAction({ kind: 'edit', target: f.target, draft: { group: 'Unmanaged' } }, f.options), 'saved');
+  assert.equal(f.vault.hosts[0].managedSourceId, undefined);
+  assert.equal(f.vault.hosts[0].group, 'Unmanaged');
+  assert.equal(f.vault.managedSources, managedSources);
+});
+
+test('a managed-source catalog replacement during preparation prevents the write', async () => {
+  const f = fixture();
+  f.beforeCommit(() => { f.vault.managedSources = managedSources; });
+  await assert.rejects(executePluginHostAction({ kind: 'create', draft: { hostname: 'new.invalid', group: 'B' } }, f.options), /Managed sources changed/);
+  assert.equal(f.writes, 0); assert.equal(f.authorized, 0);
+});
+
+test('a newer persisted managed-source catalog rejects a stale unmanaged preview before the claim', async () => {
+  const f = fixture(); f.storedSources(managedSources);
+  await assert.rejects(executePluginHostAction({ kind: 'create', draft: { hostname: 'new.invalid', group: 'B' } }, f.options), /Managed sources changed/);
+  assert.equal(f.writes, 0); assert.equal(f.authorized, 0);
 });

@@ -1391,6 +1391,8 @@ Highlight the focused split pane:
   'plugins.hostActions.scriptsRun': 'Saved startup, connect or output scripts may run with this connection.',
   'plugins.hostActions.noScripts': 'No saved startup, connect or output scripts are configured for this host.',
   'plugins.hostActions.connectionNote': 'Netcatty will open this connection using the saved settings. This does not share session content with the plugin.',
+  'plugins.hostActions.localExecution': 'Local execution: this opens a shell on this device.',
+  'plugins.hostActions.managedUnsupported': 'Managed SSH config changes require the Vault host editor.',
   'plugins.hostActions.failed': 'The request expired, was revoked, or the host changed. Select the host again.',
   'plugins.hostActions.selectionLimit': 'Select up to 50 current hosts.',
 
