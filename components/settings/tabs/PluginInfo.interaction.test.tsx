@@ -104,8 +104,28 @@ test('information previews on hover/focus, pins on click and Escape returns focu
     await act(async () => { healthy.click(); await settle(); });
     assert.match(document.querySelector('[role="dialog"]')?.textContent ?? '', /Updates are manual/);
     await act(async () => { document.querySelector('[role="dialog"]')!.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true })); await settle(); });
+    const thirdParty: NetcattyPluginSource = { id: 'third-party:synthetic', kind: 'third-party', name: 'Independent source', origin: 'https://example.com' };
+    await act(async () => { root.render(<I18nProvider locale="en"><PluginMarketplaceContent marketSource={thirdParty} catalog={{ ...catalog, entries: [], listError: 'ECONNREFUSED', source: 'cached' }} installed={[]} selected={null} onSelect={() => {}} /></I18nProvider>); await settle(); });
+    const thirdStatus = document.querySelector<HTMLButtonElement>('button[aria-label$="Notices: 1"]')!;
+    await act(async () => { thirdStatus.focus(); await settle(); });
+    const thirdPreview = document.querySelector('[role="tooltip"]')?.textContent ?? '';
+    assert.match(thirdPreview, /provided by the selected third party/);
+    assert.match(thirdPreview, /If a previously validated catalog exists for this source/);
+    assert.doesNotMatch(thirdPreview, /bundled examples|Curated open-source|First-party/);
+    assert.equal(document.querySelector('[role="tooltip"] button'), null);
+    await act(async () => { thirdStatus.click(); await settle(); });
+    assert.match(document.querySelector('[role="dialog"]')?.textContent ?? '', /ECONNREFUSED/);
+    assert.match(document.querySelector('[role="dialog"]')?.textContent ?? '', /Retry/);
+    assert.doesNotMatch(document.querySelector('[role="dialog"]')?.textContent ?? '', /bundled examples|Curated open-source/);
+    await act(async () => { document.querySelector('[role="dialog"]')!.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true })); await settle(); });
+    await act(async () => { root.render(<I18nProvider locale="en"><PluginMarketplaceContent marketSource={thirdParty} catalog={catalog} installed={[]} selected={entry.id} onSelect={() => {}} /></I18nProvider>); await settle(); });
+    const sourceInfo = document.querySelector<HTMLButtonElement>('button[aria-label="Source example"]')!;
+    await act(async () => { sourceInfo.click(); await settle(); });
+    assert.match(document.querySelector('[role="dialog"]')?.textContent ?? '', /Source-only entry from this provider/);
+    assert.doesNotMatch(document.querySelector('[role="dialog"]')?.textContent ?? '', /First-party/);
+    await act(async () => { document.querySelector('[role="dialog"]')!.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true })); await settle(); });
   } finally {
-    await act(async () => root.unmount());
+    await act(async () => { root.unmount(); await settle(); });
     dom.window.close();
     for (const [key, descriptor] of previous) {
       if (descriptor) Object.defineProperty(globalThis, key, descriptor); else Reflect.deleteProperty(globalThis, key);

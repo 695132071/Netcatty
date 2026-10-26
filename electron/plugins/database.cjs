@@ -7,7 +7,7 @@ const { DatabaseSync } = require("node:sqlite");
 
 const { LOCAL_SOURCE, assertSource, privateOwner } = require("./sourceIdentity.cjs");
 
-const SCHEMA_VERSION = 6;
+const SCHEMA_VERSION = 7;
 const MAX_SECURITY_AUDIT_DETAILS_BYTES = 16 * 1024;
 const MAX_SECURITY_AUDIT_RECORDS_PER_PLUGIN = 1_000;
 const REQUIRED_SCHEMA_COLUMNS = Object.freeze({
@@ -241,6 +241,25 @@ class PluginDatabase {
       }
       this.db.exec("PRAGMA user_version = 6");
     });
+    if (version <= 6) this.transaction(() => {
+      // One-time conversion of existing local private rows; all sources now use
+      // immutable encoded owners. Never retain a raw-ID lookup fallback.
+      for (const table of ["plugin_settings", "plugin_view_state", "plugin_permission_grants", "plugin_secrets", "plugin_sync_sidecars"]) {
+        const rows = this.db.prepare(`SELECT DISTINCT plugin_id FROM ${table}`).all();
+        for (const { plugin_id: id } of rows) {
+          if (/^[a-z0-9][a-z0-9.-]{1,127}$/u.test(id)) {
+            this.db.prepare(`UPDATE ${table} SET plugin_id = ? WHERE plugin_id = ?`).run(privateOwner(LOCAL_SOURCE, id), id);
+          }
+        }
+      }
+      for (const row of this.db.prepare("SELECT plugin_id, key FROM plugin_kv").all()) {
+        if (this.getPluginSource(row.plugin_id).id === "local") {
+          const prefix = `${privateOwner(LOCAL_SOURCE, row.plugin_id)}:`;
+          if (!row.key.startsWith(prefix)) this.db.prepare("UPDATE plugin_kv SET key = ? WHERE plugin_id = ? AND key = ?").run(prefix + row.key, row.plugin_id, row.key);
+        }
+      }
+      this.db.exec("PRAGMA user_version = 7");
+    });
     // Legacy-map backfill is deferred until PackageStore.recover() has finished
     // (hostService seeds after package initialize). Running here would promote
     // sole map candidates before recovered manifests are visible, then skip
@@ -299,11 +318,11 @@ class PluginDatabase {
     // Opaque owners enter only from host sync storage, never plugin RPC identity.
     if (/^source:[a-f0-9]{64}:[a-z0-9][a-z0-9.-]{1,127}$/u.test(pluginId)) return pluginId;
     const source = this.getPluginSource(pluginId);
-    return source.id === "local" ? pluginId : privateOwner(source, pluginId);
+    return privateOwner(source, pluginId);
   }
 
   publicPluginId(owner) {
-    if (!owner.startsWith("source:")) return owner;
+    if (!/^source:[a-f0-9]{64}:[a-z0-9][a-z0-9.-]{1,127}$/u.test(owner)) return null;
     const pluginId = owner.slice(owner.lastIndexOf(":") + 1);
     return this.privateOwner(pluginId) === owner ? pluginId : null;
   }
@@ -989,7 +1008,7 @@ class PluginDatabase {
     /** @type {Map<string, Array<{ pluginId: string, key: string }>>} */
     const byProvider = new Map();
     for (const row of legacyRows) {
-      const pluginId = row.plugin_id;
+      const pluginId = this.publicPluginId(row.plugin_id);
       const key = row.key;
       if (typeof pluginId !== "string" || typeof key !== "string") continue;
       if (!key.startsWith(legacyPrefix)) continue;
