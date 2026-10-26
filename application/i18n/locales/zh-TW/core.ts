@@ -1217,6 +1217,7 @@ Vaults 分頁維持扁平，不使用這塊背景。
   "settings.plugins.manager.unbounded": "未宣告更細的資源範圍。請在權限提示中檢查實際授權範圍。",
   "settings.plugins.openView": "開啟",
   "settings.plugins.openManager": "開啟插件管理",
+  "settings.plugins.sources.conflict": "此 ID 已从其他来源安装。请先卸载并明确清理旧来源数据，再换源重装。原来源：",
   "settings.plugins.sources.clearPrivate": "同时清除本来源的私有数据、授权和秘密，以便显式换源重装。此操作不可撤销。",
   "settings.plugins.sources.official": "官方市场",
   "settings.plugins.sources.thirdparty": "第三方市场",

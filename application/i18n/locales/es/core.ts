@@ -1328,6 +1328,7 @@ Resalta el panel dividido enfocado:
   "settings.plugins.manager.unbounded": "No se declara un alcance de recursos más limitado. Revisa el alcance real en la solicitud de permiso.",
   "settings.plugins.openView": "Abrir",
   "settings.plugins.openManager": "Abrir gestor de plugins",
+  "settings.plugins.sources.conflict": "This ID is installed from another source. Uninstall and explicitly reset its private data before switching. Existing source:",
   "settings.plugins.sources.clearPrivate": "Also clear this source’s private data, grants and secrets to reinstall from another source. This cannot be undone.",
   "settings.plugins.sources.official": "Official marketplace",
   "settings.plugins.sources.thirdparty": "Third-party marketplace",

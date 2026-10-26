@@ -38,7 +38,10 @@ export function PluginMarketplaceContent({ catalog, installed, selected, onSelec
   const pageScroll = useRef(0);
   const entry = catalog.entries.find((item) => item.id === selected);
   const filtered = filterPluginCatalog(catalog.entries, search);
-  const installedEntry = installed.find((item) => item.id === entry?.id);
+  const sourceId = marketSource?.id ?? 'official';
+  const sameSource = (plugin: NetcattyInstalledPlugin) => (plugin.source?.id ?? 'local') === sourceId;
+  const installedEntry = installed.find((item) => item.id === entry?.id && sameSource(item));
+  const conflictingInstall = installed.find((item) => item.id === entry?.id && !sameSource(item));
   const choose = (id: string) => {
     const pane = listRef.current?.closest<HTMLElement>('[data-settings-scroll-pane]');
     pageScroll.current = pane?.scrollTop ?? 0;
@@ -74,7 +77,7 @@ export function PluginMarketplaceContent({ catalog, installed, selected, onSelec
         {catalog.listStatus === 'error' && <div role="alert" className="space-y-2 text-xs text-destructive"><p>{catalog.listError}</p><Button variant="outline" size="sm" onClick={catalog.retryList}>{t('settings.plugins.market.retry')}</Button></div>}
         {catalog.listStatus === 'ready' && catalog.entries.length === 0 && <p className="text-xs text-muted-foreground">{t('settings.plugins.market.empty')}</p>}
         <div className="plugin-marketplace-grid">{filtered.map((item) => {
-          const isInstalled = installed.some((plugin) => plugin.id === item.id);
+          const isInstalled = installed.some((plugin) => plugin.id === item.id && sameSource(plugin));
           return <button key={item.id} type="button" data-plugin-id={item.id} aria-current={selected === item.id ? 'true' : undefined} onClick={() => choose(item.id)}
             className="plugin-card min-w-0 flex min-h-[200px] flex-col gap-3 rounded-lg bg-card p-4 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
             <div className="flex items-center gap-3"><span className="flex h-8 w-8 shrink-0 items-center justify-center"><PluginBrandIcon entry={item} size={32} className="text-muted-foreground" /></span><span className="min-w-0 break-words text-sm font-semibold leading-5">{item.name}</span></div>
@@ -93,7 +96,8 @@ export function PluginMarketplaceContent({ catalog, installed, selected, onSelec
         {installedEntry?.runtime?.lastError && <p role="status" className="break-words text-xs text-destructive">{t('settings.plugins.manager.lastError')}: {installedEntry.runtime.lastError}</p>}
         <p className="text-sm leading-6 text-muted-foreground">{entry.description}</p>
         <a className="block break-all text-xs text-primary underline underline-offset-4" href={`https://github.com/${entry.repository}/tree/${entry.commit}`} target="_blank" rel="noopener noreferrer">{entry.repository} @ {entry.commit.slice(0, 12)}</a>
-        {entry.artifact ? <div className="space-y-2"><p className="text-xs text-muted-foreground">{t('settings.plugins.market.installNote')}</p>{catalog.listError && <p role="status" className="text-xs text-muted-foreground">{t('settings.plugins.market.offlineShort')}</p>}<Button size="sm" disabled={catalog.busy || Boolean(catalog.listError)} onClick={() => { if (marketSource?.kind === 'third-party' || (catalog.sourceBinding && catalog.sourceBinding.id !== (marketSource?.id ?? 'official'))) { setClearPreviousSource(false); setConfirmInstall(true); } else void catalog.install(entry.id); }}>{t('settings.plugins.market.install')}</Button></div> : <div className="flex items-center gap-1 text-xs text-muted-foreground"><span>{t('settings.plugins.market.sourceBadge')}</span><PluginInfo label={t('settings.plugins.market.sourceBadge')}>{t('settings.plugins.market.sourceOnly')}</PluginInfo></div>}
+        {conflictingInstall && <p role="status" className="text-xs text-muted-foreground">{t('settings.plugins.sources.conflict')} {conflictingInstall.source?.origin ?? t('settings.plugins.sources.local')}</p>}
+        {entry.artifact ? <div className="space-y-2"><p className="text-xs text-muted-foreground">{t('settings.plugins.market.installNote')}</p>{catalog.listError && <p role="status" className="text-xs text-muted-foreground">{t('settings.plugins.market.offlineShort')}</p>}<Button size="sm" disabled={catalog.busy || Boolean(catalog.listError) || Boolean(conflictingInstall)} onClick={() => { if (marketSource?.kind === 'third-party' || (catalog.sourceBinding && catalog.sourceBinding.id !== (marketSource?.id ?? 'official'))) { setClearPreviousSource(false); setConfirmInstall(true); } else void catalog.install(entry.id); }}>{t('settings.plugins.market.install')}</Button></div> : <div className="flex items-center gap-1 text-xs text-muted-foreground"><span>{t('settings.plugins.market.sourceBadge')}</span><PluginInfo label={t('settings.plugins.market.sourceBadge')}>{t('settings.plugins.market.sourceOnly')}</PluginInfo></div>}
         <section><h4 className="mb-3 text-sm font-semibold">{t('settings.plugins.market.manifest')}</h4><PluginPackageDetails plugin={{ id: entry.id, activeVersion: entry.version, enabled: false, manifest: entry.manifest, archiveSha256: entry.artifact?.sha256, runtime: { status: 'stopped', kind: null, lastError: null, quarantinedAt: null } }} /></section>
         <div className="min-w-0 border-t pt-4"><div className="flex items-center gap-1"><h4 className="text-sm font-semibold">README</h4><PluginInfo label={t('settings.plugins.market.readmeInfo')}>{t('settings.plugins.market.readmeNote')}</PluginInfo></div>{catalog.readmeStatus === 'loading' && <p className="mt-3 text-xs text-muted-foreground">{t('settings.plugins.loading')}</p>}
           {catalog.readmeStatus === 'error' && <div role="alert" className="mt-3 space-y-2 text-xs text-destructive"><p>{catalog.readmeError}</p><Button variant="outline" size="sm" onClick={catalog.retryReadme}>{t('settings.plugins.market.retry')}</Button></div>}

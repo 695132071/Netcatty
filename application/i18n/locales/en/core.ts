@@ -1328,6 +1328,7 @@ Highlight the focused split pane:
   "settings.plugins.manager.unbounded": "No narrower resource scope is declared. Check the actual scope in the permission prompt.",
   "settings.plugins.openView": "Open",
   "settings.plugins.openManager": "Open plugin manager",
+  "settings.plugins.sources.conflict": "This ID is installed from another source. Uninstall and explicitly reset its private data before switching. Existing source:",
   "settings.plugins.sources.clearPrivate": "Also clear this source’s private data, grants and secrets to reinstall from another source. This cannot be undone.",
   "settings.plugins.sources.official": "Official marketplace",
   "settings.plugins.sources.thirdparty": "Third-party marketplace",

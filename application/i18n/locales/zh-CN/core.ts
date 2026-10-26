@@ -1243,6 +1243,7 @@ Vaults 标签保持扁平，不使用这块背景。
   "settings.plugins.manager.unbounded": "未声明更细的资源范围。请在权限提示中检查实际授权范围。",
   "settings.plugins.openView": "打开",
   "settings.plugins.openManager": "打开插件管理",
+  "settings.plugins.sources.conflict": "此 ID 已从其他来源安装。请先卸载并明确清理旧来源数据，再换源重装。原来源：",
   "settings.plugins.sources.clearPrivate": "同时清除本来源的私有数据、授权和秘密，以便显式换源重装。此操作不可撤销。",
   "settings.plugins.sources.official": "官方市场",
   "settings.plugins.sources.thirdparty": "第三方市场",

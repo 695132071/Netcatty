@@ -1223,6 +1223,7 @@ export const ruCoreMessages: Messages = {
   "settings.plugins.manager.unbounded": "Более узкая область ресурсов не заявлена. Проверьте фактическую область в запросе разрешения.",
   "settings.plugins.openView": "Открыть",
   "settings.plugins.openManager": "Открыть управление плагинами",
+  "settings.plugins.sources.conflict": "This ID is installed from another source. Uninstall and explicitly reset its private data before switching. Existing source:",
   "settings.plugins.sources.clearPrivate": "Also clear this source’s private data, grants and secrets to reinstall from another source. This cannot be undone.",
   "settings.plugins.sources.official": "Official marketplace",
   "settings.plugins.sources.thirdparty": "Third-party marketplace",
