@@ -4,6 +4,7 @@ const { createHash } = require("node:crypto");
 const fs = require("node:fs/promises");
 const path = require("node:path");
 const catalog = require("./catalog.json");
+const { getTempFilePath } = require("../bridges/tempDirBridge.cjs");
 const { createDefinitionValidator, formatValidationErrors } = require("./contractValidator.cjs");
 const validateManifest = createDefinitionValidator("PluginManifest");
 const { assertCatalogManifest } = require("./catalogPolicy.cjs");
@@ -72,7 +73,7 @@ class PluginCatalogService {
   constructor(options) {
     this.entries = validateCatalog(structuredClone(options.entries ?? catalog));
     this.fetch = options.fetch ?? fetch;
-    this.paths = options.paths;
+    this.getTempFilePath = options.getTempFilePath ?? getTempFilePath;
     this.manager = options.manager;
     this.installing = false;
   }
@@ -96,8 +97,7 @@ class PluginCatalogService {
     try {
       const bytes = await fetchBounded(entry.artifact.url, 32 * 1024 * 1024, this.fetch);
       if (createHash("sha256").update(bytes).digest("hex") !== entry.artifact.sha256) throw new Error("Catalog package SHA-256 mismatch");
-      await fs.mkdir(this.paths.dev, { recursive: true, mode: 0o700 });
-      directory = await fs.mkdtemp(path.join(this.paths.dev, "catalog-"));
+      directory = await fs.mkdtemp(this.getTempFilePath("plugin-catalog-"));
       const archive = path.join(directory, "package.ncpkg");
       await fs.writeFile(archive, bytes, { mode: 0o600, flag: "wx" });
       return await this.manager.install(archive, { enable: false, catalog: entry });

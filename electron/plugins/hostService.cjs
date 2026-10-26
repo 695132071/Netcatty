@@ -369,7 +369,7 @@ function createPluginHostService(options) {
       },
     });
     return {
-      catalogService: new PluginCatalogService({ manager, paths, fetch: options.electron.net?.fetch?.bind(options.electron.net) }),
+      catalogService: new PluginCatalogService({ manager, fetch: options.electron.net?.fetch?.bind(options.electron.net) }),
       companionSupervisor,
       contributionIconService,
       contributionService,

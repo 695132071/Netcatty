@@ -44,9 +44,14 @@ test("catalog install verifies the digest, shares manager installation, and neve
   const bytes = Buffer.from("synthetic bytes: package validation belongs to PackageStore");
   const entry = { ...structuredClone(entries[0]), artifact: { url: "https://github.com/example/repo/releases/download/v1/plugin.ncpkg", sha256: createHash("sha256").update(bytes).digest("hex") } };
   let installs = 0;
-  const service = new PluginCatalogService({ entries: [entry], paths: { dev: root }, fetch: async () => new Response(bytes), manager: {
+  const service = new PluginCatalogService({ entries: [entry], getTempFilePath: (name) => {
+    assert.equal(name, "plugin-catalog-");
+    return path.join(root, name);
+  }, fetch: async () => new Response(bytes), manager: {
     async install(archive, options) {
       installs++;
+      assert.equal(path.dirname(path.dirname(archive)), root);
+      assert.equal((await fs.stat(path.dirname(archive))).mode & 0o777, 0o700);
       assert.deepEqual(await fs.readFile(archive), bytes);
       assert.equal(options.enable, false);
       assert.equal(options.catalog.artifact.sha256, entry.artifact.sha256);
