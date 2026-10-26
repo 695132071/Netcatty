@@ -22,6 +22,7 @@ const electronBundlePath = path.join(
 );
 const checkOnly = process.argv.includes("--check");
 const typescriptTypeOverrides = new Map([
+  ["PermissionDeclaration", 'Exclude<PluginPermission, "network.stream"> | PermissionResourceDeclaration'],
   [
     "ActivationEvent",
     '"onStartupFinished" | `onCommand:${ContributionId}` | `onView:${ContributionId}` | `onProvider:${ContributionId}`',
@@ -306,6 +307,10 @@ function schemaTypeToTs(node, level = 0) {
 }
 
 const hostInteractionLimits = schema.$defs.HostInteractionLimits?.const;
+const byteStreamLimits = schema.$defs.ByteStreamLimits?.const;
+if (!byteStreamLimits || Object.values(byteStreamLimits).some((value) => !Number.isSafeInteger(value) || value < 1)) {
+  throw new Error("ByteStreamLimits must contain positive bounded integers");
+}
 if (!hostInteractionLimits || Object.values(hostInteractionLimits).some((value) => !Number.isSafeInteger(value) || value < 1)) {
   throw new Error("HostInteractionLimits must contain positive bounded integers");
 }
@@ -333,6 +338,7 @@ const generatedLimits = [
   `export const PLUGIN_WIRE_MAX_SAFE_INTEGER = ${wireIntegerLimits.maxSafeInteger} as const;`,
   `export const PLUGIN_RPC_MAX_JSON_BYTES = ${rpcLimits.maxJsonBytes} as const;`,
   `export const PLUGIN_HOST_INTERACTION_LIMITS = ${JSON.stringify(hostInteractionLimits)} as const;`,
+  `export const PLUGIN_BYTE_STREAM_LIMITS = ${JSON.stringify(byteStreamLimits)} as const;`,
   `export const PLUGIN_RPC_ERROR_CODES = ${JSON.stringify(rpcErrorCodes)} as const;`,
   `export const PLUGIN_STREAM_MAX_ID_LENGTH = ${streamLimits.maxStreamIdLength} as const;`,
   `export const PLUGIN_STREAM_MAX_CHUNK_BYTES = ${streamLimits.maxChunkBytes} as const;`,

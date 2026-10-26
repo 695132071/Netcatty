@@ -158,6 +158,8 @@ class PluginStreamRouter {
       this.outgoing.delete(frame.streamId);
       for (const pending of outgoing.queue) pending.reject(new Error(`Plugin stream cancelled: ${frame.streamId}`));
       outgoing.queue.length = 0;
+      outgoing.queuedBytes = 0;
+      this.#notifyOutgoingClosed(outgoing, "cancel");
       return;
     }
     const state = this.incoming.get(frame.streamId);
@@ -233,7 +235,8 @@ class PluginStreamRouter {
     state.onClose = handlers.onClose;
   }
 
-  async openOutgoing(streamId, windowBytes) {
+  async openOutgoing(streamId, windowBytes, options = {}) {
+    if (options.onClose !== undefined && typeof options.onClose !== "function") throw new TypeError("Stream onClose must be a function");
     if (
       this.closed
       || this.outgoing.has(streamId)
@@ -268,6 +271,7 @@ class PluginStreamRouter {
       queuedBytes: 0,
       closed: false,
       terminalKind: null,
+      onClose: options.onClose,
     };
     this.outgoing.set(streamId, state);
     try {
@@ -347,6 +351,13 @@ class PluginStreamRouter {
     for (const pending of state.queue) pending.reject(error);
     state.queue.length = 0;
     state.queuedBytes = 0;
+    this.#notifyOutgoingClosed(state, error);
+  }
+
+  #notifyOutgoingClosed(state, reason) {
+    if (state.closeNotified) return;
+    state.closeNotified = true;
+    try { state.onClose?.(reason); } catch {}
   }
 
   #finishOutgoing(state, kind) {
@@ -373,6 +384,7 @@ class PluginStreamRouter {
       ) {
         this.outgoing.delete(state.streamId);
       }
+      this.#notifyOutgoingClosed(state, kind);
     }
   }
 
@@ -413,6 +425,7 @@ class PluginStreamRouter {
     for (const state of this.outgoing.values()) {
       state.closed = true;
       for (const pending of state.queue) pending.reject(error);
+      this.#notifyOutgoingClosed(state, error);
     }
     this.outgoing.clear();
     for (const state of this.incoming.values()) {

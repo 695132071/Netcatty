@@ -655,6 +655,28 @@ export type { PluginNetworkAuthorization, PluginNetworkRequest, PluginNetworkRes
 
 export interface PluginNetworkClient {
   request(request: PluginNetworkRequest): Promise<PluginNetworkResponse>;
+  connect(request: import("@netcatty/plugin-contract").ByteStreamConnectRequest, cancellationToken?: CancellationToken): Promise<PluginByteConnection>;
+}
+
+export interface PluginAIClient {
+  openChat(params: import("@netcatty/plugin-contract").PluginAIEmptyParams): Promise<import("@netcatty/plugin-contract").PluginAIChatResult>;
+  startTurn(params: import("@netcatty/plugin-contract").PluginAIStartTurnParams): Promise<import("@netcatty/plugin-contract").PluginAITurnResult>;
+  readTurn(params: import("@netcatty/plugin-contract").PluginAITurnRef): Promise<import("@netcatty/plugin-contract").PluginAIStreamEvent>;
+  stopTurn(params: import("@netcatty/plugin-contract").PluginAITurnRef): Promise<import("@netcatty/plugin-contract").PluginAIBooleanResult>;
+  closeChat(params: import("@netcatty/plugin-contract").PluginAIChatRef): Promise<import("@netcatty/plugin-contract").PluginAIBooleanResult>;
+}
+
+export interface PluginSelectedContextClient {
+  list(params: import("@netcatty/plugin-contract").PluginAIEmptyParams): Promise<import("@netcatty/plugin-contract").PluginSelectedContextListResult>;
+  read(params: import("@netcatty/plugin-contract").PluginSelectedContextRef): Promise<import("@netcatty/plugin-contract").PluginSelectedContextContent>;
+}
+
+export interface PluginByteConnection extends Disposable {
+  readonly endpoint: string;
+  readonly readable: PluginReadableByteStream;
+  readonly writable: PluginWritableByteStream;
+  /** Closes both directions. Repeated calls on this handle are harmless. */
+  close(): Promise<void>;
 }
 
 export interface PluginFilesystemEntry {
@@ -746,6 +768,8 @@ export interface PluginContext {
   readonly secrets: PluginSecretStore;
   readonly credentials: PluginCredentialBroker;
   readonly network: PluginNetworkClient;
+  readonly ai: PluginAIClient;
+  readonly selectedContext: PluginSelectedContextClient;
   readonly filesystem: PluginFilesystemClient;
   readonly companions: PluginCompanionService;
   readonly streams: PluginStreams;
@@ -928,6 +952,8 @@ export function throwIfCancellationRequested(token: CancellationToken): void {
 }
 
 export { PLUGIN_NETWORK_CREDENTIAL_LEASE_FEATURE } from "@netcatty/plugin-contract";
+export { PLUGIN_BYTE_STREAM_FEATURE, PLUGIN_BYTE_STREAM_LIMITS } from "@netcatty/plugin-contract";
+export { PLUGIN_AI_MODEL_INVOCATION_FEATURE, PLUGIN_SELECTED_CONTEXT_FEATURE } from "@netcatty/plugin-contract";
 
 export { PLUGIN_HOST_INTERACTION_FEATURE } from "@netcatty/plugin-contract";
 export { PLUGIN_VAULT_PAGES_FEATURE } from "@netcatty/plugin-contract";
