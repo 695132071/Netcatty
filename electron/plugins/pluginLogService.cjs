@@ -10,6 +10,7 @@ const { RPC_ERRORS } = require("./rpcRouter.cjs");
 const bounded = (value, length = 128) => typeof value === "string"
   ? value.slice(0, length).replace(/[^a-zA-Z0-9._:@/-]/gu, "_") : null;
 const sourceKey = (value) => typeof value === "string" && /^[a-zA-Z0-9._:-]{1,128}$/u.test(value) ? value : null;
+const ownerKey = (value) => typeof value === "string" && /^[a-zA-Z0-9._:-]{1,256}$/u.test(value) ? value : null;
 const count = (value) => Number.isSafeInteger(value) && value >= 0 ? value : null;
 
 class PluginLogService {
@@ -18,6 +19,7 @@ class PluginLogService {
     this.preferencesPath = path.join(options.paths.root, "local-logging.json");
     this.resolveProvenance = options.resolveProvenance ?? (() => null);
     this.electron = options.electron;
+    this.provenanceChecks = new WeakMap();
     this.salt = randomBytes(32);
     this.sink = new PluginLogSink({ directory: this.directory, ...options.limits });
     this.settings = { saveToDisk: false, verbose: false };
@@ -74,14 +76,18 @@ class PluginLogService {
     let source = null;
     try { source = this.resolveProvenance(Object.freeze({ pluginId: identity.pluginId, pluginVersion: identity.pluginVersion,
       archiveSha256: plugin?.archiveSha256 ?? null, securityPrincipal: identity.securityPrincipal })); } catch {}
-    return Object.freeze({ pluginId: bounded(identity.pluginId), pluginVersion: bounded(identity.pluginVersion),
+    const metadata = Object.freeze({ pluginId: bounded(identity.pluginId), pluginVersion: bounded(identity.pluginVersion),
       runtimeId: bounded(identity.runtimeId), runtimeKind: bounded(identity.runtimeKind),
       archiveSha256: /^[a-f0-9]{64}$/u.test(plugin?.archiveSha256 ?? "") ? plugin.archiveSha256 : null,
-      sourceId: sourceKey(source?.sourceId), sourceKind: sourceKey(source?.sourceKind), namespace: sourceKey(source?.namespace) });
+      sourceId: sourceKey(source?.sourceId), sourceKind: sourceKey(source?.sourceKind), namespace: ownerKey(source?.namespace) });
+    if (source?.isCurrent && typeof source.isCurrent === "function") {
+      this.provenanceChecks.set(metadata, () => source.isCurrent() === true);
+    }
+    return metadata;
   }
   createLogger(identity, plugin) {
     const provenance = this.identity(identity, plugin);
-    return new PluginLogger({ sink: this.sink, identity: provenance, verbose: () => this.settings.verbose, audit: (event) => this.audit(provenance, event) });
+    return new PluginLogger({ sink: this.sink, identity: provenance, verbose: () => this.settings.verbose, isCurrent: this.provenanceChecks.get(provenance), audit: (event) => this.audit(provenance, event) });
   }
   audit(identity, event) {
     if (!this.sink.enabled) return;
@@ -94,7 +100,7 @@ class PluginLogService {
       authorization: ["allowed", "denied", "not-required", "not-reached", "unknown"].includes(event.authorization) ? event.authorization : "unknown",
       result: event.result === "ok" ? "ok" : "error",
       errorCode: Object.values(RPC_ERRORS).includes(event.errorCode) ? event.errorCode : event.result === "ok" ? null : RPC_ERRORS.internal,
-      durationMs: count(event.durationMs), inputBytes: count(event.inputBytes), outputBytes: count(event.outputBytes) });
+      durationMs: count(event.durationMs), inputBytes: count(event.inputBytes), outputBytes: count(event.outputBytes) }, this.provenanceChecks.get(identity));
   }
   async openFolder() {
     return this.#manage(async () => {
@@ -115,7 +121,7 @@ class PluginLogService {
           try {
             const stats = await fsp.lstat(this.sink.file(index));
             if (!stats.isFile() || stats.isSymbolicLink() || stats.size > this.sink.maxBytes) throw new Error("Unsafe plugin log file");
-            if (Date.now() - stats.mtimeMs <= this.sink.retentionMs) chunks.push(await fsp.readFile(this.sink.file(index)));
+            if (await this.sink.retained(this.sink.file(index))) chunks.push(await fsp.readFile(this.sink.file(index)));
           } catch (error) { if (error.code !== "ENOENT") throw error; }
         }
         await fsp.writeFile(result.filePath, Buffer.concat(chunks), { mode: 0o600 });

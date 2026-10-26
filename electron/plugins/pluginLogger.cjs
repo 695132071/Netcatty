@@ -62,11 +62,13 @@ class PluginLogSink {
     this.generation = 0;
   }
 
-  enqueue(record) {
+  enqueue(record, isCurrent = () => true) {
     if (!this.enabled || this.closed) return;
     if (this.clearing) { this.dropped++; return; }
+    const current = () => { try { return isCurrent() === true; } catch { return false; } };
+    if (!current()) { this.dropped++; return; }
     let line;
-    try { line = `${JSON.stringify({ ...record, droppedRecords: this.dropped, writeErrors: this.writeErrors })}\n`; }
+    try { line = `${JSON.stringify({ ...record, timestamp: new Date(this.clock()).toISOString(), droppedRecords: this.dropped, writeErrors: this.writeErrors })}\n`; }
     catch { this.dropped++; return; }
     const bytes = Buffer.byteLength(line);
     const diagnostic = record.recordType === "plugin-diagnostic";
@@ -77,21 +79,25 @@ class PluginLogSink {
     this.pendingBytes += bytes;
     if (diagnostic) this.diagnosticPendingBytes += bytes;
     this.queue = this.queue.then(async () => {
-      if (generation !== this.generation) { this.dropped++; return; }
+      if (generation !== this.generation || !current()) { this.dropped++; return; }
       await this.prune();
       const active = this.file(0);
       let size = 0;
       try { size = (await fs.stat(active)).size; } catch (error) { if (error.code !== "ENOENT") throw error; }
+      if (!current()) { this.dropped++; return; }
       if (size + bytes > this.maxBytes) {
         await fs.rm(this.file(this.maxFiles - 1), { force: true });
         for (let index = this.maxFiles - 2; index >= 0; index--) {
+          if (!current()) { this.dropped++; return; }
           try { await fs.rename(this.file(index), this.file(index + 1)); }
           catch (error) { if (error.code !== "ENOENT") throw error; }
         }
       }
+      if (!current()) { this.dropped++; return; }
       const handle = await fs.open(active, constants.O_WRONLY | constants.O_CREAT | constants.O_APPEND | (constants.O_NOFOLLOW ?? 0), 0o600);
       try {
         if (!(await handle.stat()).isFile()) throw new Error("Unsafe plugin log file");
+        if (!current()) { this.dropped++; return; }
         await handle.writeFile(line);
       } finally { await handle.close(); }
     }).catch(() => { this.dropped++; this.writeErrors++; }).finally(() => {
@@ -101,13 +107,29 @@ class PluginLogSink {
   }
 
   file(index) { return path.join(this.directory, index === 0 ? "runtime.jsonl" : `runtime.${index}.jsonl`); }
+  async retained(file) {
+    // Every host record is capped at 16 KiB. Read only the first line: append
+    // updates mtime, so mtime cannot enforce record retention for active files.
+    const handle = await fs.open(file, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0));
+    try {
+      const buffer = Buffer.alloc(16 * 1024);
+      const { bytesRead } = await handle.read(buffer, 0, buffer.length, 0);
+      const newline = buffer.indexOf(10, 0);
+      if (newline < 0 || newline >= bytesRead) return false;
+      let first;
+      try { first = JSON.parse(buffer.subarray(0, newline).toString("utf8")); } catch { return false; }
+      const start = typeof first.timestamp === "string" ? Date.parse(first.timestamp) : NaN;
+      return Number.isFinite(start) && this.clock() - start < this.retentionMs;
+    } finally { await handle.close(); }
+  }
   async prune() {
     await fs.mkdir(this.directory, { recursive: true, mode: 0o700 });
     for (let index = 0; index < this.maxFiles; index++) {
       try {
-        const stats = await fs.lstat(this.file(index));
+        const file = this.file(index);
+        const stats = await fs.lstat(file);
         if (!stats.isFile() || stats.isSymbolicLink()) throw new Error("Unsafe plugin log file");
-        if (this.clock() - stats.mtimeMs > this.retentionMs || stats.size > this.maxBytes) await fs.rm(this.file(index));
+        if (stats.size > this.maxBytes || !await this.retained(file)) await fs.rm(file);
       } catch (error) { if (error.code !== "ENOENT") throw error; }
     }
   }
@@ -138,6 +160,7 @@ class PluginLogger {
     this.sink = options.sink;
     this.identity = options.identity;
     this.verbose = options.verbose ?? (() => false);
+    this.isCurrent = options.isCurrent;
     this.closed = false;
     this.audit = options.audit ?? (() => {});
     this.bucket = new TokenBucket(DEFAULT_QUOTAS.logWritesPerMinute, DEFAULT_QUOTAS.logWritesPerMinute / 60000, options.clock ?? Date.now);
@@ -154,7 +177,7 @@ class PluginLogger {
         message: redactLogValue(typeof message === "string" ? message : "[INVALID MESSAGE]"),
         fields: redactLogValue(fields),
       },
-    });
+    }, this.isCurrent);
     return Promise.resolve();
   }
   close() { this.closed = true; }

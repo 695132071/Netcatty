@@ -21,9 +21,10 @@ test('local logging controls default off, disclose verbose risk, and call host-o
   let status = { saveToDisk: false, verbose: false, droppedRecords: 2, writeErrors: 0, pendingBytes: 0, maxBytes: 3145728, retentionDays: 7 };
   const settings: Array<{ saveToDisk: boolean; verbose: boolean }> = [];
   const actions: string[] = [];
+  let failConfigure = false;
   Object.assign(dom.window, { netcatty: {
     async getPluginLogStatus() { return status; },
-    async configurePluginLogs(value: { saveToDisk: boolean; verbose: boolean }) { settings.push(value); status = { ...status, ...value }; return status; },
+    async configurePluginLogs(value: { saveToDisk: boolean; verbose: boolean }) { settings.push(value); status = { ...status, ...value }; if (failConfigure) throw new Error('synthetic preferences write failed'); return status; },
     async openPluginLogFolder() { actions.push('open'); return status; },
     async exportPluginLogs() { actions.push('export'); return status; },
     async clearPluginLogs() { actions.push('clear-confirmed-by-native-host'); return status; },
@@ -48,8 +49,12 @@ test('local logging controls default off, disclose verbose risk, and call host-o
     await act(async () => button('Export').click());
     await act(async () => button('Clear logs…').click());
     assert.deepEqual(actions, ['open', 'export', 'clear-confirmed-by-native-host']);
+    failConfigure = true;
     await act(async () => checkboxes()[0].click());
     assert.deepEqual(settings.at(-1), { saveToDisk: false, verbose: false });
+    assert.equal(checkboxes()[0].checked, false, 'failed configuration refreshes actual OFF host state');
+    assert.equal(checkboxes()[1].checked, false);
+    assert.match(document.querySelector('[role=alert]')!.textContent!, /synthetic preferences write failed/);
   } finally {
     await act(async () => root.unmount());
     dom.window.close();

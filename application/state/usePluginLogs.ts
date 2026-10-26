@@ -21,7 +21,20 @@ export function usePluginLogs() {
       if (!result) throw new Error('Local plugin logging is unavailable');
       if (mounted.current) setStatus(result);
     } catch (cause) {
-      if (mounted.current) setError(cause instanceof Error ? cause.message : String(cause));
+      let message = cause instanceof Error ? cause.message : String(cause);
+      if (action === 'configure') {
+        // Configuration fails closed before disk I/O. Show actual host state,
+        // even when persisting a setting failed, rather than keeping stale ON.
+        try {
+          const actual = await netcattyBridge.require().getPluginLogStatus?.();
+          if (!actual) throw new Error('Local plugin log status is unavailable');
+          if (mounted.current) setStatus(actual);
+        } catch (refreshError) {
+          if (mounted.current) setStatus(null);
+          message += `\n${refreshError instanceof Error ? refreshError.message : String(refreshError)}`;
+        }
+      }
+      if (mounted.current) setError(message);
     } finally {
       pending.current = false;
       if (mounted.current) setBusy(false);

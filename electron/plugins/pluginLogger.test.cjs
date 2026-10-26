@@ -97,7 +97,8 @@ test("shared disk cap, queue cap, retention and drop accounting", async (t) => {
   f.logger.audit({ operation: "storage.get", result: "ok" });
   assert.ok((await f.records()).some((record) => record.droppedRecords > 0));
   files = await fs.readdir(f.service.directory);
-  for (const name of files) await fs.utimes(path.join(f.service.directory, name), new Date(0), new Date(0));
+  const future = Date.now() + f.service.sink.retentionMs;
+  f.service.sink.clock = () => future;
   await f.service.sink.prune();
   assert.deepEqual(await fs.readdir(f.service.directory), []);
 });
@@ -184,7 +185,8 @@ test("unknown provenance stays unknown and a disabled restart prunes expired fil
   assert.equal(records[0].namespace, null);
   assert.doesNotMatch(JSON.stringify(records), /manifest-official-claim/);
   await f.service.configure({ saveToDisk: false, verbose: false });
-  await fs.utimes(f.service.sink.file(0), new Date(0), new Date(0));
+  const expired = await fs.readFile(f.service.sink.file(0), "utf8");
+  await fs.writeFile(f.service.sink.file(0), expired.replace(/"timestamp":"[^"]+"/u, '"timestamp":"2000-01-01T00:00:00.000Z"'));
   const restored = new PluginLogService({ paths: f.paths });
   await restored.ready;
   assert.equal(restored.status().saveToDisk, false);
@@ -217,4 +219,40 @@ test("source resolver URLs and userinfo are not persisted as source identity", a
   assert.equal(records[0].sourceId, null);
   assert.equal(records[0].namespace, null);
   assert.doesNotMatch(JSON.stringify(records), /SYNTHETIC_SECRET/);
+});
+
+test("31 days of low-volume appends never retain an active record for seven days", async (t) => {
+  let now = Date.UTC(2030, 0, 1);
+  const f = await fixture(t, { clock: () => now });
+  await f.service.configure({ saveToDisk: true, verbose: false });
+  for (let day = 0; day < 31; day++) {
+    now = Date.UTC(2030, 0, 1) + day * 86400000;
+    f.logger.audit({ operation: `synthetic.day-${day}`, authorization: "not-required", result: "ok" });
+    const records = await f.records();
+    assert.ok(records.length > 0);
+    for (const record of records) assert.ok(now - Date.parse(record.timestamp) < f.service.sink.retentionMs);
+  }
+  assert.doesNotMatch(JSON.stringify(await f.records()), /synthetic.day-0"/u);
+});
+
+test("export excludes an expired active segment even when its mtime is recent", async (t) => {
+  let now = Date.UTC(2030, 0, 1);
+  const f = await fixture(t, { clock: () => now });
+  await f.service.configure({ saveToDisk: true, verbose: false });
+  f.logger.audit({ operation: "synthetic.expired", result: "ok" });
+  await f.service.sink.flush();
+  now += 86400000;
+  f.logger.audit({ operation: "synthetic.day-one", result: "ok" });
+  await f.service.sink.flush();
+  // Appending refreshed mtime; export must use the first host record's age.
+  await fs.utimes(f.service.sink.file(0), new Date(now), new Date(now));
+  now += f.service.sink.retentionMs;
+  await f.service.exportLogs();
+  assert.equal(await fs.readFile(path.join(f.root, "export.jsonl"), "utf8"), "");
+  f.logger.audit({ operation: "synthetic.new-segment", result: "ok" });
+  await f.service.sink.flush();
+  await f.service.exportLogs();
+  const records = (await fs.readFile(path.join(f.root, "export.jsonl"), "utf8")).trim().split("\n").map(JSON.parse);
+  assert.equal(records.length, 1);
+  assert.equal(records[0].operation, "synthetic.new-segment");
 });

@@ -24,7 +24,8 @@ Host audit records contain these facts:
 - Cumulative dropped-record and write-error counts at enqueue time.
 
 Runtime start, running, stop, failure, protocol rejection, and permission revocation
-produce separate host facts. The registry records known RPC attempts even when
+produce separate host facts. Required and advanced activation permission failures
+produce a fixed `runtime.authorization` event even before a runtime ID exists. The registry records known RPC attempts even when
 validation or authorization fails. Authorization has separate `allowed`, `denied`,
 `not-required`, and `not-reached` states. A handler error after approval preserves
 `allowed` and records the failed result. Unknown values remain explicit.
@@ -57,8 +58,11 @@ No plugin text is persisted when verbose diagnostics are off.
 ## Limits and lifecycle
 
 The shared sink retains at most three files of 1 MiB each, for at most seven days.
-Retention runs on startup, writes and hourly while the app runs, including after
-saving is disabled. The app cannot delete expired files while it is closed.
+Expiry uses the first host timestamp in each segment, read within the existing
+16 KiB record bound. Appending cannot extend a segment's lifetime. Export uses
+the same cutoff. A segment is removed when its first record expires; capacity
+rotation or segment expiry can remove later records sooner. Retention runs on
+startup, writes and hourly while the app runs, including after saving is disabled. The app cannot delete expired files while it is closed.
 The asynchronous queue accepts at most 256 KiB and records drops when full.
 Plugin text can occupy only a quarter of that queue, leaving capacity for host
 facts. Diagnostics also reuse the existing per-runtime log token bucket (240
@@ -68,7 +72,9 @@ both drop and error counts and never fail the plugin operation.
 
 Turning saving off stops ingress, discards queued records that have not started,
 and waits for any current write. Runtime cleanup closes its diagnostic logger.
-App shutdown drains accepted writes through the existing manager shutdown path.
+App shutdown drains accepted writes through the existing manager shutdown path,
+including when another cleanup stage rejects. A failed settings write refreshes
+the checkbox from actual host state while retaining the original error.
 Clearing pauses ingress, discards queued records, waits for a current write and
 removes only the sink's known files. Cancellation leaves them intact. Export takes
 a bounded snapshot on the write queue and uses the native Save dialog.
@@ -87,27 +93,42 @@ and element in `SettingsPluginsTab`. It adds no marketplace tab and changes no
 Installed, Official, Third-party, or source-database implementation. When merging
 with the marketplace branch, preserve this element in the host settings surface.
 
-`createPluginHostService({ resolvePluginProvenance })` accepts a synchronous,
-host-owned resolver with this input:
+`createPluginHostService` now injects the host-owned
+`createPluginLogProvenanceResolver(database)` by default. It consumes the source
+API confirmed on #3981 at `59721f97172acffffe960a6268a2916a90a6c554`:
 
-```js
-({ pluginId, pluginVersion, archiveSha256, securityPrincipal }) => ({
-	sourceId,
-	sourceKind,
-	namespace,
-})
-```
+- `getActivePlugin(pluginId)` supplies the installed version, hash and source.
+- `getRetainedPluginSource(pluginId)` must agree with the installed source.
+- `privateOwner(pluginId)` supplies the opaque namespace.
+- `publicPluginId(owner)` must round-trip to the host-assigned public ID.
 
-Return canonical source IDs, not URLs, display names, or plugin claims. Source
-keys accept only 1-128 ASCII letters, digits, periods, underscores, colons and
-hyphens. Values outside that grammar remain `null`. The source
-branch owns this resolver and must inject its authoritative source catalog. A
-runtime snapshots the resolver's result at activation. Until it is wired, source
-fields remain `null`; identity is never guessed from a manifest or package name.
+The adapter receives host activation identity only, after the existing caller
+guards. It never accepts source or owner fields from plugin request parameters.
+Missing APIs, an absent installation, changed version/hash, a retained-source
+mismatch or an orphaned owner leave provenance explicitly unknown. There is no
+bare-plugin-ID fallback. The current host API encodes every owner, including
+local imports; a bare ID returned as an owner remains unknown.
+
+Each logger snapshots the source binding and supplies a host-only `isCurrent`
+check. The sink checks it at enqueue, after asynchronous preflight, before
+rotation mutations and immediately before appending. Records from a replaced or
+uninstalled source are dropped and counted. They are never relabelled as the new
+source. Already saved records keep their original identity.
+
+The optional `resolvePluginProvenance` override remains host-owned. Its result
+contains `sourceId`, `sourceKind`, `namespace`, and an optional synchronous
+`isCurrent` function. Source IDs and kinds accept 1-128 ASCII letters, digits,
+periods, underscores, colons and hyphens. Opaque namespaces accept the same
+characters up to 256 bytes. URLs, display names and plugin claims are not source
+identity. `official` describes the host-bound source, not official maintenance.
+
+The source database, marketplace page and sync implementation are unchanged by
+this adapter. It also needs no new shared host-registration change for transport.
 
 ## Native QA with synthetic data
 
-Use a fresh isolated profile and an ordinary browser plugin with synthetic data.
+Use the parent's working cloud GUI machine, a fresh isolated profile, and the
+synthetic fixture below. Do not retry the blocked local Electron launch.
 Do not open real logs or credentials. Capture screenshots of the settings card,
 verbose disclosure, and native Clear confirmation. Record a short flow:
 
@@ -121,6 +142,29 @@ verbose disclosure, and native Clear confirmation. Record a short flow:
    app and verify that local saving remains selected but verbose text is off.
 6. Cancel Clear, then confirm it. Confirm the files are removed and the permission
    panel's separate security history remains. Turn local saving off.
+
+The fixture is `electron/plugins/fixtures/local-logging-plugin`. Build it with:
+
+```sh
+node --input-type=module -e 'import { buildPluginPackage } from "@netcatty/plugin-cli"; await buildPluginPackage("electron/plugins/fixtures/local-logging-plugin", "/tmp/netcatty-local-logging-fixture.ncpkg");'
+```
+
+Package: 3,270 bytes. SHA-256:
+`c3770a55676ed708f01ec1e0e0b9968ffb5e03c02303ee7cb9f739bde27c9de0`.
+It declares only `commands` and `menus`; its command-palette entries are under
+**Logging QA**. **Emit synthetic diagnostic** tests redaction and nested spoofed
+identity fields. **Emit synthetic diagnostic burst** emits 400 console messages
+to exercise drop accounting. **Test undeclared network denial** must return denial
+without a prompt or network I/O because the manifest declares no network access.
+No request body or credential is supplied. Do not grant additional permissions.
+
+Capture the compact settings card, verbose disclosure and native Clear dialog,
+plus a short recording of the enable/emit/export/clear flow. On a #3981 integration
+build, a normal local import must log the source and opaque owner returned by its
+host database. On the older base, both stay explicitly unknown. Do not forge an
+Official source through fixture metadata. The real-source replacement case is
+covered by `pluginLogProvenance.integration.test.cjs` on the documented source
+integration worktree; it uses only temporary synthetic database state.
 
 The execution environment for this change could not launch Electron: its SUID
 sandbox helper is not root-owned with mode 4755. Electron aborted before opening
