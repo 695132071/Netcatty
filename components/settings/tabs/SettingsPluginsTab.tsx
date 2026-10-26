@@ -7,7 +7,7 @@ import { PluginPackageManager } from './PluginPackageManager';
 import { FolderOpen } from 'lucide-react';
 import { PluginStatus } from './PluginStatus';
 import { PluginSettingsLanding } from './PluginSettingsLanding';
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 
 import { normalizePluginKeyboardEvent } from '../../../application/state/pluginKeybindings';
 import { usePluginContributions } from '../../../application/state/usePluginContributions';
@@ -287,10 +287,11 @@ export function PluginSettingField({
   );
 }
 
-function PluginManagementContent({ handoff, manager, initialSelectedId }: {
+function PluginManagementContent({ handoff, manager, initialSelectedId, active }: {
   handoff: (action: () => void) => void;
   manager: ReturnType<typeof usePluginManager>;
   initialSelectedId: string | null;
+  active: boolean;
 }) {
   const { t } = useI18n();
   const [catalogToolbar, setCatalogToolbar] = useState<HTMLDivElement | null>(null);
@@ -307,6 +308,31 @@ function PluginManagementContent({ handoff, manager, initialSelectedId }: {
     scopeIds,
   }), [scopeIds]);
   const contributions = usePluginContributions(query);
+  const settingsSection = useRef<HTMLElement | null>(null);
+  const installed = manager.plugins.find((plugin) => plugin.id === selectedInstalled);
+  const ownerKey = JSON.stringify(installed && [installed.id, installed.activeVersion, installed.archiveSha256,
+    installed.source?.id, installed.source?.kind, installed.source?.origin]);
+  const gearEntry = useRef(initialSelectedId ? { pluginId: initialSelectedId, ownerKey } : null);
+  useLayoutEffect(() => {
+    const intent = gearEntry.current;
+    if (!intent) return;
+    if (!active || pluginView !== 'installed' || selectedInstalled !== intent.pluginId || ownerKey !== intent.ownerKey) {
+      gearEntry.current = null;
+      return;
+    }
+    const section = settingsSection.current;
+    if (contributions.loading || contributions.error || !contributions.available || !section) return;
+    // Let dialog autofocus settle first, including when contributions arrive late.
+    let frame = requestAnimationFrame(() => {
+      frame = requestAnimationFrame(() => {
+        if (gearEntry.current !== intent || !section.isConnected) return;
+        gearEntry.current = null;
+        section.scrollIntoView({ block: 'start' });
+        section.focus({ preventScroll: true });
+      });
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [active, pluginView, selectedInstalled, ownerKey, contributions.loading, contributions.error, contributions.available, contributions.snapshot]);
   const contextualScopes = useMemo(() => new Set(contributions.snapshot.plugins
     .filter((plugin) => plugin.id === selectedInstalled)
     .flatMap((plugin) => plugin.settings.map((setting) => setting.scope))
@@ -316,7 +342,7 @@ function PluginManagementContent({ handoff, manager, initialSelectedId }: {
 
   return (
     <div className="space-y-5">
-        <Tabs value={pluginView} onValueChange={(value) => { setSelectedInstalled(null); setPluginView(value as 'installed' | 'marketplace' | 'thirdparty'); }} className="space-y-5">
+        <Tabs value={pluginView} onValueChange={(value) => { gearEntry.current = null; setSelectedInstalled(null); setPluginView(value as 'installed' | 'marketplace' | 'thirdparty'); }} className="space-y-5">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <TabsList className="h-auto flex-wrap justify-start bg-muted/50">
             <TabsTrigger value="installed">{t('settings.plugins.manager.installed')} <span className="ml-2 text-muted-foreground">{manager.plugins.length}</span></TabsTrigger>
@@ -332,7 +358,7 @@ function PluginManagementContent({ handoff, manager, initialSelectedId }: {
         <TabsContent forceMount hidden={pluginView !== 'marketplace'} value="marketplace" className="m-0 space-y-6"><PluginMarketplace installed={manager.plugins} toolbarContainer={pluginView === 'marketplace' ? catalogToolbar : undefined} noVault={manager.credentialStorageAvailable === false} /></TabsContent>
         <TabsContent forceMount hidden={pluginView !== 'thirdparty'} value="thirdparty" className="m-0 space-y-6"><PluginThirdPartyMarket installed={manager.plugins} toolbarContainer={pluginView === 'thirdparty' ? catalogToolbar : undefined} noVault={manager.credentialStorageAvailable === false} /></TabsContent>
         <TabsContent value="installed" className="m-0 space-y-6">
-        <PluginPackageManager manager={manager} initialSelectedId={selectedInstalled} onSelectionChange={setSelectedInstalled} />
+        <PluginPackageManager manager={manager} initialSelectedId={selectedInstalled} onSelectionChange={(id) => { gearEntry.current = null; setSelectedInstalled(id); }} />
         {contextualScopes.size > 0 && (
           <section className="grid gap-3 rounded-lg border border-border/70 bg-muted/10 p-4 sm:grid-cols-2" aria-label={t('settings.plugins.scopeTargets')}>
             {[...contextualScopes].map((kind) => (
@@ -357,7 +383,7 @@ function PluginManagementContent({ handoff, manager, initialSelectedId }: {
           const views = plugin.views.filter((view) => view.visible && view.location === 'settings');
           if (!settings.length && !views.length) return null;
           return (
-            <section key={plugin.id} className="space-y-3" aria-labelledby={`plugin-settings-${plugin.id}`}>
+            <section key={plugin.id} ref={settingsSection} tabIndex={-1} className="space-y-3 scroll-mt-4 focus:outline-none" aria-labelledby={`plugin-settings-${plugin.id}`}>
               <div>
                 <h3 id={`plugin-settings-${plugin.id}`} className="text-base font-semibold">{plugin.displayName}</h3>
                 {plugin.description && <p className="text-xs text-muted-foreground">{plugin.description}</p>}
@@ -418,7 +444,7 @@ export default function SettingsPluginsTab() {
           setOpen(true);
         }} />
         <PluginManagementDialog open={open} onOpenChange={setOpen} trigger={null} restoreFocusTo={opener} fallbackFocusTo={managerButton}>
-          {(handoff) => <PluginManagementContent handoff={handoff} manager={manager} initialSelectedId={initialSelectedId} />}
+          {(handoff) => <PluginManagementContent handoff={handoff} manager={manager} initialSelectedId={initialSelectedId} active={open} />}
         </PluginManagementDialog>
       </SettingsAnchor>
     </SettingsTabContent>
