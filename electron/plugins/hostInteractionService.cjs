@@ -2,6 +2,7 @@
 
 const { createHmac, randomBytes, randomUUID, timingSafeEqual } = require("node:crypto");
 const { createDefinitionValidator } = require("./contractValidator.cjs");
+const { TerminalSelectionAuthority } = require("./terminalSelectionAuthority.cjs");
 const { PluginRpcError, RPC_ERRORS } = require("./rpcRouter.cjs");
 const schema = require("./generated/plugin-contract.schema.json");
 const LIMITS = schema.$defs.HostInteractionLimits.const;
@@ -31,7 +32,12 @@ function assertInteractionRequest(params) {
   }
   return Object.freeze(structuredClone(params));
 }
-function interactionAuthorization(params) {
+function interactionAuthorization(params, terminalTarget) {
+  if (params.kind === "terminal.selection.read") {
+    if (!terminalTarget) throw fail("failedPrecondition", "A host-selected terminal is required");
+    return { permission: "terminal.selection.read", resources: [terminalTarget.resource],
+      reason: "Preview and explicitly share the selected terminal text", operationId: "terminal:share-selection", allowedScopes: ["once"] };
+  }
   const permission = params.kind === "clipboard.read" ? "clipboard.read"
     : params.kind === "clipboard.write" ? "clipboard.write" : "ui.interact";
   return {
@@ -55,6 +61,12 @@ class PluginHostInteractionService {
     this.timeoutMs = Math.min(options.timeoutMs ?? LIMITS.timeoutMs, LIMITS.timeoutMs);
     this.key = randomBytes(32);
     this.pending = new Map();
+    this.terminalSelection = new TerminalSelectionAuthority({getWindow: this.getWindow, getManager: options.getTerminalWorkerManager, clock: this.clock});
+    this.terminalInvalidation = this.terminalSelection.onDidInvalidate(() => {
+      for (const entry of [...this.pending.values()]) if (entry.terminalTarget && !this.terminalSelection.isCurrent(entry.terminalTarget)) {
+        this.#finish(entry, null, fail("cancelled", "Selected terminal connection changed"));
+      }
+    });
     this.rates = new Map();
     this.admissions = new WeakMap();
     this.admissionGuards = new Map();
@@ -75,8 +87,9 @@ class PluginHostInteractionService {
         const sender = this.#admit(params, context);
         let guard = this.admissionGuards.get(context.runtimeId);
         if (!guard) { guard = { active: true }; this.admissionGuards.set(context.runtimeId, guard); }
-        this.admissions.set(params, { sender, runtimeId: context.runtimeId, revision: this.admissionRevision, guard });
-        return interactionAuthorization(params);
+        const terminalTarget = params.kind === "terminal.selection.read" ? this.terminalSelection.capture(sender, context) : undefined;
+        this.admissions.set(params, { sender, runtimeId: context.runtimeId, revision: this.admissionRevision, guard, terminalTarget });
+        return interactionAuthorization(params, terminalTarget);
       },
     });
   }
@@ -132,7 +145,7 @@ class PluginHostInteractionService {
     const nonce = randomBytes(24).toString("base64url");
     const binding = JSON.stringify([
       nonce, entry.id, entry.context.pluginId, entry.context.pluginVersion,
-      entry.context.runtimeId, entry.sender.id, entry.params.kind, entry.phase, entry.expiresAt,
+      entry.context.runtimeId, entry.sender.id, entry.params.kind, entry.phase, entry.expiresAt, entry.terminalTarget?.resource ?? null,
     ]);
     return `${nonce}.${createHmac("sha256", this.key).update(binding).digest("base64url")}`;
   }
@@ -143,6 +156,7 @@ class PluginHostInteractionService {
       requestId: entry.id, actionToken: entry.actionToken,
       pluginId: entry.context.pluginId, pluginVersion: entry.context.pluginVersion,
       expiresAt: entry.expiresAt, phase: entry.phase, request: entry.params,
+      ...(entry.terminalTarget ? { terminalSessionId: entry.terminalTarget.sessionId } : {}),
       ...(entry.previewText === undefined ? {} : { previewText: entry.previewText }),
     });
   }
@@ -222,10 +236,13 @@ class PluginHostInteractionService {
     if (this.pending.size >= LIMITS.pendingTotal || [...this.pending.values()].some((entry) => entry.context.runtimeId === context.runtimeId || entry.sender === sender)) {
       throw fail("resourceExhausted", "Host interaction limit reached");
     }
+    const terminalTarget = params.kind === "terminal.selection.read"
+      ? admission?.terminalTarget ?? this.terminalSelection.capture(sender, context) : undefined;
+    if (terminalTarget) this.terminalSelection.assertCurrent(terminalTarget);
     const now = this.clock();
     return new Promise((resolve, reject) => {
       const entry = {
-        id: randomUUID(), context, params, sender, resolve, reject,
+        id: randomUUID(), context, params, sender, resolve, reject, terminalTarget,
         expiresAt: now + this.timeoutMs, phase: "request", actionToken: null,
       };
       entry.onAbort = () => this.#finish(entry, null, fail("cancelled", "Host interaction was cancelled"));
@@ -254,9 +271,18 @@ class PluginHostInteractionService {
       await entry.context.assertActive();
       this.#assertWindow(sender);
       if (this.pending.get(entry.id) !== entry) return false;
+      if (entry.terminalTarget) this.terminalSelection.assertCurrent(entry.terminalTarget);
       if (response.action === "cancel") {
         this.#audit(entry, "cancelled");
         return this.#finish(entry, { cancelled: true });
+      }
+      if (entry.params.kind === "terminal.selection.read" && entry.phase === "request") {
+        if (response.action !== "preview") throw fail("invalidArgument", "Terminal sharing requires a preview action");
+        const text = assertTextBytes(response.value);
+        if (!text.length) throw fail("failedPrecondition", "Select terminal text before requesting a share");
+        this.#audit(entry, "preview-confirmed");
+        this.quotaManager.chargeBytes(entry.context.runtimeId, "terminal", Buffer.byteLength(text));
+        entry.previewText = text; entry.phase = "preview"; this.#present(entry); return true;
       }
       if (entry.params.kind === "clipboard.read" && entry.phase === "request") {
         if (response.action !== "preview") throw fail("invalidArgument", "Clipboard sharing requires a preview action");
@@ -281,6 +307,9 @@ class PluginHostInteractionService {
       else if (entry.params.kind === "quickPick") {
         if (!entry.params.items.some((item) => item.id === response.value)) throw fail("invalidArgument", "Host interaction choice is invalid");
         value = response.value;
+      } else if (entry.params.kind === "terminal.selection.read") {
+        if (entry.phase !== "preview" || typeof entry.previewText !== "string") throw fail("failedPrecondition", "Terminal selection was not previewed");
+        value = {text:entry.previewText, ...this.terminalSelection.issue(entry.terminalTarget, entry.context)};
       } else if (entry.params.kind === "clipboard.read") value = entry.previewText;
       else value = true;
       this.#audit(entry, entry.params.kind === "clipboard.write" ? "copy-confirmed" : "share-confirmed");
@@ -295,8 +324,11 @@ class PluginHostInteractionService {
     }
   }
 
+  setTerminalTarget(sender, target) { return this.terminalSelection.setTarget(sender, target); }
+
   releaseWindow(sender) {
     if (this.owner !== sender) return;
+    this.terminalSelection.releaseWindow(sender);
     this.admissionRevision++;
     this.owner = null;
     this.ownerCleanup?.(); this.ownerCleanup = null;
@@ -305,12 +337,14 @@ class PluginHostInteractionService {
     }
   }
   releasePlugin(pluginId) {
+    this.terminalSelection.releasePlugin(pluginId);
     this.admissionRevision++;
     for (const entry of [...this.pending.values()]) {
       if (entry.context.pluginId === pluginId) this.#finish(entry, null, fail("cancelled", "Plugin access was revoked"));
     }
   }
   releaseRuntime(runtimeId) {
+    this.terminalSelection.releaseRuntime(runtimeId);
     this.cancelRuntimeRequests(runtimeId, "Plugin runtime stopped");
     this.rates.delete(runtimeId);
   }
@@ -323,7 +357,7 @@ class PluginHostInteractionService {
     }
   }
   cancelAll(invalidateAdmission = true) {
-    if (invalidateAdmission) this.admissionRevision++;
+    if (invalidateAdmission) { this.admissionRevision++; this.terminalSelection.clearHandles(); }
     for (const entry of [...this.pending.values()]) this.#finish(entry, null, fail("cancelled", "Host interaction was cancelled"));
   }
   shutdown() {
@@ -332,6 +366,7 @@ class PluginHostInteractionService {
     if (this.owner) this.releaseWindow(this.owner);
     this.cancelAll(); this.rates.clear(); this.admissionGuards.clear();
     this.revocation.dispose(); this.unsubscribeLock?.();
+    this.terminalInvalidation.dispose(); this.terminalSelection.shutdown();
     this.key.fill(0);
   }
 }

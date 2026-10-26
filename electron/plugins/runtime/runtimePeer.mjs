@@ -518,6 +518,10 @@ function createPluginContext(config, client, runtimeApi) {
     },
   };
   const terminals = {
+    shareSelection: (title) => {
+      if (!config.enabledFeatures?.includes("terminal.selection-sharing")) return Promise.reject(new Error("Terminal selection sharing is unsupported"));
+      return interact({ kind: "terminal.selection.read", title });
+    },
     onDidChange: runtimeApi.terminalEvents.event,
   };
   const environment = {

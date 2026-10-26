@@ -45,6 +45,7 @@ import type {
   SyncWriteObjectPayload,
   SyncWriteObjectResult,
   TerminalSessionSnapshot,
+  SharedTerminalSelection,
 } from "@netcatty/plugin-contract";
 
 export type * from "@netcatty/plugin-contract";
@@ -626,6 +627,8 @@ export type SyncProviderHandler = Readonly<{
 }>;
 
 export interface PluginTerminalSessions {
+  /** Explicit host Preview then Share; no screen/history query or automatic read. */
+  shareSelection(title: string): Promise<SharedTerminalSelection | undefined>;
   onDidChange(listener: (event: TerminalSessionEvent) => void): Disposable;
 }
 
@@ -935,3 +938,5 @@ export { PLUGIN_TERMINAL_SIDEBAR_FEATURE } from "@netcatty/plugin-contract";
 export { PLUGIN_INTERACTIVE_COMMAND_FEATURE } from "@netcatty/plugin-contract";
 
 export { PLUGIN_THEME_PACK_FEATURE } from "@netcatty/plugin-contract";
+
+export { PLUGIN_TERMINAL_SELECTION_SHARING_FEATURE } from "@netcatty/plugin-contract";

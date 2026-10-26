@@ -205,9 +205,10 @@ export type HostInteractionPrompt = {
   phase: "request" | "preview";
   request: HostInteractionRequest;
   previewText?: string;
+  terminalSessionId?: string;
 };
 
-export type HostInteractionRequest = (HostQuickPickRequest) | (HostInputRequest) | (HostClipboardReadRequest) | (HostClipboardWriteRequest);
+export type HostInteractionRequest = (HostQuickPickRequest) | (HostInputRequest) | (HostClipboardReadRequest) | (HostClipboardWriteRequest) | (HostTerminalSelectionReadRequest);
 
 export type HostInteractionResponse = {
   requestId: string;
@@ -220,7 +221,7 @@ export type HostInteractionResult = ({
   cancelled: true;
 }) | ({
   cancelled: false;
-  value: (string) | (true);
+  value: (string) | (true) | (SharedTerminalSelection);
 });
 
 export type HostQuickPickItem = {
@@ -236,6 +237,15 @@ export type HostQuickPickRequest = {
 };
 
 export type HostSingleLineInputText = string;
+
+export type HostTerminalSelectionReadRequest = {
+  kind: "terminal.selection.read";
+  title: string;
+};
+
+export type HostTerminalTarget = {
+  sessionId: string | null;
+};
 
 export type IconReference = (ThemeIcon) | (PackageIcon);
 
@@ -431,7 +441,7 @@ export type MenuLocation = "commandPalette" | "application" | "host/context" | "
 
 export type NetworkCredentialLeaseFeature = "network.credential-lease";
 
-export type NonResourceScopedPermission = "storage" | "runtime.advanced" | "settings.read" | "settings.write" | "commands" | "menus" | "views" | "ui.interact" | "clipboard.read" | "clipboard.write" | "terminal.metadata" | "terminal.output" | "terminal.input" | "terminal.decorate" | "terminal.complete" | "terminal.intercept.input" | "terminal.intercept.output" | "vault.metadata" | "vault.write" | "vault.credentials" | "sftp.read" | "sftp.write" | "secrets" | "provider.terminal" | "provider.connection" | "provider.authentication" | "provider.sync" | "provider.importer";
+export type NonResourceScopedPermission = "storage" | "runtime.advanced" | "settings.read" | "settings.write" | "commands" | "menus" | "views" | "ui.interact" | "clipboard.read" | "clipboard.write" | "terminal.metadata" | "terminal.output" | "terminal.input" | "terminal.decorate" | "terminal.complete" | "terminal.intercept.input" | "terminal.intercept.output" | "vault.metadata" | "vault.write" | "vault.credentials" | "sftp.read" | "sftp.write" | "secrets" | "provider.terminal" | "provider.connection" | "provider.authentication" | "provider.sync" | "provider.importer" | "terminal.selection.read";
 
 export type NullableRpcId = (RpcId) | (null);
 
@@ -587,7 +597,7 @@ export type PluginNetworkResponse = {
   };
 };
 
-export type PluginPermission = "storage" | "runtime.advanced" | "settings.read" | "settings.write" | "commands" | "menus" | "views" | "ui.interact" | "clipboard.read" | "clipboard.write" | "terminal.metadata" | "terminal.output" | "terminal.input" | "terminal.decorate" | "terminal.complete" | "terminal.intercept.input" | "terminal.intercept.output" | "vault.metadata" | "vault.write" | "vault.credentials" | "sftp.read" | "sftp.write" | "network" | "filesystem.read" | "filesystem.write" | "secrets" | "companion.execute" | "provider.terminal" | "provider.connection" | "provider.authentication" | "provider.sync" | "provider.importer";
+export type PluginPermission = "storage" | "runtime.advanced" | "settings.read" | "settings.write" | "commands" | "menus" | "views" | "ui.interact" | "clipboard.read" | "clipboard.write" | "terminal.metadata" | "terminal.output" | "terminal.input" | "terminal.decorate" | "terminal.complete" | "terminal.intercept.input" | "terminal.intercept.output" | "vault.metadata" | "vault.write" | "vault.credentials" | "sftp.read" | "sftp.write" | "network" | "filesystem.read" | "filesystem.write" | "secrets" | "companion.execute" | "provider.terminal" | "provider.connection" | "provider.authentication" | "provider.sync" | "provider.importer" | "terminal.selection.read";
 
 export type PluginViewFocusEvent = {
   instanceId: string;
@@ -811,6 +821,12 @@ export type SettingOption = {
 
 export type SettingScope = "application" | "workspace" | "host" | "session" | "device";
 
+export type SharedTerminalSelection = {
+  text: string;
+  handle: string;
+  expiresAt: SafePositiveInteger;
+};
+
 export type StreamChunkByteLength = number;
 
 export type StreamChunkData = ({
@@ -1028,6 +1044,10 @@ export type TerminalInterceptorReadyFrame = {
 };
 
 export type TerminalInterceptorWindowBytes = number;
+
+export type TerminalSelectionSharingFeature = "terminal.selection-sharing";
+
+export type TerminalSelectionSharingLimits = {"textBytes":4096,"handleTtlMs":120000,"handlesPerRuntime":4,"handlesTotal":64};
 
 export type TerminalSessionSnapshot = {
   sessionId: string;

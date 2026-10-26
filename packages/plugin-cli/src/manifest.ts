@@ -369,6 +369,8 @@ function validateSemantics(manifest: PluginManifest): string[] {
   }
 
   const requiredFeatures = new Set(manifest.features?.required ?? []);
+  const allFeatures = new Set([...requiredFeatures, ...(manifest.features?.optional ?? [])]);
+  if ((manifest.permissions?.optional ?? []).some((p) => p === 'terminal.selection.read') && !allFeatures.has('terminal.selection-sharing')) errors.push('Terminal selection sharing requires terminal.selection-sharing');
   if ((manifest.main.data || manifest.contributes?.themes?.length) && !requiredFeatures.has('appearance.theme-packs')) errors.push('Theme packs require appearance.theme-packs');
   for (const theme of manifest.contributes?.themes ?? []) if (!theme.entry.endsWith('.json')) errors.push('Theme palette entry must be JSON');
   if (manifest.contributes?.views?.some((view) => view.location === 'terminal-sidebar')

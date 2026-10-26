@@ -99,7 +99,7 @@ function createPluginHostService(options) {
       database,
       netcattyVersion: options.app.getVersion(),
       apiVersion: PLUGIN_API_VERSION,
-      supportedFeatures: [...new Set(["appearance.theme-packs", "metadata.brand-icon", NETWORK_CREDENTIAL_LEASE_FEATURE, HOST_INTERACTION_FEATURE, VAULT_PAGES_FEATURE, TERMINAL_SIDEBAR_FEATURE, INTERACTIVE_COMMAND_FEATURE, ...(options.supportedFeatures ?? [])])],
+      supportedFeatures: [...new Set(["terminal.selection-sharing", "appearance.theme-packs", "metadata.brand-icon", NETWORK_CREDENTIAL_LEASE_FEATURE, HOST_INTERACTION_FEATURE, VAULT_PAGES_FEATURE, TERMINAL_SIDEBAR_FEATURE, INTERACTIVE_COMMAND_FEATURE, ...(options.supportedFeatures ?? [])])],
     });
     const contributionIconService = new PluginContributionIconService({
       database,
@@ -190,6 +190,7 @@ function createPluginHostService(options) {
       getWindow: options.getInteractionWindow,
       isLocked: options.isAppLocked,
       subscribeLock: options.subscribeAppLock,
+      getTerminalWorkerManager: options.getTerminalWorkerManager,
     });
     interactionService.registerRpcCapabilities(rpcRegistry);
     const configuredRegistry = options.configureRpcRegistry?.(rpcRegistry);
@@ -239,7 +240,7 @@ function createPluginHostService(options) {
       paths,
       netcattyVersion: options.app.getVersion(),
       apiVersion: PLUGIN_API_VERSION,
-      supportedFeatures: [...new Set(["appearance.theme-packs", "metadata.brand-icon", NETWORK_CREDENTIAL_LEASE_FEATURE, HOST_INTERACTION_FEATURE, VAULT_PAGES_FEATURE, TERMINAL_SIDEBAR_FEATURE, INTERACTIVE_COMMAND_FEATURE, ...(options.supportedFeatures ?? [])])],
+      supportedFeatures: [...new Set(["terminal.selection-sharing", "appearance.theme-packs", "metadata.brand-icon", NETWORK_CREDENTIAL_LEASE_FEATURE, HOST_INTERACTION_FEATURE, VAULT_PAGES_FEATURE, TERMINAL_SIDEBAR_FEATURE, INTERACTIVE_COMMAND_FEATURE, ...(options.supportedFeatures ?? [])])],
       runtimeDirectory,
       appRoot,
       rpcRegistry,

@@ -390,6 +390,7 @@ function createTerminalWorkerManager(options = {}) {
     onRendererEvent = null,
   } = options;
   let child = null;
+  let pluginSessionAuthorityEpoch = 0;
   const pending = new Map();
   const pendingOutput = new Map();
   const pendingOutputBytes = new Map();
@@ -1857,6 +1858,7 @@ function createTerminalWorkerManager(options = {}) {
       },
     });
     child = worker;
+    pluginSessionAuthorityEpoch++;
     worker.on?.("message", (message) => {
       if (child === worker) handleMessage(message);
     });
@@ -2245,6 +2247,14 @@ function createTerminalWorkerManager(options = {}) {
     getSessionWebContentsId(sessionId) {
       if (!sessionId) return null;
       return sessionWebContentsIds.get(sessionId) ?? null;
+    },
+    // Main-process resource authority only; never expose worker objects or endpoints.
+    getPluginSessionBinding(sessionId, webContentsId) {
+      const generation = sessionGenerations.get(sessionId);
+      if (!child || !Number.isSafeInteger(generation) || closedSessions.has(sessionId)
+        || pendingSessionStartSequences.has(sessionId) || outputRoutePending.has(sessionId)
+        || sessionWebContentsIds.get(sessionId) !== webContentsId || !isLiveWebContentsId(webContentsId)) return null;
+      return Object.freeze({ epoch: pluginSessionAuthorityEpoch, generation });
     },
     getSessionHostId(sessionId) {
       if (!sessionId) return null;
