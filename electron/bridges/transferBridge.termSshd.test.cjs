@@ -311,7 +311,7 @@ test("TERM-SSHD queued cancellation releases its turn without closing the owner 
   assert.equal(transferBridge._getSessionFastDownloadWaiterCountForTests(fixture.sftp), 0);
 });
 
-test("TERM-SSHD failed transfer releases the physical channel for the next alias", async (t) => {
+test("TERM-SSHD failed transfer releases the physical channel for the next alias", { timeout: 5_000 }, async (t) => {
   const fixture = await createSequentialTransferFixture(t);
   const originalOpen = fixture.sftp.open;
   let rejectFirst = true;
@@ -321,10 +321,16 @@ test("TERM-SSHD failed transfer releases the physical channel for the next alias
       args.at(-1)(Object.assign(new Error("Permission denied"), { code: 3 }));
     } else originalOpen(...args);
   };
-  const [first, next] = await Promise.all([fixture.start("download"), fixture.start("download", "alias")]);
-  assert.match(first.result.error || "", /Permission denied/);
-  assert.equal(next.result.error, undefined);
-  assert.deepEqual(await fs.readFile(next.targetPath), fixture.payload);
+  const transfers = await Promise.all([fixture.start("download"), fixture.start("download", "alias")]);
+  // Both calls await local file preparation before acquiring the shared channel.
+  // Either invocation may reach the injected first OPEN failure; retain the
+  // concurrent release check without assuming filesystem completion order.
+  const failed = transfers.filter((transfer) => transfer.result.error !== undefined);
+  const succeeded = transfers.filter((transfer) => transfer.result.error === undefined);
+  assert.equal(failed.length, 1);
+  assert.equal(succeeded.length, 1);
+  assert.match(failed[0].result.error, /Permission denied/);
+  assert.deepEqual(await fs.readFile(succeeded[0].targetPath), fixture.payload);
   assert.equal(fixture.rejectedOpens(), 0);
 });
 
