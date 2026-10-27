@@ -88,7 +88,9 @@ test('README failure leaves the permissions and source visible, before the failu
     selected={entries[0].id} onSelect={() => {}} installed={[]} /></I18nProvider>);
   assert.match(html, /Compatibility and permissions/);
   assert.match(html, /settings.read/);
-  assert.match(html, /not a grant/);
+  assert.match(html, /Declared supported capabilities default to Allow/);
+  assert.match(html, /Ask or Deny/);
+  assert.match(html, /Host validation and resource scope always apply/);
   assert.match(html, /Source example/);
   assert.ok(html.indexOf('settings.read') < html.indexOf('Network unavailable'));
   assert.match(html, /Retry/);
