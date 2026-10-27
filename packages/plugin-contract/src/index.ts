@@ -69,3 +69,4 @@ export const PLUGIN_THEME_PACK_FEATURE = "appearance.theme-packs" as const satis
 export const PLUGIN_TERMINAL_SELECTION_SHARING_FEATURE = "terminal.selection-sharing" as const satisfies import("./generated/plugin-contract.js").TerminalSelectionSharingFeature;
 
 export const PLUGIN_TERMINAL_INPUT_DRAFT_FEATURE = "terminal.input-drafts" as const satisfies import("./generated/plugin-contract.js").TerminalInputDraftFeature;
+export const PLUGIN_FILESYSTEM_DIRECTORY_ENUMERATION_FEATURE = "filesystem.directory-enumeration" as const satisfies import("./generated/plugin-contract.js").FilesystemDirectoryEnumerationFeature;

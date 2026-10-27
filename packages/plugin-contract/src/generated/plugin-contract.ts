@@ -194,6 +194,8 @@ export type CredentialRef = {
 
 export type FeatureId = string;
 
+export type FilesystemDirectoryEnumerationFeature = "filesystem.directory-enumeration";
+
 export type HostClipboardReadRequest = {
   kind: "clipboard.read";
   title: string;
