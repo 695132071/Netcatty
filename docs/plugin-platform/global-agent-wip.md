@@ -117,6 +117,32 @@ checked. These records are not substituted for exact-head green CI.
 
 ## Planned public contract and adapters
 
+### Independent transport correction
+
+The exact `ea619555` internal-handler reproductions fail all four targeted cases:
+both no-session and empty-selection environment reads serialize global tool hints;
+stale chat-wide cleanup cancels replacement B; and caller-supplied builtin chat
+text can downgrade cancellation of a main-owned delegated request. The outer
+sender gate still accepts only the current trusted main window. These are trusted
+application lifecycle defects, not arbitrary plugin IPC exposure or installed
+runtime exploit evidence.
+
+Cancellation now resolves ownership from the main request map, rejects a
+conflicting caller chat, checks the recorded sender and current turn lease, and
+cancels only that native request. The legacy chat-wide cleanup IPC is unavailable
+for reserved delegated conversations; main-owned exact-turn release remains the
+cleanup authority. All delegated environment return paths omit global tool hints.
+
+An additional Node 22 regression is independently reproduced: inline arrow
+properties at the beginning of `module.exports` prevent namespace detection of
+existing exports such as `init`, breaking the real Catty attachment harness.
+Identifier exports preserve that existing interface. Correction tests pass 94 on
+Node 22.23.3, including the actual Catty attachment consumer; focused lint passes.
+Failed-before logs are `/tmp/netcatty-global-agent-transport-review-four-failed-before.log`
+and `/tmp/netcatty-global-agent-ea619-namespace-before.log`. The transport PR's
+review checkpoint remains `ea619555` until the parent integrates/rechecks this
+separate correction. No native/backend/full-CI acceptance is implied.
+
 ### Stage 2A: trusted native dispatch boundary
 
 The independent bounded recheck of foundation `ba4d3fc` passed all 20 reviewer

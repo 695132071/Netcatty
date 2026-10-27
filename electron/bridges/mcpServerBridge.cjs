@@ -2307,9 +2307,11 @@ async function dispatchCore(method, params, approvalContext = {}) {
 // ── Handler: getContext ──
 
 async function handleGetContext(params, approvalContext) {
-  debugLog("handleGetContext:start", { params, sessionCount: sessions?.size || 0 });
-  const toolHints = buildMcpToolHints();
+  const delegated = pluginAgentDelegations.isApproved(approvalContext);
+  debugLog("handleGetContext:start", delegated ? { delegated: true } : { params, sessionCount: sessions?.size || 0 });
+  const toolHints = delegated ? null : buildMcpToolHints();
   if (!sessions) {
+    if (delegated) return { environment: "netcatty-terminal", description: "No host-selected terminal sessions are available.", hosts: [], hostCount: 0 };
     return {
       hosts: [],
       instructions: "No sessions available.",
@@ -2355,7 +2357,7 @@ async function handleGetContext(params, approvalContext) {
       description: "No hosts are available in the current scope.",
       hosts: [],
       hostCount: 0,
-      tools: toolHints,
+      ...(delegated ? {} : { tools: toolHints }),
     };
   }
   for (const [sessionId, session] of sessions.entries()) {
@@ -2566,12 +2568,20 @@ function cleanup() {
   shutdownHost();
 }
 
+// Keep identifier exports so Node 22's CJS namespace analysis also preserves the
+// existing named exports consumed by renderer-side harness tests.
+const registerPluginAgentDelegation = (...args) => pluginAgentDelegations.register(...args);
+const getPluginAgentMcpConfiguration = (id, tag) => pluginAgentDelegations.configuration(id, tag);
+const isPluginAgentConversation = (id) => pluginAgentDelegations.isReserved(id);
+const assertPluginAgentCaller = (id, senderId, tag) => pluginAgentDelegations.assertCaller(id, senderId, tag);
+const onPluginAgentRelease = (id, tag, cancel) => pluginAgentDelegations.onRelease(id, tag, cancel);
+
 module.exports = {
-  registerPluginAgentDelegation: (...args) => pluginAgentDelegations.register(...args),
-  getPluginAgentMcpConfiguration: (id, tag) => pluginAgentDelegations.configuration(id, tag),
-  isPluginAgentConversation: (id) => pluginAgentDelegations.isReserved(id),
-  assertPluginAgentCaller: (id, senderId, tag) => pluginAgentDelegations.assertCaller(id, senderId, tag),
-  onPluginAgentRelease: (id, tag, cancel) => pluginAgentDelegations.onRelease(id, tag, cancel),
+  registerPluginAgentDelegation,
+  getPluginAgentMcpConfiguration,
+  isPluginAgentConversation,
+  assertPluginAgentCaller,
+  onPluginAgentRelease,
   init,
   setCommandBlocklist,
   getCommandBlocklist,
