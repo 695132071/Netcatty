@@ -73,6 +73,7 @@ import {
   STORAGE_KEY_GLOBAL_DEFAULT_PROXY_PROFILE,
   STORAGE_KEY_GLOBAL_HOTKEY_ENABLED,
   STORAGE_KEY_WINDOW_OPACITY,
+  STORAGE_KEY_WINDOW_BACKGROUND_BLUR,
   STORAGE_KEY_APP_ICON_VARIANT,
   STORAGE_KEY_AUTO_UPDATE_ENABLED,
   STORAGE_KEY_WORKSPACE_FOCUS_STYLE,
@@ -643,6 +644,9 @@ export const useSettingsState = (options: { enableSettingsSync?: boolean; enable
     windowOpacityMutationSourceRef.current = 'local';
     setWindowOpacityRecord(toggleWindowOpacityRecord);
   }, []);
+  const [windowBackgroundBlur, setWindowBackgroundBlur] = useState<boolean>(() => {
+    return readStoredString(STORAGE_KEY_WINDOW_BACKGROUND_BLUR) === 'true';
+  });
   const [appIconVariant, setAppIconVariantState] = useState<AppIconVariant>(() => {
     const stored = readStoredString(STORAGE_KEY_APP_ICON_VARIANT);
     return resolveAppIconVariant(stored ?? DEFAULT_APP_ICON_VARIANT);
@@ -1274,6 +1278,7 @@ export const useSettingsState = (options: { enableSettingsSync?: boolean; enable
     setIsHotkeyRecordingState,
     setGlobalHotkeyEnabled,
     setWindowOpacity: applyIncomingWindowOpacity,
+    setWindowBackgroundBlur,
     setAppIconVariant,
     setAutoUpdateEnabled,
     setAutoLaunchEnabled,
@@ -1296,12 +1301,18 @@ export const useSettingsState = (options: { enableSettingsSync?: boolean; enable
     setSshTransportIdleTtlMsState,
   });
 
-  // Detached sessions share opacity and the shortcut configuration needed to
-  // operate it. Keep general settings listeners and OS effects disabled there.
+  // Detached sessions share window chrome (opacity, background blur) and the
+  // shortcut configuration needed to operate it. Keep general settings
+  // listeners and OS effects disabled there.
   useEffect(() => {
     if (enableSettingsSync) return;
     const applySharedWindowSetting = (key: string, value: unknown) => {
       if (key === STORAGE_KEY_WINDOW_OPACITY) applyIncomingWindowOpacity(value);
+      if (key === STORAGE_KEY_WINDOW_BACKGROUND_BLUR) {
+        // Storage events deliver the raw string; IPC delivers a boolean.
+        const incoming = typeof value === 'boolean' ? value : value === 'true';
+        setWindowBackgroundBlur(incoming);
+      }
       if (key === STORAGE_KEY_HOTKEY_SCHEME && (value === 'disabled' || value === 'mac' || value === 'pc')) {
         setHotkeyScheme(value);
       }
@@ -1375,7 +1386,7 @@ export const useSettingsState = (options: { enableSettingsSync?: boolean; enable
     sftpUseCompressedUpload, sftpSkipUnchanged, sftpAutoOpenSidebar, sftpFollowTerminalCwd, sftpDefaultViewMode,
     showRecentHosts, hostClickBehavior, showOnlyUngroupedHostsInRoot, showSftpTab, showHostTreeSidebar, terminalSidePanelAutoOpen, terminalSidePanelAutoOpenTab, localShellSidePanelAutoOpen, localShellSidePanelAutoOpenTab, shellOnlyTabNumberShortcuts, showTabNumberBadges, disableTerminalFontZoom, restorePreviousSession, restoreTerminalCwd, startupLanding,
     editorWordWrap, sessionLogsEnabled, sessionLogsDir, sessionLogsFormat, sessionLogsTimestampsEnabled, sshDebugLogsEnabled, sshDeepLinkEnabled, jmsDeepLinkEnabled, explorerContextMenuEnabled,
-    globalHotkeyEnabled, autoUpdateEnabled, windowOpacity, appIconVariant,
+    globalHotkeyEnabled, autoUpdateEnabled, windowOpacity, windowBackgroundBlur, appIconVariant,
     setTheme, setLightUiThemeId, setDarkUiThemeId, setAccentMode,
     applyIncomingCustomAccent,
     setCustomCSS, setUiFontFamilyId, setHotkeyScheme, setUiLanguage,
@@ -1385,7 +1396,7 @@ export const useSettingsState = (options: { enableSettingsSync?: boolean; enable
     setSftpUseCompressedUpload, setSftpSkipUnchanged, setSftpAutoOpenSidebar, setSftpFollowTerminalCwd, setSftpDefaultViewMode,
     setShowRecentHostsState, setHostClickBehaviorState, setShowOnlyUngroupedHostsInRootState, setShowSftpTabState, setShowHostTreeSidebarState, setTerminalSidePanelAutoOpenState, setTerminalSidePanelAutoOpenTabState, setLocalShellSidePanelAutoOpenState, setLocalShellSidePanelAutoOpenTabState, setShellOnlyTabNumberShortcutsState, setShowTabNumberBadgesState, setDisableTerminalFontZoomState, setRestorePreviousSessionState, setRestoreTerminalCwdState, setStartupLandingState,
     setEditorWordWrapState, setSessionLogsEnabled, setSessionLogsDir, setSessionLogsFormat, setSessionLogsTimestampsEnabled, setSshDebugLogsEnabled, setSshDeepLinkEnabledState: applyIncomingSshDeepLinkEnabled, setJmsDeepLinkEnabledState: applyIncomingJmsDeepLinkEnabled, setExplorerContextMenuEnabledState: applyIncomingExplorerContextMenuEnabled,
-    setGlobalHotkeyEnabled, setWindowOpacity: applyIncomingWindowOpacity, setAppIconVariant, setAutoUpdateEnabled, setWorkspaceFocusStyleState,
+    setGlobalHotkeyEnabled, setWindowOpacity: applyIncomingWindowOpacity, setWindowBackgroundBlur, setAppIconVariant, setAutoUpdateEnabled, setWorkspaceFocusStyleState,
     setSftpTransferConcurrencyState, setSshTransportIdleTtlMsState,
     applyIncomingCustomKeyBindings, mergeIncomingTerminalSettings,
   });
@@ -1894,6 +1905,7 @@ export const useSettingsState = (options: { enableSettingsSync?: boolean; enable
     autoLaunchEnabled,
     windowOpacityRecord,
     windowOpacityMutationSourceRef,
+    windowBackgroundBlur,
     appIconVariant,
     autoUpdateEnabled,
     httpNetworkProxy,
@@ -2273,6 +2285,8 @@ export const useSettingsState = (options: { enableSettingsSync?: boolean; enable
     windowOpacity,
     setWindowOpacity,
     toggleWindowOpacity,
+    windowBackgroundBlur,
+    setWindowBackgroundBlur,
     appIconVariant,
     setAppIconVariant,
     rehydrateAllFromStorage,
