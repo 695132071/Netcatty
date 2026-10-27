@@ -7,7 +7,7 @@ const syntheticModel = { config: { id: 'synthetic', name: 'Synthetic', providerI
 
 test('renderer-owned model handles never serialize provider config and cannot cross runtimes', async () => {
   let active = true;
-  const runtime = createTrustedPluginAIHostRuntime({ getModel: () => syntheticModel, chooseSelected: async () => [], isActive: () => active });
+  const runtime = createTrustedPluginAIHostRuntime({ getModel: () => syntheticModel, prepareModel: async () => {}, chooseSelected: async () => [], isActive: () => active });
   const model = await runtime.handle('model.select', {}, 'runtime-a') as { hostHandle: string; label: string };
   assert.doesNotMatch(JSON.stringify(model), /synthetic-not-a-secret|apiKey|providerId|config/);
   await assert.rejects(runtime.handle('model.current', model, 'runtime-b'));
@@ -36,7 +36,7 @@ test('selected metadata uses explicit safe projections and current resource iden
 
 test('selected summaries never read content; late resource changes and runtime release deny content', async () => {
   let current = true; let reads = 0; let resolve: (text: string) => void;
-  const runtime = createTrustedPluginAIHostRuntime({ getModel: () => syntheticModel, isActive: () => true,
+  const runtime = createTrustedPluginAIHostRuntime({ getModel: () => syntheticModel, prepareModel: async () => {}, isActive: () => true,
     chooseSelected: async () => [{ key: 'note', scope: 'note', title: 'Synthetic', version: '1', isCurrent: () => current,
       readText: () => { reads++; return new Promise<string>((r) => { resolve = r; }); } }] });
   const result = await runtime.handle('context.select', {}, 'runtime-a') as { items: Array<{ hostHandle: string; version: string }> };
@@ -45,4 +45,23 @@ test('selected summaries never read content; late resource changes and runtime r
   const reading = runtime.handle('context.read', reference, 'runtime-a');
   await new Promise(setImmediate); current = false; resolve!('Late synthetic text'); await assert.rejects(reading);
   runtime.releaseRuntime('runtime-a'); await assert.rejects(runtime.handle('context.current', reference, 'runtime-a')); runtime.shutdown();
+});
+
+test('provider preparation failures and late results cannot publish a model handle after release, cancellation or model change', async () => {
+  for (const action of ['failure', 'release', 'cancel', 'change', 'shutdown']) {
+    let resume!: () => void; let current = syntheticModel;
+    const waiting = new Promise<void>((resolve) => { resume = resolve; });
+    const controller = new AbortController();
+    const runtime = createTrustedPluginAIHostRuntime({ getModel: () => current, isActive: () => true, chooseSelected: async () => [],
+      prepareModel: async () => { await waiting; if (action === 'failure') throw Error('Synthetic sync denied'); } });
+    const selecting = runtime.handle('model.select', {}, 'runtime-a', controller.signal);
+    const rejection = assert.rejects(selecting);
+    if (action === 'release') runtime.releaseRuntime('runtime-a');
+    if (action === 'cancel') controller.abort();
+    if (action === 'change') current = { ...syntheticModel, revision: '2' };
+    if (action === 'shutdown') runtime.shutdown();
+    resume(); await rejection;
+    await assert.rejects(runtime.handle('model.current', { hostHandle: 'not-published' }, 'runtime-a'));
+    runtime.shutdown();
+  }
 });
