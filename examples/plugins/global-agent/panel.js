@@ -52,6 +52,7 @@ element('open').addEventListener('click', async () => {
     chat = result; const history = await invoke('history', { chatHandle: chat.chatHandle });
     if (closed || run !== generation) return;
     element('transcript').textContent = history.items.map((item) => `${item.role}: ${item.text}`).join('\n\n');
+    element('usage').textContent = ''; element('activity').textContent = '';
     status(`Ready · ${result.backendLabel}`);
   } catch { await closeChat(); if (!closed && run === generation) status('Conversation unavailable. Refresh backends or choose terminals again; your draft is kept.'); }
   finally { if (!closed && run === generation) controls(false); }

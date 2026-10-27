@@ -18,7 +18,7 @@ sha256sum /tmp/netcatty-global-agent.ncpkg
 ```
 
 The reproducible sample SHA-256 is
-`0c13d89cb80965db978a42f1d6e84e9cf23d7289bfa432a14f04b7f3a2651b70`.
+`e9457dcced5619ed69cdf4e490ec6d1c04c90f85826daa91f5660213956db299`.
 Two independent package builds matched. Build scripts and tests are excluded
 from the six-file installed package.
 
