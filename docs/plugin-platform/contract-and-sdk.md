@@ -450,6 +450,11 @@ new child to an opened parent directory without a path race.
 `readDirectory()` likewise keeps its stable SDK/RPC method but fails closed
 unless the main process supplies a native adapter whose inode checks and entry
 enumeration are bound to the same directory handle.
+The default host supplies no `openPluginDirectoryHandle` adapter. The SDK exposes
+the method and the router registers it, but there is no separate advertised
+feature flag that enables enumeration. Even with an allowed `filesystem.read`
+directory resource, the default runtime returns `unsupported`. Do not interpret
+the method's presence or a filesystem permission as directory-listing support.
 
 Permission names already use the phase-3 enforcement boundaries: clipboard
 read/write, terminal metadata/output/input and input/output interception, Vault
