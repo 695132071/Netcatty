@@ -72,7 +72,12 @@ export function usePluginAgentHost(sessions: TerminalSession[]) {
       STORAGE_KEY_AI_AGENT_MODEL_MAP, STORAGE_KEY_AI_AGENT_PROVIDER_MAP, STORAGE_KEY_AI_EXTERNAL_AGENTS]);
     const configurationChanged = (event: Event) => {
       const key = event.type === 'storage' ? (event as StorageEvent).key : (event as CustomEvent<{ key: string }>).detail?.key;
-      if (key === null || (key && configurationKeys.has(key))) runtime.invalidateConfiguration();
+      if (key === null || (key && configurationKeys.has(key))) {
+        runtime.invalidateConfiguration();
+        // Invalidate main-owned backend leases too, even with no event read in
+        // flight. Re-advertising availability does not renew existing handles.
+        void bridge.ready(false).then(() => { if (mounted) return bridge.ready(true); }).catch(() => {});
+      }
     };
     window.addEventListener('pagehide', pageHide);
     window.addEventListener('storage', configurationChanged); window.addEventListener(LOCAL_STORAGE_ADAPTER_CHANGED_EVENT, configurationChanged);

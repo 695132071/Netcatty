@@ -36,7 +36,7 @@ class PluginAgentService {
     this.clock = options.clock ?? Date.now;
     this.backends = new Map(); this.selections = new Map(); this.chats = new Map(); this.turns = new Map();
     this.budgets = new Map(); this.pendingOpens = new Set(); this.registrations = []; this.closed = false;
-    this.pendingSelections = new Map(); this.targetManager = null; this.targetSubscriptions = [];
+    this.pendingSelections = new Map(); this.startupTurns = new Map(); this.targetManager = null; this.targetSubscriptions = [];
     this.eventValidator = createDefinitionValidator("PluginAgentEvent");
     this.sessionValidator = createDefinitionValidator("PluginAgentHostSession");
     this.scopes = new DelegatedAgentScopes({ resolveOwner: (ctx) => this.#guard(ctx),
@@ -127,11 +127,33 @@ class PluginAgentService {
   }
 
   registerRpcCapabilities(registry) {
+    const startupLifetime = async (_context, next) => next();
+    startupLifetime.prepareAuthorization = (context) => {
+      if (context.method !== "agent.send") return undefined;
+      // Registry cleanup runs after its final authority check. Until then the
+      // caller still owns startup cancellation because no handle was delivered.
+      return () => {
+        const turn = this.startupTurns.get(context.permissionOperation);
+        if (!turn) return;
+        try {
+          if (!turn.handoffReady || context.signal.aborted) throw fail("cancelled");
+          this.#assertNow(turn);
+        } catch { this.#end(turn); }
+        turn.detachStartup();
+      };
+    };
+    this.registrations.push(registry.use(startupLifetime));
     for (const [operation, paramsType, resultType] of ROUTES) {
       const input = createDefinitionValidator(paramsType); const output = createDefinitionValidator(resultType);
       this.registrations.push(registry.registerRequest(`agent.${operation}`, async (params, context) => {
         const result = await this[operation](params, context); await this.#guard(context);
-        if (!output(result)) throw fail("internal"); return result;
+        if (!output(result)) throw fail("internal");
+        if (operation === "send") {
+          const turn = this.startupTurns.get(context.permissionOperation);
+          if (!turn || turn.handle !== result.turnHandle) throw fail("cancelled");
+          turn.handoffReady = true;
+        }
+        return result;
       }, { metadata: { capability: "plugin-agent", mutating: !["listBackends", "listChats", "history", "read"].includes(operation), permission: "ai.agent.use" },
         validateParams: (params) => { if (!input(params)) throw fail("invalidArgument"); return Object.freeze(structuredClone(params)); },
         authorization: async (params, context) => {
@@ -254,6 +276,11 @@ class PluginAgentService {
     try { await this.#backendCurrent(turn.chat.backend, ctx); }
     catch (error) { this.#end(turn, "unavailable"); throw error; }
     return this.scopes.dispatch(turn.ticket, ctx, { capabilityId: spec.capabilityId, targets }, async (execution) => {
+      this.#assertNow(turn);
+      // Ask may have waited while the configured backend was edited. Check the
+      // trusted renderer's current revision again before the selected effect.
+      try { await this.#backendCurrent(turn.chat.backend, ctx); }
+      catch (error) { this.#end(turn, "unavailable"); throw error; }
       this.#assertNow(turn); const result = await execute(execution); this.#assertNow(turn); return result;
     });
   }
@@ -267,7 +294,16 @@ class PluginAgentService {
       done: false, reading: false, bytes: 0, toolCalls: 0, generation: ++chat.generation, expiresAt: this.clock() + 300_000, hostHandle: null,
       policyRevision: this.permission.getPolicyRevision(this.database.getActivePlugin(owner.pluginId)), senderId: this.host.getSenderId() };
     chat.activeTurn = turn; this.turns.set(turn.handle, turn);
+    turn.context = { ...context, signal: controller.signal, assertActive: async () => this.#assertNow(turn) };
+    const cancelStartup = () => this.#end(turn);
+    turn.detachStartup = () => {
+      context.signal?.removeEventListener("abort", cancelStartup);
+      if (this.startupTurns.get(context.permissionOperation) === turn) this.startupTurns.delete(context.permissionOperation);
+    };
+    this.startupTurns.set(context.permissionOperation, turn);
+    context.signal?.addEventListener("abort", cancelStartup, { once: true });
     try {
+      context.signal?.throwIfAborted();
       this.#charge(owner); await this.#backendCurrent(chat.backend, context);
       turn.ticket = await this.scopes.begin(chat.scope.handle, context);
       turn.ticket.controller.signal.addEventListener("abort", () => this.#end(turn), { once: true });
@@ -330,7 +366,7 @@ class PluginAgentService {
   #end(turn, reason = "cancelled") {
     if (turn.done) return;
     const wasCurrent = turn.chat.activeTurn === turn;
-    turn.done = true; turn.endEvent = { kind: "end", reason }; clearTimeout(turn.timer); turn.controller.abort();
+    turn.done = true; turn.detachStartup?.(); turn.endEvent = { kind: "end", reason }; clearTimeout(turn.timer); turn.controller.abort();
     if (turn.ticket) this.scopes.finish(turn.ticket);
     turn.registration?.dispose();
     if (wasCurrent) {
@@ -338,7 +374,9 @@ class PluginAgentService {
       try { this.getMcpBridge().applyChatSessionCancelled(turn.chat.record.id, true); } catch {}
     }
     if (turn.hostHandle) void this.host.requestAgent("agent.release", { hostHandle: turn.hostHandle },
-      { ...turn.context, signal: undefined }).catch(() => {});
+      // Cleanup authenticates the owning source, independently of the ended
+      // turn or its completed Send request. The host still checks app lifetime.
+      { ...turn.context, signal: undefined, assertActive: async () => this.source.assertCurrent(turn.owner) }).catch(() => {});
   }
   async stop(params, context) { const turn = await this.#turn(params, context); this.#end(turn); return { ok: true }; }
   async closeChat(params, context) {

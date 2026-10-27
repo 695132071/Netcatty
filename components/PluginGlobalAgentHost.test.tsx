@@ -144,6 +144,15 @@ test('installed global Chat UI reuses actual Catty runtime, configured HTTP tran
     await waitFor(() => element('status').textContent === 'Complete');
     assert.equal(counts.requests, before + 1, 'Actions Deny allows a tool-free configured model turn after reopening');
     assert.deepEqual(workerCalls, ['synthetic-b']);
+    phase = 'backend-revision';
+    const latestChat = [...pluginReplies].reverse().find((value) => value && typeof value === 'object' && 'chatHandle' in value) as { chatHandle: string };
+    const generation = service.agentService.host.generation; const requestsBeforeChange = counts.requests;
+    const { LOCAL_STORAGE_ADAPTER_CHANGED_EVENT } = await import('../infrastructure/persistence/localStorageAdapter');
+    dom.window.localStorage.setItem(keys.STORAGE_KEY_AI_ACTIVE_MODEL, 'changed-synthetic-model');
+    await act(async () => window.dispatchEvent(new CustomEvent(LOCAL_STORAGE_ADAPTER_CHANGED_EVENT, { detail: { key: keys.STORAGE_KEY_AI_ACTIVE_MODEL } })));
+    await waitFor(() => service!.agentService.host.generation > generation && service!.agentService.chats.size === 0);
+    await assert.rejects(service.contributionService.executeCommand('com.netcatty.globalagent.history', { chatHandle: latestChat.chatHandle }));
+    assert.equal(counts.requests, requestsBeforeChange, 'configuration invalidation never retries model inference');
     assert.doesNotMatch(JSON.stringify(pluginReplies), /FIXTURE_ONLY_API_MARKER|apiKey|externalSessionId|plugin-agent:|opaque-owner|mcpServers|permissionMode/);
     assert.doesNotMatch(JSON.stringify(trustedReplies), /FIXTURE_ONLY_API_MARKER|apiKey/);
     assert.deepEqual(errors, []);

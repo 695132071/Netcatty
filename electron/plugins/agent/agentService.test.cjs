@@ -17,7 +17,7 @@ function fixture(t) {
   const manifest = { id: "com.example.agent", publisher: "example", version: "1.0.0", permissions: { required: ["ai.agent.use", "ai.agent.actions"] } };
   let identity = { pluginId: manifest.id, pluginVersion: manifest.version, runtimeId: "r1", runtimeKind: "browser", manifest };
   let sourceId = "source-a"; let time = 1; let locked = false; const modes = new Map(); let focus = "a"; let effects = 0;
-  const audits = []; const decisions = []; const hostRequests = []; const invalidations = new Set();
+  const audits = []; const decisions = []; const hostRequests = []; const releasedHandles = []; const invalidations = new Set();
   const plugin = () => ({ id: manifest.id, enabled: true, activeVersion: manifest.version, manifest,
     source: { id: sourceId, kind: "third-party", origin: "https://synthetic.invalid" }, runtime: { status: "running" } });
   const database = { getActivePlugin: (id) => id === manifest.id ? plugin() : null,
@@ -39,7 +39,7 @@ function fixture(t) {
   const host = { generation: 1, getSenderId: () => 7,
     assertActive: async (context) => { await context.assertActive(); if (locked) throw Error("Locked"); },
     onDidInvalidate: (callback) => { invalidations.add(callback); return () => invalidations.delete(callback); },
-    requestAgent: async (kind, payload) => {
+    requestAgent: async (kind, payload, context) => {
       hostRequests.push({ kind, payload: structuredClone(payload) });
       if (kind === "agent.backends") return { backends: [
         { hostHandle: backendHandle, backend: "catty", label: "Catty fixture", status: "supported", reason: "ready" },
@@ -50,6 +50,7 @@ function fixture(t) {
       if (kind === "agent.targets") return choose();
       if (kind === "agent.run") return run(payload);
       if (kind === "agent.next") return { done: false, event: events.shift() ?? { kind: "end", reason: "completed" }, session: sessions.get(payload.hostHandle) };
+      if (kind === "agent.release") { await context.assertActive(); releasedHandles.push(payload.hostHandle); }
       return { ok: true };
     }, releaseRuntime: () => {}, shutdown: () => {} };
   const delegation = new PluginAgentMcpDelegations();
@@ -72,7 +73,7 @@ function fixture(t) {
       { trustedAgentSenderId: 7, trustedAgentTurnTag: turn.turnHandle }, (context) => { context.beforeExecute(); effects++; return "synthetic"; });
   };
   t.after(() => { service.shutdown(); delegation.shutdown(); permission.shutdown(); fs.rmSync(directory, { recursive: true, force: true }); });
-  return { service, call, open, dispatch, events, sessions, hostRequests, decisions, audits, host, delegation, targetState,
+  return { service, call, open, dispatch, events, sessions, hostRequests, releasedHandles, decisions, audits, host, delegation, targetState,
     effects: () => effects, focusTo: (id) => { focus = id; }, focus: () => focus, modeTo: (value, permission = "ai.agent.actions") => { modes.set(permission, value); },
     approve: (fn) => { approve = fn; }, run: (fn) => { run = fn; }, tick: (ms) => { time += ms; },
     choose: (fn) => { choose = fn; }, resourceChanged: () => { for (const callback of resourceListeners) callback(); },
@@ -118,6 +119,23 @@ test("actual source policy decides once per tool and targets never follow focus 
   assert.equal(f.effects(), 1);
 });
 
+test("backend revision changed during Ask cannot execute the already selected target without any pending event read", async (t) => {
+  const f = fixture(t); f.modeTo("ask"); const chat = await f.open();
+  const turn = await f.call("send", { chatHandle: chat.chatHandle, text: "Synthetic pending approval" });
+  const internal = f.service.turns.get(turn.turnHandle); const native = new AbortController();
+  f.delegation.onRelease(internal.chat.record.id, turn.turnHandle, () => native.abort());
+  const entered = deferred(); const resume = deferred();
+  f.approve(async (request) => { entered.resolve(); await resume.promise; return { requestId: request.requestId, decision: "allow", scope: "once" }; });
+  const pending = f.dispatch(turn); await entered.promise;
+  const checksBeforeApproval = f.hostRequests.filter((item) => item.kind === "agent.current").length;
+  f.currentTo(false); resume.resolve();
+  const result = await pending.then(() => "executed", () => "rejected");
+  assert.equal(f.effects(), 0); assert.equal(result, "rejected");
+  assert.ok(f.hostRequests.filter((item) => item.kind === "agent.current").length > checksBeforeApproval);
+  assert.equal(native.signal.aborted, true); assert.equal(internal.controller.signal.aborted, true);
+  assert.equal(f.decisions.length, 1);
+});
+
 test("Actions Deny keeps model conversation available with no tools; Agent-use Deny prevents host dispatch", async (t) => {
   const f = fixture(t); f.modeTo("deny"); const chat = await f.open();
   const turn = await f.call("send", { chatHandle: chat.chatHandle, text: "Synthetic model-only intent" });
@@ -156,6 +174,35 @@ test("late start/open completion after release cannot publish handles or affect 
   const next = await f.open(); f.tick(300_001);
   await assert.rejects(f.call("send", { chatHandle: next.chatHandle, text: "Expired" }));
   assert.ok((await f.open()).chatHandle); assert.equal(f.service.chats.size, 1);
+});
+
+test("registered send cancellation during trusted startup revokes the exact turn before a handle can be handed off", async (t) => {
+  const f = fixture(t); const chat = await f.open(); const entered = deferred(); const resume = deferred();
+  const caller = new AbortController();
+  f.run(async () => { entered.resolve(); await resume.promise; return { hostHandle: randomUUID() }; });
+  const pending = f.call("send", { chatHandle: chat.chatHandle, text: "Synthetic cancelled startup" }, { signal: caller.signal });
+  const rejected = assert.rejects(pending); await entered.promise;
+  const internal = [...f.service.turns.values()][0]; const native = new AbortController();
+  f.delegation.onRelease(internal.chat.record.id, internal.handle, () => native.abort());
+  caller.abort(); resume.resolve(); await rejected;
+  assert.equal(internal.chat.activeTurn, null); assert.equal(internal.controller.signal.aborted, true);
+  assert.equal(f.delegation.has(internal.chat.record.id), false); assert.equal(native.signal.aborted, true);
+  assert.equal(internal.hostHandle, null, "late startup completion cannot publish an orphan handle");
+  assert.equal(f.service.startupTurns.size, 0);
+});
+
+test("completed send detaches request lifetime from its live turn and cannot cancel replacement B", async (t) => {
+  const f = fixture(t); const chat = await f.open(); const caller = new AbortController();
+  const first = await f.call("send", { chatHandle: chat.chatHandle, text: "Synthetic completed handoff" }, { signal: caller.signal });
+  const a = f.service.turns.get(first.turnHandle); caller.abort();
+  assert.equal(f.service.startupTurns.size, 0);
+  assert.equal(a.controller.signal.aborted, false); assert.equal(await f.dispatch(first), "synthetic");
+  await f.call("stop", { turnHandle: first.turnHandle });
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.ok(f.releasedHandles.includes(a.hostHandle), "completed request lifetime cannot block exact host-handle cleanup");
+  const second = await f.call("send", { chatHandle: chat.chatHandle, text: "Synthetic replacement B" });
+  const b = f.service.turns.get(second.turnHandle); caller.abort();
+  assert.equal(b.controller.signal.aborted, false); assert.equal(await f.dispatch(second), "synthetic");
 });
 
 test("worker lifecycle during target confirmation cannot silently bind a replacement connection or leave native work running", async (t) => {
