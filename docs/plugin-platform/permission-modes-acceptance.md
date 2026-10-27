@@ -85,6 +85,16 @@ initial-checkpoint evidence.
 
 ## Latest checks and remaining environment blockers
 
+- Exact `2eee561` packaging workflow **40443396402 passed** on Linux x64,
+  Linux arm64, macOS and Windows; release jobs were skipped. Its first Linux
+  test job **121988800130** stopped on a runner shutdown signal, with no observed
+  assertion failure. Parent requested one retry. Fresh job **121992430185**
+  passed the 694-test runtime aggregate (one native skip) and failed two
+  package-detail assertions still expecting the superseded "not a grant" copy.
+  The full suite was skipped. Those assertions now verify default Allow,
+  adjustable Ask/Deny and retained host/resource validation; development-runtime
+  disclosure and HTML escaping remain checked. No production behavior changes
+  accompany this test correction. Original interruption/failure logs are kept.
 - Registered runtime recheck: **695 tests, 694 passed, zero failed/cancelled, one
   native skip**. Separate final registered receipt/authority group: **21 passed**.
 - Serial mounted renderer/Host/selected-summary/panel/locale group: **35 passed**.

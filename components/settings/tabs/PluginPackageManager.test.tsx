@@ -19,9 +19,13 @@ test('package detail renders manifest resources as text and explains advanced au
   } as NetcattyInstalledPlugin;
   const html = renderToStaticMarkup(<I18nProvider locale="en"><PluginPackageDetails plugin={plugin} /></I18nProvider>);
   assert.match(html, /full Node filesystem and network authority/);
+  assert.match(html, /Broker permissions cannot restrict this access/);
+  assert.match(html, /Development preview only/);
   assert.match(html, /https:\/\/example.com/);
   assert.match(html, /&lt;script&gt;/);
   assert.doesNotMatch(html, /<script>/);
-  assert.match(html, /not a grant/);
+  assert.match(html, /Declared supported capabilities default to Allow/);
+  assert.match(html, /Ask or Deny/);
+  assert.match(html, /Host validation and resource scope always apply/);
   assert.match(html, /aaaaaaaaaaaaaaaa/);
 });
