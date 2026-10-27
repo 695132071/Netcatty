@@ -1415,11 +1415,16 @@ function registerSdkStreamHandlers(ctx) {
 
     ipcMain.handle("netcatty:ai:sdk-agent:cancel", async (event, { requestId, chatSessionId }) => {
       if (!validateSender(event)) return { ok: false, error: "Unauthorized IPC sender" };
-      const effectiveChatSessionId = chatSessionId || sdkRequestSessions.get(requestId);
+      const ownedChatSessionId = sdkRequestSessions.get(requestId);
+      // Caller text cannot select the legacy route for a delegated request.
+      if (ownedChatSessionId && chatSessionId && ownedChatSessionId !== chatSessionId) return { ok: false, error: "Agent request ownership mismatch" };
+      const effectiveChatSessionId = ownedChatSessionId || chatSessionId;
       if (mcpServerBridge.isPluginAgentConversation?.(effectiveChatSessionId)) {
         const native = sdkRequestRuntimes.get(requestId);
         if (!native?.delegationTag || native.senderId !== event.sender.id
           || sdkRequestSessions.get(requestId) !== effectiveChatSessionId) return { ok: false, error: "Agent turn unavailable" };
+        try { mcpServerBridge.assertPluginAgentCaller(effectiveChatSessionId, event.sender.id, native.delegationTag); }
+        catch { return { ok: false, error: "Agent turn unavailable" }; }
         sdkActiveStreams.get(requestId)?.abort();
         return { ok: true };
       }
@@ -1439,6 +1444,9 @@ function registerSdkStreamHandlers(ctx) {
 
     ipcMain.handle("netcatty:ai:sdk-agent:cleanup", async (event, { chatSessionId }) => {
       if (!validateSender(event)) return { ok: false, error: "Unauthorized IPC sender" };
+      // This legacy route has no per-request identity. Delegated lifecycle is
+      // owned by main's exact-turn lease, never a delayed chat-wide UI cleanup.
+      if (mcpServerBridge.isPluginAgentConversation?.(chatSessionId)) return { ok: false, error: "Delegated Agent cleanup is main-owned" };
       mcpServerBridge.setChatSessionCancelled?.(chatSessionId, true);
       mcpServerBridge.cancelPtyExecsForSession(chatSessionId);
       mcpServerBridge.cancelWorkerBackgroundJobsForSession?.(chatSessionId);

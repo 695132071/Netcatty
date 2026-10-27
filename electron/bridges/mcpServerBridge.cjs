@@ -2309,7 +2309,7 @@ async function dispatchCore(method, params, approvalContext = {}) {
 async function handleGetContext(params, approvalContext) {
   const delegated = pluginAgentDelegations.isApproved(approvalContext);
   debugLog("handleGetContext:start", delegated ? { delegated: true } : { params, sessionCount: sessions?.size || 0 });
-  const toolHints = buildMcpToolHints();
+  const toolHints = delegated ? null : buildMcpToolHints();
   if (!sessions) {
     if (delegated) return { environment: "netcatty-terminal", description: "No host-selected terminal sessions are available.", hosts: [], hostCount: 0 };
     return {
@@ -2357,7 +2357,7 @@ async function handleGetContext(params, approvalContext) {
       description: "No hosts are available in the current scope.",
       hosts: [],
       hostCount: 0,
-      tools: toolHints,
+      ...(delegated ? {} : { tools: toolHints }),
     };
   }
   for (const [sessionId, session] of sessions.entries()) {
@@ -2568,18 +2568,29 @@ function cleanup() {
   shutdownHost();
 }
 
+// Keep identifier exports so Node 22's CJS namespace analysis also preserves the
+// existing named exports consumed by renderer-side harness tests.
+const registerPluginAgentDelegation = (...args) => pluginAgentDelegations.register(...args);
+const getPluginAgentMcpConfiguration = (id, tag) => pluginAgentDelegations.configuration(id, tag);
+const isPluginAgentConversation = (id) => pluginAgentDelegations.isReserved(id);
+const assertPluginAgentCaller = (id, senderId, tag) => pluginAgentDelegations.assertCaller(id, senderId, tag);
+const onPluginAgentRelease = (id, tag, cancel) => pluginAgentDelegations.onRelease(id, tag, cancel);
+
+const beginPluginAgentModelRequest = (id, senderId, tag) => pluginAgentDelegations.beginModelRequest(id, senderId, tag);
+function getPluginAgentJobTarget(jobId, chatSessionId) {
+  if (!pluginAgentDelegations.isReserved(chatSessionId)) return null;
+  const job = workerBackgroundJobs.get(jobId) ?? backgroundJobs.get(jobId);
+  return job?.chatSessionId === chatSessionId && typeof job.sessionId === "string" ? job.sessionId : null;
+}
+
 module.exports = {
-  getPluginAgentJobTarget: (jobId, chatSessionId) => {
-    if (!pluginAgentDelegations.isReserved(chatSessionId)) return null;
-    const job = workerBackgroundJobs.get(jobId) ?? backgroundJobs.get(jobId);
-    return job?.chatSessionId === chatSessionId && typeof job.sessionId === "string" ? job.sessionId : null;
-  },
-  registerPluginAgentDelegation: (...args) => pluginAgentDelegations.register(...args),
-  getPluginAgentMcpConfiguration: (id, tag) => pluginAgentDelegations.configuration(id, tag),
-  isPluginAgentConversation: (id) => pluginAgentDelegations.isReserved(id),
-  assertPluginAgentCaller: (id, senderId, tag) => pluginAgentDelegations.assertCaller(id, senderId, tag),
-  onPluginAgentRelease: (id, tag, cancel) => pluginAgentDelegations.onRelease(id, tag, cancel),
-  beginPluginAgentModelRequest: (id, senderId, tag) => pluginAgentDelegations.beginModelRequest(id, senderId, tag),
+  getPluginAgentJobTarget,
+  beginPluginAgentModelRequest,
+  registerPluginAgentDelegation,
+  getPluginAgentMcpConfiguration,
+  isPluginAgentConversation,
+  assertPluginAgentCaller,
+  onPluginAgentRelease,
   init,
   setCommandBlocklist,
   getCommandBlocklist,
