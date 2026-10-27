@@ -3,6 +3,7 @@
 const { createHash } = require("node:crypto");
 const { PluginCatalogService, validateCatalog, MAX_CATALOG_BYTES } = require("./catalogService.cjs");
 const { REGISTRY_URL, fetchDistribution, fetchVerified, tuple } = require("./distributionSnapshot.cjs");
+const { isOfficialMaintained } = require("./sourceIdentity.cjs");
 const tokenFor = (entry) => createHash("sha256").update(JSON.stringify(entry)).digest("hex");
 
 function prepareSnapshot(value, resources = new Map(), source) {
@@ -19,6 +20,7 @@ class RegistryCatalogService extends PluginCatalogService {
     this.source = "builtin";
     this.error = null;
     this.refreshing = null;
+    this.resolveAvatar = options.resolveAvatar;
   }
   async refresh() {
     if (this.refreshing) return this.refreshing;
@@ -58,6 +60,22 @@ class RegistryCatalogService extends PluginCatalogService {
     return entry;
   }
   artifactSize(entry) { return this.resources.get(tuple(entry))?.artifact?.size; }
+  async author(id, token) {
+    this.sourceGuard();
+    const entry = this.selected(id, token);
+    const reference = this.resources.get(tuple(entry))?.avatar;
+    let avatar = null;
+    if (reference && this.resolveAvatar) {
+      try {
+        avatar = await this.resolveAvatar({ sourceId: this.marketSource.id, reference,
+          read: () => fetchVerified(reference, this.fetch, this.origin) });
+      } catch { /* Missing or invalid imagery uses the same author placeholder. */ }
+    }
+    this.sourceGuard();
+    this.selected(id, token);
+    return { author: entry.author, avatar, officialMaintained: isOfficialMaintained(entry, this.marketSource),
+      sourceId: this.marketSource.id, version: entry.version, archiveSha256: entry.artifact?.sha256 ?? null };
+  }
   async readme(id, token) {
     const entry = this.selected(id, token);
     const resource = this.resources.get(tuple(entry))?.readme;

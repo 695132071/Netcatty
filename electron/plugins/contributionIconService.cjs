@@ -1,6 +1,7 @@
 "use strict";
 
 const path = require("node:path");
+const { createHash } = require("node:crypto");
 
 const { readContainedFile } = require("./pluginProtocol.cjs");
 const { createIsolatedContributionIconRasterizer } = require("./contributionIconRasterizer.cjs");
@@ -211,6 +212,35 @@ class PluginContributionIconService {
       if (this.pending.get(cacheKey) === pending) this.pending.delete(cacheKey);
     });
     this.pending.set(cacheKey, pending);
+    return pending;
+  }
+
+  // Called only with a host-selected, hash-bound registry reference. It shares
+  // the existing decoder, queue, cache and pending work with package icons.
+  async resolveCatalogAvatar({ sourceId, reference, read }) {
+    const key = JSON.stringify(["catalog-avatar", sourceId, reference.path, reference.sha256, reference.size]);
+    if (this.cache.has(key)) return this.cache.get(key);
+    if (this.pending.has(key)) return this.pending.get(key);
+    if (this.pending.size >= MAX_QUEUED_ICON_RASTERIZATIONS + MAX_CONCURRENT_ICON_RASTERIZATIONS) {
+      throw new Error("Plugin image queue is full");
+    }
+    const pending = (async () => {
+      const body = await read();
+      if (!Buffer.isBuffer(body) || body.length !== reference.size || body.length > 256 * 1024
+        || createHash("sha256").update(body).digest("hex") !== reference.sha256) throw new Error("Invalid plugin avatar bytes");
+      const extension = path.extname(reference.path);
+      if (![".png", ".webp"].includes(extension)) throw new Error("Invalid plugin avatar format");
+      const inspected = inspectContributionIconSource(body, extension);
+      if (inspected.mimeType !== (extension === ".png" ? "image/png" : "image/webp")) throw new Error("Plugin avatar format mismatch");
+      const png = await this.rasterizeIcon({ body, ...inspected, maxEdge: MAX_ICON_EDGE });
+      if (!png.length || png.length > MAX_ICON_PNG_BYTES) throw new Error("Plugin avatar output is too large");
+      inspectContributionIconSource(png, ".png", MAX_ICON_EDGE);
+      const value = `data:image/png;base64,${png.toString("base64")}`;
+      if (this.cache.size >= 256) this.cache.clear();
+      this.cache.set(key, value);
+      return value;
+    })().finally(() => this.pending.delete(key));
+    this.pending.set(key, pending);
     return pending;
   }
 

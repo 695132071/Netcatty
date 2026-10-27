@@ -42,6 +42,7 @@ const CHANNELS = Object.freeze({
   removeSource: "netcatty:plugins:remove-source",
   catalog: "netcatty:plugins:catalog",
   catalogReadme: "netcatty:plugins:catalog-readme",
+  author: "netcatty:plugins:author",
   catalogInstall: "netcatty:plugins:catalog-install",
   install: "netcatty:plugins:install",
   setEnabled: "netcatty:plugins:set-enabled",
@@ -679,6 +680,10 @@ function registerPluginBridge(ipcMain, options) {
   handle(CHANNELS.updateSource, async (_manager, payload) => options.catalogService.updateSource(payload));
   handle(CHANNELS.removeSource, async (_manager, payload) => options.catalogService.removeSource(payload));
   handle(CHANNELS.catalog, async (_manager, payload) => options.catalogService?.list(payload?.sourceId) ?? { entries: [], source: "builtin", error: "Plugin catalog unavailable" });
+  handle(CHANNELS.author, async (_manager, payload) => {
+    if (!options.catalogService) throw new Error("Plugin catalog unavailable");
+    return options.catalogService.author(payload);
+  });
   handle(CHANNELS.catalogReadme, async (_manager, payload) => {
     if (!options.catalogService) throw new Error("Plugin catalog unavailable");
     return options.catalogService.readme(payload?.id, payload?.selectionToken, payload?.sourceId);

@@ -6,6 +6,11 @@ const { isIP } = require("node:net");
 const OFFICIAL_ORIGIN = "https://plugins.netcatty.app";
 const OFFICIAL_SOURCE = Object.freeze({ id: "official", kind: "official", name: "Netcatty marketplace", origin: OFFICIAL_ORIGIN });
 const LOCAL_SOURCE = Object.freeze({ id: "local", kind: "local", name: "Local import", origin: null });
+// Curated first-party maintenance authority, independent of manifest publisher text.
+const FIRST_PARTY_PLUGINS = Object.freeze([
+  Object.freeze({ id: "com.netcatty.starter", repository: "binaricat/Netcatty" }),
+  Object.freeze({ id: "com.netcatty.hello", repository: "binaricat/Netcatty" }),
+]);
 const hash = (value) => createHash("sha256").update(value).digest("hex");
 
 // Source identity is host-owned. Neither a manifest nor a catalog supplies kind/id.
@@ -41,4 +46,11 @@ function privateOwner(source, pluginId) {
   return `source:${hash(assertSource(source).id)}:${pluginId}`;
 }
 
-module.exports = { OFFICIAL_SOURCE, LOCAL_SOURCE, canonicalSourceOrigin, thirdPartySource, assertSource, privateOwner };
+function isOfficialMaintained(entry, source) {
+  const trusted = assertSource(source);
+  return trusted.id === OFFICIAL_SOURCE.id && trusted.kind === OFFICIAL_SOURCE.kind
+    && trusted.origin === OFFICIAL_SOURCE.origin
+    && FIRST_PARTY_PLUGINS.some((pair) => pair.id === entry.id && pair.repository === entry.repository);
+}
+
+module.exports = { OFFICIAL_SOURCE, LOCAL_SOURCE, canonicalSourceOrigin, thirdPartySource, assertSource, privateOwner, isOfficialMaintained };

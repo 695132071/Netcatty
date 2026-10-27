@@ -6,6 +6,7 @@ import type { usePluginManager } from '../../../application/state/usePluginManag
 import { Button } from '../../ui/button';
 import { Input } from '../../ui/input';
 import { PluginBrandIcon } from '../../plugins/PluginBrandIcon';
+import { PluginAuthorRow } from '../../plugins/PluginAuthorRow';
 import { SettingCard, SettingRow, SettingsSection, Toggle } from '../settings-ui';
 import { PluginLogSettings } from './PluginLogSettings';
 
@@ -72,7 +73,8 @@ export function PluginSettingsLanding({ manager, settingsAvailable, settingsErro
               <span className="truncate" title={name}>{name}</span>
               {plugin.activeVersion && <span className="shrink-0 text-xs font-normal text-muted-foreground">{plugin.activeVersion}</span>}
             </span>} description={<>
-              <span className="block break-words">{[plugin.manifest?.publisher, sourceOf(plugin), statusOf(plugin)].filter(Boolean).join(' · ')}</span>
+              {plugin.manifest?.publisher && <PluginAuthorRow plugin={plugin} />}
+              <span className="block break-words">{[sourceOf(plugin), statusOf(plugin)].filter(Boolean).join(' · ')}</span>
               {availableUpdate && <span className="block text-primary">{t('settings.plugins.landing.updateAvailable').replace('{version}', availableUpdate.availableVersion)}</span>}
               {description && <span className="line-clamp-2 break-words">{description}</span>}
             </>}>

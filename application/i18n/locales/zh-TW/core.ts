@@ -1179,6 +1179,8 @@ Vaults 分頁維持扁平，不使用這塊背景。
   'qs.default': '預設',
 
   'settings.tab.plugins': '外掛程式',
+  "settings.plugins.author.official": "官方維護",
+  "settings.plugins.author.officialMeaning": "由 Netcatty 專案維護。這不是安全認證。",
   "settings.plugins.manager.installed": "已安裝插件",
   "settings.plugins.manager.import": "導入 .ncpkg",
   "settings.plugins.manager.preview": "導入的插件保持停用，請檢查後再啟用。",
@@ -1337,7 +1339,7 @@ Vaults 分頁維持扁平，不使用這塊背景。
   'plugins.authentication.responseFailedWithMessage': '無法送出驗證回應：{message}。請重試或取消此要求。',
   'plugins.authentication.continue': '繼續',
   'plugins.hostActions.select': '分享所選主機的中繼資料',
-  'plugins.hostActions.selectionNote': '向此外掛分享已儲存的名稱、位址、使用者名稱、協定、群組和標籤。選擇群組僅包含本次選取的成員。連線需要另外確認。',
+  'plugins.hostActions.selectionNote': '僅向此外掛分享所選主機的中繼資料：名稱、位址、使用者名稱、協定、群組和標籤。選擇群組僅包含本次選取的成員。後續編輯或連線請求遵循此外掛的權限設定。',
   'plugins.hostActions.create': '預覽主機草稿',
   'plugins.hostActions.edit': '預覽主機修改',
   'plugins.hostActions.connect': '確認連線',

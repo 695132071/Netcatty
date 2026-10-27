@@ -117,7 +117,8 @@ export interface PluginHostUI {
 }
 
 /** Saved-host selection does not grant editing, connecting or session access.
- * Each action uses the host's separate review and confirmation UI. */
+ * Later actions follow the plugin's permission settings. Host drafts retain
+ * the host editor; connections retain normal authentication. */
 export interface PluginVault {
   selectHosts(params: import("@netcatty/plugin-contract").VaultSelectHostsParams): Promise<import("@netcatty/plugin-contract").VaultHostSelectionResult>;
   /** Managed SSH-config drafts require the full Vault host editor. */

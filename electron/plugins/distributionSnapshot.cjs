@@ -23,6 +23,10 @@ const packageRef = structuredClone(deliveryV2.properties.plugins.items.propertie
 packageRef.properties.path.pattern = "^/assets/[a-f0-9]{64}\\.ncpkg$";
 packageRef.properties.size.maximum = 32 * 1024 * 1024;
 deliveryV2.properties.plugins.items.properties.artifact = { oneOf: [{ type: "null" }, packageRef] };
+const avatarRef = structuredClone(deliveryV2.properties.plugins.items.properties.readme);
+avatarRef.properties.path.pattern = "^/assets/[a-f0-9]{64}\\.(png|webp)$";
+avatarRef.properties.size.minimum = 1;
+deliveryV2.properties.plugins.items.properties.avatar = { oneOf: [{ type: "null" }, avatarRef] };
 const validateDeliveryV2 = ajv.compile(deliveryV2);
 const digest = (bytes) => createHash("sha256").update(bytes).digest("hex");
 const tuple = (entry) => JSON.stringify([entry.id, entry.version, entry.repository, entry.commit]);
@@ -101,6 +105,7 @@ function validateSet(pointer, entries, index, delivery, origin = DISTRIBUTION_OR
     if (!catalogTuples.has(key) || resources.has(key)) throw new Error("Delivery identity does not match catalog tuple");
     assertAsset(plugin.readme, ["md"]);
     for (const icon of [plugin.iconLight, plugin.iconDark]) if (icon !== null) assertAsset(icon, ["png", "webp"]);
+    if (plugin.avatar !== null) assertAsset(plugin.avatar, ["png", "webp"]);
     const entry = entries.find((item) => tuple(item) === key);
     if (plugin.artifact !== null) {
       assertReference(plugin.artifact, `/assets/${plugin.artifact.sha256}.ncpkg`, 32 * 1024 * 1024);

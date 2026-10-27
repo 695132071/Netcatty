@@ -355,6 +355,18 @@ declare global {
     artifact?: { url: string; sha256: string };
   }
 
+  type NetcattyPluginAuthorRequest =
+    | { kind: 'catalog'; pluginId: string; selectionToken: string; sourceId: string }
+    | { kind: 'installed'; pluginId: string };
+  interface NetcattyPluginAuthorPresentation {
+    author: string;
+    avatar: string | null;
+    officialMaintained: boolean;
+    sourceId: string;
+    version: string;
+    archiveSha256: string | null;
+  }
+
   type PluginPermissionMode = 'allow' | 'ask' | 'deny';
   type NetcattyPluginPermissionPrompt = import('@netcatty/plugin-contract').PermissionRequest & {
     actionToken: string; resources: string[];
@@ -477,6 +489,7 @@ declare global {
     updatePluginSource?(source: { id: string; name: string; enabled: boolean }): Promise<NetcattyPluginSource>;
     removePluginSource?(id: string, disablePlugins: boolean): Promise<void>;
     listPluginCatalog?(sourceId?: string): Promise<NetcattyPluginCatalogSnapshot>;
+    getPluginAuthorPresentation?(request: NetcattyPluginAuthorRequest): Promise<NetcattyPluginAuthorPresentation | null>;
     getPluginCatalogReadme?(id: string, selectionToken?: string, sourceId?: string): Promise<string>;
     installCatalogPlugin?(id: string, selectionToken?: string, sourceId?: string, acceptedSourceId?: string): Promise<NetcattyInstalledPlugin>;
     setPluginAIHostReady?(ready: boolean): Promise<boolean>;

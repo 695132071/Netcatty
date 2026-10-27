@@ -14,3 +14,9 @@ The fixture includes no executable plugin package, avatar or credentials.
 
 Schema revisions must be coordinated with the registry publisher. In particular,
 artifact/avatar are deliberately null in v1; do not expand this consumer alone.
+
+The coordinated v2 consumer in `distributionSnapshot.cjs` retains the pinned v1
+schema and permits bounded package references and PNG/WebP avatar references.
+Avatar references require positive size up to 256KiB and exact content-addressed
+paths. No v3 path is added. The original bootstrap bytes remain unchanged, and
+client support does not publish or activate live metadata.

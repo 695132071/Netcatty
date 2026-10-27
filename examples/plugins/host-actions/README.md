@@ -11,9 +11,11 @@ Group results contain the chosen current members and never include future member
 label change for the first chosen host. Netcatty displays editable fields and the
 normalized field diff before either action saves.
 
-`connect` asks Netcatty to confirm a saved-host connection. The confirmation shows
-whether saved scripts can run. The acknowledgement contains no session identifier
-or terminal data. Selecting metadata never authorizes a connection by itself.
+`connect` requests a saved-host connection under the plugin's permission settings.
+Ask displays the target and whether saved scripts can run; Allow can dispatch
+without that permission-only dialog, and Deny blocks the request. Normal SSH
+authentication still applies. The acknowledgement contains no session identifier
+or terminal data. Selecting metadata does not change those permission settings.
 
 All sample test resources use synthetic hostnames. Native acceptance must use
 synthetic hosts and must not establish a real host connection.
