@@ -139,6 +139,17 @@ test("backend revision changed during Ask cannot execute the already selected ta
   assert.equal(f.decisions.length, 1);
 });
 
+test("empty-argument environment Ask carries the canonical host operation and selected-target disclosure", async (t) => {
+  const f = fixture(t); f.choose(async () => ({ targets: [] })); f.modeTo("ask");
+  const chat = await f.open(); const turn = await f.call("send", { chatHandle: chat.chatHandle, text: "Synthetic environment" });
+  const internal = f.service.turns.get(turn.turnHandle);
+  await f.delegation.dispatch("netcatty/getContext", { chatSessionId: internal.chat.record.id },
+    { trustedAgentSenderId: 7, trustedAgentTurnTag: turn.turnHandle }, () => ({ hosts: [], hostCount: 0 }));
+  assert.equal(f.decisions.length, 1);
+  assert.deepEqual(f.decisions[0].displayContext.action, { capabilityId: "session.environment", text: "{}" });
+  assert.deepEqual(f.decisions[0].displayContext.selections, []);
+});
+
 test("Actions Deny keeps model conversation available with no tools; Agent-use Deny prevents host dispatch", async (t) => {
   const f = fixture(t); f.modeTo("deny"); const chat = await f.open();
   const turn = await f.call("send", { chatHandle: chat.chatHandle, text: "Synthetic model-only intent" });
