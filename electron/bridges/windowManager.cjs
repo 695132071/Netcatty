@@ -445,11 +445,13 @@ function applyWindowBackgroundChromeToWindow(win, options = {}) {
       return;
     }
     if (process.platform === "darwin") win.setVibrancy?.(null);
-    // Only undo a background this module actually made transparent. Touching
-    // the background otherwise would clobber the color the window was created
-    // with before any theme color has been pushed.
+    if (options.applyBackgroundColor !== true) return;
+    // An explicit theme/background-color push must always repaint, otherwise
+    // the native backing goes stale after theme changes. Registration-time
+    // chrome setup is different: it must not clobber the color the window was
+    // created with before any theme color has been pushed.
     const wasTransparent = transparentChromeWindows.delete(win);
-    if (wasTransparent && options.applyBackgroundColor === true) {
+    if (options.forceBackgroundColor === true || wasTransparent) {
       // A window can be asked to drop vibrancy before any theme color has been
       // pushed (cold start with blur already saved). Falling back to the active
       // theme keeps the window from staying transparent.
@@ -467,10 +469,10 @@ function applyWindowBackgroundColor(color) {
   if (!normalized) return false;
   currentWindowBackgroundColor = normalized;
   for (const win of getAppContentWindowList()) {
-    applyWindowBackgroundChromeToWindow(win, { applyBackgroundColor: true });
+    applyWindowBackgroundChromeToWindow(win, { applyBackgroundColor: true, forceBackgroundColor: true });
   }
   if (settingsWindow && !settingsWindow.isDestroyed()) {
-    applyWindowBackgroundChromeToWindow(settingsWindow, { applyBackgroundColor: true });
+    applyWindowBackgroundChromeToWindow(settingsWindow, { applyBackgroundColor: true, forceBackgroundColor: true });
   }
   return true;
 }

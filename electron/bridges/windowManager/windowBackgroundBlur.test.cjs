@@ -93,3 +93,19 @@ test('disabling blur before any theme color push restores the current theme back
   assert.notEqual(state.background, '#00000000');
   assert.match(String(state.background), /^#[0-9a-fA-F]{6}$/);
 });
+
+test('explicit theme and background-color pushes repaint windows that never used blur', () => {
+  for (const platform of ['darwin', 'win32', 'linux']) {
+    const { invoke, state } = loadWindowManager(platform);
+    assert.equal(state.background, '#123456');
+    // Registration-time chrome setup must leave the creation-time color alone...
+    invoke('setWindowBackgroundBlur', false);
+    assert.equal(state.background, '#123456');
+    // ...but an explicit theme color must always land.
+    invoke('setBackgroundColor', '#abcdef');
+    assert.equal(state.background, '#abcdef');
+    invoke('setTheme', 'dark');
+    assert.match(String(state.background), /^#[0-9a-fA-F]{6}$/);
+    assert.notEqual(state.background, '#abcdef');
+  }
+});
