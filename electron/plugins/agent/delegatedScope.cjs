@@ -163,6 +163,15 @@ class DelegatedAgentScopes {
     for (const scope of this.scopes.values()) if (scope.owner.runtimeId === runtimeId) this.#revoke(scope);
   }
 
+  // Main-owned cleanup after a pending operation loses its lease. Exact owner
+  // object matching prevents old cleanup from deleting a replacement source.
+  discard(handle, owner) {
+    const scope = this.scopes.get(handle);
+    if (!scope || scope.owner !== owner) return false;
+    this.#revoke(scope);
+    return true;
+  }
+
   releasePlugin(pluginId) {
     for (const scope of this.scopes.values()) if (scope.owner.pluginId === pluginId) this.#revoke(scope);
   }
@@ -177,4 +186,4 @@ class DelegatedAgentScopes {
   }
 }
 
-module.exports = { DelegatedAgentScopes };
+module.exports = { DelegatedAgentScopes, isRequestCancellation };

@@ -23,7 +23,7 @@ class PluginAgentMcpDelegations {
       || tools.some((tool) => typeof tool !== "string" || !tool || tool.length > 128)
       || this.sessions.has(chatSessionId) || this.sessions.size >= 64) throw Error("Invalid Agent delegation");
     const token = randomBytes(32).toString("hex");
-    const entry = { chatSessionId, turnTag, token, dispatch, assertCurrent, senderId, tools: Object.freeze([...tools]), sockets: new Set(), cancellations: new Set() };
+    const entry = { chatSessionId, turnTag, token, dispatch, assertCurrent, senderId, modelRequests: 0, tools: Object.freeze([...tools]), sockets: new Set(), cancellations: new Set() };
     this.sessions.set(chatSessionId, entry); this.tokens.set(token, entry);
     return Object.freeze({ dispose: () => { if (this.sessions.get(chatSessionId) === entry) this.release(chatSessionId); } });
   }
@@ -71,6 +71,11 @@ class PluginAgentMcpDelegations {
     if (typeof cancel !== "function") throw Error("Native cancellation callback required");
     entry.cancellations.add(cancel);
     return () => entry.cancellations.delete(cancel);
+  }
+  beginModelRequest(chatSessionId, senderId, turnTag) {
+    this.assertCaller(chatSessionId, senderId, turnTag);
+    const entry = this.sessions.get(chatSessionId);
+    if (++entry.modelRequests > 32) { this.release(chatSessionId); throw Error("Agent model request budget exceeded"); }
   }
   isReserved(chatSessionId) { return typeof chatSessionId === "string" && chatSessionId.startsWith(PREFIX); }
   isApproved(context) { return this.approvedContexts.has(context); }

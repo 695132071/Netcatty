@@ -78,6 +78,10 @@ class PluginPermissionDecisionHost {
           resources: (request.resources ?? []).map((resource) => escapePermissionText(resource)),
           ...(request.displayContext ? { displayContext: {
             ...(request.displayContext.modelLabel ? { modelLabel: escapePermissionText(request.displayContext.modelLabel) } : {}),
+            ...(request.displayContext.action ? { action: {
+              capabilityId: escapePermissionText(request.displayContext.action.capabilityId, 160),
+              text: escapePermissionText(request.displayContext.action.text, 16_384),
+            } } : {}),
             selections: (request.displayContext.selections ?? []).map((item) => ({
               scope: item.scope, title: escapePermissionText(item.title), version: escapePermissionText(item.version),
             })),

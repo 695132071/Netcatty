@@ -198,6 +198,69 @@ metadata, not credentials, provider diagnostics or full unreviewed tool payloads
 
 ## Remaining acceptance gates
 
+### Separate runtime/sample implementation checkpoint
+
+The runtime continuation wires the nine `context.agent` methods through the
+registered default host, dedicated trusted-app preload/IPC and `PluginAgentHost`
+mounted in `AppView`. It reuses the existing `AgentRuntime`, Catty/external turn
+drivers, core `AISession` documents, compaction, model/provider transport, native
+cancellation, selected worker epoch/generation checks and permission/audit engine.
+No source database, Vault history or builtin conversation ownership change is
+included. Plugin input cannot supply internal session IDs, source/owner, CLI/env,
+MCP configuration or permission mode.
+
+The first eligible profiles are configured Catty and Claude MCP. Other known
+backends report unsupported/unavailable. Claude has builtin tools disabled,
+strict MCP, no inherited settings sources, at most 12 native turns and no native
+session persistence/resume; its existing driver rehydrates from core-owned history.
+This code path has handler/driver/MCP fixture coverage. Authenticated Claude
+service/native CLI acceptance has not run and must not be inferred from mocks.
+
+Actions use one source-bound Allow / Ask / Deny decision path. Actions Deny permits
+model-only conversation with an empty tool profile; Agent-use Deny blocks host
+dispatch. Explicit target choice is independent of focus/workspace. Worker
+lifecycle changes cancel a pending chooser and revoke stale target leases;
+source/runtime/policy/lock invalidation aborts native work and rejects late events.
+Core history is source/private-owner namespaced and read/write protected through
+the plugin filesystem broker. A user-granted terminal command still has that
+terminal's native OS authority; this is not an OS filesystem sandbox.
+
+Bounds include six sends/source/minute, eight scopes/runtime and 64 total, 256
+retained turn handles, 32 tool actions and 32 Catty HTTP calls per turn, 12 Catty
+iterations, a 120-second turn lifetime, 60-second model HTTP/15-second streaming
+idle deadlines, 128 KiB HTTP responses, 256 KiB projected turn output and 4 KiB
+text events. Usage is projected; no hard total native-Claude token budget is
+claimed. Handles expire after five minutes without silent target reselection.
+
+The installable `examples/plugins/global-agent` sample provides backend/owned
+conversation choice, explicit targets, history, Send/Stop and existing host theme
+tokens. Its deterministic local provider fixture performs no model inference,
+paid API calls, real terminal execution or request/body/header logging. The
+installed Node/JSDOM pipeline test uses actual Catty orchestration, configured
+HTTP admission and main dispatch to synthetic workers. It proves one selected-B
+tool cycle, streamed result, Stop and revoked-handle denial; it is not native
+browser sandbox or real model acceptance. A failed-before JSON-snapshot regression
+is retained at `/tmp/netcatty-global-agent-snapshot-failed-before.log`.
+
+Recorded validation: plugin runtime 732 passed/0 failed/1 skipped; affected group
+105 passed/0 failed/3 skipped; examples 6 passed/0 failed/1 skipped; repaired setup
+paths 284 passed. Build, codegen and lint passed before the final review corrections.
+Typecheck is still red: 774 diagnostics on both unchanged foundation and this
+continuation, with equal per-file/error-code counts; it is not a clean typecheck.
+The repaired Node 22 full run reports 15,354 passed/9 failed/46 skipped. Eight are
+missing xterm install patches, subsequently applied; the ninth is the transport
+CJS namespace regression fixed separately. Exact final-head validation is pending.
+
+The earlier pre-setup full run remains pending after its timed-out unpatched FIDO
+test worker kept a socket open. Reading `/proc/319596/cwd` to confirm that worker's
+identity was denied (EACCES); no signal was sent and no alternate route attempted.
+Its log is retained without invented final totals. `pack:dir` first failed using
+the unwritable default npm cache; a standard task-local cache repaired that step,
+then native rebuild failed because installed `@electron/rebuild` hardcodes
+`/home/agent/.electron-gyp` outside writable roots. No home override or sandbox
+bypass was attempted. Native screenshots/video and independent runtime review
+remain parent-owned gates; nothing is merged or released.
+
 - Canonical schema/SDK/runtime registration and the installed default host path.
 - Host-owned durable history and backend references, including backend switching.
 - Actual Catty and Claude MCP dispatch, policy and worker lifecycle regressions.

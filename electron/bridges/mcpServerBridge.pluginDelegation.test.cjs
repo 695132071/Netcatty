@@ -93,3 +93,13 @@ test("actual main TCP gate binds delegated credentials, scope and policy at work
   await assert.rejects(app.call("netcatty/getContext", { chatSessionId: coreId }));
   assert.throws(() => bridge.getPluginAgentMcpConfiguration(coreId));
 });
+
+test("delegated environment never falls back to the full tool inventory before session initialization", async (t) => {
+  bridge.init({ sessions: null });
+  const id = `plugin-agent:${randomUUID()}`; const tag = randomUUID();
+  const registration = bridge.registerPluginAgentDelegation(id, { senderId: 7, turnTag: tag, tools: ["get_environment"],
+    assertCurrent: () => {}, dispatch: (_method, _params, execute) => execute() });
+  t.after(() => { registration.dispose(); bridge.cleanup(); });
+  const value = await bridge.dispatchBuiltinRpc("netcatty/getContext", { chatSessionId: id }, { trustedAgentSenderId: 7, trustedAgentTurnTag: tag });
+  assert.deepEqual(Object.keys(value).sort(), ["description", "environment", "hostCount", "hosts"]); assert.equal(value.hostCount, 0);
+});

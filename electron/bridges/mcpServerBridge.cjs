@@ -1978,7 +1978,7 @@ function getWorkerJob(jobId, chatSessionId) {
 
 const WORKER_JOB_NOT_FOUND_ERROR = "Background job not found";
 
-async function handleWorkerJobPoll(params = {}) {
+async function handleWorkerJobPoll(params = {}, beforeExecute) {
   const { jobId, chatSessionId, scopedSessionIds } = params || {};
   if (!jobId) throw new Error("jobId is required");
   const job = getWorkerJob(jobId, chatSessionId || null);
@@ -1990,7 +1990,7 @@ async function handleWorkerJobPoll(params = {}) {
     const scopeErr = validateSessionScope(job.sessionId, chatSessionId || null, scopedSessionIds);
     if (scopeErr) return { ok: false, error: scopeErr };
   }
-  const result = await terminalWorkerManager.request("netcatty:ai:jobPoll", params, {});
+  const result = await terminalWorkerManager.request("netcatty:ai:jobPoll", params, typeof beforeExecute === "function" ? { beforeExecute } : {});
   if (result?.ok === false && result.error === WORKER_JOB_NOT_FOUND_ERROR) {
     // The route is still here but the worker no longer knows the job (pruned or restarted).
     emitJobDiag("job-stop-miss", { jobId, chatSessionId: chatSessionId || null, op: "poll", reason: "worker-job-missing" });
@@ -2001,7 +2001,7 @@ async function handleWorkerJobPoll(params = {}) {
   return result;
 }
 
-async function handleWorkerJobStop(params = {}) {
+async function handleWorkerJobStop(params = {}, beforeExecute) {
   const { jobId, chatSessionId, scopedSessionIds } = params || {};
   if (!jobId) throw new Error("jobId is required");
   const job = getWorkerJob(jobId, chatSessionId || null);
@@ -2012,7 +2012,7 @@ async function handleWorkerJobStop(params = {}) {
   if (Array.isArray(scopedSessionIds) && job.sessionId && !scopedSessionIds.includes(job.sessionId)) {
     return { ok: false, error: `Session "${job.sessionId}" is not in the current scope.` };
   }
-  const result = await terminalWorkerManager.request("netcatty:ai:jobStop", params, {});
+  const result = await terminalWorkerManager.request("netcatty:ai:jobStop", params, typeof beforeExecute === "function" ? { beforeExecute } : {});
   if (result?.ok === false && result.error === WORKER_JOB_NOT_FOUND_ERROR) {
     // The route is still here but the worker no longer knows the job (pruned or restarted).
     emitJobDiag("job-stop-miss", { jobId, chatSessionId: chatSessionId || null, op: "stop", reason: "worker-job-missing" });
@@ -2288,10 +2288,10 @@ async function dispatchCore(method, params, approvalContext = {}) {
       return await handleWorkerJobStart(params, approvalContext.beforeExecute);
     }
     if (capability?.id === "terminal.poll" && workerBackgroundJobs.has(params?.jobId)) {
-      return await handleWorkerJobPoll(params);
+      return await handleWorkerJobPoll(params, approvalContext.beforeExecute);
     }
     if (capability?.id === "terminal.stop" && workerBackgroundJobs.has(params?.jobId)) {
-      return await handleWorkerJobStop(params);
+      return await handleWorkerJobStop(params, approvalContext.beforeExecute);
     }
     return await handler(params, approvalContext);
   } finally {
@@ -2307,9 +2307,11 @@ async function dispatchCore(method, params, approvalContext = {}) {
 // ── Handler: getContext ──
 
 async function handleGetContext(params, approvalContext) {
-  debugLog("handleGetContext:start", { params, sessionCount: sessions?.size || 0 });
+  const delegated = pluginAgentDelegations.isApproved(approvalContext);
+  debugLog("handleGetContext:start", delegated ? { delegated: true } : { params, sessionCount: sessions?.size || 0 });
   const toolHints = buildMcpToolHints();
   if (!sessions) {
+    if (delegated) return { environment: "netcatty-terminal", description: "No host-selected terminal sessions are available.", hosts: [], hostCount: 0 };
     return {
       hosts: [],
       instructions: "No sessions available.",
@@ -2567,11 +2569,17 @@ function cleanup() {
 }
 
 module.exports = {
+  getPluginAgentJobTarget: (jobId, chatSessionId) => {
+    if (!pluginAgentDelegations.isReserved(chatSessionId)) return null;
+    const job = workerBackgroundJobs.get(jobId) ?? backgroundJobs.get(jobId);
+    return job?.chatSessionId === chatSessionId && typeof job.sessionId === "string" ? job.sessionId : null;
+  },
   registerPluginAgentDelegation: (...args) => pluginAgentDelegations.register(...args),
   getPluginAgentMcpConfiguration: (id, tag) => pluginAgentDelegations.configuration(id, tag),
   isPluginAgentConversation: (id) => pluginAgentDelegations.isReserved(id),
   assertPluginAgentCaller: (id, senderId, tag) => pluginAgentDelegations.assertCaller(id, senderId, tag),
   onPluginAgentRelease: (id, tag, cancel) => pluginAgentDelegations.onRelease(id, tag, cancel),
+  beginPluginAgentModelRequest: (id, senderId, tag) => pluginAgentDelegations.beginModelRequest(id, senderId, tag),
   init,
   setCommandBlocklist,
   getCommandBlocklist,

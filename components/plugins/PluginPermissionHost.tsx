@@ -20,6 +20,10 @@ export function PluginPermissionHost() {
       </DialogHeader>
       <p className="text-sm">{description.description}</p>
       {prompt.displayContext?.modelLabel && <p className="text-sm break-words">{zh ? '模型' : 'Model'}: {prompt.displayContext.modelLabel}</p>}
+      {prompt.displayContext?.action && <div className="space-y-1">
+        <p className="text-sm">{zh ? '请求内容（控制字符以转义形式显示）' : 'Requested action (control characters shown as escapes)'}</p>
+        <pre className="max-h-48 overflow-auto whitespace-pre-wrap break-words rounded border border-border p-2 text-xs">{prompt.displayContext.action.text}</pre>
+      </div>}
       {(prompt.displayContext?.selections ?? []).map((item, index) => <p key={index} className="text-sm break-words">
         {item.title} <span className="text-xs text-muted-foreground">· {item.scope}</span>
       </p>)}

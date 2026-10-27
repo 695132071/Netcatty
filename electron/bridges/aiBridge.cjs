@@ -624,6 +624,7 @@ async function streamRequest(url, options, event, requestId, skipTLS) {
   const delegatedBridge = delegatedId ? require("./mcpServerBridge.cjs") : null;
   const assertDelegation = () => delegatedBridge?.assertPluginAgentCaller(`plugin-agent:${delegatedId}`, event.sender.id, delegationTag);
   assertDelegation();
+  if (delegatedId) delegatedBridge.beginPluginAgentModelRequest(`plugin-agent:${delegatedId}`, event.sender.id, delegationTag);
   const detachDelegation = delegatedBridge?.onPluginAgentRelease(`plugin-agent:${delegatedId}`, delegationTag, () => controller.abort(createAbortError()));
   const { idleTimeoutMs, totalTimeoutMs } = pluginRuntimeId || delegatedId
     ? { idleTimeoutMs: Math.min(15_000, Math.max(1, Number(options.idleTimeoutMs) || 15_000)),

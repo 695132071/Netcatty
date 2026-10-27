@@ -32,6 +32,8 @@ const { PluginNetworkBroker } = require("./networkBroker.cjs");
 const { PluginByteStreamService, FEATURE: BYTE_STREAM_FEATURE } = require("./byteStreamService.cjs");
 const { PluginAIContextService, PLUGIN_AI_CONTEXT_FEATURES } = require("./ai/aiContextService.cjs");
 const { PluginAITrustedHostAdapter } = require("./ai/trustedHostAdapter.cjs");
+const { PluginAgentService, PLUGIN_AGENT_FEATURE } = require("./agent/agentService.cjs");
+const { PluginAgentConversationStore } = require("./agent/conversationStore.cjs");
 const { HOST_INTERACTION_FEATURE, PluginHostInteractionService } = require("./hostInteractionService.cjs");
 const { PluginHostVaultService } = require("./hostVaultService.cjs");
 const { PluginAISourceBinding } = require("./ai/sourceBinding.cjs");
@@ -99,12 +101,14 @@ function createPluginHostService(options) {
   const paths = createPluginPaths(options.app.getPath("userData"));
   const appRoot = options.appRoot ?? options.app.getAppPath();
   const runtimeDirectory = options.runtimeDirectory ?? path.join(__dirname, "runtime");
-  const supportedFeatures = [...new Set(["terminal.input-drafts", "terminal.selection-sharing", "appearance.theme-packs", "metadata.brand-icon", BYTE_STREAM_FEATURE, ...PLUGIN_AI_CONTEXT_FEATURES, NETWORK_CREDENTIAL_LEASE_FEATURE, HOST_INTERACTION_FEATURE, HOST_VAULT_FEATURE, VAULT_PAGES_FEATURE, TERMINAL_SIDEBAR_FEATURE, INTERACTIVE_COMMAND_FEATURE, ...(options.supportedFeatures ?? [])])];
+  const supportedFeatures = [...new Set(["terminal.input-drafts", "terminal.selection-sharing", "appearance.theme-packs", "metadata.brand-icon", BYTE_STREAM_FEATURE, ...PLUGIN_AI_CONTEXT_FEATURES, PLUGIN_AGENT_FEATURE, NETWORK_CREDENTIAL_LEASE_FEATURE, HOST_INTERACTION_FEATURE, HOST_VAULT_FEATURE, VAULT_PAGES_FEATURE, TERMINAL_SIDEBAR_FEATURE, INTERACTIVE_COMMAND_FEATURE, ...(options.supportedFeatures ?? [])])];
   const database = new PluginDatabase(paths.database);
   let interactionService;
   let byteStreamService;
   let aiContextService;
   let aiHostAdapter;
+  let agentService;
+  let agentHostAdapter;
   let permissionDecisionHost;
   let manager;
   const logService = new PluginLogService({ paths, electron: options.electron, resolveProvenance: options.resolvePluginProvenance ?? createPluginLogProvenanceResolver(database) });
@@ -162,7 +166,8 @@ function createPluginHostService(options) {
     const filesystemBroker = new PluginFilesystemBroker({
       quotaManager,
       openDirectoryHandle: options.openPluginDirectoryHandle,
-      protectedDirectories: [paths.logs],
+      protectedDirectories: [paths.logs, path.join(paths.root, "agent-chats")],
+      protectedReadDirectories: [path.join(paths.root, "agent-chats")],
       protectedFiles: [logService.preferencesPath, `${logService.preferencesPath}.tmp`],
     });
     const networkBroker = new PluginNetworkBroker({
@@ -294,6 +299,7 @@ function createPluginHostService(options) {
       runtimeCleanup: async (identity) => {
         byteStreamService?.releaseRuntime(identity.runtimeId);
         aiContextService?.releaseRuntime(identity.runtimeId);
+        agentService?.releaseRuntime(identity.runtimeId);
         interactionService?.releaseRuntime(identity.runtimeId);
         leaseStore.revokeRuntime(identity.runtimeId);
         await companionSupervisor.releaseRuntime(identity.runtimeId);
@@ -314,9 +320,40 @@ function createPluginHostService(options) {
       hostAdapter: aiHostAdapter,
     });
     aiContextService.registerRpcCapabilities(rpcRegistry);
+    agentHostAdapter = options.pluginAgentHostAdapter ?? new PluginAITrustedHostAdapter({
+      getWindow: options.getInteractionWindow ?? (() => null),
+      isLocked: options.isAppLocked, subscribeLock: options.subscribeAppLock,
+      channels: { request: "netcatty:plugins:agent-host-request", ready: "netcatty:plugins:agent-host-ready", response: "netcatty:plugins:agent-host-response" },
+      requestDefinition: "PluginAgentHostRequest", responseDefinition: "PluginAgentHostResponse", maxEnvelopeBytes: 1_048_576,
+      // Agent native/model streams have their own exact-turn main lease.
+      cancelProviderStreams: () => {},
+    });
+    if (options.electron.ipcMain) agentHostAdapter.registerIpc?.(options.electron.ipcMain);
+    agentService = new PluginAgentService({ database, permissionEngine,
+      getRuntimeIdentity: (pluginId) => runtimeSupervisor.getRuntimeIdentity(pluginId),
+      hostAdapter: agentHostAdapter,
+      conversationStore: new PluginAgentConversationStore(path.join(paths.root, "agent-chats")),
+      getMcpBridge: () => require("../bridges/mcpServerBridge.cjs"),
+      getTargetManager: options.getTerminalWorkerManager,
+      getSessionBinding: (sessionId) => {
+        const worker = options.getTerminalWorkerManager?.();
+        const ownerId = worker?.getSessionOwnerWebContentsId?.(sessionId);
+        const binding = worker?.getPluginSessionBinding?.(sessionId, ownerId);
+        if (!Number.isSafeInteger(ownerId) || !binding) return null;
+        const revision = JSON.stringify([binding.epoch, binding.generation]);
+        return Object.freeze({ owner: String(ownerId), revision, isCurrent: (snapshot) => {
+          if (options.getTerminalWorkerManager?.() !== worker || worker.getSessionOwnerWebContentsId(sessionId) !== ownerId) return false;
+          const current = worker.getPluginSessionBinding(sessionId, ownerId);
+          return snapshot.owner === String(ownerId) && snapshot.revision === revision && current != null
+            && JSON.stringify([current.epoch, current.generation]) === revision;
+        } });
+      },
+    });
+    agentService.registerRpcCapabilities(rpcRegistry);
     const originalOnPluginDisabled = contributionService.onPluginDisabled.bind(contributionService);
     contributionService.onPluginDisabled = (pluginId) => {
       aiContextService.releasePlugin(pluginId);
+      agentService.releasePlugin(pluginId);
       return originalOnPluginDisabled(pluginId);
     };
     runtimeSupervisor.onDidChangeRuntime((event) => contributionService.onRuntimeStateChanged(event));
@@ -459,6 +496,7 @@ function createPluginHostService(options) {
           interactionService.shutdown();
           byteStreamService.shutdown();
           aiContextService.shutdown();
+          agentService.shutdown();
           terminalDataPipelineService?.shutdown();
           extensionProviderService.shutdown();
           credentialResolver.shutdown?.();
@@ -497,6 +535,7 @@ function createPluginHostService(options) {
       networkBroker,
       byteStreamService,
       aiContextService,
+      agentService,
       permissionEngine,
       permissionDecisionHost,
       quotaManager,
@@ -512,6 +551,8 @@ function createPluginHostService(options) {
     try { interactionService?.shutdown(); } catch {}
     try { byteStreamService?.shutdown(); } catch {}
     try { aiContextService?.shutdown(); } catch {}
+    try { agentService?.shutdown(); } catch {}
+    if (!agentService) { try { agentHostAdapter?.shutdown?.(); } catch {} }
     if (!aiContextService) { try { aiHostAdapter?.shutdown?.(); } catch {} }
     void logService.close();
     database.close();

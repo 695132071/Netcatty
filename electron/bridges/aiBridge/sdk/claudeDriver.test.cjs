@@ -340,6 +340,9 @@ test("delegated Claude uses only explicit MCP configuration and cannot inherit l
     injectedMcpServers: [{ name: "scoped-netcatty", command: "host-managed", args: [], env: [] }],
   });
   assert.equal(options.strictMcpConfig, true);
+  assert.equal(options.maxTurns, 12);
+  assert.equal(options.persistSession, false);
+  assert.equal(options.resume, undefined);
   assert.deepEqual(options.settingSources, []);
   assert.deepEqual(options.tools, []);
   assert.equal(options.settings, undefined);

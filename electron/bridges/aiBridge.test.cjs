@@ -1732,6 +1732,7 @@ test("delegated model stream release aborts its actual HTTP request and stale tu
   let live = true; let release; let detached = 0; let requests = 0;
   let resolveAccepted; const accepted = new Promise((resolve) => { resolveAccepted = resolve; });
   const ctx = await withCapturingServer(t, { mcpServerBridge: {
+    beginPluginAgentModelRequest: () => {},
     assertPluginAgentCaller: (actual, sender, actualTag) => {
       assert.equal(actual, chatId); assert.equal(sender, 1);
       if (!live || actualTag !== tag) throw Error("Agent turn unavailable");
@@ -1754,6 +1755,29 @@ test("delegated model stream release aborts its actual HTTP request and stale tu
     assert.equal(detached, 1); assert.equal(requests, 1);
     const stale = await invoke(randomUUID());
     assert.equal(stale.ok, false); assert.equal(requests, 1);
+  } finally { ctx.restore(); }
+});
+
+test("delegated compaction fetch uses the same exact-turn cancellation", { timeout: 5_000 }, async (t) => {
+  const { randomUUID } = require("node:crypto"); const id = randomUUID(); const tag = randomUUID();
+  let live = true; let release; let detached = 0; let requests = 0;
+  let accepted; const started = new Promise((resolve) => { accepted = resolve; });
+  const ctx = await withCapturingServer(t, { mcpServerBridge: {
+    beginPluginAgentModelRequest: () => {},
+    assertPluginAgentCaller: (chatId, sender, actualTag) => {
+      assert.equal(chatId, `plugin-agent:${id}`); assert.equal(sender, 1);
+      if (!live || actualTag !== tag) throw Error("Agent unavailable");
+    },
+    onPluginAgentRelease: (_id, _tag, cancel) => { release = cancel; return () => detached++; },
+  } }, (res) => { requests++; res.writeHead(200, { "content-type": "application/json" }); res.write('{"synthetic":'); accepted(); });
+  try {
+    const invoke = () => ctx.ipcMain.handlers.get("netcatty:ai:fetch")({ sender: ctx.sender }, {
+      requestId: `agent-model_${id}_${tag}_fetch_fixture`, url: `${ctx.baseURL}/v1/chat/completions`, method: "POST",
+      headers: { "content-type": "application/json" }, body: '{"messages":[]}', providerId: "content-length",
+    });
+    const pending = invoke(); await started; assert.equal(ctx.received.body.toString(), '{"messages":[]}');
+    live = false; release(); assert.equal((await pending).ok, false); assert.equal(detached, 1);
+    assert.equal((await invoke()).ok, false); assert.equal(requests, 1); assert.equal(ctx.ipcMain.handlers.has("netcatty:ai:chat:cancel"), true);
   } finally { ctx.restore(); }
 });
 

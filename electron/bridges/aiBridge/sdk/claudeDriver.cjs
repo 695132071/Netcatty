@@ -137,6 +137,11 @@ function buildClaudeQueryOptions({
   if (delegatedAgent) {
     options.strictMcpConfig = true;
     options.settingSources = [];
+    options.maxTurns = 12;
+    // Global plugin history belongs to core's source namespace. Rehydrate from
+    // that history each turn instead of creating a second native history store.
+    options.persistSession = false;
+    delete options.resume;
   }
   return options;
 }

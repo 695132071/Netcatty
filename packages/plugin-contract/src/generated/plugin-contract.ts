@@ -522,6 +522,7 @@ export type PermissionRequest = {
   resources?: Array<PermissionResource>;
   resourceKinds?: Array<PermissionResourceKind>;
   displayContext?: {
+    action?: PluginAgentActionPreview;
     modelLabel?: string;
     selections?: Array<{
       title: string;
@@ -554,6 +555,11 @@ export type PermissionSet = {
   optional?: Array<PermissionDeclaration>;
 };
 
+export type PluginAgentActionPreview = {
+  capabilityId: string;
+  text: string;
+};
+
 export type PluginAgentBackend = {
   backendRef: string;
   label: string;
@@ -567,6 +573,8 @@ export type PluginAgentBackendKind = "catty" | "claude" | "codex" | "copilot" | 
 export type PluginAgentBackendsResult = {
   items: Array<PluginAgentBackend>;
 };
+
+export type PluginAgentCapabilities = ["session.environment","terminal.execute","terminal.start","terminal.poll","terminal.stop","harness.terminal.read_context"];
 
 export type PluginAgentChatRef = {
   chatHandle: string;
@@ -610,6 +618,143 @@ export type PluginAgentFeature = "ai.agent-sessions";
 
 export type PluginAgentHistoryResult = {
   items: Array<PluginAgentMessage>;
+};
+
+export type PluginAgentHostBackend = {
+  hostHandle: string;
+  label: string;
+  backend: PluginAgentBackendKind;
+  status: "supported" | "unsupported" | "unavailable";
+  reason: "ready" | "not-configured" | "native-boundary-unverified" | "configuration-unavailable";
+};
+
+export type PluginAgentHostRequest = ({
+  requestId: string;
+  actionToken: string;
+  runtimeId: string;
+  kind: "agent.backends";
+  payload: PluginAIEmptyParams;
+}) | ({
+  requestId: string;
+  actionToken: string;
+  runtimeId: string;
+  kind: "agent.targets";
+  payload: PluginAIEmptyParams;
+}) | ({
+  requestId: string;
+  actionToken: string;
+  runtimeId: string;
+  kind: "agent.current";
+  payload: {
+    hostHandle: string;
+  };
+}) | ({
+  requestId: string;
+  actionToken: string;
+  runtimeId: string;
+  kind: "agent.run";
+  payload: {
+    backendHandle: string;
+    delegationTag: string;
+    session: PluginAgentHostSession;
+    terminalSessions: Array<PluginAgentHostTerminal>;
+    text: string;
+    capabilities: Array<"session.environment" | "terminal.execute" | "terminal.start" | "terminal.poll" | "terminal.stop" | "harness.terminal.read_context">;
+    maxIterations: number;
+  };
+}) | ({
+  requestId: string;
+  actionToken: string;
+  runtimeId: string;
+  kind: "agent.next";
+  payload: {
+    hostHandle: string;
+  };
+}) | ({
+  requestId: string;
+  actionToken: string;
+  runtimeId: string;
+  kind: "agent.stop";
+  payload: {
+    hostHandle: string;
+  };
+}) | ({
+  requestId: string;
+  actionToken: string;
+  runtimeId: string;
+  kind: "agent.release";
+  payload: {
+    hostHandle: string;
+  };
+}) | ({
+  requestId: string;
+  actionToken: string;
+  runtimeId: string;
+  kind: "request.cancel";
+  payload: {
+    requestId: string;
+  };
+}) | ({
+  requestId: string;
+  actionToken: string;
+  runtimeId: string;
+  kind: "runtime.release";
+  payload: PluginAIEmptyParams;
+});
+
+export type PluginAgentHostResponse = ({
+  requestId: string;
+  actionToken: string;
+  result: PluginAgentHostResult;
+}) | ({
+  requestId: string;
+  actionToken: string;
+  error: true;
+});
+
+export type PluginAgentHostResult = ({
+  backends: Array<PluginAgentHostBackend>;
+}) | ({
+  targets: Array<PluginAgentHostTerminal>;
+}) | ({
+  current: boolean;
+}) | ({
+  hostHandle: string;
+}) | ({
+  ok: boolean;
+  session?: PluginAgentHostSession;
+}) | ({
+  done: false;
+  event: PluginAgentEvent;
+  session?: PluginAgentHostSession;
+}) | ({
+  done: true;
+  session: PluginAgentHostSession;
+});
+
+export type PluginAgentHostSession = {
+  conversationRef: string;
+  id: string;
+  title: string;
+  agentId: string;
+  scope: {
+    type: "global";
+  };
+  messages: Array<JsonValue>;
+  createdAt: number;
+  updatedAt: number;
+  externalSessionId?: string;
+  contextCompaction?: JsonValue;
+};
+
+export type PluginAgentHostTerminal = {
+  sessionId: string;
+  hostId?: string;
+  hostname: string;
+  label: string;
+  protocol?: string;
+  username?: string;
+  connected: boolean;
 };
 
 export type PluginAgentMessage = {

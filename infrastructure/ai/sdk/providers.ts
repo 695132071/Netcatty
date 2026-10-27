@@ -44,6 +44,10 @@ interface BridgeAPI {
     headers: Record<string, string>,
     body?: string,
     providerId?: string,
+    skipHostCheck?: boolean,
+    followRedirects?: boolean,
+    skipTLSVerify?: boolean,
+    requestId?: string,
   ): Promise<{
     ok: boolean;
     status: number;
@@ -494,11 +498,11 @@ export function createBridgeFetchForSDK(
         ))
       : undefined;
 
+    const delegatedId = /^plugin-agent:([0-9a-f-]{36})$/.exec(requestContext?.chatSessionId ?? '')?.[1];
+    if (delegatedId && (!/^agent-model_[0-9a-f-]{36}_[0-9a-f-]{36}_$/.test(requestContext?.requestIdPrefix ?? '')
+      || !requestContext?.requestIdPrefix?.startsWith(`agent-model_${delegatedId}_`))) throw Error('Delegated model request identity required');
     // Streaming path
     if (isStreamingRequest(resolvedInit)) {
-      const delegatedId = /^plugin-agent:([0-9a-f-]{36})$/.exec(requestContext?.chatSessionId ?? '')?.[1];
-      if (delegatedId && (!/^agent-model_[0-9a-f-]{36}_[0-9a-f-]{36}_$/.test(requestContext?.requestIdPrefix ?? '')
-        || !requestContext?.requestIdPrefix?.startsWith(`agent-model_${delegatedId}_`))) throw Error('Delegated model request identity required');
       const prefix = requestContext?.requestIdPrefix ?? '';
       const requestId = `${prefix}sdk_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
       const captureOpenAIChatFields = createOpenAIChatStreamFieldCapture(requestContext);
@@ -653,7 +657,16 @@ export function createBridgeFetchForSDK(
     }
 
     // Non-streaming path
-    const result = await bridge.aiFetch(url, method, headers, requestBody, providerId);
+    const fetchId = delegatedId ? `${requestContext!.requestIdPrefix}fetch_${crypto.randomUUID()}` : undefined;
+    const cancel = () => { if (fetchId) void bridge.aiChatCancel(fetchId).catch(() => {}); };
+    resolvedInit?.signal?.throwIfAborted();
+    if (fetchId) resolvedInit?.signal?.addEventListener('abort', cancel, { once: true });
+    let result;
+    try {
+      result = fetchId ? await bridge.aiFetch(url, method, headers, requestBody, providerId, false, false, false, fetchId)
+        : await bridge.aiFetch(url, method, headers, requestBody, providerId);
+      resolvedInit?.signal?.throwIfAborted();
+    } finally { resolvedInit?.signal?.removeEventListener('abort', cancel); }
 
     return new Response(normalizeOpenAIChatCacheUsage(result.data), {
       status: result.status,

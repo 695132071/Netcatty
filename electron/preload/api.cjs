@@ -109,6 +109,13 @@ function createPreloadApi(ctx) {
   getPluginCatalogReadme: (id, selectionToken, sourceId) => ipcRenderer.invoke("netcatty:plugins:catalog-readme", { id, selectionToken, sourceId }),
   installCatalogPlugin: (id, selectionToken, sourceId, acceptedSourceId) => ipcRenderer.invoke("netcatty:plugins:catalog-install", { id, selectionToken, sourceId, acceptedSourceId }),
   setPluginAIHostReady: (ready) => ipcRenderer.invoke("netcatty:plugins:ai-host-ready", ready),
+  setPluginAgentHostReady: (ready) => ipcRenderer.invoke("netcatty:plugins:agent-host-ready", ready),
+  respondPluginAgentHost: (response) => ipcRenderer.invoke("netcatty:plugins:agent-host-response", response),
+  onPluginAgentHostRequest: (callback) => {
+    const listener = (_event, payload) => callback(payload);
+    ipcRenderer.on("netcatty:plugins:agent-host-request", listener);
+    return () => ipcRenderer.removeListener("netcatty:plugins:agent-host-request", listener);
+  },
   respondPluginAIHost: (response) => ipcRenderer.invoke("netcatty:plugins:ai-host-response", response),
   onPluginAIHostRequest: (callback) => {
     const listener = (_event, payload) => callback(payload);
@@ -1987,8 +1994,8 @@ function createPreloadApi(ctx) {
   aiChatCancel: async (requestId) => {
     return ipcRenderer.invoke("netcatty:ai:chat:cancel", { requestId });
   },
-  aiFetch: async (url, method, headers, body, providerId, skipHostCheck, followRedirects, skipTLSVerify) => {
-    return ipcRenderer.invoke("netcatty:ai:fetch", { url, method, headers, body, providerId, skipHostCheck, followRedirects, skipTLSVerify });
+  aiFetch: async (url, method, headers, body, providerId, skipHostCheck, followRedirects, skipTLSVerify, requestId) => {
+    return ipcRenderer.invoke("netcatty:ai:fetch", { url, method, headers, body, providerId, skipHostCheck, followRedirects, skipTLSVerify, ...(requestId ? { requestId } : {}) });
   },
   aiAllowlistAddHost: async (baseURL) => {
     return ipcRenderer.invoke("netcatty:ai:allowlist:add-host", { baseURL });

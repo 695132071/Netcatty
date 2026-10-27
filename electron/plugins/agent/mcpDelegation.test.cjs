@@ -58,3 +58,14 @@ test("tool profile and trusted caller tag are enforced before invoking the host 
   assert.equal(decisions, 1); assert.equal(effects, 1);
   registry.shutdown();
 });
+
+test("model request limits cannot be reset or consumed by a different turn or caller", () => {
+  const registry = new PluginAgentMcpDelegations(); const id = `plugin-agent:${randomUUID()}`; const tag = randomUUID();
+  registry.register(id, options(tag)); let cancelled = 0; registry.onRelease(id, tag, () => cancelled++);
+  for (let i = 0; i < 32; i++) {
+    assert.throws(() => registry.beginModelRequest(id, 8, tag));
+    assert.throws(() => registry.beginModelRequest(id, 7, randomUUID()));
+    registry.beginModelRequest(id, 7, tag);
+  }
+  assert.throws(() => registry.beginModelRequest(id, 7, tag), /budget/); assert.equal(cancelled, 1); assert.equal(registry.has(id), false);
+});
