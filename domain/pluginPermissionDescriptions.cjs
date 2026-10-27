@@ -3,6 +3,8 @@
 // Presentation only. Admission and grants remain owned by the canonical schema
 // and permission engine. Tests require exact coverage of its permission enum.
 const PERMISSION_DESCRIPTIONS = {
+  "ai.agent.use": [true, "Agent conversations", "Use configured host Agents and read this plugin's own chat history. Model or Agent service usage may incur costs.", "Agent 会话", "使用宿主已配置的 Agent，并读取此插件自己的聊天历史；模型或 Agent 服务可能产生费用。"],
+  "ai.agent.actions": [true, "Agent actions", "Authorize Agent tools against explicitly selected targets under this plugin's policy. Commands can change remote systems.", "Agent 操作", "根据插件策略授权 Agent 工具操作明确选中的目标；命令可能更改远程系统。"],
   storage: [false, "Plugin storage", "Save and read this plugin's local data.", "插件存储", "保存和读取此插件自己的本地数据。"],
   "runtime.advanced": [true, "Full device access", "Run Node code with filesystem and network access outside broker restrictions. Developer mode only.", "完整设备访问", "运行 Node 代码，可直接访问文件系统和网络，不受代理权限限制。仅限开发者模式。"],
   "settings.read": [false, "Read plugin settings", "Read this plugin's configured preferences.", "读取插件设置", "读取此插件自己的设置。"],

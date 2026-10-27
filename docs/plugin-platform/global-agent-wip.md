@@ -1,0 +1,107 @@
+# Global Agent plugin bridge (work in progress)
+
+This stack starts from `integration/plugin-ask-routing-acceptance` at
+`2433cf0130d1c3274c56c39e5765349c2945de01`. The parent confirmed this dependency;
+its native Ask acceptance and integrated CI are still pending. This branch does
+not modify the frozen candidate, #3986, #3998, or #4002.
+
+The user approved a global conversation independent of a terminal or workspace,
+with a plugin-provided chat UI and selectable existing Agent backends. Core owns
+Agent execution, history, target authority, native approvals, credentials and
+audit. Global is not unrestricted inventory access or a background service.
+
+## Stage 1: dispatch authority
+
+`electron/plugins/agent/delegatedScope.cjs` is a host-only authority. It does not
+register plugin APIs, start an Agent or implement an orchestration loop.
+
+- `issue(context, hostSnapshot)` authenticates with the existing source binding.
+  Host snapshots contain backend identity/revision, target kind/id/owner/revision,
+  synchronous current-owner checks, and a supported capability subset. The public
+  result contains only an opaque handle and expiry. Plugin parameters must never
+  be used as `hostSnapshot`.
+- `begin(handle, context)` returns an internal turn ticket and AbortController.
+- `dispatch(ticket, context, resolvedAction, execute)` runs the common host policy
+  adapter once, checks current target revisions after any approval wait, invokes
+  the real dispatcher, and rejects late results. `resolvedAction` must come from
+  canonical host capability/argument resolution, not an unchecked plugin object.
+- `assertTurn` guards outgoing events. `finish` and `stop` invalidate the exact
+  ticket. Runtime/plugin release, lock/hide invalidation and shutdown abort work.
+- Handles expire in five minutes. There are at most eight per runtime owner and
+  64 overall, with at most 32 explicit resources per scope. Expiry never silently
+  refreshes a selection or revives an old turn.
+
+The focused tests use the actual `PluginAISourceBinding` with synthetic host
+registries, two terminal owners representing different workspaces, controlled
+time, and deferred approval/native completion. They cover source/runtime/target
+substitution, focus changes, revision changes across approval, policy denial,
+Stop, release, lock, late completion and bounds. They do not yet prove actual MCP
+or AgentRuntime dispatch; those remain integration gates.
+
+Initial execution failed before test discovery because the new worktree has no
+dependencies (`ajv/dist/2020` missing). Running with the existing local worktree's
+read-only CommonJS dependency path passes all 12 cases. No provider, CLI Agent,
+paid credentials or GUI was used.
+
+The adjacent run then passed 49 tests and failed one installed-entrypoint test
+because ESM could not resolve `@netcatty/plugin-cli` from the new worktree. Standard
+`npm ci --ignore-scripts` and `build:plugin-runtime-deps` repaired the setup. These
+failures are setup evidence, not failed-before product regressions.
+
+The core conversation repository stores the existing global `AISession` document
+shape in a host-only directory, namespaced by the hash of source/private-owner.
+Native session identity and compaction remain private. Commits serialize a cloned
+snapshot, revalidate provenance before atomic rename, and retain previous history
+when that check fails. Files use mode 0600 and no-follow reads. The repository
+does not register a plugin storage API or change the source database schema.
+
+The canonical schema and SDK now declare the proposed session interface and
+permissions. Runtime methods and the supported-feature advertisement are not yet
+registered. This stage must not be described as an installable working Agent
+bridge. Focused scope/history/wire and permission-copy tests pass 20 cases;
+contract/SDK/CLI tests pass 91. Focused lint and generated drift checks pass.
+
+## Planned public contract and adapters
+
+The proposed feature is `ai.agent-sessions`, with `ai.agent.use` for conversation
+operations and `ai.agent.actions` for actual Agent tool actions. Permission mode
+comes from the existing source-bound Allow/Ask/Deny engine. These are additive
+names, separate from the existing tools-disabled `ai.invoke` broker.
+
+The API will provide backend listing, explicit target selection, owned chat
+listing/opening, sending, bounded event reads, history, Stop and close. Backend
+references are opaque host-issued configuration revisions. Conversation references
+identify only histories owned by the calling source/private-owner; runtime handles
+are separate and cannot substitute builtin chat IDs or native SDK resume IDs.
+Messages cannot supply permissionMode, CLI/env/MCP configuration or owner fields.
+
+Core will reuse `AISession`, `AgentRuntime`, both existing turn drivers, event and
+compaction handling, SDK resume identity validation, and `stopAgentTurn`. The first
+eligible backends are Catty and configured Claude Code in MCP mode. Other backend
+entries must return explicit unsupported/unconfigured status until their native
+tool and approval boundaries are verified. Codex SDK's current unrestricted native
+configuration must not be treated as eligible merely because it has a driver.
+
+The terminal worker already exposes a suitable main-owned resource binding:
+`getPluginSessionBinding(sessionId, ownerWebContentsId)` returns worker epoch and
+session generation. Use this for dispatch-time targets; do not use menu IDs,
+focused tab, display labels, or a renderer-provided session ID as authority.
+
+The MCP dispatcher and Catty direct execution route need the same delegated
+session guard. A delegated call must not update process-global permission mode,
+or request both an Agent approval and a plugin approval for the same action.
+Policy changes, disable/restart/source replacement, lock and host disconnection
+must cancel scoped native work and invalidate outgoing event tickets. Existing
+Agent trace and plugin audit/log facilities will receive redacted correlation
+metadata, not credentials, provider diagnostics or full unreviewed tool payloads.
+
+## Remaining acceptance gates
+
+- Canonical schema/SDK/runtime registration and the installed default host path.
+- Host-owned durable history and backend references, including backend switching.
+- Actual Catty and Claude MCP dispatch, policy and worker lifecycle regressions.
+- Synthetic streaming/cancellation fixtures; these are not real inference or
+  actual authenticated Claude service acceptance.
+- Installable minimal chat UI with backend and explicit target choice.
+- Standard CI, independent review and parent-scheduled native evidence. No GUI
+  ownership, merge or release is granted to this executor.
