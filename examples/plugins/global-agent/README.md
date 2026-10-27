@@ -6,6 +6,11 @@ explicitly choose connected terminal targets, open a new or owned conversation,
 then Send. Stop cancels the exact turn. Refresh and reselection are explicit;
 expired authority never silently re-shares targets or retries inference.
 
+The command runtime remembers this sample's current opaque chat handle across
+modal closes. A later explicit Open releases that exact lease before opening
+the selected conversation. View pagehide cleanup is best effort; core source,
+expiry and duplicate-open checks still apply. No handle is stored persistently.
+
 Core stores source-isolated conversation history. The plugin receives text,
 usage and safe activity summaries, never native session IDs, credentials, raw
 tool arguments/results or executable/MCP configuration. Tool actions use the

@@ -122,6 +122,15 @@ test("actual source policy decides once per tool and targets never follow focus 
   assert.equal(f.effects(), 1);
 });
 
+test("a duplicate owned-history Open cannot replace or cancel an active core chat", async (t) => {
+  const f = fixture(t); const chat = await f.open();
+  const turn = await f.call("send", { chatHandle: chat.chatHandle, text: "Synthetic active chat" });
+  const active = f.service.turns.get(turn.turnHandle);
+  await assert.rejects(f.open("catty", chat.conversationRef), { code: -32006 });
+  assert.equal(f.service.chats.size, 1); assert.equal(active.chat.activeTurn, active);
+  assert.equal(active.controller.signal.aborted, false); assert.equal(await f.dispatch(turn), "synthetic");
+});
+
 test("backend revision changed during Ask cannot execute the already selected target without any pending event read", async (t) => {
   const f = fixture(t); f.modeTo("ask"); const chat = await f.open();
   const turn = await f.call("send", { chatHandle: chat.chatHandle, text: "Synthetic pending approval" });

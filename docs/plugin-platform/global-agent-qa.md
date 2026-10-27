@@ -18,7 +18,7 @@ sha256sum /tmp/netcatty-global-agent.ncpkg
 ```
 
 The reproducible sample SHA-256 is
-`7f2f0b2a1d37344012a14a50e428fa41a2dfbac09db663d638d6a7f0a57b35af`.
+`f0edf43523845847d5dbb74b0c4d8cd3bfe8e0f89ca193f28140e6b47dc45ed0`.
 Two independent package builds matched. Build scripts and tests are excluded
 from the six-file installed package.
 
@@ -31,6 +31,14 @@ mouse Stop. It does not load the plugin script or start an Agent/provider. This
 render check remains pending where the normal browser sandbox cannot start;
 do not disable the sandbox to run it. Also verify the installed sample visually
 at the 1188-by-848-pixel app window before accepting the viewport correction.
+
+For the modal-history lifecycle regression, stop the synthetic stream, close
+the modal with the host X, and reopen it without disabling/restarting the
+plugin or waiting for five-minute lease expiry. Select the owned conversation,
+confirm fresh empty targets, and Open. History must load without another model
+request. Repeat with a new conversation. The sample command runtime retains
+only its last host-issued chat handle and releases that exact lease on explicit
+Open; it does not change core expiry, source ownership or duplicate-open guards.
 
 ## Native fixture acceptance (parent-scheduled GUI only)
 

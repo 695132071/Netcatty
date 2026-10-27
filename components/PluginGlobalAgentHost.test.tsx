@@ -102,11 +102,18 @@ test('installed global Chat UI reuses actual Catty runtime, configured HTTP tran
       if (Date.now() >= until) throw Error(`Global Agent UI fixture timed out; accepted=${counts.requests}, rejected=${counts.rejected}, effects=${workerCalls.length}, status=${panel?.window.document.getElementById('status')?.textContent}`);
       await act(async () => { await new Promise((resolve) => setTimeout(resolve, 5)); });
     } };
-    panel = new JSDOM(fs.readFileSync(path.join(sample, 'panel.html'), 'utf8'), { runScripts: 'outside-only' });
-    Object.defineProperty(panel.window, 'netcattyView', { value: { executeCommand: async (name: string, params: unknown) => {
-      const result = structuredClone(await service!.contributionService.executeCommand(name, structuredClone(params))); pluginReplies.push(result); return result;
-    }, onDidReceiveMessage: () => ({ dispose() {} }), onDidChangeEnvironment: () => ({ dispose() {} }) } });
-    await act(async () => panel!.window.eval(fs.readFileSync(path.join(sample, 'panel.js'), 'utf8')));
+    let viewOpen = true;
+    const mountPanel = async () => {
+      panel = new JSDOM(fs.readFileSync(path.join(sample, 'panel.html'), 'utf8'), { runScripts: 'outside-only' });
+      Object.defineProperty(panel.window, 'netcattyView', { value: { executeCommand: async (name: string, params: unknown) => {
+        // PluginViewHost.close removes sender authority before WebContents
+        // closes. A pagehide RPC cannot be relied on to reach this relay.
+        if (!viewOpen) throw Error('Untrusted plugin view sender');
+        const result = structuredClone(await service!.contributionService.executeCommand(name, structuredClone(params))); pluginReplies.push(result); return result;
+      }, onDidReceiveMessage: () => ({ dispose() {} }), onDidChangeEnvironment: () => ({ dispose() {} }) } });
+      await act(async () => panel!.window.eval(fs.readFileSync(path.join(sample, 'panel.js'), 'utf8')));
+    };
+    await mountPanel();
     const element = (id: string) => panel!.window.document.getElementById(id)!;
     await waitFor(() => element('status').textContent!.startsWith('Choose terminals'));
     await act(async () => element('targets').click()); await waitFor(() => document.querySelectorAll('input[type="checkbox"]').length === 2);
@@ -114,7 +121,7 @@ test('installed global Chat UI reuses actual Catty runtime, configured HTTP tran
     await act(async () => { [...document.querySelectorAll('button')].find((button) => button.textContent === 'Use selected terminals')!.click(); });
     await waitFor(() => element('status').textContent!.startsWith('Targets selected'));
     await act(async () => element('open').click()); await waitFor(() => element('status').textContent!.startsWith('Ready'));
-    const prompt = element('prompt') as HTMLTextAreaElement; prompt.value = 'Synthetic selected-target task';
+    let prompt = element('prompt') as HTMLTextAreaElement; prompt.value = 'Synthetic selected-target task';
     const send = () => element('compose').dispatchEvent(new panel!.window.Event('submit', { cancelable: true }));
     phase = 'complete'; await act(async () => { send(); }); await waitFor(() => element('status').textContent === 'Complete');
     assert.deepEqual(workerCalls, ['synthetic-b']); assert.match(element('transcript').textContent!, /Synthetic global Agent result/);
@@ -124,12 +131,29 @@ test('installed global Chat UI reuses actual Catty runtime, configured HTTP tran
     await waitFor(() => element('transcript').textContent!.includes('Synthetic waiting output'));
     await act(async () => element('stop').click()); await waitFor(() => element('status').textContent === 'Stopped' && counts.aborted === 1);
     const stopped = element('transcript').textContent; await new Promise((resolve) => setTimeout(resolve, 75)); assert.equal(element('transcript').textContent, stopped);
+    phase = 'modal-reopen-history';
+    const reference = pluginReplies.find((value) => value && typeof value === 'object' && 'conversationRef' in value && 'chatHandle' in value) as { conversationRef: string };
+    const beforeReopen = counts.requests;
+    viewOpen = false;
+    panel!.window.dispatchEvent(new panel!.window.Event('pagehide')); panel!.window.close();
+    viewOpen = true; await mountPanel();
+    await waitFor(() => element('status').textContent!.startsWith('Choose terminals'));
+    (element('conversation') as HTMLSelectElement).value = reference.conversationRef;
+    await act(async () => element('conversation').dispatchEvent(new panel!.window.Event('change')));
+    await act(async () => element('targets').click()); await waitFor(() => document.querySelectorAll('input[type="checkbox"]').length === 2);
+    await act(async () => { [...document.querySelectorAll('button')].find((button) => button.textContent === 'Use selected terminals')!.click(); });
+    await waitFor(() => element('status').textContent!.startsWith('Targets selected'));
+    await act(async () => element('open').click());
+    await waitFor(() => /^(Ready|Conversation unavailable)/.test(element('status').textContent!));
+    assert.match(element('status').textContent!, /^Ready/, 'ordinary modal reopen must release the prior exact chat even if pagehide cleanup never reaches the plugin');
+    assert.match(element('transcript').textContent!, /Synthetic global Agent result/);
+    assert.equal(service.agentService.chats.size, 1); assert.equal(counts.requests, beforeReopen, 'history reopen does not invoke a model');
+    prompt = element('prompt') as HTMLTextAreaElement; prompt.value = 'Synthetic continuation';
     phase = 'deny'; const before = counts.requests; const plugin = service.database.getActivePlugin('com.netcatty.globalagent');
     service.permissionEngine.setMode(plugin, 'ai.agent.actions', 'deny', service.permissionEngine.getPolicyRevision(plugin));
     await act(async () => { send(); }); await waitFor(() => element('status').textContent!.startsWith('Request ended'));
     assert.equal(counts.requests, before); assert.deepEqual(workerCalls, ['synthetic-b']);
     phase = 'restart-history';
-    const reference = pluginReplies.find((value) => value && typeof value === 'object' && 'conversationRef' in value && 'chatHandle' in value) as { conversationRef: string };
     await service.manager.setEnabled('com.netcatty.globalagent', false);
     await service.manager.setEnabled('com.netcatty.globalagent', true);
     await act(async () => element('refresh').click()); await waitFor(() => element('status').textContent!.startsWith('Choose terminals'));
