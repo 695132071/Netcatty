@@ -262,6 +262,83 @@ test("trackSessionIdlePrompt and getFreshIdlePrompt accept a two-line user@host 
   assert.equal(getFreshIdlePrompt(ptySession), "user@host: /home/foo\n\n\n$ ");
 });
 
+test("extractTrailingIdlePrompt recognizes an Oh My Zsh ys two-line idle prompt", () => {
+  // ys paints `# user @ host ...` then a bare `$` or `#`. Spaces around `@`
+  // and the leading decorative `#` are required; a lone marker is not a prompt.
+  assert.equal(
+    extractTrailingIdlePrompt("# user @ host in ~ [12:34:56]\n$ "),
+    "# user @ host in ~ [12:34:56]\n$ ",
+  );
+  assert.equal(
+    extractTrailingIdlePrompt("welcome\r\n# user @ host in ~ [12:34:56]\n# "),
+    "# user @ host in ~ [12:34:56]\n# ",
+  );
+  assert.equal(
+    extractTrailingIdlePrompt("# user @ host in ~/proj on git:main [12:34:56]\n$ "),
+    "# user @ host in ~/proj on git:main [12:34:56]\n$ ",
+  );
+  assert.equal(
+    extractTrailingIdlePrompt("welcome\r\n# ys @ ys-mbp in ~/.oh-my-zsh on git:master x [21:47:42] C:127\n$ "),
+    "# ys @ ys-mbp in ~/.oh-my-zsh on git:master x [21:47:42] C:127\n$ ",
+  );
+  // Same CR / CRLF blank lines as the classic two-line PS1.
+  assert.equal(
+    extractTrailingIdlePrompt("# user @ host in ~ [12:34:56]\r\r\n$ "),
+    "# user @ host in ~ [12:34:56]\n\n\n$ ",
+  );
+  assert.equal(
+    extractTrailingIdlePrompt("# user @ host in ~ [12:34:56]\r\n# "),
+    "# user @ host in ~ [12:34:56]\n\n# ",
+  );
+  // Optional "(name) " env prefix is stripped only for recognition (#3947).
+  assert.equal(
+    extractTrailingIdlePrompt("(venv) # user @ host in ~ [12:34:56]\n$ "),
+    "(venv) # user @ host in ~ [12:34:56]\n$ ",
+  );
+  assert.equal(
+    extractTrailingIdlePrompt("(venv) user@host: /home/foo\n$ "),
+    "(venv) user@host: /home/foo\n$ ",
+  );
+
+  assert.equal(extractTrailingIdlePrompt("$ "), "");
+  assert.equal(extractTrailingIdlePrompt("# "), "");
+  assert.equal(extractTrailingIdlePrompt("welcome\r\n$ "), "");
+  assert.equal(extractTrailingIdlePrompt("not a host line\n$ "), "");
+  assert.equal(extractTrailingIdlePrompt("user @ host in ~\n$ "), "");
+  assert.equal(extractTrailingIdlePrompt("# user host in ~ [12:34:56]\n$ "), "");
+  assert.equal(extractTrailingIdlePrompt("# user@host in ~ [12:34:56]\n$ "), "");
+  assert.equal(extractTrailingIdlePrompt("copied output\n# "), "");
+  assert.equal(extractTrailingIdlePrompt("# user @ host in ~ [12:34:56]\n$ ls"), "");
+  assert.equal(extractTrailingIdlePrompt("# user @ host in ~ [12:34:56] $"), "");
+  assert.equal(extractTrailingIdlePrompt("echo $"), "");
+  assert.equal(extractTrailingIdlePrompt("price is 5$"), "");
+  assert.equal(extractTrailingIdlePrompt("(venv) not a host line\n$ "), "");
+});
+
+test("trackSessionIdlePrompt and getFreshIdlePrompt accept an Oh My Zsh ys two-line prompt", () => {
+  const session = {};
+  const prompt = "# user @ host in ~ [12:34:56]\n$ ";
+  trackSessionIdlePrompt(session, `welcome\r\n${prompt}`);
+  assert.equal(getFreshIdlePrompt(session), prompt);
+
+  const extra = {};
+  trackSessionIdlePrompt(extra, "# user @ host in ~/proj on git:main [12:34:56]\r\r\n$ ");
+  assert.equal(
+    getFreshIdlePrompt(extra),
+    "# user @ host in ~/proj on git:main [12:34:56]\n\n\n$ ",
+  );
+
+  const root = {};
+  trackSessionIdlePrompt(root, "# user @ host in ~ [12:34:56]\n# ");
+  assert.equal(getFreshIdlePrompt(root), "# user @ host in ~ [12:34:56]\n# ");
+
+  const bare = {};
+  assert.equal(trackSessionIdlePrompt(bare, "$ "), "");
+  assert.equal(getFreshIdlePrompt(bare), "");
+  assert.equal(trackSessionIdlePrompt(bare, "not a host line\n$ "), "");
+  assert.equal(getFreshIdlePrompt(bare), "");
+});
+
 test("extractTrailingIdlePrompt still recognizes a classic single-line POSIX prompt", () => {
   assert.equal(extractTrailingIdlePrompt("welcome\r\nuser@host:~$ "), "user@host:~$ ");
 });
