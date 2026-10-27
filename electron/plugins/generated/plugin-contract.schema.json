@@ -1099,6 +1099,13 @@
         "request"
       ],
       "properties": {
+        "permissionMode": {
+          "enum": [
+            "allow",
+            "ask",
+            "deny"
+          ]
+        },
         "requestId": {
           "type": "string",
           "maxLength": 128
@@ -5772,6 +5779,76 @@
           "maxItems": 128,
           "items": {
             "$ref": "#/$defs/PermissionResourceKind"
+          }
+        },
+        "displayContext": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "modelLabel": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 160
+            },
+            "selections": {
+              "type": "array",
+              "maxItems": 5,
+              "items": {
+                "type": "object",
+                "required": [
+                  "title",
+                  "scope",
+                  "version"
+                ],
+                "additionalProperties": false,
+                "properties": {
+                  "title": {
+                    "type": "string",
+                    "maxLength": 160
+                  },
+                  "scope": {
+                    "enum": [
+                      "workspace",
+                      "tab",
+                      "session",
+                      "host",
+                      "note"
+                    ]
+                  },
+                  "version": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 128
+                  }
+                }
+              }
+            }
+          }
+        },
+        "relatedPermissions": {
+          "type": "array",
+          "maxItems": 5,
+          "items": {
+            "type": "object",
+            "required": [
+              "permission",
+              "resources"
+            ],
+            "properties": {
+              "permission": {
+                "$ref": "#/$defs/PluginPermission"
+              },
+              "resources": {
+                "type": "array",
+                "minItems": 1,
+                "maxItems": 128,
+                "uniqueItems": true,
+                "items": {
+                  "$ref": "#/$defs/PermissionResource"
+                }
+              }
+            },
+            "additionalProperties": false
           }
         },
         "reason": {

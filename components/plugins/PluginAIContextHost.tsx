@@ -9,7 +9,7 @@ export function PluginAIContextHost({ sessions, workspaces }: { sessions: Termin
   return <Dialog open={choice !== null} onOpenChange={(open) => { if (!open) choice?.cancel(); }}>
     <DialogContent data-host-security-surface="">
       <DialogHeader><DialogTitle>Choose a reference for the plugin</DialogTitle>
-        <DialogDescription>Share a Note summary and the current selected workspace, tab, session, and host summaries. Reading content requires a separate permission and text review.</DialogDescription></DialogHeader>
+        <DialogDescription>Share a Note summary and the current selected workspace, tab, session, and host summaries. Content access follows this plugin's Allow / Ask / Deny settings; this chooser shares summaries only.</DialogDescription></DialogHeader>
       <label className="text-sm" htmlFor="plugin-ai-note">Note</label>
       <select id="plugin-ai-note" value={noteId} onChange={(event) => setNoteId(event.target.value)} className="rounded border border-border bg-background p-2 text-foreground">
         <option value="">No Note</option>

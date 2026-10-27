@@ -94,10 +94,10 @@ test("Stop during expired-session reopening discards the late session without se
   assert.match(f.element("prompt").value, /must survive/);
 });
 
-test("expired real selected Note requires explicit re-selection, then fresh content permission and review", async (t) => {
+test("expired real selected Note requires explicit re-selection and fresh content permission without duplicate review", async (t) => {
   const { PluginAIContextService } = require("../electron/plugins/ai/aiContextService.cjs");
   let now = 0; let selections = 0; let reads = 0; let modelCalls = 0;
-  let contentAllowed = false; let reviewAllowed = false;
+  let contentAllowed = false;
   const grants = []; const reviews = [];
   const caller = { pluginId: "com.netcatty.assistant", runtimeId: "selected-note-panel", pluginVersion: "0.1.0", assertActive: async () => {} };
   const source = { id: "synthetic-source", kind: "third-party", origin: "https://synthetic.example" };
@@ -120,7 +120,7 @@ test("expired real selected Note requires explicit re-selection, then fresh cont
         return [{ key: "synthetic-note", scope: "note", title: "Synthetic selected Note", version: "v1", isCurrent: () => true,
           readText: () => { reads++; return "Synthetic selected Note body"; } }];
       },
-      reviewText: async (text) => { reviews.push(text); return reviewAllowed; },
+      reviewText: async (text) => { reviews.push(text); throw Error("Unexpected duplicate content review"); },
     },
   });
   service.selected.clock = () => now; service.broker.clock = () => now;
@@ -156,11 +156,8 @@ test("expired real selected Note requires explicit re-selection, then fresh cont
   f.send(); await f.waitFor(() => f.element("status").textContent.startsWith("Request ended"));
   assert.equal(grants.length, 1); assert.equal(reads, 0); assert.equal(modelCalls, 0);
   contentAllowed = true;
-  f.send(); await f.waitFor(() => f.element("status").textContent.startsWith("Request ended"));
-  assert.equal(reviews.length, 1); assert.equal(reviews[0].text, "Synthetic selected Note body"); assert.equal(modelCalls, 0);
-  reviewAllowed = true;
   f.send(); await f.waitFor(() => f.element("status").textContent === "Complete");
-  assert.equal(modelCalls, 1); assert.equal(reviews.length, 2);
+  assert.equal(modelCalls, 1); assert.equal(reviews.length, 0);
   assert.ok(grants.every((grant) => grant.permission === "context.selected.read" && grant.allowedScopes[0] === "once"
     && grant.resources[0] === `selected:${newHandle}:v1`));
   assert.match(f.element("prompt").value, /must survive/);

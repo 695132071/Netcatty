@@ -223,6 +223,7 @@ export type HostInteractionFeature = "host.interactions";
 export type HostInteractionLimits = {"textBytes":4096,"requestBytes":65536,"items":100,"pendingPerRuntime":1,"pendingTotal":8,"requestsPerMinute":10,"timeoutMs":60000};
 
 export type HostInteractionPrompt = {
+  permissionMode?: "allow" | "ask" | "deny";
   requestId: string;
   actionToken: string;
   pluginId: PluginId;
@@ -520,6 +521,18 @@ export type PermissionRequest = {
   permission: PluginPermission;
   resources?: Array<PermissionResource>;
   resourceKinds?: Array<PermissionResourceKind>;
+  displayContext?: {
+    modelLabel?: string;
+    selections?: Array<{
+      title: string;
+      scope: "workspace" | "tab" | "session" | "host" | "note";
+      version: string;
+    }>;
+  };
+  relatedPermissions?: Array<{
+    permission: PluginPermission;
+    resources: Array<PermissionResource>;
+  }>;
   reason: string;
   operationId?: string;
   sessionId?: string;

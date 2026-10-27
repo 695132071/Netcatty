@@ -47,7 +47,7 @@ test('default host adapter, real preload, mounted host chooser and installed ass
   let service: ReturnType<typeof createPluginHostService> | undefined;
   let panel: JSDOM | undefined;
   const root = createRoot(document.getElementById('root')!);
-  let locked = false; let contentAllowed = false; let reviewAllowed = false;
+  let locked = false; let contentAllowed = false;
   const lockListeners = new Set<(state: { locked: boolean }) => void>();
   const reviews: Array<Record<string, unknown>> = [];
   const trustedPayloads: unknown[] = [];
@@ -88,8 +88,8 @@ test('default host adapter, real preload, mounted host chooser and installed ass
       getInteractionWindow: () => mainWindow, isAppLocked: () => locked,
       subscribeAppLock: (listener: (state: { locked: boolean }) => void) => { lockListeners.add(listener); return () => lockListeners.delete(listener); },
       electron: { ipcMain: { handle: (name: string, handler: (...args: unknown[]) => unknown) => ipcHandlers.set(name, handler), removeHandler: (name: string) => ipcHandlers.delete(name) },
-        dialog: { showMessageBox: async (_window: unknown, options: Record<string, unknown>) => { reviews.push(options); return { response: reviewAllowed ? 0 : 1 }; } } },
-      requestPermissionDecision: async (request: { requestId: string; permission: string }) => request.permission === 'context.selected.read' && !contentAllowed
+        dialog: { showMessageBox: async (_window: unknown, options: Record<string, unknown>) => { reviews.push(options); return { response: 1 }; } } },
+      requestPermissionDecision: async (request: { requestId: string; permission: string; relatedPermissions?: Array<{ permission: string }> }) => (request.permission === 'context.selected.read' || request.relatedPermissions?.some((item) => item.permission === 'context.selected.read')) && !contentAllowed
         ? { requestId: request.requestId, decision: 'deny' }
         : { requestId: request.requestId, decision: 'allow', scope: request.permission === 'context.selected.read' ? 'once' : 'application' },
     });
@@ -101,6 +101,7 @@ test('default host adapter, real preload, mounted host chooser and installed ass
     fs.copyFileSync(path.join(sample, 'src/index.js'), path.join(staging, 'dist/index.js'));
     const { buildPluginPackage } = await import('@netcatty/plugin-cli');
     const archive = path.join(fixtureRoot, 'assistant.ncpkg'); await buildPluginPackage(staging, archive);
+    service.database.setPermissionMode('com.netcatty.assistant', 'context.selected.read', 'ask');
     await service.manager.install(archive, { enable: true });
     await act(async () => root.render(<I18nProvider locale="en"><PluginAIContextHost sessions={[]} workspaces={[]} /></I18nProvider>));
     const waitFor = async (condition: () => boolean) => {
@@ -131,11 +132,8 @@ test('default host adapter, real preload, mounted host chooser and installed ass
     send(); await waitFor(() => element('status').textContent!.startsWith('Request ended'));
     assert.equal(counts.requests, 0); assert.equal(reviews.length, 0);
     contentAllowed = true;
-    send(); await waitFor(() => element('status').textContent!.startsWith('Request ended'));
-    assert.equal(counts.requests, 0); assert.equal(reviews.length, 1);
-    assert.equal(reviews[0].defaultId, reviews[0].cancelId); assert.match(String(reviews[0].detail), /Synthetic retry plan: add a retry button/);
-    reviewAllowed = true;
     send(); await waitFor(() => element('status').textContent === 'Complete');
+    assert.equal(reviews.length, 0, 'content policy must not open a second native sharing review');
     assert.equal(counts.completed, 1); assert.match(element('response').textContent!, /Synthetic plan/); assert.match(element('usage').textContent!, /12 input tokens/);
     send(); await waitFor(() => element('response').textContent!.startsWith('Synthetic plan: '));
     element('stop').dispatchEvent(new panel.window.Event('click'));

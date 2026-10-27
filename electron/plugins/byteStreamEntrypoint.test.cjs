@@ -110,6 +110,7 @@ export default { activate(context) {
   await buildPluginPackage(packageRoot, archive);
   await service.manager.install(archive, { enable: true });
   const run = (name) => service.contributionService.executeCommand(`${id}.${name}`);
+  service.permissionEngine.setMode({ id, manifest }, "network.stream", "ask");
   await assert.rejects(run("run"), /denied/u);
   assert.equal(service.byteStreamService.broker.connections.size, 0);
   allow = true;

@@ -57,8 +57,7 @@ for (const source of ["compose", "share"]) test(`normal browser example complete
     const output = source === "compose" ? "synthetic output" : "SYNTHETIC PRIVATE TEXT";
     assert.deepEqual(result, { copied: true, characters: output.length });
     assert.deepEqual(copied, [output]); assert.equal(reads, source === "share" ? 1 : 0);
-    assert.ok(requests.includes("ui.interact")); assert.ok(requests.includes("clipboard.write"));
-    assert.equal(requests.includes("clipboard.read"), source === "share");
+    assert.deepEqual(requests, [], "Allow mode has only the real choice/input workflows");
     assert.equal(JSON.stringify(audit).includes("synthetic private text"), false);
     assert.equal(JSON.stringify(audit).includes("synthetic output"), false);
     assert.equal(service.pending.size, 0);
@@ -71,7 +70,7 @@ test("outer command deadline closes its real browser clipboard confirmation and 
   const manifest = JSON.parse(await readFile(new URL("../../examples/plugins/host-interactions/netcatty.plugin.json", pathToFileURL(__filename)), "utf8"));
   const identity = { pluginId: manifest.id, pluginVersion: manifest.version, runtimeId: "runtime-deadline", runtimeKind: "browser" };
   const writes = [], messages = [];
-  const database = { listPermissionGrants: () => [], recordSecurityAudit() {},
+  const database = { getPermissionMode: () => "ask", listPermissionGrants: () => [], recordSecurityAudit() {},
     listPlugins: () => [{ id: manifest.id, activeVersion: manifest.version, manifest, enabled: true, runtime: { status: "running" } }],
   };
   const engine = new PluginPermissionEngine({ database, requestDecision: async (request) => ({ requestId: request.requestId, decision: "allow", scope: "once" }) });

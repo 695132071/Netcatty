@@ -20,7 +20,16 @@ export function usePluginHostInteractions() {
         current.current = null; setPrompt(null);
       } else {
         if (event.request.kind.startsWith('vault.')) return;
-        current.current = event as UiPrompt; setPrompt(event as UiPrompt);
+        current.current = event as UiPrompt;
+        if (event.request.kind === 'terminal.selection.read' && event.phase === 'request') {
+          setPrompt(null);
+          try {
+            const selection = readPluginTerminalSelection(event.terminalSessionId ?? '', event.terminalRendererId ?? '');
+            void bridge.respondPluginInteraction?.({ requestId: event.requestId, actionToken: event.actionToken, action: 'preview', value: selection }).catch(() => {
+              void bridge.respondPluginInteraction?.({ requestId: event.requestId, actionToken: event.actionToken, action: 'cancel' }).catch(() => {});
+            });
+          } catch { void bridge.respondPluginInteraction?.({ requestId: event.requestId, actionToken: event.actionToken, action: 'cancel' }).catch(() => {}); }
+        } else setPrompt(event as UiPrompt);
         setValue(event.request.kind === 'input' ? event.request.initialValue ?? '' : event.request.kind === 'terminal.input.propose' ? event.request.text : '');
       }
       pending.current = false; setBusy(false); setError(false);

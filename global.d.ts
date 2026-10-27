@@ -355,13 +355,19 @@ declare global {
     artifact?: { url: string; sha256: string };
   }
 
+  type PluginPermissionMode = 'allow' | 'ask' | 'deny';
+  type NetcattyPluginPermissionPrompt = import('@netcatty/plugin-contract').PermissionRequest & {
+    actionToken: string; resources: string[];
+  };
   interface NetcattyPluginPermissionSnapshot {
+    policyRevision?: string;
+    policies?: Array<{ permission: string; resources: string[]; mode: PluginPermissionMode }>;
     grants: Array<{
       permission: string; resource: string; resourceKind: string;
       scope: 'always' | 'application' | 'session'; sessionId: string | null; grantedAt: number;
       matchesCurrentActivation: boolean;
     }>;
-    audit: Array<{ event: string; createdAt: number; permission?: string; scope?: string }>;
+    audit: Array<{ event: string; createdAt: number; permission?: string; scope?: string; mode?: PluginPermissionMode; action?: string }>;
   }
 
   interface NetcattyPluginSource {
@@ -480,6 +486,10 @@ declare global {
     respondPluginInteraction?(response: import("@netcatty/plugin-contract").HostInteractionResponse): Promise<import("@netcatty/plugin-contract").HostInteractionReceipt>;
     onPluginInteraction?(callback: (event: import("@netcatty/plugin-contract").HostInteractionEvent) => void): () => void;
     listPlugins?(): Promise<NetcattyInstalledPlugin[]>;
+    setPluginPermissionMode?(pluginId: string, permission: string, mode: PluginPermissionMode, policyRevision: string): Promise<boolean>;
+    setPluginPermissionReady?(ready: boolean): Promise<boolean>;
+    respondPluginPermission?(response: { requestId: string; actionToken: string; decision: 'allow' | 'deny' | 'cancel' }): Promise<boolean>;
+    onPluginPermission?(callback: (event: NetcattyPluginPermissionPrompt | { requestId: string; closed: true }) => void): () => void;
     getPluginPermissions?(pluginId: string): Promise<NetcattyPluginPermissionSnapshot>;
     revokePluginPermissions?(pluginId: string): Promise<NetcattyInstalledPlugin>;
     installPluginPackage?(archivePath: string, options?: { enable?: boolean }): Promise<NetcattyInstalledPlugin>;

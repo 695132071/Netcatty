@@ -112,7 +112,7 @@ export function usePluginHostActions() {
           const entry = current.current;
           if (!entry || entry.prompt.requestId !== prompt.requestId || entry.prompt.request.kind !== prompt.request.kind) throw new Error('Host review is unavailable');
           entry.prompt = prompt;
-          setReview({ ...entry });
+          if (!(prompt.request.kind === 'vault.requestConnect' && prompt.permissionMode === 'allow')) setReview({ ...entry });
           void execute(entry);
           return;
         }
@@ -126,7 +126,12 @@ export function usePluginHostActions() {
           scriptsRun: host ? pluginHostRunsSavedScripts(host, vault.groupConfigs, vault.snippets) : false,
           claimed: false,
         };
-        current.current = entry; setReview(entry); setSelectedIds([]); setBusy(false); setError(false); responding.current = false;
+        current.current = entry; setSelectedIds([]); setBusy(false); setError(false); responding.current = false;
+        if (prompt.request.kind === 'vault.requestConnect' && prompt.permissionMode === 'allow') {
+          setReview(null);
+          void bridge.respondPluginInteraction?.({ requestId: prompt.requestId, actionToken: prompt.actionToken,
+            action: 'submit', scriptsRun: entry.scriptsRun }).catch(() => void fail(entry));
+        } else setReview(entry);
       } catch {
         void bridge.respondPluginInteraction?.({ requestId: prompt.requestId, actionToken: prompt.actionToken, action: 'fail' }).catch(() => {});
       }
@@ -137,7 +142,7 @@ export function usePluginHostActions() {
       unsubscribe();
       if (entry && !entry.claimed) void bridge.respondPluginInteraction?.({ requestId: entry.prompt.requestId, actionToken: entry.prompt.actionToken, action: 'cancel' }).catch(() => {});
     };
-  }, [execute, getVault]);
+  }, [execute, fail, getVault]);
 
   const respond = useCallback(async (action: 'cancel' | 'submit', draft?: PluginHostDraftFields) => {
     const entry = current.current;

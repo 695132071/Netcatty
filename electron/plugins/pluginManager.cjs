@@ -126,9 +126,12 @@ class PluginManager {
     });
   }
 
-  setEnabled(pluginId, enabled) {
+  setEnabled(pluginId, enabled, options = {}) {
     return this.#mutate(async () => {
       await this.#ready();
+      if (options.expectedSourceOwner !== undefined && this.database.privateOwner(pluginId) !== options.expectedSourceOwner) {
+        throw new Error("Plugin source changed before its lifecycle update");
+      }
       if (enabled) {
         const plugin = this.database.getActivePlugin(pluginId);
         if (plugin) await this.packageStore.assertCompatible?.(plugin);

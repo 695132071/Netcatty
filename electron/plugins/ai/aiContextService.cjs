@@ -96,8 +96,27 @@ class PluginAIContextService {
         },
         authorization: async (params, context) => {
           await this.#guard(context);
-          if (route.operation === "readSelected") await this.selected.assertCurrent(params, context);
-          return this.#authorization(route.permission, params);
+          const references = route.operation === "readSelected" ? [params] : route.operation === "start" ? params.contexts ?? [] : [];
+          let displayContext;
+          if (route.operation === "start" || references.length) {
+            for (const reference of references) await this.selected.assertCurrent(reference, context);
+            const summaries = references.length ? await this.selected.summaries(context) : [];
+            const selections = references.map((reference) => {
+              const summary = summaries.find((item) => item.handle === reference.handle && item.version === reference.version);
+              if (!summary) throw fail("permissionDenied", "Selected context changed");
+              return { title: summary.title, scope: summary.scope, version: summary.version };
+            });
+            displayContext = { ...(route.operation === "start" ? await this.broker.describeChat(params.chatHandle, context) : {}), selections };
+          }
+          return { ...this.#authorization(route.permission, params),
+            ...(displayContext ? { displayContext } : {}),
+            ...(route.operation === "start" && params.contexts?.length ? { relatedPermissions: params.contexts.map((reference) => (
+              this.#authorization("context.selected.read", reference)
+            )) } : {}),
+            // Open selects a model; start is the meaningful invocation. The
+            // broker's source-bound handles authorize subsequent stream work.
+            ...(["open", "list", "read", "stop", "close"].includes(route.operation) ? { deferDecision: true } : {}),
+          };
         },
       }));
     }
@@ -150,8 +169,8 @@ class PluginAIContextService {
     await this.#guard(context);
     const selected = await this.selected.read(reference, context);
     await this.#guard(context);
-    if (!await this.host.reviewText({ scope: selected.scope, title: selected.title, version: selected.version,
-      text: selected.text, pluginId: context.pluginId }, context)) throw fail("cancelled", "Selected context sharing was cancelled");
+    // The selected handle and version are checked on both sides of the read.
+    // Permission middleware (or the model-turn content check above) owns Ask.
     await this.#guard(context);
     await this.selected.assertCurrent(reference, context);
     return selected;

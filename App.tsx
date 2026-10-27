@@ -12,6 +12,7 @@ import { ToastProvider } from './components/ui/toast';
 import { TooltipProvider } from './components/ui/tooltip';
 import { ScriptAutomationRoot } from './components/scripts/ScriptAutomationRoot';
 import { ExternalMcpApprovalsHost } from './components/ai/ExternalMcpApprovalsHost';
+import { PluginPermissionHost } from './components/plugins/PluginPermissionHost';
 import { PluginHostInteractionHost } from './components/plugins/PluginHostInteractionHost';
 import { PluginHostActionHost } from './components/plugins/PluginHostActionHost';
 import { PluginAuthenticationHost } from './components/plugins/PluginAuthenticationHost';
@@ -88,6 +89,7 @@ function AppWithProviders({ settings, appLock }: { settings: SettingsState; appL
               <ScriptAutomationRoot />
               <ExternalMcpApprovalsHost />
               <PluginAuthenticationHost />
+              <PluginPermissionHost />
               <PluginHostInteractionHost />
               <MultilinePasteConfirmHost />
               <VaultPublisher>
