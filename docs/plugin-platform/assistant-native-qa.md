@@ -1,5 +1,10 @@
 # Test the selected Note assistant on an isolated desktop
 
+For the permission-policy/AI acceptance candidate, first use
+[its integration record](policy-ai-integration.md) and exact package manifest.
+The older permission-dialog sequence below is historical baseline evidence;
+apply the current Allow/Ask/Deny semantics when testing the new candidate.
+
 This recipe tests a sandbox plugin against a deterministic loopback provider.
 The provider does not run a model or contact a paid service. The profile contains
 only synthetic data. The parent owns native screenshots and video on the working

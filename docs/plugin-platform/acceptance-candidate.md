@@ -1,5 +1,9 @@
 # Unified plugin acceptance candidate
 
+This file records the frozen 677 native baseline. For the subsequent permission
+policy and AI candidate, use [the new integration record](policy-ai-integration.md)
+and its package manifest. Historical consent flows below are not the revised UX.
+
 The dedicated branch is `integration/plugin-native-acceptance`. Its Draft PR
 records the exact current head and CI runs. Native AI, database, Host/Vault, and
 settings/logging checks use this candidate rather than separate feature trees.
