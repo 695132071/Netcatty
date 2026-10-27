@@ -8140,6 +8140,50 @@
             }
           },
           "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": [
+            "requestId",
+            "actionToken",
+            "runtimeId",
+            "kind",
+            "payload"
+          ],
+          "properties": {
+            "requestId": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "actionToken": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{32}$"
+            },
+            "runtimeId": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128,
+              "pattern": "^[A-Za-z0-9-]+$"
+            },
+            "kind": {
+              "const": "agent.close"
+            },
+            "payload": {
+              "type": "object",
+              "required": [
+                "chatSessionId"
+              ],
+              "properties": {
+                "chatSessionId": {
+                  "type": "string",
+                  "maxLength": 128,
+                  "pattern": "^plugin-agent:[0-9a-f-]+$"
+                }
+              },
+              "additionalProperties": false
+            }
+          },
+          "additionalProperties": false
         }
       ]
     },

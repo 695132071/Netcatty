@@ -287,11 +287,23 @@ then native rebuild failed because installed `@electron/rebuild` hardcodes
 bypass was attempted. Native screenshots/video and independent runtime review
 remain parent-owned gates; nothing is merged or released.
 
-- Canonical schema/SDK/runtime registration and the installed default host path.
-- Host-owned durable history and backend references, including backend switching.
-- Actual Catty and Claude MCP dispatch, policy and worker lifecycle regressions.
-- Synthetic streaming/cancellation fixtures; these are not real inference or
-  actual authenticated Claude service acceptance.
-- Installable minimal chat UI with backend and explicit target choice.
-- Standard CI, independent review and parent-scheduled native evidence. No GUI
-  ownership, merge or release is granted to this executor.
+Final focused Node 22 validation passes 205 cases, including all nine failure
+paths from the broad run after the documented setup/correction changes. The
+installed pipeline additionally proves disable/re-enable, owned history reopening
+and a fresh model-only turn under Actions Deny. `conversationRef` is durable;
+each open receives a fresh private runtime actor so revoked privacy/native/tool
+state cannot be revived. A typed, host-only close control clears its owned
+runtime caches after that actor settles. Build, lint (seven existing warnings)
+and generated drift checks pass. Typecheck still has the same 774 per-file/code
+diagnostic counts as the unchanged foundation. Logs:
+`/tmp/netcatty-global-agent-lifecycle-final-tests.log`,
+`/tmp/netcatty-global-agent-lifecycle-final-build.log`, and
+`/tmp/netcatty-global-agent-lifecycle-final-typecheck.log`.
+
+The native recipe and reproducible package hash are in
+[`global-agent-qa.md`](global-agent-qa.md). Remaining gates are independent
+transport/runtime review, CI on the final integrated head, parent-scheduled native
+screenshots/video, genuine Claude compatibility acceptance with separately
+approved access, and native packaging on a machine with supported writable
+rebuild caches. The initial full-run pending worker and previous red totals above
+remain recorded. No GUI ownership, merge or release is granted to this executor.

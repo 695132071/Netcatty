@@ -139,6 +139,10 @@ class PluginAITrustedHostAdapter {
   }
 
   getSenderId() { return this.#owner().id; }
+  releaseAgentChat(chatSessionId, runtimeId) {
+    if (this.requestDefinition !== "PluginAgentHostRequest" || !/^plugin-agent:[0-9a-f-]{36}$/u.test(chatSessionId)) throw fail("invalidArgument", "Agent conversation unavailable");
+    this.#cleanup("agent.close", { chatSessionId }, runtimeId);
+  }
 
   async selectModel(context) {
     const selected = await this.#request("model.select", {}, context);

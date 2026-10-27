@@ -212,6 +212,9 @@ class PluginAgentService {
       const now = this.clock();
       record ??= { conversationRef: randomUUID(), id: `plugin-agent:${randomUUID()}`, title: "Global Agent chat", agentId: backend.backend,
         scope: { type: "global" }, messages: [], createdAt: now, updatedAt: now };
+      // Durable conversation identity is conversationRef. A fresh runtime actor
+      // never reuses revoked privacy/native/tool state when history is reopened.
+      record.id = `plugin-agent:${randomUUID()}`;
       record.agentId = backend.backend; delete record.externalSessionId;
       const declared = normalizePermissionDeclarations(context.manifest).has("ai.agent.actions");
       const capabilities = declared && this.permission.getMode(context, "ai.agent.actions") !== "deny" ? CAPABILITIES : [];
@@ -345,6 +348,7 @@ class PluginAgentService {
   #forgetChat(chat) {
     if (chat.activeTurn) this.#end(chat.activeTurn);
     this.scopes.discard(chat.scope.handle, chat.owner);
+    try { this.host.releaseAgentChat?.(chat.record.id, chat.owner.runtimeId); } catch {}
     try { void this.getMcpBridge().cleanupScopedMetadata?.(chat.record.id)?.catch(() => {}); } catch {}
   }
   releaseRuntime(runtimeId) {

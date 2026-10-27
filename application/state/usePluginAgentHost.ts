@@ -58,6 +58,7 @@ export function usePluginAgentHost(sessions: TerminalSession[]) {
         if (chooser?.runtimeId === request.runtimeId) chooser.cancel();
         runtime.releaseRuntime(request.runtimeId); return;
       }
+      if (request.kind === 'agent.close') { runtime.releaseChat(request.payload.chatSessionId, request.runtimeId); return; }
       if (requests.has(request.requestId) || requests.size >= 64) return;
       const controller = new AbortController(); requests.set(request.requestId, { runtimeId: request.runtimeId, controller });
       void runtime.handle(request, controller.signal).then(

@@ -34,6 +34,13 @@ export function createTrustedPluginAgentRuntime(options: {
   const sessionOwners = new Map<string, { runtimeId: string }>();
   let closed = false;
   const active = () => { if (closed || !options.isActive()) throw Error('Trusted Agent host unavailable'); };
+  const releaseChat = (id: string, runtimeId: string) => {
+    const owner = sessionOwners.get(id); if (!owner || owner.runtimeId !== runtimeId) return;
+    for (const [handle, turn] of turns) if (turn.session.id === id && turn.runtimeId === runtimeId) { stop(turn); turns.delete(handle); }
+    void runtime.waitForActiveTurn(id).finally(() => {
+      if (sessionOwners.get(id) === owner) { runtime.clearChatSession(id); sessionOwners.delete(id); }
+    });
+  };
   const snapshot = (turn: Turn) => {
     // Existing stream UI deliberately clears optional fields with undefined.
     // Canonical private IPC and core documents carry JSON values only.
@@ -211,12 +218,11 @@ export function createTrustedPluginAgentRuntime(options: {
     releaseRuntime(runtimeId: string) {
       for (const [id, turn] of turns) if (turn.runtimeId === runtimeId) { stop(turn); turns.delete(id); }
       for (const [id, owner] of sessionOwners) if (owner.runtimeId === runtimeId) {
-        void runtime.waitForActiveTurn(id).finally(() => {
-          if (sessionOwners.get(id) === owner) { runtime.clearChatSession(id); sessionOwners.delete(id); }
-        });
+        releaseChat(id, runtimeId);
       }
       backends.releaseRuntime(runtimeId);
     },
+    releaseChat,
     shutdown() {
       closed = true; for (const turn of turns.values()) stop(turn); turns.clear(); backends.shutdown();
       for (const [id, owner] of sessionOwners) void runtime.waitForActiveTurn(id).finally(() => {

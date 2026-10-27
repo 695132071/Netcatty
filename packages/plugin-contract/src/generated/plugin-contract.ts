@@ -700,6 +700,14 @@ export type PluginAgentHostRequest = ({
   runtimeId: string;
   kind: "runtime.release";
   payload: PluginAIEmptyParams;
+}) | ({
+  requestId: string;
+  actionToken: string;
+  runtimeId: string;
+  kind: "agent.close";
+  payload: {
+    chatSessionId: string;
+  };
 });
 
 export type PluginAgentHostResponse = ({

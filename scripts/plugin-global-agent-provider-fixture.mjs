@@ -24,7 +24,8 @@ export function createGlobalAgentProviderFixture({ delayMs = 20, toolName = 'ter
       model: 'global-agent-fixture', choices: [{ index: 0, delta, finish_reason: finish }] })}\n\n`);
     const hasResult = payload.messages.some((message) => message.role === 'tool');
     const requestTool = !hasResult && payload.tools?.some((entry) => entry.function?.name === toolName);
-    const wait = payload.messages.some((message) => message.role === 'user' && typeof message.content === 'string' && message.content.includes('fixture:wait'));
+    const lastUser = [...payload.messages].reverse().find((message) => message.role === 'user');
+    const wait = typeof lastUser?.content === 'string' && lastUser.content.includes('fixture:wait');
     let finished = false; let index = 0;
     const parts = wait ? Array(80).fill('Synthetic waiting output. ') : ['Synthetic global ', 'Agent result.'];
     const timer = setInterval(() => {
