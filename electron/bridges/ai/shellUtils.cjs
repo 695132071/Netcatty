@@ -71,8 +71,16 @@ const POSIX_PROMPT_PATTERN = /^(?:[^\s@]+@[^\s:]+(?::[^\n\r]*)?|\[[^\s@\]]+@[^\s
 
 // Host line of a two-line bash PS1 (`\u@\h: \w` then a following `$` or `#`).
 // Same user@host[:path] class as POSIX_PROMPT_PATTERN's first alternative,
-// without a prompt marker on this line. A bare `$`/`#` alone is not a prompt.
+// without a prompt marker on this line. Oh My Zsh `ys` uses a different host
+// line (`# user @ host ...`), matched separately below. A bare `$`/`#` alone
+// is not a prompt.
 const POSIX_PROMPT_HOST_LINE_PATTERN = /^[^\s@]+@[^\s:]+(?::[^\n\r]*)?$/;
+
+// Oh My Zsh `ys` status line: a decorative `#`, then `user @ host` with
+// spaces around `@`, then an optional remainder (directory, git, venv, time,
+// exit code). Example: `# user @ host in ~ [12:34:56]`. Arbitrary text before
+// a bare `$`/`#` still does not match.
+const OH_MY_ZSH_YS_HOST_LINE_PATTERN = /^#\s+[^\s@]+\s+@\s+[^\s]+(?:\s+[^\n\r]+)?$/;
 
 // Alpine's default ash PS1 omits the username: `\h:\w\$ ` -> `localhost:~# `.
 // Require a hostname and a home/absolute path, excluding prompt delimiters
@@ -124,12 +132,15 @@ function extractTrailingIdlePrompt(output) {
     return lastLine;
   }
 
-  // Two-line PS1 (`export PS1="\u@\h: \w\n$ "`). Bash emits the newline as
-  // CR and the PTY's ONLCR adds another, so the bytes are `\r\r\n`. The
-  // CR-to-LF normalize above turns that into blank lines between the host
-  // line and `$`/`#`. Keep those blanks in the cache: getFreshIdlePrompt
-  // uses the same normalize, and hasExpectedPromptSuffix compares this
-  // CR-as-LF form against live PTY bytes. A lone `$` must not satisfy endsWith.
+  // Two-line PS1. Classic bash is `export PS1="\u@\h: \w\n$ "`. Oh My Zsh
+  // `ys` paints `# user @ host ...` and then a bare `$` or `#`. Bash emits
+  // the newline as CR and the PTY's ONLCR adds another, so the bytes are
+  // `\r\r\n`. The CR-to-LF normalize above turns that into blank lines
+  // between the host line and `$`/`#`. Keep those blanks in the cache:
+  // getFreshIdlePrompt uses the same normalize, and hasExpectedPromptSuffix
+  // compares this CR-as-LF form against live PTY bytes. A lone `$`/`#` must
+  // not satisfy endsWith; the previous non-empty line has to be a recognized
+  // host line (classic `user@host[:path]` or Oh My Zsh `ys`).
   if (rightTrimmed === "$" || rightTrimmed === "#") {
     let hostIndex = lines.length - 1;
     while (hostIndex >= 0 && lines[hostIndex].replace(/\s+$/, "") === "") {
@@ -137,7 +148,13 @@ function extractTrailingIdlePrompt(output) {
     }
     const previousLine = hostIndex >= 0 ? lines[hostIndex] : "";
     const previousRightTrimmed = previousLine.replace(/\s+$/, "");
-    if (POSIX_PROMPT_HOST_LINE_PATTERN.test(previousRightTrimmed)) {
+    // Same optional "(name) " env prefix as isDefaultPosixPromptLine (#3947).
+    // Recognition only; the returned prompt keeps the visible prefix.
+    const previousHostLine = previousRightTrimmed.replace(/^\([^()\n\r]+\)\s+/, "");
+    if (
+      POSIX_PROMPT_HOST_LINE_PATTERN.test(previousHostLine)
+      || OH_MY_ZSH_YS_HOST_LINE_PATTERN.test(previousHostLine)
+    ) {
       return `${lines.slice(hostIndex).join("\n")}\n${lastLine}`;
     }
   }
@@ -202,8 +219,9 @@ function trackSessionIdlePrompt(session, chunk) {
 // Return `session.lastIdlePrompt` only if the PTY's recent rolling tail
 // still ends with it. The cached prompt is updated only when
 // extractTrailingIdlePrompt recognizes a known shape (PowerShell, cmd.exe,
-// `user@host[:path][#$]`, two-line `user@host[:path]` + `$`/`#`,
-// RHEL `[user@host path][#$]`, or Alpine `host:path[#$]`);
+// `user@host[:path][#$]`, two-line classic `user@host[:path]` or Oh My Zsh
+// `ys` (`# user @ host ...`) + `$`/`#`, RHEL `[user@host path][#$]`, or
+// Alpine `host:path[#$]`);
 // a remote shell switch into another shell, an oh-my-posh / starship / custom
 // PS1, or any unrecognized prompt would
 // otherwise leave a stale value behind, which `resolveEffectiveShellKind`

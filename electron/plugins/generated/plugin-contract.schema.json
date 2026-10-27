@@ -7165,6 +7165,9 @@
     "TerminalInputDraftFeature": {
       "const": "terminal.input-drafts"
     },
+    "FilesystemDirectoryEnumerationFeature": {
+      "const": "filesystem.directory-enumeration"
+    },
     "HostTerminalInputProposalRequest": {
       "type": "object",
       "required": [

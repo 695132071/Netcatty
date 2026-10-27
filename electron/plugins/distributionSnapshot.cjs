@@ -16,14 +16,7 @@ ajv.addSchema(require("./generated/plugin-contract.schema.json"));
 const validateIndex = ajv.compile(require("./distribution/index.schema.json"));
 const deliverySchema = require("./distribution/delivery.schema.json");
 const validateDelivery = ajv.compile(deliverySchema);
-const deliveryV2 = structuredClone(deliverySchema);
-deliveryV2.title = "Netcatty static delivery v2 (hash-bound packages)";
-deliveryV2.properties.schemaVersion.const = 2;
-const packageRef = structuredClone(deliveryV2.properties.plugins.items.properties.readme);
-packageRef.properties.path.pattern = "^/assets/[a-f0-9]{64}\\.ncpkg$";
-packageRef.properties.size.maximum = 32 * 1024 * 1024;
-deliveryV2.properties.plugins.items.properties.artifact = { oneOf: [{ type: "null" }, packageRef] };
-const validateDeliveryV2 = ajv.compile(deliveryV2);
+const validateDeliveryV2 = ajv.compile(require("./distribution/delivery-v2.schema.json"));
 const digest = (bytes) => createHash("sha256").update(bytes).digest("hex");
 const tuple = (entry) => JSON.stringify([entry.id, entry.version, entry.repository, entry.commit]);
 
@@ -101,9 +94,10 @@ function validateSet(pointer, entries, index, delivery, origin = DISTRIBUTION_OR
     if (!catalogTuples.has(key) || resources.has(key)) throw new Error("Delivery identity does not match catalog tuple");
     assertAsset(plugin.readme, ["md"]);
     for (const icon of [plugin.iconLight, plugin.iconDark]) if (icon !== null) assertAsset(icon, ["png", "webp"]);
+    if (plugin.avatar !== null) assertAsset(plugin.avatar, ["png", "webp"]);
     const entry = entries.find((item) => tuple(item) === key);
     if (plugin.artifact !== null) {
-      assertReference(plugin.artifact, `/assets/${plugin.artifact.sha256}.ncpkg`, 32 * 1024 * 1024);
+      assertReference(plugin.artifact, `/assets/${plugin.artifact.sha256}.ncpkg`, 16 * 1024 * 1024);
       if (!entry.artifact || entry.artifact.sha256 !== plugin.artifact.sha256 || entry.artifact.url !== `${origin}${plugin.artifact.path}`) throw new Error("Package delivery does not match catalog hash and source");
     } else if (entry.artifact) throw new Error("Catalog package has no delivery resource");
     resources.set(key, plugin);

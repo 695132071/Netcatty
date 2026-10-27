@@ -32,7 +32,9 @@ test('installed grid filters, opens one detail and restores search, scroll and c
     assert.equal(cards().length, 2);
     const alphaCard = renderer.root.findAllByType('article')[0];
     assert.match(JSON.stringify(renderer.toJSON()), /Alpha safely formats synthetic greetings/);
-    assert.ok(alphaCard.findAllByType('p').some((node) => node.children.includes('Example')), 'author has its own line');
+    const authorRow = alphaCard.findByProps({ 'data-plugin-author-row': true });
+    assert.ok(authorRow.findAllByType('span').some((node) => node.children.includes('Example')), 'author has its own compact row');
+    assert.ok(authorRow.findByProps({ 'data-plugin-author-placeholder': true }), 'an unverified installed publisher has a default avatar');
     assert.ok(alphaCard.findAllByType('p').some((node) => node.props.className?.includes('line-clamp-3')), 'card description is bounded');
     assert.match(JSON.stringify(renderer.toJSON()), /MIT/);
     assert.match(JSON.stringify(renderer.toJSON()), /Incompatible version/);

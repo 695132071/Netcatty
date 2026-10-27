@@ -450,6 +450,13 @@ new child to an opened parent directory without a path race.
 `readDirectory()` likewise keeps its stable SDK/RPC method but fails closed
 unless the main process supplies a native adapter whose inode checks and entry
 enumeration are bound to the same directory handle.
+The host advertises `filesystem.directory-enumeration` only when it supplies that
+adapter. Declare the feature as required, or optional and check
+`context.enabledFeatures.has(PLUGIN_FILESYSTEM_DIRECTORY_ENUMERATION_FEATURE)`.
+The default host supplies no adapter and does not enable this feature. Both the
+SDK and direct RPC return `unsupported` before a permission request or path probe.
+An enabled feature still requires the declared `filesystem.read` directory
+resource and the normal permission, root, symlink and same-handle checks.
 
 Permission names already use the phase-3 enforcement boundaries: clipboard
 read/write, terminal metadata/output/input and input/output interception, Vault

@@ -3,8 +3,10 @@
 The plugin manager has Installed, Official marketplace and Third-party marketplace
 pages. Listing a plugin in the official market does not certify it or establish
 that Netcatty maintains it. Remote manifests, publisher names, source names and
-README content cannot create a host-issued official badge. This revision does not
-issue maintainer badges. README text and images remain author content.
+README content cannot create a host-issued official badge. The separate gold
+maintainer badge requires the built-in official source and an exact host-curated
+first-party ID/repository pair. It describes maintenance, not safety certification.
+README text and images remain author content.
 
 ## Add a source
 
@@ -33,20 +35,24 @@ manifest, compatibility, browser-runtime admission and archive validation still
 apply. Third-party source consent is not permission consent.
 
 Delivery v1 is unchanged and source-only. Delivery **v2** has the same fields and
-strict schema as v1, with `schemaVersion: 2` and one extension: each plugin's
-`artifact` can be null or a package reference:
+strict schema as v1, with `schemaVersion: 2`. Each plugin's `artifact` can be null
+or a package reference:
 
 ```json
 {"path":"/assets/<64-lowercase-hex-sha256>.ncpkg","sha256":"<same-sha256>","size":12345}
 ```
 
-Packages are at most 32 MiB. The catalog entry must contain
+V2 delivery packages are at most 16 MiB. The catalog entry must contain
 `artifact: {url: "https://plugins.example.com/assets/<same-sha256>.ncpkg", sha256}`.
 The index's current, non-withdrawn version must exactly equal the catalog entry
 and use `distribution: "release"`. Source-only entries retain null delivery
-artifacts and `distribution: "source-only"`. Avatars remain null; remote README
-embeds are not loaded. README and PNG/WebP references retain the v1 bounds.
+artifacts and `distribution: "source-only"`. The reserved `avatar` can also be
+null or a same-origin `/assets/<sha256>.png` or `.webp` reference, with a positive
+size no greater than 256KiB. The host verifies and rasterizes its bytes through
+the existing image infrastructure. Missing or invalid imagery uses a placeholder.
+Remote README embeds are not loaded. README and PNG/WebP references retain the v1 bounds.
 Existing official bootstrap entries are not changed or made installable.
+See [author presentation](author-identity.md) for subject and maintenance authority.
 
 Before every install, refresh and validate the entire snapshot again. A changed
 selection, withdrawal, unavailable source, altered hash or size prevents install;

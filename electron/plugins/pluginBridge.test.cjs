@@ -101,6 +101,19 @@ test("plugin management bridge checks sender ownership before invoking manager",
   );
 });
 
+test("author presentation is a trusted-app-only route and forwards no invented authority", async () => {
+  const ipcMain = createIpcMain(); const calls = [];
+  registerPluginBridge(ipcMain, { manager: { initialize: async () => {} }, isTrustedSender: createTrustedPluginBridgeSender({ devServerUrl: "http://localhost:5173" }),
+    catalogService: { author: async (request) => { calls.push(request); return { author: "Netcatty", avatar: null, officialMaintained: false }; } } });
+  const payload = { kind: "catalog", pluginId: "com.netcatty.starter", selectionToken: "a".repeat(64), sourceId: "official" };
+  for (const url of ["netcatty-plugin://plugin-runtime/index.html", "https://attacker.invalid/"]) {
+    await assert.rejects(ipcMain.handlers.get(CHANNELS.author)({ senderFrame: { url } }, payload), /Untrusted/);
+  }
+  assert.deepEqual(calls, []);
+  const result = await ipcMain.handlers.get(CHANNELS.author)({ senderFrame: { url: "app://netcatty/index.html" } }, payload);
+  assert.equal(result.officialMaintained, false); assert.deepEqual(calls, [payload]);
+});
+
 test("plugin Vault credential catalog updates only through the trusted host bridge", async () => {
   const ipcMain = createIpcMain();
   const updates = [];

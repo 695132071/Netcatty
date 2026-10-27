@@ -108,7 +108,7 @@ test('handoffDissolvedWorkspaceAIScope retargets inherited chat when its pane is
   });
 });
 
-test('handoffDissolvedWorkspaceAIScope retargets inherited chat when original pane also survives', () => {
+test('handoffDissolvedWorkspaceAIScope keeps inherited chat on its surviving owner pane', () => {
   const result = handoffDissolvedWorkspaceAIScope({
     activeSessionIdMap: {
       'workspace:ws-1': 'chat-a',
@@ -132,12 +132,52 @@ test('handoffDissolvedWorkspaceAIScope retargets inherited chat when original pa
     preferredTerminalId: 'term-b',
   });
 
-  assert.equal(result.changed, true);
-  assert.equal(result.activeSessionIdMap['terminal:term-b'], 'chat-a');
-  assert.equal(result.activeSessionIdMap['terminal:term-a'], null);
-  assert.equal(result.sessions[0]?.scope.targetId, 'term-b');
+  assert.equal(result.activeSessionIdMap['terminal:term-a'], 'chat-a');
+  assert.equal(result.activeSessionIdMap['terminal:term-b'], 'chat-b');
+  assert.equal(result.sessions[0]?.scope.type, 'terminal');
+  assert.equal(result.sessions[0]?.scope.targetId, 'term-a');
+  assert.equal(result.sessions[0]?.updatedAt, 1);
   assert.equal(result.sessions[1]?.scope.targetId, 'term-b');
-  assert.deepEqual(result.panelViewByScope['terminal:term-b'], {
+  assert.deepEqual(result.panelViewByScope['terminal:term-a'], {
+    mode: 'session',
+    sessionId: 'chat-a',
+  });
+  assert.equal(result.panelViewByScope['terminal:term-b'], undefined);
+});
+
+test('handoffDissolvedWorkspaceAIScope keeps owner history when the other pane is preferred', () => {
+  const result = handoffDissolvedWorkspaceAIScope({
+    activeSessionIdMap: {
+      'workspace:ws-1': 'chat-a',
+      'terminal:term-b': 'chat-b',
+    },
+    sessions: [
+      {
+        id: 'chat-a',
+        scope: { type: 'terminal', targetId: 'term-a', hostIds: ['host-a'] },
+        updatedAt: 1,
+      },
+      {
+        id: 'chat-b',
+        scope: { type: 'terminal', targetId: 'term-b', hostIds: ['host-b'] },
+        updatedAt: 1,
+      },
+    ],
+    workspaceId: 'ws-1',
+    terminalIds: ['term-a', 'term-b'],
+    preferredTerminalId: 'term-b',
+    panelViewByScope: {
+      'workspace:ws-1': { mode: 'session', sessionId: 'chat-a' },
+    },
+  });
+
+  assert.equal(result.changed, true);
+  assert.equal(result.activeSessionIdMap['terminal:term-a'], 'chat-a');
+  assert.equal(result.activeSessionIdMap['terminal:term-b'], 'chat-b');
+  assert.equal(result.sessions[0]?.scope.targetId, 'term-a');
+  assert.equal(result.sessions[1]?.id, 'chat-b');
+  assert.equal(result.sessions[1]?.scope.targetId, 'term-b');
+  assert.deepEqual(result.panelViewByScope['terminal:term-a'], {
     mode: 'session',
     sessionId: 'chat-a',
   });

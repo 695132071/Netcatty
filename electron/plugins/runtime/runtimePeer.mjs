@@ -5,7 +5,7 @@ import {
   PLUGIN_ERROR_WIRE_CODES,
   pluginErrorToRpcError,
 } from "@netcatty/plugin-sdk";
-import { createMessagePortStreamEnvelope, PLUGIN_HOST_INTERACTION_LIMITS } from "@netcatty/plugin-contract";
+import { createMessagePortStreamEnvelope, PLUGIN_HOST_INTERACTION_LIMITS, PLUGIN_FILESYSTEM_DIRECTORY_ENUMERATION_FEATURE } from "@netcatty/plugin-contract";
 import { createPluginStreamEndpoint } from "./pluginStreamEndpoint.mjs";
 import { connectByteStream } from "./byteStreamClient.mjs";
 
@@ -415,8 +415,12 @@ function createPluginContext(config, client, runtimeApi) {
       ...options,
     }).then(() => undefined),
     stat: (filePath) => client.request("filesystem.stat", { path: filePath }),
-    readDirectory: (directoryPath) => client.request("filesystem.readDirectory", { path: directoryPath })
-      .then((result) => result.entries),
+    readDirectory: async (directoryPath) => {
+      if (!config.enabledFeatures?.includes(PLUGIN_FILESYSTEM_DIRECTORY_ENUMERATION_FEATURE)) {
+        throw new PluginError("unsupported", "Secure plugin directory enumeration is unavailable on this runtime");
+      }
+      return (await client.request("filesystem.readDirectory", { path: directoryPath })).entries;
+    },
   };
   const companions = {
     start: async (companionId) => {

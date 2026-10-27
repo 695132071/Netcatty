@@ -38,6 +38,7 @@ const { HOST_INTERACTION_FEATURE, PluginHostInteractionService } = require("./ho
 const { PluginHostVaultService } = require("./hostVaultService.cjs");
 const { PluginAISourceBinding } = require("./ai/sourceBinding.cjs");
 const HOST_VAULT_FEATURE = require("./generated/plugin-contract.schema.json").$defs.HostVaultFeature.const;
+const DIRECTORY_ENUMERATION_FEATURE = require("./generated/plugin-contract.schema.json").$defs.FilesystemDirectoryEnumerationFeature.const;
 const { PluginPermissionEngine } = require("./permissionEngine.cjs");
 const { PluginProtocol } = require("./pluginProtocol.cjs");
 const { PluginViewHost } = require("./pluginViewHost.cjs");
@@ -101,7 +102,9 @@ function createPluginHostService(options) {
   const paths = createPluginPaths(options.app.getPath("userData"));
   const appRoot = options.appRoot ?? options.app.getAppPath();
   const runtimeDirectory = options.runtimeDirectory ?? path.join(__dirname, "runtime");
-  const supportedFeatures = [...new Set(["terminal.input-drafts", "terminal.selection-sharing", "appearance.theme-packs", "metadata.brand-icon", BYTE_STREAM_FEATURE, ...PLUGIN_AI_CONTEXT_FEATURES, PLUGIN_AGENT_FEATURE, NETWORK_CREDENTIAL_LEASE_FEATURE, HOST_INTERACTION_FEATURE, HOST_VAULT_FEATURE, VAULT_PAGES_FEATURE, TERMINAL_SIDEBAR_FEATURE, INTERACTIVE_COMMAND_FEATURE, ...(options.supportedFeatures ?? [])])];
+  const supportedFeatures = [...new Set(["terminal.input-drafts", "terminal.selection-sharing", "appearance.theme-packs", "metadata.brand-icon", BYTE_STREAM_FEATURE, ...PLUGIN_AI_CONTEXT_FEATURES, PLUGIN_AGENT_FEATURE, NETWORK_CREDENTIAL_LEASE_FEATURE, HOST_INTERACTION_FEATURE, HOST_VAULT_FEATURE, VAULT_PAGES_FEATURE, TERMINAL_SIDEBAR_FEATURE, INTERACTIVE_COMMAND_FEATURE, ...(options.supportedFeatures ?? [])])]
+    .filter((feature) => feature !== DIRECTORY_ENUMERATION_FEATURE);
+  if (typeof options.openPluginDirectoryHandle === "function") supportedFeatures.push(DIRECTORY_ENUMERATION_FEATURE);
   const database = new PluginDatabase(paths.database);
   let interactionService;
   let byteStreamService;
@@ -516,7 +519,8 @@ function createPluginHostService(options) {
       themeService,
       interactionService,
       hostVaultService,
-      catalogService: new MarketSourcesService({ database, manager, fetch: options.electron.net?.fetch?.bind(options.electron.net) }),
+      catalogService: new MarketSourcesService({ database, manager, fetch: options.electron.net?.fetch?.bind(options.electron.net),
+        resolveAvatar: (request) => contributionIconService.resolveCatalogAvatar(request) }),
       companionSupervisor,
       contributionIconService,
       contributionService,

@@ -117,7 +117,8 @@ export interface PluginHostUI {
 }
 
 /** Saved-host selection does not grant editing, connecting or session access.
- * Each action uses the host's separate review and confirmation UI. */
+ * Later actions follow the plugin's permission settings. Host drafts retain
+ * the host editor; connections retain normal authentication. */
 export interface PluginVault {
   selectHosts(params: import("@netcatty/plugin-contract").VaultSelectHostsParams): Promise<import("@netcatty/plugin-contract").VaultHostSelectionResult>;
   /** Managed SSH-config drafts require the full Vault host editor. */
@@ -724,6 +725,7 @@ export interface PluginFilesystemClient {
     overwrite: true;
   }>): Promise<void>;
   stat(path: string): Promise<PluginFilesystemStat>;
+  /** Requires filesystem.directory-enumeration and an authorized filesystem.read directory. */
   readDirectory(path: string): Promise<readonly PluginFilesystemEntry[]>;
 }
 
@@ -995,3 +997,4 @@ export { PLUGIN_THEME_PACK_FEATURE } from "@netcatty/plugin-contract";
 export { PLUGIN_TERMINAL_SELECTION_SHARING_FEATURE } from "@netcatty/plugin-contract";
 
 export { PLUGIN_TERMINAL_INPUT_DRAFT_FEATURE } from "@netcatty/plugin-contract";
+export { PLUGIN_FILESYSTEM_DIRECTORY_ENUMERATION_FEATURE } from "@netcatty/plugin-contract";

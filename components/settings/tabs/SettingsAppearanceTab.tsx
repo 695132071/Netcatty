@@ -23,7 +23,7 @@ import {
 import { resolveAppIconVariant, type AppIconVariant } from "../../../domain/appIconVariant";
 import { resolveNoteFontSelectionFamily, resolveNoteFontSelectionId } from "../../../domain/noteFonts";
 import { DEFAULT_AUTO_IMPORT_SYSTEM_KNOWN_HOSTS } from "../../../domain/systemKnownHostsAutoImport";
-import { cn } from "../../../lib/utils";
+import { cn, isMacPlatform } from "../../../lib/utils";
 import { SectionHeader, SettingsAnchor, SettingsTabContent, SettingRow, Toggle, Select } from "../settings-ui";
 import { FontSelect } from "../FontSelect";
 import { TerminalFontSelect } from "../TerminalFontSelect";
@@ -69,6 +69,8 @@ function SettingsAppearanceTab(props: {
   setShowHostTreeSidebar: (enabled: boolean) => void;
   windowOpacity: number;
   setWindowOpacity: (opacity: number) => void;
+  windowBackgroundBlur: boolean;
+  setWindowBackgroundBlur: (enabled: boolean) => void;
   appIconVariant: AppIconVariant;
   setAppIconVariant: (variant: AppIconVariant) => void;
 }) {
@@ -140,10 +142,13 @@ function SettingsAppearanceTab(props: {
     setShowHostTreeSidebar,
     windowOpacity,
     setWindowOpacity,
+    windowBackgroundBlur,
+    setWindowBackgroundBlur,
     appIconVariant,
     setAppIconVariant,
   } = props;
   const resolvedAppIconVariant = resolveAppIconVariant(appIconVariant);
+  const isMac = isMacPlatform();
 
   const WINDOW_OPACITY_PRESETS = [
     { label: '100%', value: 1 },
@@ -315,6 +320,19 @@ function SettingsAppearanceTab(props: {
             </div>
           </div>
         </SettingRow>
+        {isMac && (
+          <SettingRow
+            anchorId="appearance-window-background-blur"
+            label={t("settings.appearance.windowBackgroundBlur")}
+            description={t("settings.appearance.windowBackgroundBlur.desc")}
+          >
+            <Toggle
+              checked={windowBackgroundBlur}
+              onChange={setWindowBackgroundBlur}
+              ariaLabel={t("settings.appearance.windowBackgroundBlur")}
+            />
+          </SettingRow>
+        )}
       </div>
 
       <SectionHeader title={t("settings.appearance.uiTheme")} />
