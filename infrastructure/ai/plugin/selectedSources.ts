@@ -9,12 +9,17 @@ export interface SelectedSnapshot {
   note: VaultNote | null;
 }
 
+function selectedSessionId(snapshot: SelectedSnapshot): string | undefined {
+  const workspace = snapshot.workspaces.find((item) => item.id === snapshot.activeTabId);
+  return workspace?.focusedSessionId ?? (workspace ? collectSessionIds(workspace.root)[0] : snapshot.activeTabId);
+}
+
 // Receives host-selected snapshots only. No Host/Vault DTO serialization,
 // inventory reader, terminal scrollback, credential fields, or command access.
 export function buildSelectedPluginSources(getSnapshot: () => SelectedSnapshot): HostSelectedSource[] {
   const snapshot = getSnapshot();
   const workspace = snapshot.workspaces.find((item) => item.id === snapshot.activeTabId);
-  const sessionId = workspace?.focusedSessionId ?? (workspace ? collectSessionIds(workspace.root)[0] : snapshot.activeTabId);
+  const sessionId = selectedSessionId(snapshot);
   const session = snapshot.sessions.find((item) => item.id === sessionId);
   const sources: HostSelectedSource[] = [];
   const add = (scope: HostSelectedSource['scope'], key: string, title: string, value: unknown, current: () => boolean) => {
@@ -29,7 +34,11 @@ export function buildSelectedPluginSources(getSnapshot: () => SelectedSnapshot):
   if (workspace || session) add('tab', snapshot.activeTabId, workspace?.title ?? session.hostLabel,
     { title: workspace?.title ?? session.hostLabel, kind: workspace ? 'workspace' : 'terminal' }, tabCurrent);
   if (session) {
-    const current = () => tabCurrent() && getSnapshot().sessions.find((item) => item.id === session.id) === session;
+    const current = () => {
+      const latest = getSnapshot();
+      return latest.activeTabId === snapshot.activeTabId && selectedSessionId(latest) === session.id
+        && latest.sessions.find((item) => item.id === session.id) === session;
+    };
     add('session', session.id, session.hostLabel, { label: session.hostLabel, status: session.status, protocol: session.protocol ?? 'ssh' }, current);
     add('host', session.hostId || session.id, session.hostLabel,
       { label: session.hostLabel, hostname: session.hostname, username: session.username, port: session.port, protocol: session.protocol ?? 'ssh' }, current);
