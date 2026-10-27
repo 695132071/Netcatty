@@ -19,7 +19,7 @@ export function PluginLogSettings() {
   const disclosure = zh
     ? '插件编写的日志文字可能包含敏感数据。截断和字段过滤不能保证任意文字安全。只为排查问题临时开启，导出前请检查。重启应用后自动关闭详细日志。'
     : 'Plugin-authored text may contain sensitive data. Truncation and field filtering cannot make arbitrary text safe. Enable temporarily for troubleshooting and review files before sharing. Verbose diagnostics turn off after app restart.';
-  return <div data-host-security-surface="">
+  return <div>
     <Dialog open={open} onOpenChange={setOpen}>
       <SettingRow label={title} description={zh ? '选择是否在此设备保存审计记录和诊断日志。' : 'Choose whether to keep audit records and diagnostics on this device.'}>
         <div className="flex items-center gap-3">
@@ -53,6 +53,6 @@ export function PluginLogSettings() {
         </DialogFooter>
       </DialogContent>
     </Dialog>
-    <ConfirmDialog open={confirmVerbose} title={zh ? '开启插件详细诊断？' : 'Enable verbose plugin diagnostics?'} message={disclosure} confirmLabel={zh ? '临时开启' : 'Enable temporarily'} onOpenChange={setConfirmVerbose} onConfirm={() => { setConfirmVerbose(false); void run('configure', { saveToDisk: true, verbose: true }); }} />
+    <ConfirmDialog hostSecuritySurface open={confirmVerbose} title={zh ? '开启插件详细诊断？' : 'Enable verbose plugin diagnostics?'} message={disclosure} confirmLabel={zh ? '临时开启' : 'Enable temporarily'} onOpenChange={setConfirmVerbose} onConfirm={() => { setConfirmVerbose(false); void run('configure', { saveToDisk: true, verbose: true }); }} />
   </div>;
 }

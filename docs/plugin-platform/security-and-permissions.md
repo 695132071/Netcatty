@@ -47,6 +47,9 @@ focus handoff is needed. Close, cancel, timeout, lock, hide/blur, reload, crash
 and stale runtime/source fail closed. The dialog uses the existing host security
 surface marker so attached native plugin views yield while it is visible and
 restore through their existing lifecycle on dismissal.
+Ordinary landing rows do not suspend native views. The logging dialog and its
+verbose confirmation are marked security surfaces; the confirmation opts into
+the existing marker because it temporarily accessibility-hides its parent dialog.
 A plugin DOM click never becomes a host gesture. Choosers, drafts, terminal and
 clipboard sharing use their existing host-owned action tokens. Ask integrates
 with that workflow instead of opening a second capability dialog. Allow skips

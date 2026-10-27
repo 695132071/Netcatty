@@ -85,6 +85,32 @@ initial-checkpoint evidence.
 
 ## Latest checks and remaining environment blockers
 
+- The native candidate `2433cf0130d1c3274c56c39e5765349c2945de01` retains the
+  same idle logging-row marker as `89beeb9` (source blob
+  `4dd5a7cea4ae5a6addc5db5c162038d8fa44075c`). Actual Settings landing plus the
+  existing observer reproduces native-child suppression with no dialog open.
+  This source defect is separate from the worker's earlier GPU exit and does
+  not alone establish the cause of the recorded blank native body.
+- The scoped correction removes only the idle-row marker. Actual logging and
+  Ask dialogs remain marked. A real nested verbose confirmation test also
+  reproduced premature restoration when its parent became accessibility-hidden;
+  that confirmation now opts into the existing marker on its own dialog content.
+  The observer, window trust, permissions and data access are unchanged. The real
+  landing regression verifies idle visible, each security dialog hidden, and
+  restored on dismissal. Focused group **six passed**; Settings boundary group
+  **36 passed**. Both pre-fix failures are retained outside the source tree.
+  Production build and full lint pass (zero lint errors/seven existing warnings).
+  Full TypeScript remains baseline-equivalent at 774 diagnostics with zero
+  added/removed. Exact-head CI and the next frozen native recheck are separate
+  gates; neither is inferred from these local tests.
+- QA-only **Settings Ask QA 0.1.0** uses its supported `location: settings` entry
+  and public SDK to read only its synthetic own setting after an explicit click.
+  Exact archive SHA-256:
+  `9502a58a4804862e4b13de9fc0d1baf6ad8c2bc681c08b5c0664b552ef0aafc4`.
+  Its HTML/CSS/JS each return 200 with proper MIME/CSP through the actual plugin
+  protocol. It contains no raw IPC/test hook or external access. No GUI or running
+  app was changed by this correction; parent will build a new frozen candidate
+  after current cleanup and repeat native Settings acceptance.
 - A registered regression reproduces `Plugin permission decision provider failed`
   on exact `79a9bd6` when a Settings-owned view activates a real `settings.get`
   API configured Ask while main is unfocused. The follow-up uses the existing
