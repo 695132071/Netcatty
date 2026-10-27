@@ -105,6 +105,7 @@ function createPluginHostService(options) {
   let byteStreamService;
   let aiContextService;
   let aiHostAdapter;
+  let permissionDecisionHost;
   const logService = new PluginLogService({ paths, electron: options.electron, resolveProvenance: options.resolvePluginProvenance ?? createPluginLogProvenanceResolver(database) });
   try {
     const packageStore = new PackageStore({
@@ -128,9 +129,12 @@ function createPluginHostService(options) {
       runtimeDirectory,
       moduleResources,
     });
+    const { PluginPermissionDecisionHost } = require("./permissionDecisionHost.cjs");
+    permissionDecisionHost = new PluginPermissionDecisionHost({ getWindow: options.getInteractionWindow,
+      isLocked: options.isAppLocked, subscribeLock: options.subscribeAppLock });
     const permissionEngine = new PluginPermissionEngine({
       database,
-      requestDecision: options.requestPermissionDecision,
+      requestDecision: options.requestPermissionDecision ?? ((...args) => permissionDecisionHost.request(...args)),
     });
     const quotaManager = new PluginQuotaManager({
       getProcessMetrics: options.getProcessMetrics
@@ -456,6 +460,7 @@ function createPluginHostService(options) {
           await viewHost?.shutdown();
           await companionSupervisor.shutdown();
           leaseStore.shutdown();
+          permissionDecisionHost.shutdown();
           permissionEngine.shutdown();
           quotaManager.shutdown();
         } finally {
@@ -488,6 +493,7 @@ function createPluginHostService(options) {
       byteStreamService,
       aiContextService,
       permissionEngine,
+      permissionDecisionHost,
       quotaManager,
       rpcRegistry,
       runtimeSupervisor,
@@ -497,6 +503,7 @@ function createPluginHostService(options) {
       viewHost,
     };
   } catch (error) {
+    try { permissionDecisionHost?.shutdown(); } catch {}
     try { interactionService?.shutdown(); } catch {}
     try { byteStreamService?.shutdown(); } catch {}
     try { aiContextService?.shutdown(); } catch {}

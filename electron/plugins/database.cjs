@@ -335,6 +335,7 @@ class PluginDatabase {
       for (const table of ["plugin_settings", "plugin_view_state", "plugin_permission_grants", "plugin_secrets", "plugin_sync_sidecars", "plugin_sync_provider_bindings"]) {
         this.db.prepare(`DELETE FROM ${table} WHERE plugin_id = ? OR plugin_id = ?`).run(owner, pluginId);
       }
+      this.db.prepare("DELETE FROM plugin_host_preferences WHERE key LIKE ?").run(`permission:${owner}:%`);
       this.db.prepare("DELETE FROM plugin_source_bindings WHERE plugin_id = ?").run(pluginId);
     });
   }
@@ -1168,6 +1169,25 @@ class PluginDatabase {
         WHERE plugin_id = ? ORDER BY id DESC LIMIT ${MAX_SECURITY_AUDIT_RECORDS_PER_PLUGIN}
       )
     `).run(pluginId, pluginId);
+  }
+
+  // Host-owned policy preferences are deliberately separate from plugin-writable
+  // settings. Source ownership is stable across package versions; grants are not.
+  getPermissionMode(pluginId, permission) {
+    const key = `permission:${this.privateOwner(pluginId)}:${permission}`;
+    const row = this.db.prepare("SELECT value_json FROM plugin_host_preferences WHERE key = ?").get(key);
+    const mode = row ? parseJson(row.value_json, "permission mode") : "allow";
+    if (!["allow", "ask", "deny"].includes(mode)) throw new Error("Corrupt plugin permission mode");
+    return mode;
+  }
+
+  setPermissionMode(pluginId, permission, mode) {
+    const key = `permission:${this.privateOwner(pluginId)}:${permission}`;
+    this.transaction(() => {
+      this.db.prepare("INSERT INTO plugin_host_preferences(key,value_json,updated_at) VALUES(?,?,?) ON CONFLICT(key) DO UPDATE SET value_json=excluded.value_json,updated_at=excluded.updated_at")
+        .run(key, JSON.stringify(mode), this.clock());
+      this.#appendSecurityAudit(pluginId, "permission.policy-edited", JSON.stringify({ permission, mode, sourceOwner: this.privateOwner(pluginId) }));
+    });
   }
 
   getHostThemeSelection() {

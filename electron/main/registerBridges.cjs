@@ -154,9 +154,6 @@ function createBridgeRegistrar(context) {
       createService: () => {
         const { createPluginHostService } = require("../plugins/hostService.cjs");
         const {
-          createNativePermissionDecisionProvider,
-        } = require("../plugins/nativePermissionDecision.cjs");
-        const {
           terminalInterceptorChoiceLabel,
           terminalInterceptorIdentifier,
           terminalInterceptorMessages,
@@ -169,17 +166,6 @@ function createBridgeRegistrar(context) {
           getTerminalWorkerManager: () => terminalWorkerManager,
           isAppLocked: () => getAppLockController?.()?.getRuntimeState?.()?.locked !== false,
           subscribeAppLock: (listener) => getAppLockController?.()?.subscribe?.(listener),
-          requestPermissionDecision: createNativePermissionDecisionProvider({
-            getLocale: () => getWindowManager().getCurrentLanguage?.() ?? "en",
-            dialog: electronModule.dialog,
-            window: win,
-            getWindow: () => {
-              const settingsWindow = getWindowManager().getSettingsWindow?.();
-              return settingsWindow && !settingsWindow.isDestroyed() && settingsWindow.isFocused()
-                ? settingsWindow
-                : win;
-            },
-          }),
           getLocale: () => getWindowManager().getCurrentLanguage?.() ?? "en",
           requestTerminalInterceptorSelection: async ({ direction, providers }) => {
             const messages = terminalInterceptorMessages(getWindowManager().getCurrentLanguage?.() ?? "en");
@@ -223,6 +209,7 @@ function createBridgeRegistrar(context) {
       manager: pluginHostService?.manager,
       interactionService: pluginHostService?.interactionService,
       permissionEngine: pluginHostService?.permissionEngine,
+      permissionDecisionHost: pluginHostService?.permissionDecisionHost,
       runtimeSupervisor: pluginHostService?.runtimeSupervisor,
       database: pluginHostService?.database,
       catalogService: pluginHostService?.catalogService,

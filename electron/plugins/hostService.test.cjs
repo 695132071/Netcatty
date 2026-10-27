@@ -114,7 +114,7 @@ test("runtime cleanup revokes leases before awaiting companion teardown", async 
   assert.equal(settled, true);
 });
 
-test("runtime trust placement precedes required and advanced permission prompts", async (context) => {
+test("runtime trust placement and default Allow require no install permission ceremony", async (context) => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "netcatty-plugin-host-service-"));
   context.after(() => fs.rmSync(root, { recursive: true, force: true }));
   const events = [];
@@ -146,11 +146,7 @@ test("runtime trust placement precedes required and advanced permission prompts"
     securityPrincipal: "verified:test-publisher-key",
     signal: new AbortController().signal,
   }), "utility");
-  assert.deepEqual(events, [
-    "placement",
-    "permission:storage",
-    "permission:runtime.advanced",
-  ]);
+  assert.deepEqual(events, ["placement"]);
 });
 
 test("first-party placement selects the utility runtime for companion manifests", async (context) => {
@@ -198,7 +194,7 @@ test("first-party placement selects the utility runtime for companion manifests"
     securityPrincipal: "unsigned-package:companion-placement",
     signal: new AbortController().signal,
   }), "utility");
-  assert.deepEqual(requested, ["companion.execute", "runtime.advanced"]);
+  assert.deepEqual(requested, []);
 });
 
 test("first-party placement selects utility for dual-entrypoint terminal interceptors", async (context) => {
@@ -238,15 +234,7 @@ test("first-party placement selects utility for dual-entrypoint terminal interce
     securityPrincipal: "unsigned-package:interceptor-placement",
     signal: new AbortController().signal,
   }), "utility");
-  assert.deepEqual(requested.map((request) => request.permission), [
-    "provider.terminal",
-    "terminal.intercept.input",
-    "runtime.advanced",
-  ]);
-  assert.match(
-    requested.find((request) => request.permission === "terminal.intercept.input")?.reason ?? "",
-    /arbitrary no-echo input may not be detectable/u,
-  );
+  assert.deepEqual(requested, []);
 });
 
 test("secure host methods fail closed without an approver while public logging remains available", async (context) => {
@@ -254,6 +242,7 @@ test("secure host methods fail closed without an approver while public logging r
   context.after(() => fs.rmSync(root, { recursive: true, force: true }));
   const service = createPluginHostService(createOptions(root));
   context.after(() => service.manager.shutdown());
+  service.database.getPermissionMode = () => "ask";
   const routes = service.rpcRegistry.createRoutes({
     pluginId: "com.example.service",
     pluginVersion: "1.0.0",
@@ -268,7 +257,7 @@ test("secure host methods fail closed without an approver while public logging r
   });
   await assert.rejects(
     routes.requestHandlers["storage.set"]({ key: "answer", value: 42 }, transportContext()),
-    /not granted/,
+    /decision provider failed/,
   );
   await routes.notificationHandlers["log.write"]({ level: "info", message: "hello" }, transportContext());
   assert.equal(service.database.getValue("com.example.service", "answer"), undefined);
@@ -303,6 +292,7 @@ test("approved host capabilities reuse application grants through the registry",
     archiveSha256: "a".repeat(64),
     packageRelativePath: "com.example.service/1.0.0/package",
   });
+  service.permissionEngine.setMode({ id: pluginManifest.id, manifest: pluginManifest }, "storage", "ask");
   const routes = service.rpcRegistry.createRoutes({
     pluginId: "com.example.service",
     pluginVersion: "1.0.0",
@@ -456,28 +446,12 @@ test("logging always drains before database close when another shutdown stage re
   assert.equal(record.operation, "synthetic.before-shutdown");
 });
 
-test("activation permission denial is audited before a runtime logger exists", async (t) => {
-  const { defaultSecurityPrincipal } = require("./permissionResources.cjs");
-  const { RPC_ERRORS } = require("./rpcRouter.cjs");
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "netcatty-synthetic-activation-log-"));
-  const host = createPluginHostService(createOptions(root));
+test("required browser capabilities activate without a permission ceremony", async (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "netcatty-synthetic-activation-"));
+  let prompts = 0;
+  const host = createPluginHostService({ ...createOptions(root), requestPermissionDecision: () => { prompts++; throw new Error("Unexpected install prompt"); } });
   t.after(async () => { await host.manager.shutdown(); fs.rmSync(root, { recursive: true, force: true }); });
-  const manifest = { manifestVersion: 1, id: "com.example.synthetic-activation", version: "1.0.0", name: "Synthetic", publisher: "example", engines: { netcatty: ">=0.0.0", api: ">=0.1.0-internal <0.2.0" }, main: { browser: "index.js" }, permissions: { required: ["commands"] } };
-  const archiveSha256 = "a".repeat(64);
-  host.database.installVersion({ pluginId: manifest.id, version: manifest.version, manifest, archiveSha256, packageRelativePath: `${manifest.id}/${manifest.version}/package` }, { enable: true });
-  await host.logService.ready;
-  await host.logService.configure({ saveToDisk: true, verbose: false });
-  await assert.rejects(host.runtimeSupervisor.resolveRuntimeKind({
-    plugin: host.database.getActivePlugin(manifest.id), availableKinds: ["browser"], signal: new AbortController().signal,
-    securityPrincipal: defaultSecurityPrincipal(manifest, archiveSha256),
-  }), { code: RPC_ERRORS.permissionDenied });
-  await host.logService.sink.flush();
-  const record = JSON.parse(await fsp.readFile(host.logService.sink.file(0), "utf8"));
-  assert.equal(record.operation, "runtime.authorization");
-  assert.equal(record.authorization, "denied");
-  assert.equal(record.runtimeId, null);
-  assert.equal(record.errorCode, RPC_ERRORS.permissionDenied);
-  assert.equal(record.archiveSha256, archiveSha256);
-  assert.equal(Object.hasOwn(record, "message"), false);
-  assert.equal(host.runtimeSupervisor.getRuntimeIdentity(manifest.id), null);
+  const manifest = { id: "com.example.synthetic-activation", version: "1.0.0", publisher: "example", main: { browser: "index.js" }, permissions: { required: ["commands"] } };
+  assert.equal(await host.runtimeSupervisor.resolveRuntimeKind({ plugin: { id: manifest.id, activeVersion: manifest.version, manifest }, availableKinds: ["browser"], signal: new AbortController().signal }), "browser");
+  assert.equal(prompts, 0);
 });

@@ -1735,3 +1735,27 @@ test("local log management rejects plugin/untrusted senders before touching the 
   for (const channel of [CHANNELS.logStatus, CHANNELS.logConfigure, CHANNELS.logOpen, CHANNELS.logExport, CHANNELS.logClear]) await ipcMain.handlers.get(channel)({ trusted: true }, {});
   assert.deepEqual(actions, ["status", "configure", "openFolder", "exportLogs", "clear"]);
 });
+
+test("policy edits require trusted UI and the exact source/version/policy revision", async () => {
+  const { PluginPermissionEngine } = require("./permissionEngine.cjs");
+  const ipcMain = createIpcMain();
+  let sourceOwner = "source-a", mode = "deny";
+  const plugin = { id: "com.example.policy", activeVersion: "1.0.0", manifest: { permissions: { optional: ["storage"] } } };
+  const engine = new PluginPermissionEngine({ database: { privateOwner: () => sourceOwner,
+    getPermissionMode: () => mode, setPermissionMode: (_id, _permission, value) => { mode = value; },
+    deleteAllPermissionGrants() {}, recordSecurityAudit() {},
+  } });
+  registerPluginBridge(ipcMain, { manager: { async initialize() {} }, isTrustedSender: (event) => event?.trusted === true,
+    permissionEngine: engine, database: { getActivePlugin: () => plugin } });
+  const edit = ipcMain.handlers.get(CHANNELS.setPermissionMode);
+  const payload = { pluginId: plugin.id, permission: "storage", mode: "allow", policyRevision: engine.getPolicyRevision(plugin) };
+  await assert.rejects(edit({}, payload), /Untrusted/);
+  for (const change of [() => { sourceOwner = "source-b"; }, () => { plugin.activeVersion = "2.0.0"; }, () => engine.revokeAll(plugin.id)]) {
+    const stale = { ...payload, policyRevision: engine.getPolicyRevision(plugin) }; change();
+    await assert.rejects(edit({ trusted: true }, stale), /refresh/);
+    assert.equal(mode, "deny");
+  }
+  assert.equal(await edit({ trusted: true }, { ...payload, policyRevision: engine.getPolicyRevision(plugin) }), true);
+  assert.equal(mode, "allow");
+  engine.shutdown();
+});

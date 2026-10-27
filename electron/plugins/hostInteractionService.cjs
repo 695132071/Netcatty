@@ -37,7 +37,7 @@ function interactionAuthorization(params, terminalTarget) {
   if (params.kind === "terminal.selection.read" || params.kind === "terminal.input.propose") {
     if (!terminalTarget) throw fail("failedPrecondition", "A host-selected terminal is required");
     return { permission: params.kind, resources: [terminalTarget.resource],
-      reason: params.kind === "terminal.selection.read" ? "Preview and explicitly share the selected terminal text" : "Open an editable host draft without sending terminal input", operationId: params.kind, allowedScopes: ["once"] };
+      reason: params.kind === "terminal.selection.read" ? "Preview and explicitly share the selected terminal text" : "Open an editable host draft without sending terminal input", operationId: params.kind, allowedScopes: ["once"], deferDecision: true };
   }
   const permission = params.kind === "clipboard.read" ? "clipboard.read"
     : params.kind === "clipboard.write" ? "clipboard.write" : "ui.interact";
@@ -46,6 +46,7 @@ function interactionAuthorization(params, terminalTarget) {
     resources: [permission.startsWith("clipboard.") ? "clipboard:text" : "*"],
     reason: permission.startsWith("clipboard.") ? "Explicitly share or replace clipboard text" : "Show a host input or choice dialog",
     operationId: `ui:${params.kind}`,
+    deferDecision: true,
     ...(permission.startsWith("clipboard.") ? { allowedScopes: ["once"] } : {}),
   };
 }
@@ -174,6 +175,7 @@ class PluginHostInteractionService {
       requestId: entry.id, actionToken: entry.actionToken,
       pluginId: entry.context.pluginId, pluginVersion: entry.context.pluginVersion,
       expiresAt: entry.expiresAt, phase: entry.phase, request: entry.params,
+      permissionMode: entry.permissionMode,
       ...(entry.terminalTarget ? { terminalSessionId: entry.terminalTarget.sessionId, terminalRendererId: entry.terminalTarget.rendererId, terminalLabel: entry.terminalTarget.label } : {}),
       ...(entry.previewText === undefined ? {} : { previewText: entry.previewText }),
       ...(this.vaultService?.isRequest(entry.params) ? this.vaultService.describePrompt(entry) : {}),
@@ -261,10 +263,25 @@ class PluginHostInteractionService {
         ? this.terminalSelection.resolve(params.handle, context) : undefined);
     if (terminalTarget) this.terminalSelection.assertCurrent(terminalTarget);
     if (params.kind === "terminal.input.propose") this.terminalSelection.resolve(params.handle, context);
+    const authorization = context.authorization ?? interactionAuthorization(params, terminalTarget);
+    const permissionMode = this.permissionEngine.getMode?.(context, authorization.permission) ?? "ask";
+    if (permissionMode === "deny") throw fail("permissionDenied", "Plugin permission is disabled");
+    // These actions need no target/data-input UI. The main process still owns
+    // admission, quotas, audit and precise operation/resource validation.
+    if (permissionMode === "allow" && params.kind.startsWith("clipboard.")) {
+      await context.assertActive(); this.#assertWindow(sender);
+      const entry = { context, params };
+      this.#audit(entry, "completed");
+      if (params.kind === "clipboard.write") { this.clipboard.writeText(params.text); return { cancelled: false, value: true }; }
+      const text = assertTextBytes(this.clipboard.readText());
+      this.quotaManager.chargeBytes(context.runtimeId, "clipboard", Buffer.byteLength(text));
+      await context.assertActive();
+      return { cancelled: false, value: text };
+    }
     const now = this.clock();
     return new Promise((resolve, reject) => {
       const entry = {
-        id: randomUUID(), context, params, sender, resolve, reject, terminalTarget,
+        id: randomUUID(), context, params, sender, resolve, reject, terminalTarget, permissionMode,
         expiresAt: now + this.timeoutMs, phase: "request", actionToken: null,
       };
       entry.onAbort = () => this.#finish(entry, null, fail("cancelled", "Host interaction was cancelled"));
@@ -273,8 +290,14 @@ class PluginHostInteractionService {
       this.pending.set(entry.id, entry);
       context.signal?.addEventListener("abort", entry.onAbort, { once: true });
       if (context.signal?.aborted) { entry.onAbort(); return; }
-      try { this.#present(entry); }
-      catch { this.#finish(entry, null, fail("unavailable", "Host interaction window is unavailable")); }
+      try {
+        if (params.kind === "clipboard.read") {
+          entry.previewText = assertTextBytes(this.clipboard.readText());
+          this.quotaManager.chargeBytes(context.runtimeId, "clipboard", Buffer.byteLength(entry.previewText));
+          entry.phase = "preview";
+        }
+        this.#present(entry);
+      } catch { this.#finish(entry, null, fail("unavailable", "Host interaction window is unavailable")); }
     });
   }
 
@@ -324,6 +347,11 @@ class PluginHostInteractionService {
         if (!text.length) throw fail("failedPrecondition", "Select terminal text before requesting a share");
         this.#audit(entry, "preview-confirmed");
         this.quotaManager.chargeBytes(entry.context.runtimeId, "terminal", Buffer.byteLength(text));
+        if (entry.permissionMode === "allow") {
+          this.#audit(entry, "completed");
+          return this.#finish(entry, { cancelled: false, value: Object.freeze({ text,
+            ...this.terminalSelection.issue(entry.terminalTarget, entry.context) }) });
+        }
         entry.previewText = text; entry.phase = "preview"; this.#present(entry); return true;
       }
       if (entry.params.kind === "clipboard.read" && entry.phase === "request") {

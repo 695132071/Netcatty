@@ -123,6 +123,14 @@ function createPreloadApi(ctx) {
     return () => ipcRenderer.removeListener("netcatty:plugins:host-interaction", listener);
   },
   listPlugins: () => ipcRenderer.invoke("netcatty:plugins:list"),
+  setPluginPermissionMode: (pluginId, permission, mode, policyRevision) => ipcRenderer.invoke("netcatty:plugins:set-permission-mode", { pluginId, permission, mode, policyRevision }),
+  setPluginPermissionReady: (ready) => ipcRenderer.invoke("netcatty:plugins:permission-ready", { ready }),
+  respondPluginPermission: (response) => ipcRenderer.invoke("netcatty:plugins:permission-response", response),
+  onPluginPermission: (callback) => {
+    const listener = (_event, prompt) => callback(prompt);
+    ipcRenderer.on("netcatty:plugins:permission-prompt", listener);
+    return () => ipcRenderer.removeListener("netcatty:plugins:permission-prompt", listener);
+  },
   getPluginPermissions: (pluginId) => ipcRenderer.invoke("netcatty:plugins:permissions", { pluginId }),
   revokePluginPermissions: (pluginId) => ipcRenderer.invoke("netcatty:plugins:revoke-permissions", { pluginId }),
   installPluginPackage: (archivePath, options) => ipcRenderer.invoke("netcatty:plugins:install", {

@@ -30,6 +30,9 @@ const CHANNELS = Object.freeze({
   interactionResponse: "netcatty:plugins:interaction-response",
   list: "netcatty:plugins:list",
   permissions: "netcatty:plugins:permissions",
+  setPermissionMode: "netcatty:plugins:set-permission-mode",
+  permissionReady: "netcatty:plugins:permission-ready",
+  permissionResponse: "netcatty:plugins:permission-response",
   revokePermissions: "netcatty:plugins:revoke-permissions",
   resetSource: "netcatty:plugins:reset-source",
   sourceBinding: "netcatty:plugins:source-binding",
@@ -710,6 +713,18 @@ function registerPluginBridge(ipcMain, options) {
     await options.logService.ready;
     return options.logService[action](payload);
   });
+  handle(CHANNELS.permissionReady, async (_manager, payload, event) => options.permissionDecisionHost?.setReady(event.sender, payload?.ready));
+  handle(CHANNELS.permissionResponse, async (_manager, payload, event) => options.permissionDecisionHost?.respond(event.sender, payload));
+  handle(CHANNELS.setPermissionMode, async (_manager, payload) => {
+    const pluginId = assertManagedPluginId(payload);
+    const plugin = options.database?.getActivePlugin(pluginId);
+    if (!plugin || !options.permissionEngine) throw new Error("Plugin permissions are unavailable");
+    if (typeof payload?.policyRevision !== "string" || payload.policyRevision !== options.permissionEngine.getPolicyRevision(plugin)) {
+      throw new Error("Plugin permissions changed; refresh before editing");
+    }
+    options.permissionEngine.setMode(plugin, payload?.permission, payload?.mode);
+    return true;
+  });
   handle(CHANNELS.permissions, async (_manager, payload) => {
     const pluginId = assertManagedPluginId(payload);
     if (!options.permissionEngine || !options.database) throw new Error("Plugin permissions are unavailable");
@@ -736,8 +751,12 @@ function registerPluginBridge(ipcMain, options) {
       event: entry.event, createdAt: entry.createdAt,
       ...(typeof entry.details?.permission === "string" ? { permission: entry.details.permission } : {}),
       ...(typeof entry.details?.scope === "string" ? { scope: entry.details.scope } : {}),
+      ...(["allow", "ask", "deny"].includes(entry.details?.mode) ? { mode: entry.details.mode } : {}),
+      ...(["completed", "cancelled", "preview-confirmed", "share-confirmed", "copy-confirmed", "draft-reviewed", "action-confirmed", "action-claimed"].includes(entry.details?.action)
+        ? { action: entry.details.action } : {}),
     }));
-    return { grants, audit };
+    return { grants, audit, ...(options.permissionEngine.describePolicies && plugin
+      ? { policies: options.permissionEngine.describePolicies(plugin), policyRevision: options.permissionEngine.getPolicyRevision(plugin) } : {}) };
   });
   handle(CHANNELS.revokePermissions, async (activeManager, payload) => (
     activeManager.revokePermissions(assertManagedPluginId(payload))

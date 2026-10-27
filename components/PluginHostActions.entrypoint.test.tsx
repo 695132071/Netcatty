@@ -109,6 +109,7 @@ test('installed sample entrypoint uses real SDK, source authority, signed host d
     const archive = path.join(directory, 'fixture.ncpkg');
     await buildPluginPackage(packageRoot, archive);
     await service.manager.install(archive, { enable: true });
+    service.database.setPermissionMode('com.netcatty.host-actions', 'ui.interact', 'ask');
     service.interactionService.setReady(sender, true);
     await act(async () => root.render(<I18nProvider locale="en"><PluginHostActionHost /></I18nProvider>));
 
@@ -192,8 +193,8 @@ test('installed sample entrypoint uses real SDK, source authority, signed host d
       const run = await begin('edit'); await chooseGroup();
       await waitFor(() => button('Save Host') !== undefined); await click(button('Save Host'));
       await waitFor(() => preparing);
-      await act(async () => { service.permissionEngine.revokeApplication('com.netcatty.host-actions', 'vault.write'); release(); await settle(); });
-      await assert.rejects(run.promise, /revoked|cancelled/); assert.equal(saves, 1); beforeCommit = undefined;
+      await act(async () => { service.permissionEngine.setMode(service.database.getActivePlugin('com.netcatty.host-actions'), 'vault.write', 'deny'); release(); await settle(); });
+      await assert.rejects(run.promise, /revoked|cancelled/); assert.equal(saves, 1); beforeCommit = undefined; service.permissionEngine.setMode(service.database.getActivePlugin('com.netcatty.host-actions'), 'vault.write', 'allow');
     });
 
     await t.test('source replacement during review cannot use the old action authority', async () => {
@@ -272,13 +273,44 @@ test('installed sample entrypoint uses real SDK, source authority, signed host d
       }
     });
 
+    await t.test('Allow connects through the selected target without a confirmation dialog; Deny blocks every Host action', async () => {
+      const id = 'com.netcatty.host-actions';
+      const plugin = service.database.getActivePlugin(id);
+      const set = (permission: string, mode: string) => service.permissionEngine.setMode(plugin, permission, mode);
+      set('ui.interact', 'allow');
+      const allowed = await begin('connect'); await chooseGroup();
+      await act(async () => { await allowed.promise; await settle(); });
+      assert.equal(document.querySelector('[role="dialog"]'), null);
+      assert.equal(connections.length, 2);
+      for (const [permission, command] of [['vault.metadata', 'select'], ['vault.write', 'create']] as const) {
+        set(permission, 'deny'); requestClock += 60_001;
+        await assert.rejects(service.contributionService.executeCommand(`${id}.${command}`), /disabled/);
+        assert.equal(document.querySelector('[role="dialog"]'), null);
+        set(permission, 'allow');
+      }
+      set('ui.interact', 'deny');
+      const denied = await begin('connect'); await chooseGroup();
+      await assert.rejects(denied.promise, /disabled/);
+      assert.equal(connections.length, 2); assert.equal(saves, 1);
+      set('ui.interact', 'ask'); set('vault.write', 'ask');
+      const draft = await begin('create');
+      assert.equal(document.querySelectorAll('[role="dialog"]').length, 1);
+      assert.ok(button('Save Host')); await click(button('Cancel'));
+      assert.deepEqual(await draft.promise, { cancelled: true });
+      set('vault.write', 'allow'); set('vault.metadata', 'ask');
+      const selection = await begin('select'); await chooseGroup();
+      assert.ok('hosts' in await selection.promise);
+      assert.equal(document.querySelector('[role="dialog"]'), null);
+      set('vault.metadata', 'allow');
+    });
+
     await t.test('runtime removal rejects old signed replies', async () => {
       const run = await begin('create');
       const old = prompts.at(-1)!;
       await act(async () => { await service.manager.setEnabled('com.netcatty.host-actions', false); await settle(); });
       await assert.rejects(run.promise);
       assert.equal(await service.interactionService.respond(sender, { requestId: old.requestId, actionToken: old.actionToken, action: 'submit', draft: { hostname: 'late.invalid' } }), false);
-      assert.equal(saves, 1); assert.equal(connections.length, 1);
+      assert.equal(saves, 1); assert.equal(connections.length, 2);
     });
   } finally {
     await act(async () => { root.unmount(); await settle(); });

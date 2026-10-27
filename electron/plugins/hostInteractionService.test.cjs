@@ -81,7 +81,7 @@ test("old command completion cannot invalidate a replacement runtime's host-owne
   assert.deepEqual(await request, { cancelled: false, value: "synthetic new input" });
 });
 
-test("Once permission dialog may restore the same owner's focus after its decision resolves", async (t) => {
+test("input workflow is shown directly without a separate capability prompt", async (t) => {
   const { PluginHostRpcRegistry } = require("./hostRpcRegistry.cjs");
   const { PluginPermissionEngine } = require("./permissionEngine.cjs");
   const f = fixture(t);
@@ -104,13 +104,13 @@ test("Once permission dialog may restore the same owner's focus after its decisi
   }).requestHandlers["ui.interact"];
   const result = route({ kind: "input", title: "Synthetic input", initialValue: "visible" }, { signal: f.context.signal });
   await new Promise((resolve) => setTimeout(resolve, 10));
-  assert.equal(f.messages.length, 0, "no dialog is delivered while the owner is backgrounded");
+  assert.equal(f.messages.filter((message) => !message.closed).length, 1);
   await new Promise((resolve) => setTimeout(resolve, 45));
   const prompt = f.messages.find((message) => !message.closed);
   assert.ok(prompt);
   await f.respond(prompt, "submit", "visible");
   assert.deepEqual(await result, { cancelled: false, value: "visible" });
-  assert.equal(decisions, 1);
+  assert.equal(decisions, 0);
   assert.equal(f.reads, 0); assert.deepEqual(f.writes, []);
 });
 
@@ -142,17 +142,12 @@ test("focus restoration is bounded and admission cannot survive owner or access 
   await assert.rejects(background.service.request(assertInteractionRequest({ kind: "input", title: "Background" }), background.context), /focused unlocked/);
 });
 
-test("clipboard read waits for preview action and a separate single-use sharing confirmation", async (t) => {
+test("Ask clipboard read has one scoped preview and a single-use sharing decision", async (t) => {
   const f = fixture(t);
   const request = await f.begin({ kind: "clipboard.read", title: "Share text" });
-  let done = false; void request.promise.then(() => { done = true; });
-  assert.equal(f.reads, 0);
-  await f.respond(request.prompt, "preview");
-  const preview = f.messages.filter((message) => !message.closed).at(-1);
+  const preview = request.prompt;
   assert.equal(preview.phase, "preview"); assert.equal(preview.previewText, "synthetic clipboard");
-  assert.notEqual(preview.actionToken, request.prompt.actionToken);
-  assert.equal(f.reads, 1); assert.equal(done, false);
-  assert.equal(await f.respond(request.prompt, "submit"), false, "old-phase action cannot share text");
+  assert.equal(f.reads, 1);
   assert.equal(await f.respond(preview, "submit"), true);
   assert.deepEqual(await request.promise, { cancelled: false, value: "synthetic clipboard" });
   assert.equal(await f.respond(preview, "submit"), false, "no replay");
@@ -221,7 +216,7 @@ test("manifest permission checks and interaction quota run before any host promp
   const f = fixture(t);
   let decisions = 0;
   const engine = new PluginPermissionEngine({
-    database: { listPermissionGrants: () => [], recordSecurityAudit() {} },
+    database: { getPermissionMode: () => "deny", listPermissionGrants: () => [], recordSecurityAudit() {} },
     requestDecision: async (request) => { decisions++; return { requestId: request.requestId, decision: "deny" }; },
   });
   t.after(() => engine.shutdown());
@@ -234,7 +229,7 @@ test("manifest permission checks and interaction quota run before any host promp
   assert.equal(decisions, 0); assert.equal(f.messages.length, 0);
   const route = registry.createRoutes({ ...base, manifest: { ...base.manifest, permissions: { optional: ["ui.interact"] } } }).requestHandlers["ui.interact"];
   for (let count = 1; count < 10; count++) {
-    await assert.rejects(route({ kind: "input", title: "Denied" }, { signal: f.context.signal }), /denied/);
+    await assert.rejects(route({ kind: "input", title: "Denied" }, { signal: f.context.signal }), /disabled/);
   }
   const before = decisions;
   await assert.rejects(route({ kind: "input", title: "Over quota" }, { signal: f.context.signal }), /limit/);
@@ -270,7 +265,7 @@ test("same-document navigation keeps ownership, while document reload and render
     if (event === "reload") f.sender.emit("did-start-navigation", { isMainFrame: true, isSameDocument: false });
     else f.sender.emit("render-process-gone");
     await assert.rejects(request.promise, /window closed/);
-    assert.equal(f.reads, 0); assert.equal(f.service.owner, null);
+    assert.equal(f.reads, 1); assert.equal(f.service.owner, null);
   }
 });
 
@@ -278,7 +273,6 @@ test("host lock subscription cancels previewed text before it can be shared", as
   let changed;
   const f = fixture(t, { subscribeLock(listener) { changed = listener; return () => {}; } });
   const request = await f.begin({ kind: "clipboard.read", title: "Share" });
-  await f.respond(request.prompt, "preview");
   const preview = f.messages.filter((message) => !message.closed).at(-1);
   changed({ locked: true });
   await assert.rejects(request.promise, /cancelled/);

@@ -28,7 +28,7 @@ if (!schema.$defs.PluginAIChatResult) {
       },
       requestPermissionDecision: async (request) => {
         decisions.push(request);
-        if ((request.permission === "context.selected.read" && !contentAllowed) || (request.permission === "ai.invoke" && !modelAllowed)) return { requestId: request.requestId, decision: "deny" };
+        if (((request.permission === "context.selected.read" || request.relatedPermissions?.some((item) => item.permission === "context.selected.read")) && !contentAllowed) || (request.permission === "ai.invoke" && !modelAllowed)) return { requestId: request.requestId, decision: "deny" };
         return { requestId: request.requestId, decision: "allow", scope: request.permission === "context.selected.read" ? "once" : "application" };
       },
     });
@@ -45,14 +45,22 @@ if (!schema.$defs.PluginAIChatResult) {
     await service.manager.install(archive, { enable: true });
     const id = "com.netcatty.assistant";
     const run = (name, args) => service.contributionService.executeCommand(`${id}.${name}`, args);
-    modelAllowed = false; await assert.rejects(run("open")); assert.equal(invoked, 0);
-    modelAllowed = true;
+    // Normal installed Allow flow has only host model/context selection, with
+    // no permission or body-sharing ceremony at any stream stage.
+    const defaultChat = await run("open"); const [defaultReference] = await run("contexts");
+    const defaultTurn = await run("send", { chatHandle: defaultChat.chatHandle, prompt: "Summarize", contexts: [{ handle: defaultReference.handle, version: defaultReference.version }] });
+    await run("read", { turnHandle: defaultTurn.turnHandle }); await run("read", { turnHandle: defaultTurn.turnHandle }); await run("read", { turnHandle: defaultTurn.turnHandle });
+    assert.equal(decisions.length, 0); assert.equal(invoked, 1);
+    invoked = 0;
+    service.permissionEngine.setMode({ id, manifest: service.database.getActivePlugin(id).manifest }, "ai.invoke", "deny");
+    await assert.rejects(run("open")); assert.equal(invoked, 0);
+    service.permissionEngine.setMode({ id, manifest: service.database.getActivePlugin(id).manifest }, "ai.invoke", "ask");
     const chat = await run("open"); const references = await run("contexts"); assert.equal(references.length, 1);
     assert.equal(references[0].scope, "note"); assert.equal(references[0].text, undefined);
     const input = { chatHandle: chat.chatHandle, prompt: "Summarize", contexts: [{ handle: references[0].handle, version: references[0].version }] };
+    service.database.setPermissionMode(id, "context.selected.read", "ask");
     await assert.rejects(run("send", input)); assert.equal(invoked, 0);
-    contentAllowed = true; reviewed = false; await assert.rejects(run("send", input)); assert.equal(invoked, 0);
-    reviewed = true;
+    contentAllowed = true; reviewed = false; // No separate body-sharing ceremony.
     const turn = await run("send", input);
     assert.deepEqual(await run("read", { turnHandle: turn.turnHandle }), { kind: "text", sequence: 0, text: "Synthetic summary" });
     assert.deepEqual(await run("read", { turnHandle: turn.turnHandle }), { kind: "usage", sequence: 1, inputTokens: 12, outputTokens: 6, totalTokens: 18 });
@@ -64,7 +72,7 @@ if (!schema.$defs.PluginAIChatResult) {
     service.permissionEngine.revokeApplication(id, "ai.invoke", "*");
     assert.equal(service.aiContextService.broker.turns.size, 0);
     await assert.rejects(run("read", { turnHandle: pending.turnHandle }));
-    assert.ok(decisions.some((decision) => decision.permission === "context.selected.read" && decision.resources[0].startsWith("selected:")));
+    assert.ok(decisions.some((decision) => decision.relatedPermissions?.some((item) => item.permission === "context.selected.read" && item.resources[0].startsWith("selected:"))));
     const fresh = await run("open"); const [reference] = await run("contexts");
     versionCurrent = false;
     await assert.rejects(run("send", { chatHandle: fresh.chatHandle, prompt: "Hi", contexts: [{ handle: reference.handle, version: reference.version }] }));

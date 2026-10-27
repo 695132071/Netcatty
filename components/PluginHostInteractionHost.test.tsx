@@ -3,7 +3,7 @@ import test from 'node:test';
 import { EventEmitter } from 'node:events';
 import { JSDOM } from 'jsdom';
 
-test('host dialog drives choice/input/copy and the two-phase clipboard share using real service action tokens', async () => {
+test('host dialog drives choice/input/copy and a single scoped clipboard share using real service action tokens', async () => {
   const dom = new JSDOM('<!doctype html><html><body><div id="root"></div></body></html>', { pretendToBeVisual: true, url: 'http://localhost' });
   const previous = new Map<string, PropertyDescriptor | undefined>();
   const install = (key: string, value: unknown) => {
@@ -80,9 +80,6 @@ test('host dialog drives choice/input/copy and the two-phase clipboard share usi
     assert.deepEqual(await copy.promise, { cancelled: false, value: true });
     assert.deepEqual(writes, ['synthetic output']);
     const share = await begin({ kind: 'clipboard.read', title: 'Share clipboard' });
-    assert.equal(reads, 0);
-    assert.equal(document.querySelector('textarea'), null);
-    await click(button('Preview clipboard'));
     assert.equal(reads, 1);
     assert.equal(document.querySelector('textarea')?.value, 'synthetic private text');
     await click(button('Share with plugin'));
@@ -105,17 +102,15 @@ test('host dialog drives choice/input/copy and the two-phase clipboard share usi
       assert.match(document.querySelector('[role="dialog"]')?.textContent ?? '', /Synthetic selected terminal/);
       await click(button('Cancel'));
       assert.deepEqual(await noShare.promise, { cancelled: true });
-      assert.equal(selectionReads, 0);
-      const selected = await begin({ kind: 'terminal.selection.read', title: 'Synthetic terminal share' });
-      assert.equal(selectionReads, 0);
-      await click(button('Preview terminal selection'));
       assert.equal(selectionReads, 1);
+      const selected = await begin({ kind: 'terminal.selection.read', title: 'Synthetic terminal share' });
+      assert.equal(selectionReads, 2);
       assert.equal(document.querySelector('textarea')?.value, selectionText);
       selectionText = 'changed after preview';
       await click(button('Share with plugin'));
       const result = await selected.promise as { cancelled: false; value: { text: string; handle: string } };
       assert.equal(result.value.text, 'synthetic terminal selection\nsecond line');
-      assert.equal(selectionReads, 1);
+      assert.equal(selectionReads, 2);
       const draft = await begin({ kind: 'terminal.input.propose', handle: result.value.handle, title: 'Synthetic editable review', text: 'first\nsecond\r\u0003\u001b[31m\u0000' });
       assert.match(document.querySelector('[role="dialog"]')?.textContent ?? '', /sends no terminal input or Enter/);
       const textarea = document.querySelector('textarea')!;
@@ -135,11 +130,9 @@ test('host dialog drives choice/input/copy and the two-phase clipboard share usi
       assert.deepEqual(writes, ['synthetic output']);
       selectionState.visible = false;
       const hidden = await begin({ kind: 'terminal.selection.read', title: 'Hidden terminal' });
-      await click(button('Preview terminal selection'));
-      assert.ok(document.querySelector('[role="alert"]'));
-      assert.equal(selectionReads, 1);
-      await click(button('Cancel'));
       assert.deepEqual(await hidden.promise, { cancelled: true });
+      assert.equal(selectionReads, 2);
+      assert.equal(document.querySelector('[role="dialog"]'), null);
     } finally { cleanupSelection(); terminalElement.remove(); }
     const cancelled = await begin({ kind: 'clipboard.write', title: 'Cancelled copy', text: 'must not copy' });
     await click(button('Cancel'));

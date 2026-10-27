@@ -47,7 +47,7 @@ class PluginHostVaultService {
           this.admissions.set(params, binding);
           return {
             permission: method === "vault.requestHostDraft" ? "vault.write" : method === "vault.selectHosts" ? "vault.metadata" : "ui.interact",
-            resources: ["*"], allowedScopes: ["once"],
+            resources: ["*"], allowedScopes: ["once"], deferDecision: true,
             reason: method === "vault.selectHosts" ? "Choose the current host metadata to share" : method === "vault.requestHostDraft" ? "Review a host draft before saving" : "Review a saved host connection and its script disclosure",
             operationId: method,
           };
@@ -61,6 +61,7 @@ class PluginHostVaultService {
     if (this.admissions.get(params) !== binding) throw fail("permissionDenied", "Host action admission is unavailable");
     this.admissions.delete(params);
     const assertActive = async () => {
+      await originalContext.assertActive();
       if (await this.sourceBinding.resolve(originalContext) !== binding) throw fail("permissionDenied", "Host action source changed");
       if (params.target) this.#resolveTarget(params.target, params.expectedRevision, binding);
     };

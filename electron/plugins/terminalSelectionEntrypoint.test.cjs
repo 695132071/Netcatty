@@ -76,9 +76,11 @@ async function fixture(t) {
     const archive = path.join(root, 'fixture.ncpkg');
     await buildPluginPackage(sourceRoot, archive);
     await service.manager.install(archive, { enable: true });
+    service.database.setPermissionMode(manifest.id, "terminal.selection.read", "ask");
+    service.database.setPermissionMode(manifest.id, "terminal.input.propose", "ask");
   };
   return { root, service, sender, window, manager, runtime, select, install, writes, prompts, decisions, responses,
-    mode(value) { mode = value; }, selection(value) { selection = value; }, allow(value) { allow = value; },
+    mode(value) { mode = value; }, selection(value) { selection = value; }, allow(value) { allow = value; service.permissionEngine.setMode({ id, manifest }, "terminal.selection.read", value ? "ask" : "deny"); },
     async startB() { nextSession = 'terminal-b'; await manager.request('netcatty:local:start', {}, { webContentsId: 7 }); select('terminal-b', 'renderer-b'); },
   };
 }
@@ -111,7 +113,7 @@ test('installed entrypoint keeps consent, exact snapshots, separate references a
   await f.install(source, manifest);
   const run = (name) => f.service.contributionService.executeCommand(`${id}.${name}`);
   f.allow(false);
-  await assert.rejects(run('share'), /denied/);
+  await assert.rejects(run('share'), /disabled/);
   assert.equal(f.prompts.filter((p) => !p.closed).length, 0);
   f.allow(true); f.mode('cancel');
   assert.deepEqual(await run('share'), { cancelled: true });
@@ -137,11 +139,10 @@ test('installed entrypoint keeps consent, exact snapshots, separate references a
   assert.equal(f.prompts.filter((p) => p.request?.kind === 'terminal.input.propose').at(-1).terminalSessionId, 'terminal-b');
   await assert.rejects(run('spoof'), /unavailable/);
   assert.deepEqual(f.writes, []);
-  const selectionDecision = f.decisions.find((d) => d.permission === 'terminal.selection.read');
-  const draftDecision = f.decisions.find((d) => d.permission === 'terminal.input.propose');
-  assert.deepEqual(selectionDecision.allowedScopes, ['once']);
-  assert.deepEqual(draftDecision.allowedScopes, ['once']);
-  assert.match(selectionDecision.resources[0], /^terminal-session:terminal-a:window:7:/);
+  assert.equal(f.decisions.length, 0, 'Ask is integrated into host sharing and draft UI');
+  assert.ok(f.prompts.some((p) => p.permissionMode === 'ask'));
+  assert.match(f.prompts.find((p) => p.request?.kind === 'terminal.selection.read').terminalSessionId, /terminal-a/);
+  f.service.interactionService.rates.clear();
   f.service.permissionEngine.revokeApplication(id, 'terminal.input.propose');
   await assert.rejects(run('draftLast'), /unavailable/);
   const audit = JSON.stringify(f.service.database.listSecurityAudit?.(id) ?? []);
@@ -222,5 +223,25 @@ test('changing the selected renderer cancels an installed preview and rejects la
   await assert.rejects(pending, /cancel|changed/);
   assert.equal(await f.service.interactionService.respond(f.sender, { requestId: preview.requestId, actionToken: preview.actionToken, action: 'submit' }), false);
   assert.equal(f.service.interactionService.terminalSelection.handles.size, 0);
+  assert.deepEqual(f.writes, []);
+});
+
+test('installed Allow shares the host-selected snapshot without confirmation; Deny releases no text or draft', { timeout: 15_000 }, async (t) => {
+  const f = await fixture(t); await f.install(source, manifest);
+  const plugin = f.service.database.getActivePlugin(id);
+  f.service.permissionEngine.setMode(plugin, 'terminal.selection.read', 'allow');
+  f.service.permissionEngine.setMode(plugin, 'terminal.input.propose', 'allow');
+  const run = (name) => f.service.contributionService.executeCommand(`${id}.${name}`);
+  const shared = await run('share'); assert.equal(shared.text, 'synthetic owned selection\nsecond line');
+  assert.equal(f.prompts.filter((p) => p.phase === 'preview').length, 0, 'no sharing confirmation in Allow');
+  assert.equal(f.decisions.length, 0);
+  assert.equal(await run('draftLast'), true, 'editable draft remains a real workflow');
+  assert.deepEqual(f.writes, []);
+  f.service.permissionEngine.setMode(plugin, 'terminal.selection.read', 'deny');
+  const count = f.prompts.length;
+  await assert.rejects(run('share'), /disabled/);
+  assert.equal(f.prompts.length, count);
+  assert.equal(f.service.interactionService.terminalSelection.handles.size, 0);
+  await assert.rejects(run('draftLast'), /unavailable/);
   assert.deepEqual(f.writes, []);
 });

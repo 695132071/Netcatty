@@ -171,7 +171,12 @@ class PluginHostRpcRegistry {
     const middleware = [...this.middleware];
     const streamHandlers = [...this.incomingStreams];
     const createHandler = (kind, method, registration) => async (params, transportContext) => {
+      const operationController = new AbortController();
+      const signal = transportContext.signal ? AbortSignal.any([transportContext.signal, operationController.signal]) : operationController.signal;
+      const authorizationGuards = [];
       const assertActive = async () => {
+        signal.throwIfAborted();
+        for (const guard of authorizationGuards) guard();
         transportContext.signal?.throwIfAborted();
         await assertCurrent?.();
         transportContext.signal?.throwIfAborted();
@@ -181,6 +186,7 @@ class PluginHostRpcRegistry {
       let auditResources;
       let auditResult;
       let auditError;
+      const authorizationCleanup = [];
       try {
         await assertActive();
         const validatedParams = registration.validateParams
@@ -192,6 +198,9 @@ class PluginHostRpcRegistry {
         const authorizationContext = Object.freeze({
           ...transportContext,
           ...identity,
+          signal,
+          addAuthorizationGuard: (guard) => authorizationGuards.push(guard),
+          cancelAuthorization: (reason) => operationController.abort(reason),
           assertActive,
           kind,
           method,
@@ -201,6 +210,10 @@ class PluginHostRpcRegistry {
           },
           params: validatedParams,
         });
+        for (const current of middleware) {
+          const cleanup = current.prepareAuthorization?.(authorizationContext);
+          if (typeof cleanup === "function") authorizationCleanup.push(cleanup);
+        }
         const resolvedAuthorization = typeof registration.authorization === "function"
           ? await registration.authorization(validatedParams, authorizationContext)
           : registration.authorization;
@@ -230,6 +243,7 @@ class PluginHostRpcRegistry {
         auditError = error;
         throw error;
       } finally {
+        for (const cleanup of authorizationCleanup) cleanup();
         // Never record params, handler results, error messages or plugin text.
         const dataBytes = (value) => {
           if (typeof value === "string") return Buffer.byteLength(value);

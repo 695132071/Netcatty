@@ -22,26 +22,23 @@ function fixture() {
     allow: (v) => { allowed = v; }, review: (v) => { reviewed = v; }, current: (v) => { current = v; }, source: (v) => { sourceId = v; }, revoke: () => revoke({ pluginId: context.pluginId }) };
 }
 
-test("model invocation independently requests content permission and reviewed text", async (t) => {
+test("model invocation independently checks content permission without a duplicate sharing prompt", async (t) => {
   const f = fixture(); t.after(() => f.service.shutdown());
   const { items: [reference] } = await f.service.list({}, f.context); assert.equal(f.reads(), 0);
   const chat = await f.service.open({}, f.context);
   f.allow(false);
   await assert.rejects(f.service.start({ chatHandle: chat.chatHandle, prompt: "Hi", contexts: [{ handle: reference.handle, version: reference.version }] }, f.context));
   assert.equal(f.reads(), 0); assert.equal(f.invoked(), 0);
-  f.allow(true); f.review(false);
-  await assert.rejects(f.service.start({ chatHandle: chat.chatHandle, prompt: "Hi", contexts: [{ handle: reference.handle, version: reference.version }] }, f.context));
-  assert.equal(f.invoked(), 0);
-  f.review(true);
+  f.allow(true); f.hostAdapter.reviewText = () => { throw new Error("Duplicate sharing prompt"); };
   const turn = await f.service.start({ chatHandle: chat.chatHandle, prompt: "Hi", contexts: [{ handle: reference.handle, version: reference.version }] }, f.context);
   assert.equal((await f.service.read(turn, f.context)).text, "Result");
   assert.ok(f.authorizations.every((authorization) => authorization.permission === "context.selected.read" && authorization.allowedScopes[0] === "once"));
 });
 
-test("source change during host review suppresses text and inference", async (t) => {
+test("source change during selected-content read suppresses text and inference", async (t) => {
   const f = fixture(); t.after(() => f.service.shutdown());
   const { items: [reference] } = await f.service.list({}, f.context); const chat = await f.service.open({}, f.context);
-  f.hostAdapter.reviewText = async () => { f.source("source-b"); return true; };
+  f.service.selected.handles.get(reference.handle).readText = async () => { f.source("source-b"); return "Never release"; };
   await assert.rejects(f.service.start({ chatHandle: chat.chatHandle, prompt: "Hi", contexts: [{ handle: reference.handle, version: reference.version }] }, f.context));
   assert.equal(f.invoked(), 0);
 });
