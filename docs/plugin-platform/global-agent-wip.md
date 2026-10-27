@@ -87,6 +87,34 @@ checkpoint. Original runner failure remains historical evidence. Neither that
 rerun nor the helper fix establishes runtime, native or independent-review
 acceptance; the correction still needs reviewer recheck.
 
+### Follow-up: cancellation is not source revocation
+
+The independent recheck confirmed the first two repairs and found a remaining
+Stop race: an aborted Stop(A) RPC could enter the generic owner-failure cleanup
+after B had started, revoking B's scope. The same failure was reproduced at both
+owner-validation await paths using the actual source binding. Exact-18377 source
+with the new 18-case scope suite yields 16 passed / 2 failed; evidence is retained
+in `/tmp/netcatty-global-agent-stop-rpc-exact183-before.log`.
+
+The minimal follow-up distinguishes this request's abort/deadline from verified
+owner or resource failure, rethrows the access failure, and leaves the existing
+turn-capture rule intact. Cancellation of Stop(A) cannot revoke B. A separate
+regression confirms that a verified source mismatch still aborts native work
+even when the RPC is concurrently cancelled. Foreign caller protections remain.
+The full foundation/permission group passes 26 tests on Node 22.23.3 and Node
+24.19.0; focused lint and diff checks pass. Logs:
+`/tmp/netcatty-global-agent-stop-rpc-final.log` and
+`/tmp/netcatty-global-agent-stop-rpc-node22.log`. Independent recheck is pending.
+
+The authorized original-head Linux rerun `122048349748` ended cancelled, with an
+operation-cancelled log and no assertion failure. No second rerun was requested.
+At 18377, test workflow `40462595842`, Linux job `122050816182`, also received an
+explicit runner shutdown; `PluginLogSettings.test.tsx` was SIGKILLed immediately
+afterward. That interrupted stage reports 34 passed / 1 failed, not a complete
+repository total or an assertion failure. Both Windows jobs passed. No blind
+rerun of that job was made. Package workflow `40462595846` was still running when
+checked. These records are not substituted for exact-head green CI.
+
 ## Planned public contract and adapters
 
 The proposed feature is `ai.agent-sessions`, with `ai.agent.use` for conversation

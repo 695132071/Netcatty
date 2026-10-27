@@ -38,7 +38,7 @@ function fixture() {
   const scopes = new DelegatedAgentScopes({ resolveOwner: (ctx) => binding.resolve(ctx),
     assertHostActive: async () => { if (locked) throw Error("Locked"); },
     authorizeAction: (...args) => authorize(...args), clock: () => time });
-  return { scopes, context, target, targets: currentTargets,
+  return { scopes, context, target, targets: currentTargets, database,
     issue: (targets = [target("terminal-a"), target("terminal-b")]) => scopes.issue(context,
       { backend, targets, capabilities: ["terminal.execute", "session.environment"] }),
     action: (id = "terminal-a") => ({ capabilityId: "terminal.execute", targets: [target(id)] }),
@@ -176,6 +176,39 @@ test("Stop captures turn A before owner validation and cannot cancel replacement
   assert.equal(await stopping, false);
   assert.equal(second.controller.signal.aborted, false, "an earlier Stop must not cancel a later turn");
   assert.equal(await f.scopes.assertTurn(second, f.context), second.scope);
+});
+
+for (const phase of [1, 5]) {
+  test(`cancelled Stop(A) during owner check ${phase} cannot revoke replacement turn B`, { timeout: 2_000 }, async () => {
+    const f = fixture(); const ref = await f.issue(); const first = await f.scopes.begin(ref.handle, f.context);
+    const entered = deferred(); const release = deferred(); const rpc = new AbortController(); let checks = 0;
+    const stopContext = { ...f.context, signal: rpc.signal, assertActive: async () => {
+      if (++checks === phase) { entered.resolve(); await release.promise; }
+      rpc.signal.throwIfAborted();
+    } };
+    const stopping = f.scopes.stop(ref.handle, stopContext);
+    await entered.promise; f.scopes.finish(first);
+    const second = await f.scopes.begin(ref.handle, f.context);
+    rpc.abort(phase === 1 ? new DOMException("Stop cancelled", "AbortError") : new DOMException("Stop deadline", "TimeoutError"));
+    release.resolve();
+    await assert.rejects(stopping, (error) => error === rpc.signal.reason);
+    assert.equal(second.controller.signal.aborted, false, "a cancelled RPC does not revoke source authority or stop a later turn");
+    assert.equal(f.scopes.scopes.size, 1);
+    assert.equal(await f.scopes.assertTurn(second, f.context), second.scope);
+  });
+}
+
+test("verified source failure still aborts native work when the RPC is concurrently cancelled", async () => {
+  const f = fixture(); const ref = await f.issue(); const ticket = await f.scopes.begin(ref.handle, f.context);
+  const rpc = new AbortController(); const retained = f.database.getRetainedPluginSource;
+  f.database.getRetainedPluginSource = () => {
+    rpc.abort(new DOMException("Concurrent RPC cancellation", "AbortError"));
+    return { ...retained(), id: "different-retained-source" };
+  };
+  await assert.rejects(f.scopes.assertTurn(ticket, { ...f.context, signal: rpc.signal }),
+    (error) => error !== rpc.signal.reason && error.code === -32007);
+  assert.equal(ticket.controller.signal.aborted, true);
+  assert.equal(f.scopes.scopes.size, 0);
 });
 
 test("a foreign runtime cannot revoke a victim scope by failing authentication with its handle", async () => {

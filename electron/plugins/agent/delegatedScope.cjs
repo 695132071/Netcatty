@@ -5,6 +5,9 @@ const { PluginRpcError, RPC_ERRORS } = require("../rpcRouter.cjs");
 
 const fail = (code) => new PluginRpcError(RPC_ERRORS[code], "Delegated Agent scope is unavailable");
 const key = (target) => JSON.stringify([target.kind, target.id]);
+const isRequestCancellation = (error, context) => context.signal?.aborted === true
+  && (error === context.signal.reason || error?.name === "AbortError" || error?.name === "TimeoutError"
+    || error?.code === RPC_ERRORS.cancelled || error?.code === RPC_ERRORS.deadlineExceeded);
 
 // Host-only authority, not a plugin RPC interface or an Agent engine. The host
 // supplies snapshots after resolving configured backends and choosing targets.
@@ -75,7 +78,7 @@ class DelegatedAgentScopes {
     catch (error) {
       // Context identity comes from the authenticated host transport. Revoke
       // only its own captured scope, never a victim referenced by another caller.
-      if (scope && scope.owner.runtimeId === context.runtimeId && scope.owner.pluginId === context.pluginId
+      if (!isRequestCancellation(error, context) && scope && scope.owner.runtimeId === context.runtimeId && scope.owner.pluginId === context.pluginId
         && scope.owner.pluginVersion === context.pluginVersion) this.#revoke(scope);
       throw error;
     }
@@ -86,7 +89,10 @@ class DelegatedAgentScopes {
         || scope.expiresAt <= this.clock()) throw fail("permissionDenied");
       this.#assertSnapshots(scope);
     } catch (error) {
-      this.#revoke(scope);
+      // A failed individual RPC has no authority to revoke another turn. Real
+      // owner/target failure still invalidates the scope, even if a request also
+      // happens to be cancelled at that time.
+      if (!isRequestCancellation(error, context)) this.#revoke(scope);
       throw error;
     }
     return scope;
