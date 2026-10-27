@@ -76,3 +76,33 @@ denial. This transport correction does not redesign that policy.
 Native outcome, independent verification, and the sample's light-theme appearance
 follow-up remain separate acceptance work. No GUI launch, sandbox bypass, paid
 model invocation, main merge, or release was performed for this correction.
+
+## Node 22 CI observer correction
+
+The new cold-start test failed on exact head `9ca70f329` in test run
+`40436198585`, Linux job `121965743101`: 15,206 passed, 1 failed, 50 skipped.
+The sole failure was the empty SDK/renderer-error assertion receiving one
+`SDK_OR_RENDERER_ERROR` marker. This red result is retained as evidence; it is
+not an unrelated baseline failure.
+
+The CI runtime was Node `22.23.3`; local validation had used Node `24.19.0`.
+Reproduction on the exact CI version identified the safe category
+`setup:node-sqlite-experimental`, before any model operation. The existing
+`node:sqlite` import schedules its ExperimentalWarning on the next tick via
+`console.error`. The newly added observer was installed before that warning
+drained. The same test passed on Node 24, which did not emit that warning.
+
+The test now lets pending module warnings reach normal stderr before installing
+the SDK/renderer observer. The warning remains visible, and the zero-runtime-error
+assertion is unchanged. Safe phase/error categories make future failures
+diagnosable without request payloads or headers. No production behavior, timeout,
+permission, or cancellation assertion changed. Both Node versions pass the
+focused test; the Node 22 parallel fixture/UI/provider/preload group passes all
+16 tests with concurrency 4.
+
+Diagnostic evidence: `/tmp/netcatty-ai-cold-ci-node22-sqlite-category.log` fails
+before correction, `/tmp/netcatty-ai-cold-ci-node22-after.log` passes with the
+SQLite warning still visible, and `/tmp/netcatty-ai-cold-ci-node22-parallel.log`
+records the parallel check. The appearance-only sample change is independently
+published as `e325742abf9fd329f1f7858eda66367e7a62357c`; its package hash is
+`7943d4c3800914fe0acd3d0f3a3d7f7c1910c212a5dc58a044871a6a82485274`.

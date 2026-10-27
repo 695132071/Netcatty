@@ -55,10 +55,26 @@ test('cold plugin host reaches the local fixture through the actual main provide
   const streamResults: Array<{ ok: boolean; statusCode?: number; allowlistRejected: boolean }> = [];
   const providerSyncs: Array<{ count: number; selectedPresent: boolean }> = [];
   const sdkErrorNames: string[] = [];
+  let diagnosticPhase = 'setup';
   const originalConsoleError = console.error;
+  // node:sqlite was imported above. Node 22 delivers its ExperimentalWarning
+  // asynchronously through console.error. Let module warnings reach normal
+  // stderr before observing SDK/renderer errors; do not suppress that warning.
+  await new Promise<void>((resolve) => setImmediate(resolve));
   // The expected pre-fix SDK error contains request details. Keep diagnostics
   // categorical even on the failing-before path; never print payloads/headers.
-  console.error = () => { sdkErrorNames.push('SDK_OR_RENDERER_ERROR'); };
+  console.error = (value: unknown) => {
+    let category = 'unknown';
+    if (typeof value === 'string' && /not wrapped in act/.test(value)) category = 'react-act-warning';
+    else if (typeof value === 'string' && /act.*environment|environment.*act/.test(value)) category = 'react-act-environment';
+    else if (typeof value === 'string' && /ExperimentalWarning: SQLite is an experimental feature/.test(value)) category = 'node-sqlite-experimental';
+    else if (typeof value === 'string') category = 'other-string';
+    else if (value && typeof value === 'object') {
+      const name = (value as { name?: unknown }).name;
+      if (typeof name === 'string' && ['AbortError', 'AI_APICallError', 'AI_LoadAPIKeyError', 'TypeError', 'Error'].includes(name)) category = name;
+    }
+    sdkErrorNames.push(`${diagnosticPhase}:${category}`);
+  };
   t.after(() => { console.error = originalConsoleError; });
   try {
     server.listen(0, '127.0.0.1'); await once(server, 'listening');
@@ -149,6 +165,7 @@ test('cold plugin host reaches the local fixture through the actual main provide
       executeCommand: async (command: string, args: unknown) => structuredClone(await service!.contributionService.executeCommand(command, structuredClone(args))),
       onDidReceiveMessage: () => ({ dispose() {} }),
     } });
+    diagnosticPhase = 'initial-selection';
     await act(async () => panel!.window.eval(fs.readFileSync(path.join(sample, 'panel.js'), 'utf8')));
     await waitFor(() => document.getElementById('plugin-ai-note') !== null);
     const noteChoice = document.getElementById('plugin-ai-note') as HTMLSelectElement;
@@ -162,23 +179,28 @@ test('cold plugin host reaches the local fixture through the actual main provide
     assert.equal(reference.value, ''); assert.equal(reference.options.length, 2);
     assert.notEqual(reference.options[1].value, syntheticNote.id); reference.value = reference.options[1].value;
     const send = () => element('compose').dispatchEvent(new panel!.window.Event('submit', { cancelable: true }));
+    diagnosticPhase = 'deny-content';
     send(); await waitFor(() => element('status').textContent!.startsWith('Request ended'));
     assert.equal(counts.requests, 0); assert.equal(reviews.length, 0);
     contentAllowed = true;
+    diagnosticPhase = 'cancel-review';
     send(); await waitFor(() => element('status').textContent!.startsWith('Request ended'));
     assert.equal(counts.requests, 0); assert.equal(reviews.length, 1);
     assert.equal(reviews[0].defaultId, reviews[0].cancelId); assert.match(String(reviews[0].detail), /Synthetic retry plan: add a retry button/);
     reviewAllowed = true;
+    diagnosticPhase = 'complete-stream';
     send(); await waitFor(() => counts.completed === 1 || streamResults.some((result) => !result.ok));
     assert.deepEqual(streamResults.at(-1), { ok: true, statusCode: 200, allowlistRejected: false },
       'Cold plugin startup must synchronize host providers before the main allowlist admits transport');
     assert.ok(providerSyncs.some((sync) => sync.selectedPresent && sync.count === 2), 'Preserve other host-configured providers in the shared registry');
     await waitFor(() => element('status').textContent === 'Complete');
     assert.equal(counts.completed, 1); assert.match(element('response').textContent!, /Synthetic plan/); assert.match(element('usage').textContent!, /12 input tokens/);
+    diagnosticPhase = 'stop-stream';
     send(); await waitFor(() => element('response').textContent!.startsWith('Synthetic plan: '));
     element('stop').dispatchEvent(new panel.window.Event('click'));
     await waitFor(() => element('status').textContent === 'Stopped' && counts.aborted === 1);
     const stoppedText = element('response').textContent; await new Promise((resolve) => setTimeout(resolve, 50)); assert.equal(element('response').textContent, stoppedText);
+    diagnosticPhase = 'lock-stream';
     send(); await waitFor(() => element('response').textContent!.startsWith('Synthetic plan: '));
     locked = true; registerAppAppLockRuntime({ locked: true } as NonNullable<ReturnType<typeof getAppAppLockRuntime>>);
     for (const listener of lockListeners) listener({ locked: true });
