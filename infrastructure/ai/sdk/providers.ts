@@ -496,7 +496,11 @@ export function createBridgeFetchForSDK(
 
     // Streaming path
     if (isStreamingRequest(resolvedInit)) {
-      const requestId = `${requestContext?.requestIdPrefix ?? ''}sdk_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+      const delegatedId = /^plugin-agent:([0-9a-f-]{36})$/.exec(requestContext?.chatSessionId ?? '')?.[1];
+      if (delegatedId && (!/^agent-model_[0-9a-f-]{36}_[0-9a-f-]{36}_$/.test(requestContext?.requestIdPrefix ?? '')
+        || !requestContext?.requestIdPrefix?.startsWith(`agent-model_${delegatedId}_`))) throw Error('Delegated model request identity required');
+      const prefix = requestContext?.requestIdPrefix ?? '';
+      const requestId = `${prefix}sdk_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
       const captureOpenAIChatFields = createOpenAIChatStreamFieldCapture(requestContext);
       const normalizeOpenAIChatToolCalls = createOpenAIChatToolCallNormalizer(requestId);
 

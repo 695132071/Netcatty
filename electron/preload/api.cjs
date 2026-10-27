@@ -1993,17 +1993,17 @@ function createPreloadApi(ctx) {
   aiAllowlistAddHost: async (baseURL) => {
     return ipcRenderer.invoke("netcatty:ai:allowlist:add-host", { baseURL });
   },
-  aiExec: async (sessionId, command, chatSessionId) => {
-    return ipcRenderer.invoke("netcatty:ai:exec", { sessionId, command, chatSessionId });
+  aiExec: async (sessionId, command, chatSessionId, delegationTag) => {
+    return ipcRenderer.invoke("netcatty:ai:exec", { sessionId, command, chatSessionId, ...(delegationTag ? { delegationTag } : {}) });
   },
-  aiCattyCancelExec: async (chatSessionId) => {
-    return ipcRenderer.invoke("netcatty:ai:catty:cancel", { chatSessionId });
+  aiCattyCancelExec: async (chatSessionId, delegationTag) => {
+    return ipcRenderer.invoke("netcatty:ai:catty:cancel", { chatSessionId, ...(delegationTag ? { delegationTag } : {}) });
   },
-  aiSetChatSessionCancelled: async (chatSessionId, cancelled = true) => {
-    return ipcRenderer.invoke("netcatty:ai:chat-session:set-cancelled", { chatSessionId, cancelled });
+  aiSetChatSessionCancelled: async (chatSessionId, cancelled = true, delegationTag) => {
+    return ipcRenderer.invoke("netcatty:ai:chat-session:set-cancelled", { chatSessionId, cancelled, ...(delegationTag ? { delegationTag } : {}) });
   },
-  aiCapability: async (rpcMethod, params, chatSessionId) => {
-    return ipcRenderer.invoke("netcatty:ai:capability", { rpcMethod, params, chatSessionId });
+  aiCapability: async (rpcMethod, params, chatSessionId, delegationTag) => {
+    return ipcRenderer.invoke("netcatty:ai:capability", { rpcMethod, params, chatSessionId, ...(delegationTag ? { delegationTag } : {}) });
   },
   aiDiscoverAgents: async (options) => {
     return ipcRenderer.invoke("netcatty:ai:agents:discover", options);
@@ -2064,8 +2064,8 @@ function createPreloadApi(ctx) {
   aiPrivacyStatus: async () => ipcRenderer.invoke("netcatty:ai:privacy:status"),
   aiPrivacyTransform: async (request) => ipcRenderer.invoke("netcatty:ai:privacy:transform", request),
   aiPrivacyClearSession: async (chatSessionId) => ipcRenderer.invoke("netcatty:ai:privacy:clear", chatSessionId),
-  aiMcpUpdateSessions: async (sessions, chatSessionId) => {
-    return ipcRenderer.invoke("netcatty:ai:mcp:update-sessions", { sessions, chatSessionId });
+  aiMcpUpdateSessions: async (sessions, chatSessionId, delegationTag) => {
+    return ipcRenderer.invoke("netcatty:ai:mcp:update-sessions", { sessions, chatSessionId, ...(delegationTag ? { delegationTag } : {}) });
   },
   aiMcpUpdateLiveSessions: async (sessions) => {
     return ipcRenderer.invoke("netcatty:ai:mcp:update-live-sessions", { sessions });

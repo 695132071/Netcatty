@@ -333,3 +333,16 @@ test("listClaudeModels aborts a hung SDK query and returns it for cleanup", asyn
   assert.equal(queryAbortSignal.aborted, true);
   assert.equal(returnCount, 1);
 });
+
+test("delegated Claude uses only explicit MCP configuration and cannot inherit local settings/tool mode", () => {
+  const options = buildClaudeQueryOptions({
+    delegatedAgent: true, toolIntegrationMode: "mcp", settings: { mcpServers: { unwanted: {} } },
+    injectedMcpServers: [{ name: "scoped-netcatty", command: "host-managed", args: [], env: [] }],
+  });
+  assert.equal(options.strictMcpConfig, true);
+  assert.deepEqual(options.settingSources, []);
+  assert.deepEqual(options.tools, []);
+  assert.equal(options.settings, undefined);
+  assert.deepEqual(Object.keys(options.mcpServers), ["scoped-netcatty"]);
+  assert.throws(() => buildClaudeQueryOptions({ delegatedAgent: true, toolIntegrationMode: "skills" }), /requires MCP/);
+});

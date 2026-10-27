@@ -157,7 +157,9 @@ function createCapabilityRpcDispatcher(deps) {
         hostname: host?.hostname || "",
       };
     }
-    const permission = evaluatePermissionWithGrants({
+    const permission = deps.isDelegatedApproval?.(approvalContext)
+      ? { allowed: !isChatSessionCancelled(params?.chatSessionId), requiresApproval: false }
+      : evaluatePermissionWithGrants({
       rpcMethod,
       surface,
       permissionMode: deps.permissionMode,

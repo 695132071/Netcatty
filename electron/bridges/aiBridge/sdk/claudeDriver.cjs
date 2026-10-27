@@ -101,7 +101,9 @@ function mergeClaudeEffortSettings(settings, effort) {
 function buildClaudeQueryOptions({
   cwd, model, env, pathToClaudeCodeExecutable, abortController, injectedMcpServers, settings, resume,
   toolIntegrationMode,
+  delegatedAgent = false,
 }) {
+  if (delegatedAgent && toolIntegrationMode !== "mcp") throw Error("Delegated Claude requires MCP mode");
   const { model: resolvedModel, effort } = splitClaudeModelSelection(model);
   const options = {
     cwd,
@@ -130,8 +132,12 @@ function buildClaudeQueryOptions({
     options.pathToClaudeCodeExecutable = pathToClaudeCodeExecutable;
   }
   // Optional settings.json path / inline object — additive to CLAUDE_CONFIG_DIR.
-  const parsedSettings = mergeClaudeEffortSettings(parseClaudeSettings(settings), effort);
+  const parsedSettings = mergeClaudeEffortSettings(delegatedAgent ? undefined : parseClaudeSettings(settings), effort);
   if (parsedSettings !== undefined) options.settings = parsedSettings;
+  if (delegatedAgent) {
+    options.strictMcpConfig = true;
+    options.settingSources = [];
+  }
   return options;
 }
 

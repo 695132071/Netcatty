@@ -2192,3 +2192,49 @@ test("SDK adapter passes a live privacy guard through asynchronous driver startu
   assert.equal(sent, false);
   assert.equal(h.ctx.sdkActiveStreams.size, 0);
 });
+
+test("delegated Agent entry rejects unverified runtimes and Skills before native/environment work", async () => {
+  let validated = 0;
+  const { handlers } = registerWithStubbedCtx({
+    mcpServerBridge: {
+      isPluginAgentConversation: () => true,
+      assertPluginAgentCaller: () => {},
+      getPluginAgentMcpConfiguration: () => { validated++; throw Error("No current delegation"); },
+    },
+  });
+  const handler = handlers.get("netcatty:ai:sdk-agent:stream");
+  for (const sdkBackend of ["codex", "copilot", "cursor", "codebuddy", "opencode", "grok", "mimo", "arbitrary-cli"]) {
+    await assert.rejects(handler({ sender: { id: 7 } }, {
+      requestId: "synthetic", chatSessionId: "plugin-agent:synthetic", sdkBackend, toolIntegrationMode: "mcp",
+    }), /not eligible/);
+  }
+  await assert.rejects(handler({ sender: { id: 7 } }, {
+    requestId: "synthetic", chatSessionId: "plugin-agent:synthetic", sdkBackend: "claude", toolIntegrationMode: "skills",
+  }), /not eligible/);
+  assert.equal(validated, 0);
+  await assert.rejects(handler({ sender: { id: 7 } }, {
+    requestId: "synthetic", chatSessionId: "plugin-agent:synthetic", sdkBackend: "claude", toolIntegrationMode: "mcp",
+  }), /No current delegation/);
+  assert.equal(validated, 1);
+});
+
+test("delegated native cancellation is exact-request and cannot mark replacement chat work cancelled", async () => {
+  const broad = [];
+  const { handlers, ctx } = registerWithStubbedCtx({ mcpServerBridge: {
+    isPluginAgentConversation: () => true,
+    setChatSessionCancelled: () => broad.push('chat'), cancelPtyExecsForSession: () => broad.push('pty'),
+    clearPendingApprovals: () => broad.push('approval'), cancelWorkerBackgroundJobsForSession: () => broad.push('worker'),
+  } });
+  const first = new AbortController(); const second = new AbortController();
+  const chat = 'plugin-agent:synthetic';
+  ctx.sdkActiveStreams.set('native-a', first); ctx.sdkRequestSessions.set('native-a', chat);
+  ctx.sdkRequestRuntimes.set('native-a', { delegationTag: 'tag-a', senderId: 7 });
+  ctx.sdkActiveStreams.set('native-b', second); ctx.sdkRequestSessions.set('native-b', chat);
+  ctx.sdkRequestRuntimes.set('native-b', { delegationTag: 'tag-b', senderId: 7 });
+  const cancel = handlers.get('netcatty:ai:sdk-agent:cancel');
+  assert.equal((await cancel({ sender: { id: 7 } }, { requestId: 'native-a', chatSessionId: chat })).ok, true);
+  assert.equal(first.signal.aborted, true); assert.equal(second.signal.aborted, false);
+  assert.equal((await cancel({ sender: { id: 7 } }, { requestId: '', chatSessionId: chat })).ok, false);
+  assert.equal((await cancel({ sender: { id: 99 } }, { requestId: 'native-b', chatSessionId: chat })).ok, false);
+  assert.equal(second.signal.aborted, false); assert.deepEqual(broad, []);
+});

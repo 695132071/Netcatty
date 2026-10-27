@@ -611,11 +611,21 @@ function withContentLength(headers, body) {
 }
 
 async function streamRequest(url, options, event, requestId, skipTLS) {
+  if (requestId.startsWith("agent-model_") && !/^agent-model_[0-9a-f-]{36}_[0-9a-f-]{36}_sdk_/.test(requestId)) {
+    throw new Error("Delegated model request identity invalid");
+  }
   const parsedUrl = new URL(url);
   // Register cancellation before any await so Stop during PAC/proxy lookup works.
   const controller = new AbortController();
   const pluginRuntimeId = /^plugin-model_([A-Za-z0-9-]{1,128})_/.exec(requestId)?.[1];
-  const { idleTimeoutMs, totalTimeoutMs } = pluginRuntimeId
+  const delegatedMatch = /^agent-model_([0-9a-f-]{36})_([0-9a-f-]{36})_sdk_/.exec(requestId);
+  const delegatedId = delegatedMatch?.[1];
+  const delegationTag = delegatedMatch?.[2];
+  const delegatedBridge = delegatedId ? require("./mcpServerBridge.cjs") : null;
+  const assertDelegation = () => delegatedBridge?.assertPluginAgentCaller(`plugin-agent:${delegatedId}`, event.sender.id, delegationTag);
+  assertDelegation();
+  const detachDelegation = delegatedBridge?.onPluginAgentRelease(`plugin-agent:${delegatedId}`, delegationTag, () => controller.abort(createAbortError()));
+  const { idleTimeoutMs, totalTimeoutMs } = pluginRuntimeId || delegatedId
     ? { idleTimeoutMs: Math.min(15_000, Math.max(1, Number(options.idleTimeoutMs) || 15_000)),
         totalTimeoutMs: Math.min(60_000, Math.max(1, Number(options.totalTimeoutMs) || 60_000)) }
     : resolveAIStreamTimeouts(options);
@@ -629,6 +639,7 @@ async function streamRequest(url, options, event, requestId, skipTLS) {
     clearTimeout(idleTimer);
     activeStreams.delete(requestId);
     pluginModelStreamOwners.delete(requestId);
+    detachDelegation?.();
   };
   const noteStreamActivity = () => {
     if (lifecycleFinished) return;
@@ -647,6 +658,9 @@ async function streamRequest(url, options, event, requestId, skipTLS) {
     finishLifecycle();
     throw controller.signal.reason instanceof Error ? controller.signal.reason : createAbortError();
   }
+
+  try { assertDelegation(); }
+  catch (error) { finishLifecycle(); throw error; }
 
   const { resolveOutboundHttpAgent } = require("./httpNetworkProxyAgent.cjs");
   let proxyAgent;
@@ -731,6 +745,7 @@ async function streamRequest(url, options, event, requestId, skipTLS) {
     if (proxyAgent) reqOpts.agent = proxyAgent;
 
     try {
+      assertDelegation();
       req = lib.request(parsedUrl, reqOpts,
         (res) => {
         if (streamFinished) {
@@ -795,7 +810,7 @@ async function streamRequest(url, options, event, requestId, skipTLS) {
         res.on("data", (chunk) => {
           if (streamFinished) return;
           noteStreamActivity();
-          if (pluginRuntimeId) {
+          if (pluginRuntimeId || delegatedId) {
             pluginResponseBytes += Buffer.byteLength(chunk);
             if (pluginResponseBytes > 131_072) {
               failStream(new Error("Plugin model stream byte budget exceeded"));

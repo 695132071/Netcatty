@@ -46,6 +46,7 @@ function loadBridgeWithMocks(options = {}) {
       clearPendingApprovals() {},
       cleanupScopedMetadata: async () => {},
       cleanup() {},
+      ...options.mcpServerBridge,
     },
       "../cli/discoveryPath.cjs": {
       getCliLauncherPath: () => "/tmp/netcatty-tool-cli",
@@ -1724,6 +1725,37 @@ async function withCapturingServer(t, options, respond) {
     },
   };
 }
+
+test("delegated model stream release aborts its actual HTTP request and stale turns fail before HTTP", { timeout: 5_000 }, async (t) => {
+  const { randomUUID } = require("node:crypto");
+  const id = randomUUID(); const tag = randomUUID(); const chatId = `plugin-agent:${id}`;
+  let live = true; let release; let detached = 0; let requests = 0;
+  let resolveAccepted; const accepted = new Promise((resolve) => { resolveAccepted = resolve; });
+  const ctx = await withCapturingServer(t, { mcpServerBridge: {
+    assertPluginAgentCaller: (actual, sender, actualTag) => {
+      assert.equal(actual, chatId); assert.equal(sender, 1);
+      if (!live || actualTag !== tag) throw Error("Agent turn unavailable");
+    },
+    onPluginAgentRelease: (_id, _tag, cancel) => { release = cancel; return () => detached++; },
+  } }, (res) => {
+    requests++; res.writeHead(200, { "content-type": "text/event-stream" });
+    res.write('data: {"synthetic":true}\n\n'); resolveAccepted();
+  });
+  try {
+    const invoke = (turnTag) => ctx.ipcMain.handlers.get("netcatty:ai:chat:stream")({ sender: ctx.sender }, {
+      requestId: `agent-model_${id}_${turnTag}_sdk_fixture`, url: `${ctx.baseURL}/v1/chat/completions`,
+      headers: { "content-type": "application/json" }, body: '{"stream":true}', providerId: "content-length",
+    });
+    const ended = new Promise((resolve) => ctx.onStreamEvent((channel) => {
+      if (channel === "netcatty:ai:stream:error" || channel === "netcatty:ai:stream:end") resolve();
+    }));
+    const pending = invoke(tag); await accepted; live = false; release();
+    await pending; await ended;
+    assert.equal(detached, 1); assert.equal(requests, 1);
+    const stale = await invoke(randomUUID());
+    assert.equal(stale.ok, false); assert.equal(requests, 1);
+  } finally { ctx.restore(); }
+});
 
 test("streaming AI requests send Content-Length instead of chunked encoding", { timeout: 5_000 }, async (t) => {
   const ctx = await withCapturingServer(t, {}, (res) => {

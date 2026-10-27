@@ -44,6 +44,7 @@ const DRIVER_REGISTRY = {
         settings: ctx.claudeSettings,
         resume: ctx.resumeSessionId,
         toolIntegrationMode: ctx.toolIntegrationMode,
+        delegatedAgent: ctx.delegatedAgent === true,
       });
       return claude.runClaudeTurn({ prompt: ctx.prompt, attachments: ctx.attachments, options, emitter: ctx.emitter, assertSessionValid: ctx.assertSessionValid });
     },

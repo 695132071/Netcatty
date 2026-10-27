@@ -5,6 +5,25 @@ import { z } from 'zod';
 import { createBridgeFetchForSDK, createModelFromConfig } from './sdk/providers';
 import type { OpenAIChatAssistantFields } from './providerContinuation';
 
+test('delegated bridge fetch rejects absent or substituted turn identity before transport', async (t) => {
+  const original = Object.getOwnPropertyDescriptor(globalThis, 'window');
+  let requests = 0;
+  Object.defineProperty(globalThis, 'window', { configurable: true, value: { netcatty: {
+    aiFetch: async () => { requests++; throw Error('Unexpected fixture transport'); },
+    aiChatStream: async () => { requests++; throw Error('Unexpected fixture transport'); },
+  } } });
+  t.after(() => { if (original) Object.defineProperty(globalThis, 'window', original); else Reflect.deleteProperty(globalThis, 'window'); });
+  const id = '11111111-1111-4111-8111-111111111111';
+  const tag = '22222222-2222-4222-8222-222222222222';
+  for (const requestIdPrefix of [undefined, 'sdk_', `agent-model_${tag}_${tag}_`]) {
+    const fetch = createBridgeFetchForSDK('synthetic-provider', { requireBridge: true, chatSessionId: `plugin-agent:${id}`, requestIdPrefix });
+    await assert.rejects(fetch('http://fixture.invalid/v1/chat/completions', {
+      method: 'POST', body: JSON.stringify({ stream: true, messages: [] }),
+    }), /Delegated model request identity/);
+  }
+  assert.equal(requests, 0);
+});
+
 test('buffers stream events emitted before the Response stream starts', async (t) => {
   const originalWindow = (globalThis as typeof globalThis & { window?: unknown }).window;
   t.after(() => {

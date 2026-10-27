@@ -10,6 +10,8 @@ const net = require("node:net");
 const crypto = require("node:crypto");
 const fs = require("node:fs");
 const path = require("node:path");
+const { PluginAgentMcpDelegations } = require("../plugins/agent/mcpDelegation.cjs");
+const pluginAgentDelegations = new PluginAgentMcpDelegations();
 const { existsSync } = require("node:fs");
 
 const { toUnpackedAsarPath, getFreshIdlePrompt, formatSyntheticEcho } = require("./ai/shellUtils.cjs");
@@ -1423,7 +1425,7 @@ function handleConnection(socket) {
       consumedUntil = newlineIdx + 1;
       searchFrom = consumedUntil;
       if (!line.trim()) continue;
-      debugLog("Incoming line", line);
+      debugLog("Incoming message", { bytes: Buffer.byteLength(line) });
       handleMessage(socket, line);
     }
     if (consumedUntil > 0) buffer = buffer.slice(consumedUntil);
@@ -1455,7 +1457,8 @@ async function handleMessage(socket, line) {
     const isExternalToken = Boolean(
       presentedToken && externalAuthToken && presentedToken === externalAuthToken,
     );
-    if (method === "auth/verify" && (isCattyToken || isExternalToken)) {
+    const isDelegatedToken = method === "auth/verify" && pluginAgentDelegations.authenticate(presentedToken, socket);
+    if (method === "auth/verify" && (isCattyToken || isExternalToken || isDelegatedToken)) {
       if (isExternalToken && !externalMcpActivityHook?.isEnabled?.()) {
         const response = JSON.stringify({
           jsonrpc: "2.0",
@@ -1496,6 +1499,13 @@ async function handleMessage(socket, line) {
 
   try {
     const callParams = { ...(params || {}) };
+    const delegatedChat = pluginAgentDelegations.boundChat(socket);
+    if (delegatedChat) {
+      if (callParams.chatSessionId && callParams.chatSessionId !== delegatedChat) throw Error("Agent connection cannot change its session");
+      callParams.chatSessionId = delegatedChat;
+    } else if (pluginAgentDelegations.isReserved(callParams.chatSessionId)) {
+      throw Error("Delegated Agent credentials required");
+    }
     // External-token sockets always operate under the reserved app-wide scope so
     // callers cannot omit chatSessionId and widen access via scopedSessionIds.
     if (externalMcpSockets.has(socket)) {
@@ -1531,7 +1541,7 @@ async function handleMessage(socket, line) {
         managedPrivacyScopes.set(socket, callParams.chatSessionId);
       }
       result = await createManagedPrivacyBoundary(
-        (rpcMethod, rpcParams, context) => dispatch(rpcMethod, rpcParams, context),
+        (rpcMethod, rpcParams, context) => dispatch(rpcMethod, rpcParams, { ...context, externalSocket: socket }),
         aiPrivacyService,
       )(method, callParams);
     }
@@ -1653,6 +1663,7 @@ const dispatchCapabilityRpc = createCapabilityRpcDispatcher({
     return invokeVaultAgentFn(...args);
   },
   evaluatePermissionWithGrants,
+  isDelegatedApproval: (context) => pluginAgentDelegations.isApproved(context),
   get permissionMode() {
     return permissionMode;
   },
@@ -2148,7 +2159,17 @@ function getBuiltinRpcHandlerRegistry() {
 }
 
 async function dispatch(method, params, approvalContext = {}) {
-  debugLog("dispatch", { method, params, permissionMode });
+  if (pluginAgentDelegations.isReserved(params?.chatSessionId)) {
+    return pluginAgentDelegations.dispatch(method, params, approvalContext,
+      (approved) => dispatchCore(method, params, approved));
+  }
+  return dispatchCore(method, params, approvalContext);
+}
+
+async function dispatchCore(method, params, approvalContext = {}) {
+  const delegated = pluginAgentDelegations.isApproved(approvalContext);
+  if (delegated) debugLog("Delegated dispatch", { method });
+  else debugLog("dispatch", { method, params, permissionMode });
 
   if (!method.startsWith("netcatty/")) {
     const capabilityResult = await dispatchCapabilityRpc(method, params || {}, approvalContext);
@@ -2164,7 +2185,8 @@ async function dispatch(method, params, approvalContext = {}) {
   pruneCompletedBackgroundJobs();
 
   const approvalTarget = getApprovalTarget(params);
-  const permission = evaluatePermissionWithGrants({
+  const permission = delegated ? { allowed: !isChatSessionCancelled(params?.chatSessionId), requiresApproval: false }
+    : evaluatePermissionWithGrants({
     rpcMethod: method,
     surface: CAPABILITY_SURFACES.BUILTIN,
     permissionMode,
@@ -2284,7 +2306,7 @@ async function dispatch(method, params, approvalContext = {}) {
 
 // ── Handler: getContext ──
 
-async function handleGetContext(params) {
+async function handleGetContext(params, approvalContext) {
   debugLog("handleGetContext:start", { params, sessionCount: sessions?.size || 0 });
   const toolHints = buildMcpToolHints();
   if (!sessions) {
@@ -2383,6 +2405,12 @@ async function handleGetContext(params) {
     }
   }
 
+  if (pluginAgentDelegations.isApproved(approvalContext)) {
+    // Do not query or serialize app-wide tunnel/tool inventory for a delegated
+    // conversation. Its core-owned scope already selected the session metadata.
+    return { environment: "netcatty-terminal", description: "Use only these host-selected session IDs.",
+      hosts, hostCount: hosts.length };
+  }
   let activePortForwardTunnels = [];
   try {
     activePortForwardTunnels = await listActivePortForwards();
@@ -2532,12 +2560,18 @@ const configAndCleanupApi = createConfigAndCleanupApi({
 const { resolveMcpServerRuntimeCommand, buildMcpServerConfig, cleanupScopedMetadata } = configAndCleanupApi;
 
 function cleanup() {
+  pluginAgentDelegations.shutdown();
   try { disposeWorkerSessionClosed?.dispose?.(); } catch { /* ignore */ }
   disposeWorkerSessionClosed = null;
   shutdownHost();
 }
 
 module.exports = {
+  registerPluginAgentDelegation: (...args) => pluginAgentDelegations.register(...args),
+  getPluginAgentMcpConfiguration: (id, tag) => pluginAgentDelegations.configuration(id, tag),
+  isPluginAgentConversation: (id) => pluginAgentDelegations.isReserved(id),
+  assertPluginAgentCaller: (id, senderId, tag) => pluginAgentDelegations.assertCaller(id, senderId, tag),
+  onPluginAgentRelease: (id, tag, cancel) => pluginAgentDelegations.onRelease(id, tag, cancel),
   init,
   setCommandBlocklist,
   getCommandBlocklist,

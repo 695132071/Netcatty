@@ -117,6 +117,53 @@ checked. These records are not substituted for exact-head green CI.
 
 ## Planned public contract and adapters
 
+### Stage 2A: trusted native dispatch boundary
+
+The independent bounded recheck of foundation `ba4d3fc` passed all 20 reviewer
+cases. This resolves its reported helper findings; it does not establish full CI,
+runtime, backend or native acceptance.
+
+The additive transport slice gives managed subprocesses a separate per-turn MCP
+credential, permanently binds their TCP connection to that turn, filters their
+tool list, and routes actual tool execution through the source-bound host policy
+adapter. Catty's trusted-app IPC enters the same dispatcher. Branded approval
+contexts skip the legacy Agent approval only after that host adapter grants the
+action; process-global permission mode is unchanged. Selected environment reads
+return the scoped session metadata without querying global tunnel inventory.
+
+Managed Claude is restricted to its existing MCP mode with builtin tools disabled,
+strict MCP configuration and no inherited settings sources. The main native entry
+rejects unverified backends and Skills mode for reserved delegated conversations.
+Each model stream and native SDK request carries a main-owned turn tag; releasing
+that lease aborts its HTTP/native work. Old credentials, cancellation requests and
+disposers cannot acquire or cancel the next turn.
+
+The focused boundary suite passes 116 cases, including an actual local TCP/main
+handler with synthetic workers, plus two new actual-HTTP/renderer-transport lease
+tests. These are deterministic transport tests, not real model inference or
+authenticated Claude service/CLI acceptance. Public runtime registration, core
+conversation integration and the custom chat sample are still separate work in
+progress; this transport slice alone is not a usable plugin Agent feature.
+
+At exact `ba4d3fc`, package CI `40464058910` passed; test workflow `40464058908`
+is red. Linux job `122055141575` failed a real assertion in
+`PluginManagementDialog.interaction.test.tsx:71`: the external view handoff had
+not run when asserted. That stage reports 34 passed / 1 failed; earlier runtime
+and contract groups passed 720 and 5. Both Windows jobs passed. No blind rerun was
+requested. This unresolved assertion must not be classified as runner shutdown.
+
+The wider initial local transport run reports 697 passed / 10 failed / 3 skipped.
+All ten failures are Cursor discovery expectations after `npm ci --ignore-scripts`
+left SQLite's native binding absent, making the bundled Cursor SDK import fail.
+The standard rebuild first failed using unwritable default caches; rebuilding
+with task-local npm/node-gyp cache paths succeeded. The failed totals are retained
+in `/tmp/netcatty-global-agent-transport-expanded.log`; the after-setup run is
+recorded separately. No GUI or provider credentials were used.
+
+After the dependency repair, the expanded transport/native-handler/preload/SDK
+suite passes 709 tests, 0 failures, 3 skips. Log:
+`/tmp/netcatty-global-agent-transport-expanded-after-setup.log`. Focused lint passes.
+
 The proposed feature is `ai.agent-sessions`, with `ai.agent.use` for conversation
 operations and `ai.agent.actions` for actual Agent tool actions. Permission mode
 comes from the existing source-bound Allow/Ask/Deny engine. These are additive
