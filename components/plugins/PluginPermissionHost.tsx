@@ -13,7 +13,7 @@ export function PluginPermissionHost() {
   const description = describePluginPermission(prompt.permission, resolvedLocale);
   const resources = prompt.resources.filter((resource) => resource !== '*' && !resource.startsWith('selected:'));
   return <Dialog open onOpenChange={(open) => { if (!open) void respond('cancel'); }}>
-    <DialogContent className="max-h-[85vh] overflow-y-auto sm:max-w-[480px]">
+    <DialogContent data-host-security-surface="" className="max-h-[85vh] overflow-y-auto sm:max-w-[480px]">
       <DialogHeader>
         <DialogTitle>{description.label}</DialogTitle>
         <DialogDescription className="break-words">{prompt.pluginName ?? prompt.pluginId} · {prompt.pluginVersion}</DialogDescription>

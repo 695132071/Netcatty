@@ -713,8 +713,12 @@ function registerPluginBridge(ipcMain, options) {
     await options.logService.ready;
     return options.logService[action](payload);
   });
-  handle(CHANNELS.permissionReady, async (_manager, payload, event) => options.permissionDecisionHost?.setReady(event.sender, payload?.ready));
-  handle(CHANNELS.permissionResponse, async (_manager, payload, event) => options.permissionDecisionHost?.respond(event.sender, payload));
+  const permissionSender = (event) => {
+    if ("senderFrame" in event && (!event.senderFrame || event.senderFrame !== event.sender?.mainFrame)) throw new Error("Untrusted permission UI frame");
+    return event.sender;
+  };
+  handle(CHANNELS.permissionReady, async (_manager, payload, event) => options.permissionDecisionHost?.setReady(permissionSender(event), payload?.ready));
+  handle(CHANNELS.permissionResponse, async (_manager, payload, event) => options.permissionDecisionHost?.respond(permissionSender(event), payload));
   handle(CHANNELS.setPermissionMode, async (_manager, payload) => {
     const pluginId = assertManagedPluginId(payload);
     const plugin = options.database?.getActivePlugin(pluginId);

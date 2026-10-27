@@ -6,48 +6,51 @@ const { describePluginPermission } = require("../../domain/pluginPermissionDescr
 const { escapePermissionText } = require("./nativePermissionDecision.cjs");
 const CHANNEL = "netcatty:plugins:permission-prompt";
 
-/** Main-window-only Ask decisions. Tokens are bound to one pending request and
- * consumed before any asynchronous work. Plugin windows never own this link. */
+/** Ask belongs to a ready, focused managed app renderer. Plugin views never
+ * own this link. Each token and cancellation lifecycle stays with its window. */
 class PluginPermissionDecisionHost {
   constructor(options) {
-    this.getWindow = options.getWindow;
+    this.getWindows = options.getWindows ?? (() => [options.getWindow?.()].filter(Boolean));
     this.isLocked = options.isLocked ?? (() => true);
     this.pending = new Map();
-    this.owner = null;
+    this.owners = new Map();
     this.closed = false;
     this.unsubscribeLock = options.subscribeLock?.((state) => { if (state.locked) this.cancelAll(); });
   }
 
   setReady(sender, ready) {
     if (this.closed) throw permissionDenied("Permission UI is closed");
-    if (sender !== this.getWindow?.()?.webContents || sender.isDestroyed?.() || typeof ready !== "boolean") {
+    const window = this.getWindows().find((candidate) => candidate?.webContents === sender);
+    if (!window || window.isDestroyed?.() || sender.isDestroyed?.() || typeof ready !== "boolean") {
       throw permissionDenied("Permission UI sender is invalid");
     }
-    this.cancelAll();
-    this.cleanup?.(); this.cleanup = null;
-    this.owner = ready ? sender : null;
+    this.releaseOwner(sender);
     if (ready) {
-      const window = this.getWindow();
-      const cancel = () => this.cancelAll();
-      const release = () => { this.cancelAll(); this.owner = null; };
+      const cancel = () => this.cancelOwner(sender);
+      const release = () => this.releaseOwner(sender);
       const navigate = (details, _url, inPlace, mainFrame) => {
         if ((details?.isMainFrame ?? mainFrame) !== false && (details?.isSameDocument ?? inPlace) !== true) release();
       };
       sender.on?.("destroyed", release); sender.on?.("render-process-gone", release); sender.on?.("did-start-navigation", navigate);
-      window.on?.("hide", cancel); window.on?.("blur", cancel);
-      this.cleanup = () => {
+      window.on?.("hide", cancel); window.on?.("blur", cancel); window.on?.("closed", release);
+      this.owners.set(sender, { window, cleanup: () => {
         sender.removeListener?.("destroyed", release); sender.removeListener?.("render-process-gone", release); sender.removeListener?.("did-start-navigation", navigate);
-        window.removeListener?.("hide", cancel); window.removeListener?.("blur", cancel);
-      };
+        window.removeListener?.("hide", cancel); window.removeListener?.("blur", cancel); window.removeListener?.("closed", release);
+      } });
     }
     return true;
   }
 
+  get owner() {
+    return this.getWindows().find((window) => this.owners.has(window?.webContents)
+      && !window.isDestroyed?.() && window.isFocused?.() && window.isVisible?.())?.webContents ?? null;
+  }
+
   assertOwner(sender = this.owner) {
-    const window = this.getWindow?.();
-    if (this.closed || !sender || sender !== this.owner || window?.webContents !== sender || sender.isDestroyed?.()
+    const window = this.owners.get(sender)?.window;
+    if (this.closed || !sender || !window || !this.getWindows().includes(window) || window.webContents !== sender || sender.isDestroyed?.()
       || window.isDestroyed?.() || !window.isFocused?.() || !window.isVisible?.() || this.isLocked()) {
-      throw permissionDenied("Permission UI requires the focused unlocked main window");
+      throw permissionDenied("Permission UI requires a focused unlocked app window");
     }
   }
 
@@ -102,7 +105,9 @@ class PluginPermissionDecisionHost {
     return true;
   }
 
+  cancelOwner(sender) { for (const entry of [...this.pending.values()]) if (entry.sender === sender) entry.finish("cancel"); }
+  releaseOwner(sender) { this.cancelOwner(sender); this.owners.get(sender)?.cleanup(); this.owners.delete(sender); }
   cancelAll() { for (const entry of [...this.pending.values()]) entry.finish("cancel"); }
-  shutdown() { if (this.closed) return; this.closed = true; this.cancelAll(); this.cleanup?.(); this.unsubscribeLock?.(); this.owner = null; }
+  shutdown() { if (this.closed) return; this.closed = true; for (const sender of [...this.owners.keys()]) this.releaseOwner(sender); this.unsubscribeLock?.(); }
 }
 module.exports = { PluginPermissionDecisionHost, PLUGIN_PERMISSION_PROMPT_CHANNEL: CHANNEL };

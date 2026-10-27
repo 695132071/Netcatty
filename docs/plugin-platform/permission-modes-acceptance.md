@@ -23,7 +23,7 @@ activation or real user configuration change was performed here.
   revision, so stale controls cannot change a replacement source or override a
   newer Deny.
 - Ask decisions use the existing in-app Dialog/Button components, reached only
-  through trusted main-window preload IPC. A one-use response token binds the
+  through trusted managed-app-window preload IPC. A one-use response token binds the
   request; close, cancel, lock, blur/hide, reload, renderer crash and shutdown
   invalidate it. Plugin DOM clicks confer no host gesture authority.
 - Host selection, model/context selection and draft editing remain workflows.
@@ -85,6 +85,24 @@ initial-checkpoint evidence.
 
 ## Latest checks and remaining environment blockers
 
+- A registered regression reproduces `Plugin permission decision provider failed`
+  on exact `79a9bd6` when a Settings-owned view activates a real `settings.get`
+  API configured Ask while main is unfocused. The follow-up uses the existing
+  managed-window registry (including Settings), per-renderer readiness and the
+  same in-app component. It does not focus main or expand plugin-frame trust.
+  The actual Settings factory, installed package/SDK activation, view command
+  IPC and permission IPC now pass main/Settings/foreign/background, subframe,
+  independent readiness and hide/close/stale-token checks. Native Electron
+  objects are represented in this regression; this is not native GUI acceptance.
+  Focused boundary group: **67 passed**; renderer/native-view visibility group:
+  **three passed**; runtime aggregate: **695 passed/one native skip**. The initial
+  renderer assertion incorrectly expected a view to reappear while the separate
+  permission-settings security surface remained visible; the corrected test
+  checks both overlapping surfaces and restoration after both close.
+  Production build passed (69 seconds). Full lint passes with the same seven
+  warnings after moving a leftover screenshot harness out of the source tree;
+  its initial lint failure is retained. TypeScript remains baseline-equivalent
+  at 774 diagnostics, with zero added/removed after path normalization.
 - Subsequent exact `da4e809` workflows **40444934631** (tests) and
   **40444934738** (packages) passed. The full suite reports **15,392 tests:
   15,342 passed, 50 skipped, zero failures/cancellations**. The runtime group
@@ -233,5 +251,10 @@ node examples/plugins/database-minimal/prepare.mjs tcp://10.77.0.20:3306 /tmp/da
 7. Restart/update the same source with an explicit Deny; it must remain Deny.
    Check distinct plugins and sources, stale settings edits and explicit source
    reset. Review bounded audit events and optional local logging for redaction.
+8. Open a plugin view from standalone Settings and exercise an Ask-gated API
+   during activation and from its own view command. Ask must be reachable in
+   Settings without focusing main or losing the view. Close/hide/reload that
+   window, switch to an unrelated window, and try a stale response: old authority
+   must be cancelled, with no background-window fallback or plugin-frame reply.
 
 No merge, release or native acceptance is authorized by this handoff.

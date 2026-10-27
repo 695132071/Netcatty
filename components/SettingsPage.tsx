@@ -27,6 +27,7 @@ import { useExternalMcpGrantPersister } from "./ai/useExternalMcpGrantPersister"
 import { setupMcpApprovalBridge } from "../infrastructure/ai/shared/approvalGate";
 import { usePluginContributions } from "../application/state/usePluginContributions";
 import { PluginContributionHost } from "./plugins/PluginContributionHost";
+import { PluginPermissionHost } from "./plugins/PluginPermissionHost";
 import { matchesKeyBinding } from "../domain/models";
 import { isPrimaryModifierWBinding } from "../application/state/windowCommandClose";
 
@@ -720,6 +721,7 @@ const SettingsPageContent: React.FC<{ settings: SettingsState; appLock?: AppLock
             </Tabs>
         </div>
         <ExternalMcpApprovalsHost />
+        <PluginPermissionHost />
         <PluginContributionHost locale={settings.uiLanguage} theme={settings.resolvedTheme} themeTokens={pluginThemeTokens} />
         </>
     );

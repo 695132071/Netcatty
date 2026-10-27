@@ -37,9 +37,16 @@ before commits and content delivery, and remain invalid after a Deny-to-Allow
 flip. A late prompt reply cannot revive old work. The user must start a fresh
 operation after changing policy.
 
-Ask uses Netcatty's existing in-app Dialog, typography and theme. Only the trusted
-main window can receive requests or return scoped single-use tokens; close,
-cancel, timeout, lock, hide, reload, crash and stale runtime/source fail closed.
+Ask uses Netcatty's existing in-app Dialog, typography and theme. Its recipient
+must be a ready, focused, visible, unlocked top-level app renderer in the managed
+window registry, including the standalone Settings window. Arbitrary windows,
+plugin view contents and subframes cannot register or respond. Each single-use
+token and cancellation lifecycle remains bound to the receiving window; another
+renderer's readiness changes cannot cancel or inherit that request. No main-window
+focus handoff is needed. Close, cancel, timeout, lock, hide/blur, reload, crash
+and stale runtime/source fail closed. The dialog uses the existing host security
+surface marker so attached native plugin views yield while it is visible and
+restore through their existing lifecycle on dismissal.
 A plugin DOM click never becomes a host gesture. Choosers, drafts, terminal and
 clipboard sharing use their existing host-owned action tokens. Ask integrates
 with that workflow instead of opening a second capability dialog. Allow skips
