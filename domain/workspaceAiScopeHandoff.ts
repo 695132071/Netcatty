@@ -78,13 +78,15 @@ export function seedWorkspaceAIActiveSessionFromMembers(input: {
 }
 
 /**
- * When a workspace tab dissolves, copy its active chat onto the preferred
- * surviving terminal before the workspace scope key is pruned. Also remint
- * workspace-scoped chats and the handed-off active chat when it still lives
- * under a different terminal (including one that also survives dissolve),
- * clear that previous terminal selection so ownership filters do not hide the
- * chat, and seed a session panel view so terminal scopes do not fall back to
- * a blank draft.
+ * When a workspace tab dissolves, copy its active chat onto a surviving
+ * terminal before the workspace scope key is pruned. An inherited chat that
+ * is already terminal-scoped to a pane still in `terminalIds` stays on that
+ * owner, even when focus/preferred is a different survivor. Otherwise the
+ * target is the preferred survivor, or the first remaining terminal when the
+ * original pane is gone. Workspace-scoped chats are reminted onto that
+ * target, duplicate terminal map entries for the same chat are cleared, and
+ * a session panel view is seeded so terminal scopes do not fall back to a
+ * blank draft.
  */
 export function handoffDissolvedWorkspaceAIScope<T extends AISessionScopeHandoffLike>(input: {
   activeSessionIdMap: AIActiveSessionIdMap;
@@ -99,7 +101,7 @@ export function handoffDissolvedWorkspaceAIScope<T extends AISessionScopeHandoff
   panelViewByScope: Record<string, AIPanelViewHandoffLike>;
   changed: boolean;
 } {
-  const preferredTerminalId = (
+  const fallbackTerminalId = (
     input.preferredTerminalId
     && input.terminalIds.includes(input.preferredTerminalId)
       ? input.preferredTerminalId
@@ -109,6 +111,17 @@ export function handoffDissolvedWorkspaceAIScope<T extends AISessionScopeHandoff
   const workspaceKey = buildAIScopeKey('workspace', input.workspaceId);
   const workspaceActive = input.activeSessionIdMap[workspaceKey];
   const hasWorkspaceActive = typeof workspaceActive === 'string' && workspaceActive.length > 0;
+  const activeSession = hasWorkspaceActive
+    ? input.sessions.find((session) => session.id === workspaceActive)
+    : undefined;
+  const survivingOwnerTerminalId = (
+    activeSession?.scope.type === 'terminal'
+    && activeSession.scope.targetId
+    && input.terminalIds.includes(activeSession.scope.targetId)
+      ? activeSession.scope.targetId
+      : null
+  );
+  const handoffTargetTerminalId = survivingOwnerTerminalId ?? fallbackTerminalId;
   const previousPanelViewByScope = (
     input.panelViewByScope as Record<string, AIPanelViewHandoffLike> | undefined
   ) ?? {};
@@ -118,8 +131,8 @@ export function handoffDissolvedWorkspaceAIScope<T extends AISessionScopeHandoff
   };
   let mapChanged = false;
 
-  if (preferredTerminalId && hasWorkspaceActive) {
-    const terminalKey = buildAIScopeKey('terminal', preferredTerminalId);
+  if (handoffTargetTerminalId && hasWorkspaceActive) {
+    const terminalKey = buildAIScopeKey('terminal', handoffTargetTerminalId);
     let map = nextMap;
     let changed = false;
     if (map[terminalKey] !== workspaceActive) {
@@ -145,24 +158,23 @@ export function handoffDissolvedWorkspaceAIScope<T extends AISessionScopeHandoff
 
   let sessionsChanged = false;
   const nextSessions = input.sessions.map((session) => {
-    if (!preferredTerminalId) return session;
+    if (!handoffTargetTerminalId) return session;
 
     const isWorkspaceScoped = (
       session.scope.type === 'workspace'
       && session.scope.targetId === input.workspaceId
     );
-    // Inherited member chats stay terminal-scoped under the original pane.
-    // Prefer the focused survivor even when that original pane also survives
-    // dissolve, otherwise B's history ownership filter excludes A's chat.
+    // Keep an inherited chat on its owner when that pane survives. Remint
+    // only when the handoff target is a different terminal (original pane gone).
     const isInheritedActiveChatOnOtherTerminal = (
       hasWorkspaceActive
       && session.id === workspaceActive
       && session.scope.type === 'terminal'
       && Boolean(session.scope.targetId)
-      && session.scope.targetId !== preferredTerminalId
+      && session.scope.targetId !== handoffTargetTerminalId
     );
     if (!isWorkspaceScoped && !isInheritedActiveChatOnOtherTerminal) return session;
-    if (session.scope.type === 'terminal' && session.scope.targetId === preferredTerminalId) {
+    if (session.scope.type === 'terminal' && session.scope.targetId === handoffTargetTerminalId) {
       return session;
     }
 
@@ -172,7 +184,7 @@ export function handoffDissolvedWorkspaceAIScope<T extends AISessionScopeHandoff
       scope: {
         ...session.scope,
         type: 'terminal',
-        targetId: preferredTerminalId,
+        targetId: handoffTargetTerminalId,
       },
       updatedAt: Date.now(),
     };
@@ -182,8 +194,8 @@ export function handoffDissolvedWorkspaceAIScope<T extends AISessionScopeHandoff
   const nextPanelViewByScope: Record<string, AIPanelViewHandoffLike> = {
     ...previousPanelViewByScope,
   };
-  if (preferredTerminalId && hasWorkspaceActive) {
-    const terminalKey = buildAIScopeKey('terminal', preferredTerminalId);
+  if (handoffTargetTerminalId && hasWorkspaceActive) {
+    const terminalKey = buildAIScopeKey('terminal', handoffTargetTerminalId);
     const workspacePanelView = previousPanelViewByScope[workspaceKey];
     const terminalPanelView = previousPanelViewByScope[terminalKey];
     const nextView: AIPanelViewHandoffLike = (
