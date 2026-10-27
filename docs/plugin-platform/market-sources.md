@@ -42,7 +42,7 @@ or a package reference:
 {"path":"/assets/<64-lowercase-hex-sha256>.ncpkg","sha256":"<same-sha256>","size":12345}
 ```
 
-Packages are at most 32 MiB. The catalog entry must contain
+V2 delivery packages are at most 16 MiB. The catalog entry must contain
 `artifact: {url: "https://plugins.example.com/assets/<same-sha256>.ncpkg", sha256}`.
 The index's current, non-withdrawn version must exactly equal the catalog entry
 and use `distribution: "release"`. Source-only entries retain null delivery

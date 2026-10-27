@@ -104,6 +104,17 @@ test("avatar schema rejects foreign paths, non-raster formats and invalid sizes 
   }
 });
 
+test("v2 package references enforce the publisher's positive 16MiB bound without installing", async () => {
+  const entry = structuredClone(catalog[0]);
+  entry.artifact = { sha256: "a".repeat(64), url: `${OFFICIAL_SOURCE.origin}/assets/${"a".repeat(64)}.ncpkg` };
+  for (const size of [0, 16 * 1024 * 1024, 16 * 1024 * 1024 + 1]) {
+    const r = registry({ files: filesFor([entry], (_index, sidecar) => { sidecar.plugins[0].artifact.size = size; }) });
+    const snapshot = await r.service.list();
+    assert.equal(Boolean(snapshot.error), size !== 16 * 1024 * 1024);
+    assert.equal(r.requests.length, 4, "catalog validation never downloads or installs the package");
+  }
+});
+
 test("a changed selection or removed source cannot publish an in-flight avatar result", async () => {
   for (const change of ["selection", "source"]) {
     let release; let entered; let enabled = true;
