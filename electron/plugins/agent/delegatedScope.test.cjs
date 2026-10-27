@@ -148,6 +148,44 @@ test("backend config changes and expiry invalidate scopes; host snapshots cannot
   assert.equal(active.controller.signal.aborted, true); assert.equal(g.scopes.scopes.size, 0);
 });
 
+test("source replacement detected during owner authentication aborts already-running native work", async () => {
+  const f = fixture(); const ref = await f.issue(); const ticket = await f.scopes.begin(ref.handle, f.context);
+  const entered = deferred(); const release = deferred();
+  const result = f.scopes.dispatch(ticket, f.context, f.action(), async ({ signal }) => {
+    entered.resolve(signal); await release.promise; return "late native result";
+  });
+  const signal = await entered.promise;
+  try {
+    f.replaceSource();
+    await assert.rejects(f.scopes.assertTurn(ticket, f.context));
+    assert.equal(signal.aborted, true, "source detection must abort native work, not only reject its result");
+    assert.equal(f.scopes.scopes.size, 0);
+  } finally { release.resolve(); await assert.rejects(result); }
+});
+
+test("Stop captures turn A before owner validation and cannot cancel replacement turn B", async () => {
+  const f = fixture(); const ref = await f.issue(); const first = await f.scopes.begin(ref.handle, f.context);
+  const entered = deferred(); const release = deferred(); let blocked = false;
+  const stopContext = { ...f.context, assertActive: async () => {
+    if (!blocked) { blocked = true; entered.resolve(); await release.promise; }
+  } };
+  const stopping = f.scopes.stop(ref.handle, stopContext);
+  await entered.promise; assert.equal(f.scopes.finish(first), true);
+  const second = await f.scopes.begin(ref.handle, f.context);
+  release.resolve();
+  assert.equal(await stopping, false);
+  assert.equal(second.controller.signal.aborted, false, "an earlier Stop must not cancel a later turn");
+  assert.equal(await f.scopes.assertTurn(second, f.context), second.scope);
+});
+
+test("a foreign runtime cannot revoke a victim scope by failing authentication with its handle", async () => {
+  const f = fixture(); const ref = await f.issue(); const ticket = await f.scopes.begin(ref.handle, f.context);
+  await assert.rejects(f.scopes.stop(ref.handle, { ...f.context, runtimeId: "foreign-runtime" }));
+  assert.equal(ticket.controller.signal.aborted, false);
+  assert.equal(f.scopes.scopes.size, 1);
+  assert.equal(await f.scopes.assertTurn(ticket, f.context), ticket.scope);
+});
+
 test("bounded host scopes reject malformed snapshots without registering partial targets", async () => {
   const f = fixture(); await assert.rejects(f.issue([null])); assert.equal(f.scopes.scopes.size, 0);
   await assert.rejects(f.issue([f.target("terminal-a"), f.target("terminal-a")]));

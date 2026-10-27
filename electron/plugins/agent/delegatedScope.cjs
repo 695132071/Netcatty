@@ -69,8 +69,16 @@ class DelegatedAgentScopes {
   }
 
   async #resolve(handle, context) {
-    const owner = await this.#owner(context);
     const scope = this.scopes.get(handle);
+    let owner;
+    try { owner = await this.#owner(context); }
+    catch (error) {
+      // Context identity comes from the authenticated host transport. Revoke
+      // only its own captured scope, never a victim referenced by another caller.
+      if (scope && scope.owner.runtimeId === context.runtimeId && scope.owner.pluginId === context.pluginId
+        && scope.owner.pluginVersion === context.pluginVersion) this.#revoke(scope);
+      throw error;
+    }
     if (!scope || scope.owner !== owner) throw fail("permissionDenied");
     if (scope.expiresAt <= this.clock()) { this.#revoke(scope); throw fail("permissionDenied"); }
     try {
@@ -132,8 +140,12 @@ class DelegatedAgentScopes {
   }
 
   async stop(handle, context) {
+    // Capture before the first await. A prior Stop cannot acquire authority over
+    // a turn that replaces the one the caller intended to stop.
+    const candidate = this.scopes.get(handle);
+    const ticket = candidate?.activeTurn;
     const scope = await this.#resolve(handle, context);
-    return this.finish(scope.activeTurn);
+    return scope === candidate ? this.finish(ticket) : false;
   }
 
   #revoke(scope) {

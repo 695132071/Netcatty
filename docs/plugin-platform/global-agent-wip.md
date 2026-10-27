@@ -61,6 +61,32 @@ registered. This stage must not be described as an installable working Agent
 bridge. Focused scope/history/wire and permission-copy tests pass 20 cases;
 contract/SDK/CLI tests pass 91. Focused lint and generated drift checks pass.
 
+## Independent stage-1 correction
+
+The independent review of exact `056164157f34ea779ed6cf51199909082345eca4`
+confirmed two helper defects before any runtime acceptance claim: source failure
+during the initial owner check rejected late work without aborting the active
+native signal; Stop could acquire a replacement turn after awaiting identity.
+
+Both reproduce against that exact helper using the real `PluginAISourceBinding`:
+the focused before run is 13 passed / 2 failed. The correction revokes the captured
+scope when its own host-authenticated identity fails, and captures the intended
+turn before Stop's first await. A foreign runtime cannot use a failed lookup to
+revoke another caller's scope. Focused after: 15 passed / 0 failed. The complete
+foundation/permission group passes 23 on Node 24.19.0 and Node 22.23.3; focused lint
+and diff checks pass. Logs: `/tmp/netcatty-global-agent-review-before.log`,
+`/tmp/netcatty-global-agent-review-after.log`,
+`/tmp/netcatty-global-agent-review-node22.log`.
+
+The first CI run at 0561641, test `40459522087`, Linux job `122040565759`, failed
+after an explicit runner shutdown and operation cancellation, with no assertion
+failure in its log and no complete repository test total. Package workflow
+`40459521971` and both Windows jobs passed. The parent authorized one job rerun;
+it was requested once, producing Linux job `122048349748`, still running at this
+checkpoint. Original runner failure remains historical evidence. Neither that
+rerun nor the helper fix establishes runtime, native or independent-review
+acceptance; the correction still needs reviewer recheck.
+
 ## Planned public contract and adapters
 
 The proposed feature is `ai.agent-sessions`, with `ai.agent.use` for conversation
