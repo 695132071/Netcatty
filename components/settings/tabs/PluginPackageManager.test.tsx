@@ -27,5 +27,8 @@ test('package detail renders manifest resources as text and explains advanced au
   assert.match(html, /Declared supported capabilities default to Allow/);
   assert.match(html, /Ask or Deny/);
   assert.match(html, /Host validation and resource scope always apply/);
+  assert.match(html, /this capability may expose private data/);
+  assert.match(html, /mode can be changed in permission settings/);
+  assert.doesNotMatch(html, /before granting/);
   assert.match(html, /aaaaaaaaaaaaaaaa/);
 });
