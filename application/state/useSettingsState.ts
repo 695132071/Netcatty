@@ -1301,12 +1301,18 @@ export const useSettingsState = (options: { enableSettingsSync?: boolean; enable
     setSshTransportIdleTtlMsState,
   });
 
-  // Detached sessions share opacity and the shortcut configuration needed to
-  // operate it. Keep general settings listeners and OS effects disabled there.
+  // Detached sessions share window chrome (opacity, background blur) and the
+  // shortcut configuration needed to operate it. Keep general settings
+  // listeners and OS effects disabled there.
   useEffect(() => {
     if (enableSettingsSync) return;
     const applySharedWindowSetting = (key: string, value: unknown) => {
       if (key === STORAGE_KEY_WINDOW_OPACITY) applyIncomingWindowOpacity(value);
+      if (key === STORAGE_KEY_WINDOW_BACKGROUND_BLUR) {
+        // Storage events deliver the raw string; IPC delivers a boolean.
+        const incoming = typeof value === 'boolean' ? value : value === 'true';
+        setWindowBackgroundBlur(incoming);
+      }
       if (key === STORAGE_KEY_HOTKEY_SCHEME && (value === 'disabled' || value === 'mac' || value === 'pc')) {
         setHotkeyScheme(value);
       }

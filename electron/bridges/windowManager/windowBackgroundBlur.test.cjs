@@ -80,3 +80,16 @@ test('unsupported platforms retain the existing opacity behavior', () => {
     assert.equal(state.vibrancy, null);
   }
 });
+
+test('disabling blur before any theme color push restores the current theme background', () => {
+  const { invoke, state } = loadWindowManager('darwin');
+  // No setBackgroundColor / setTheme call yet: currentWindowBackgroundColor is
+  // still null, so the fallback must come from the active theme.
+  invoke('setWindowOpacity', 0.7);
+  invoke('setWindowBackgroundBlur', true);
+  assert.equal(state.background, '#00000000');
+  invoke('setWindowBackgroundBlur', false);
+  assert.equal(state.vibrancy, null);
+  assert.notEqual(state.background, '#00000000');
+  assert.match(String(state.background), /^#[0-9a-fA-F]{6}$/);
+});

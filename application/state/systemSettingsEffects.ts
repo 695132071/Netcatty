@@ -305,11 +305,17 @@ export function useSystemSettingsEffects({
     persistMountedRef,
   ]);
 
+  // Window chrome also applies in detached sessions, independently of the
+  // OS-level effects disabled there (tray, global shortcuts, autolaunch, ...).
+  // Only the windows that own settings persistence drive the shared native
+  // state; detached/editor windows consume it (see applySharedWindowSetting).
   useEffect(() => {
+    if (!enabled) return;
     localStorageAdapter.writeBoolean(STORAGE_KEY_WINDOW_BACKGROUND_BLUR, windowBackgroundBlur);
     if (!persistMountedRef.current) return;
     notifySettingsChanged(STORAGE_KEY_WINDOW_BACKGROUND_BLUR, windowBackgroundBlur);
   }, [
+    enabled,
     windowBackgroundBlur,
     notifySettingsChanged,
     persistMountedRef,
@@ -320,6 +326,9 @@ export function useSystemSettingsEffects({
     windowOpacityRecord.opacity,
   );
 
+  // Applies in every app-content window, including detached sessions: the
+  // transparent backing only looks right when the renderer class matches the
+  // native vibrancy the main process put on that window.
   useEffect(() => {
     if (typeof document === 'undefined') return;
     document.documentElement.classList.toggle('window-background-blur', windowBackgroundBlurActive);
@@ -330,11 +339,14 @@ export function useSystemSettingsEffects({
     };
   }, [windowBackgroundBlurActive, windowOpacityRecord.opacity]);
 
+  // setWindowBackgroundBlur is a main-process handler that retargets every
+  // app-content window, so a single owner must drive it.
   useEffect(() => {
+    if (!enabled) return;
     netcattyBridge.get()?.setWindowBackgroundBlur?.(windowBackgroundBlur).catch((err) => {
       console.warn('[WindowBackgroundBlur] Failed to apply macOS vibrancy:', err);
     });
-  }, [windowBackgroundBlur]);
+  }, [enabled, windowBackgroundBlur]);
 
   // Persist and sync app icon variant
   useEffect(() => {

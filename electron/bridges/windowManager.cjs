@@ -41,6 +41,8 @@ let currentLanguage = "en";
 let currentWindowOpacity = 1;
 let currentWindowBackgroundBlurRequested = false;
 let currentWindowBackgroundColor = null;
+/** Windows this module switched to a transparent backing, so restore is safe. */
+const transparentChromeWindows = new WeakSet();
 let cachedNativeTheme = null;
 
 let handlersRegistered = false; // Prevent duplicate IPC handler registration
@@ -439,11 +441,21 @@ function applyWindowBackgroundChromeToWindow(win, options = {}) {
     if (isWindowBackgroundBlurActive()) {
       win.setVibrancy?.("hud");
       win.setBackgroundColor?.("#00000000");
-    } else {
-      if (process.platform === "darwin") win.setVibrancy?.(null);
-      if (options.applyBackgroundColor === true && currentWindowBackgroundColor) {
-        win.setBackgroundColor?.(currentWindowBackgroundColor);
-      }
+      transparentChromeWindows.add(win);
+      return;
+    }
+    if (process.platform === "darwin") win.setVibrancy?.(null);
+    // Only undo a background this module actually made transparent. Touching
+    // the background otherwise would clobber the color the window was created
+    // with before any theme color has been pushed.
+    const wasTransparent = transparentChromeWindows.delete(win);
+    if (wasTransparent && options.applyBackgroundColor === true) {
+      // A window can be asked to drop vibrancy before any theme color has been
+      // pushed (cold start with blur already saved). Falling back to the active
+      // theme keeps the window from staying transparent.
+      const restoreColor = currentWindowBackgroundColor
+        || THEME_COLORS[currentTheme]?.background;
+      if (restoreColor) win.setBackgroundColor?.(restoreColor);
     }
   } catch {
     // ignore platform-specific chrome failures

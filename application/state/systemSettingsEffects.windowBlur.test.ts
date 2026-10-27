@@ -8,7 +8,15 @@ import { STORAGE_KEY_WINDOW_BACKGROUND_BLUR } from '../../infrastructure/config/
 import { DEFAULT_HTTP_NETWORK_PROXY } from '../../domain/httpNetworkProxy';
 import { useSystemSettingsEffects } from './systemSettingsEffects';
 
-test('opacity changes and remounts preserve the chosen blur preference', async () => {
+type Harness = {
+  dom: JSDOM;
+  params: Parameters<typeof useSystemSettingsEffects>[0];
+  bridgeRequests: boolean[];
+  blurNotifications: unknown[];
+  restore: () => void;
+};
+
+function setUp(enabled: boolean, windowBackgroundBlur: boolean): Harness {
   const dom = new JSDOM('<html><body><div id="root"></div></body></html>', { url: 'http://localhost' });
   Object.defineProperty(dom.window.navigator, 'platform', { value: 'MacIntel' });
   const previousGlobals = new Map<string, PropertyDescriptor | undefined>();
@@ -32,7 +40,7 @@ test('opacity changes and remounts preserve the chosen blur preference', async (
   });
   const noop = () => {};
   const params: Parameters<typeof useSystemSettingsEffects>[0] = {
-    enabled: false,
+    enabled,
     toggleWindowHotkey: '',
     globalHotkeyEnabled: false,
     closeToTray: false,
@@ -40,7 +48,7 @@ test('opacity changes and remounts preserve the chosen blur preference', async (
     autoLaunchEnabled: false,
     windowOpacityRecord: { opacity: 0.7, preferredOpacity: 0.7, version: 1 },
     windowOpacityMutationSourceRef: { current: 'local' },
-    windowBackgroundBlur: true,
+    windowBackgroundBlur,
     appIconVariant: 'original',
     autoUpdateEnabled: false,
     httpNetworkProxy: DEFAULT_HTTP_NETWORK_PROXY,
@@ -54,7 +62,29 @@ test('opacity changes and remounts preserve the chosen blur preference', async (
       if (key === STORAGE_KEY_WINDOW_BACKGROUND_BLUR) blurNotifications.push(value);
     },
   };
-  const Probe = (props: typeof params) => { useSystemSettingsEffects(props); return null; };
+  return {
+    dom,
+    params,
+    bridgeRequests,
+    blurNotifications,
+    restore: () => {
+      for (const [key, descriptor] of previousGlobals) {
+        if (descriptor) Object.defineProperty(globalThis, key, descriptor);
+        else Reflect.deleteProperty(globalThis, key);
+      }
+      dom.window.close();
+    },
+  };
+}
+
+const Probe = (props: Parameters<typeof useSystemSettingsEffects>[0]) => {
+  useSystemSettingsEffects(props);
+  return null;
+};
+
+test('opacity changes and remounts preserve the chosen blur preference', async () => {
+  const harness = setUp(true, true);
+  const { dom, params, bridgeRequests, blurNotifications, restore } = harness;
   let renderer: ReactTestRenderer | undefined;
   try {
     await act(async () => { renderer = create(React.createElement(Probe, params)); });
@@ -76,10 +106,34 @@ test('opacity changes and remounts preserve the chosen blur preference', async (
     assert.deepEqual(bridgeRequests, [true, true, false]);
   } finally {
     await act(async () => { renderer?.unmount(); });
-    for (const [key, descriptor] of previousGlobals) {
-      if (descriptor) Object.defineProperty(globalThis, key, descriptor);
-      else Reflect.deleteProperty(globalThis, key);
-    }
-    dom.window.close();
+    restore();
+  }
+});
+
+test('detached session windows only apply the blur class, never own the setting', async () => {
+  // Peer session windows run with enableSystemEffects off. They must still
+  // paint the transparent backing, but persistence, cross-window broadcast and
+  // the (all-windows) native vibrancy IPC stay with the settings owners.
+  const harness = setUp(false, true);
+  const { dom, params, bridgeRequests, blurNotifications, restore } = harness;
+  let renderer: ReactTestRenderer | undefined;
+  try {
+    await act(async () => { renderer = create(React.createElement(Probe, params)); });
+    assert.equal(document.documentElement.classList.contains('window-background-blur'), true);
+    assert.equal(document.documentElement.style.getPropertyValue('--window-content-opacity'), '0.7');
+    assert.equal(dom.window.localStorage.getItem(STORAGE_KEY_WINDOW_BACKGROUND_BLUR), null);
+    assert.deepEqual(bridgeRequests, []);
+    assert.deepEqual(blurNotifications, []);
+
+    await act(async () => {
+      renderer!.update(React.createElement(Probe, { ...params, windowBackgroundBlur: false }));
+    });
+    assert.equal(document.documentElement.classList.contains('window-background-blur'), false);
+    assert.equal(dom.window.localStorage.getItem(STORAGE_KEY_WINDOW_BACKGROUND_BLUR), null);
+    assert.deepEqual(bridgeRequests, []);
+    assert.deepEqual(blurNotifications, []);
+  } finally {
+    await act(async () => { renderer?.unmount(); });
+    restore();
   }
 });
