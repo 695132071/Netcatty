@@ -240,7 +240,7 @@ function createBridgeRegistrar(context) {
       isTrustedSender: createTrustedPluginBridgeSender({ devServerUrl: effectiveDevServerUrl }),
       broadcast: (channel, payload) => {
         for (const window of electronModule.BrowserWindow.getAllWindows()) {
-          if (!window.isDestroyed()) window.webContents.send(channel, payload);
+          if (!window.isDestroyed() && !window.webContents.isDestroyed()) window.webContents.send(channel, payload);
         }
       },
     });
