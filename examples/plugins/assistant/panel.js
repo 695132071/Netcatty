@@ -2,6 +2,31 @@
 'use strict';
 const element = (id) => document.getElementById(id);
 const invoke = (operation, params = {}) => window.netcattyView.executeCommand(`com.netcatty.assistant.${operation}`, params);
+// Follow the same seven public semantic tokens as the other browser samples.
+// Only this page's own DOM is updated; no host settings or DOM access is used.
+(() => {
+  const names = ['--background', '--foreground', '--muted', '--muted-foreground', '--border', '--primary', '--primary-foreground'];
+  let subscription;
+  const subscribe = () => {
+    if (subscription) return;
+    subscription = window.netcattyView.onDidChangeEnvironment?.((environment) => {
+      const root = document.documentElement;
+      const theme = ['light', 'dark'].includes(environment.theme) ? environment.theme : 'system';
+      root.dataset.theme = theme;
+      root.style.colorScheme = theme === 'system' ? 'light dark' : theme;
+      root.dataset.reducedMotion = String(Boolean(environment.reducedMotion));
+      root.dataset.highContrast = String(Boolean(environment.highContrast));
+      for (const name of names) {
+        const value = environment.themeTokens?.[name];
+        if (typeof value === 'string' && value.length > 0 && value.length <= 96) root.style.setProperty(name, value);
+        else root.style.removeProperty(name);
+      }
+    });
+  };
+  subscribe();
+  window.addEventListener('pagehide', () => { subscription?.dispose(); subscription = undefined; });
+  window.addEventListener('pageshow', subscribe);
+})();
 let chat;
 let turn;
 let generation = 0;

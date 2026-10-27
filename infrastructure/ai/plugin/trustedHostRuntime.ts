@@ -17,10 +17,12 @@ type Owned<T> = T & { runtimeId: string };
 
 export function createTrustedPluginAIHostRuntime(options: {
   getModel: () => { config: ProviderConfig; label: string; revision: string } | null;
+  prepareModel: (revision: string) => Promise<void>;
   chooseSelected: (signal: AbortSignal, runtimeId: string) => Promise<HostSelectedSource[]>;
   isActive: () => boolean;
 }) {
   const models = new Map<string, Owned<{ model: Model }>>();
+  const selections = new Set<{ runtimeId: string; active: boolean }>();
   const turns = new Map<string, Owned<{ iterator: Iterator; controller: AbortController; reading: boolean }>>();
   const sources = new Map<string, Owned<{ source: HostSelectedSource }>>();
   let closed = false;
@@ -37,6 +39,7 @@ export function createTrustedPluginAIHostRuntime(options: {
     void turn.iterator.return(undefined).catch(() => {});
   };
   const releaseRuntime = (runtimeId: string) => {
+    for (const selection of selections) if (selection.runtimeId === runtimeId) { selection.active = false; selections.delete(selection); }
     for (const [handle, turn] of turns) if (turn.runtimeId === runtimeId) cancel(handle);
     for (const [handle, model] of models) if (model.runtimeId === runtimeId) models.delete(handle);
     for (const [handle, source] of sources) if (source.runtimeId === runtimeId) sources.delete(handle);
@@ -50,12 +53,19 @@ export function createTrustedPluginAIHostRuntime(options: {
       if (kind === 'model.select') {
         const selected = options.getModel();
         if (!selected || !selected.config.enabled || !selected.config.defaultModel) throw Error('Choose a configured model first');
-        if (models.size >= 32) throw Error('Model handle limit reached');
-        const handle = crypto.randomUUID();
-        const model = createPluginModelAdapter({ config: selected.config, label: selected.label, transportTag: runtimeId,
-          isCurrent: () => !closed && options.isActive() && options.getModel()?.revision === selected.revision });
-        models.set(handle, { runtimeId, model });
-        return { hostHandle: handle, label: selected.label };
+        if (models.size + selections.size >= 32) throw Error('Model handle limit reached');
+        const selection = { runtimeId, active: true };
+        selections.add(selection);
+        try {
+          await options.prepareModel(selected.revision);
+          signal.throwIfAborted(); assertActive();
+          if (!selection.active || options.getModel()?.revision !== selected.revision) throw Error('Selected model changed');
+          const handle = crypto.randomUUID();
+          const model = createPluginModelAdapter({ config: selected.config, label: selected.label, transportTag: runtimeId,
+            isCurrent: () => !closed && options.isActive() && options.getModel()?.revision === selected.revision });
+          models.set(handle, { runtimeId, model });
+          return { hostHandle: handle, label: selected.label };
+        } finally { selections.delete(selection); }
       }
       if (kind === 'model.release') { owned(models, payload.hostHandle, runtimeId); models.delete(String(payload.hostHandle)); return { ok: true }; }
       if (kind === 'model.current') return { current: await owned(models, payload.hostHandle, runtimeId).model.isCurrent() };
@@ -138,6 +148,6 @@ export function createTrustedPluginAIHostRuntime(options: {
       throw Error('Unsupported host operation');
     },
     releaseRuntime,
-    shutdown() { closed = true; for (const handle of [...turns.keys()]) cancel(handle); models.clear(); sources.clear(); },
+    shutdown() { closed = true; for (const selection of selections) selection.active = false; selections.clear(); for (const handle of [...turns.keys()]) cancel(handle); models.clear(); sources.clear(); },
   };
 }

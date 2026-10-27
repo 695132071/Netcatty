@@ -4,7 +4,7 @@ import { getNotesSnapshot } from './notesStore';
 import { useActiveTabId } from './activeTabStore';
 import { getAppAppLockRuntime } from './appRuntimeBridge';
 import { createTrustedPluginAIHostRuntime } from '../../infrastructure/ai/plugin/trustedHostRuntime';
-import { getConfiguredPluginModel } from '../../infrastructure/ai/plugin/configuredModel';
+import { getConfiguredPluginModel, prepareConfiguredPluginModel } from '../../infrastructure/ai/plugin/configuredModel';
 import { buildSelectedPluginSources } from '../../infrastructure/ai/plugin/selectedSources';
 import { netcattyBridge } from '../../infrastructure/services/netcattyBridge';
 
@@ -29,6 +29,7 @@ export function usePluginAIContextHost({ sessions, workspaces }: { sessions: Ter
     const requests = new Map<string, { runtimeId: string; controller: AbortController }>();
     const runtime = createTrustedPluginAIHostRuntime({
       getModel: getConfiguredPluginModel,
+      prepareModel: prepareConfiguredPluginModel,
       isActive: () => mounted && document.visibilityState === 'visible' && getAppAppLockRuntime()?.locked === false,
       chooseSelected: (signal, runtimeId) => new Promise((resolve, reject) => {
         if (chooser) { reject(Error('A host selection is already pending')); return; }
