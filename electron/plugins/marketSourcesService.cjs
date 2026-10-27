@@ -34,15 +34,19 @@ class MarketSourcesService {
     }
     return catalog;
   }
-  async list(sourceId = "official") {
-    const snapshot = await this.#catalog(sourceId).list();
+  #publishCatalogIdentity(sourceId, entries) {
     // Selection tokens bind the validated entry and its delivery resources.
-    const identity = JSON.stringify(snapshot.entries.map((entry) => [entry.id, entry.selectionToken]));
+    const identity = JSON.stringify(entries.map((entry) => [entry.id, entry.selectionToken]));
     if (this.catalogIdentities.get(sourceId) !== identity) {
       this.catalogIdentities.set(sourceId, identity);
       this.#changed(sourceId);
     }
-    return snapshot;
+  }
+  list(sourceId = "official") {
+    return this.#catalog(sourceId).list().then((snapshot) => {
+      this.#publishCatalogIdentity(sourceId, snapshot.entries);
+      return snapshot;
+    });
   }
   readme(id, token, sourceId) { return this.#catalog(sourceId).readme(id, token); }
   async author(request) {
@@ -74,7 +78,11 @@ class MarketSourcesService {
   }
   install(id, token, sourceId = "official", acceptedSourceId) {
     if (sourceId !== "official" && acceptedSourceId !== sourceId) throw new Error("Review and confirm this third-party source before installing");
-    return this.#catalog(sourceId).install(id, token);
+    const catalog = this.#catalog(sourceId);
+    return catalog.install(id, token).finally(() => {
+      // A rejected stale selection can still have published a newer snapshot.
+      this.#publishCatalogIdentity(sourceId, catalog.publicEntries);
+    });
   }
   listSources() { return this.registry.list(); }
   addSource(payload) { return this.manager.changeMarketSource(() => this.registry.add(payload?.name, payload?.address)); }

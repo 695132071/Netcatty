@@ -51,7 +51,7 @@ test('mounted installed authors follow actual catalog/update/source entrypoints 
     changeMarketSource: async (change: () => unknown) => change() };
   let avatarReads = 0;
   const service = new MarketSourcesService({ database, manager,
-    fetch: async (url: string) => { assert.equal(new URL(url).origin, OFFICIAL_SOURCE.origin); return new Response(files.get(new URL(url).pathname)); },
+    fetch: async (url: string) => { assert.equal(new URL(url).origin, OFFICIAL_SOURCE.origin); assert.ok(!new URL(url).pathname.endsWith('.ncpkg'), 'rejected selection never downloads a package'); return new Response(files.get(new URL(url).pathname)); },
     createSourceFetch: (origin: string) => async (url: string) => { assert.equal(new URL(url).origin, origin); return new Response(files.get(new URL(url).pathname)); },
     resolveAvatar: async () => { avatarReads++; return 'data:image/png;base64,eA=='; } });
   const ipcMain = { handlers: new Map(), handle(channel: string, handler: unknown) { this.handlers.set(channel, handler); }, on() {} };
@@ -87,10 +87,13 @@ test('mounted installed authors follow actual catalog/update/source entrypoints 
     files = filesFor([{ ...entry, author: 'Updated project name' }], false);
     await act(async () => { await api.listPluginCatalog('official'); });
     assert.equal(row().dataset.author, 'Updated project name'); assert.equal(row().dataset.avatar, undefined);
+    const beforeWithdrawal = (await api.listPluginCatalog('official')).entries[0];
     files = filesFor([]);
-    await act(async () => { await api.listPluginCatalog('official'); });
+    await act(async () => {
+      await assert.rejects(api.installCatalogPlugin(entry.id, beforeWithdrawal.selectionToken, 'official'), /not in the curated catalog|changed/);
+    });
     assert.equal(row().dataset.author, entry.manifest.publisher); assert.equal(row().dataset.official, 'false');
-    assert.equal(row().dataset.avatar, undefined, 'withdrawal removes enriched identity without a remount');
+    assert.equal(row().dataset.avatar, undefined, 'rejected install refresh removes withdrawn enrichment without another list or remount');
 
     const source = await api.addPluginSource({ name: 'Community', address: 'https://community.example.com' });
     const community = structuredClone(entry);
