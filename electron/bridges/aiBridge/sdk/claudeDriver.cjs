@@ -5,7 +5,7 @@
  *
  * - Spawns the user's system `claude` binary via an ABSOLUTE pathToClaudeCodeExecutable
  *   (SDK existsSync-checks it; PATH is not resolved — issue #205).
- * - Repairs ~/.claude.json before spawn (ensureClaudeConfig).
+ * - Repairs ~/.claude.json before builtin turns only (ensureClaudeConfig).
  * - Bypasses the SDK's built-in permission system and BLOCKS built-in
  *   side-effect tools so the agent can only act through the injected netcatty
  *   MCP server (approval/scope/blocklist enforced there).
@@ -244,8 +244,10 @@ function buildClaudePromptInput(prompt, attachments) {
  * @param {object} args.emitter  createStreamEmitter(...)
  * @param {Function} [args.queryFn] inject @anthropic-ai/claude-agent-sdk query (for tests)
  */
-async function runClaudeTurn({ prompt, attachments, options, emitter, queryFn, assertSessionValid }) {
-  ensureClaudeConfig();
+async function runClaudeTurn({ prompt, attachments, options, emitter, queryFn, assertSessionValid, delegatedAgent = false }) {
+  // A delegated turn may use the selected host profile for authentication, but
+  // must not repair or delete unrelated files in the main process's home.
+  if (!delegatedAgent) ensureClaudeConfig();
   let query = queryFn;
   if (!query) {
     let sdk;

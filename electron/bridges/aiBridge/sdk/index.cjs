@@ -46,7 +46,8 @@ const DRIVER_REGISTRY = {
         toolIntegrationMode: ctx.toolIntegrationMode,
         delegatedAgent: ctx.delegatedAgent === true,
       });
-      return claude.runClaudeTurn({ prompt: ctx.prompt, attachments: ctx.attachments, options, emitter: ctx.emitter, assertSessionValid: ctx.assertSessionValid });
+      return claude.runClaudeTurn({ prompt: ctx.prompt, attachments: ctx.attachments, options, emitter: ctx.emitter,
+        assertSessionValid: ctx.assertSessionValid, delegatedAgent: ctx.delegatedAgent === true });
     },
     async listModels(ctx) {
       return claude.listClaudeModels({

@@ -52,6 +52,25 @@ test('trusted runtime reuses actual AgentRuntime and projects bounded events wit
   await assert.rejects(f.call('agent.next', started, undefined, 'foreign-runtime'));
 });
 
+test('plugin backend listing and current checks never invoke Claude native model discovery or repair', async (t) => {
+  const { getDriver } = createRequire(import.meta.url)('../../../electron/bridges/aiBridge/sdk/index.cjs');
+  let discoveryCalls = 0;
+  t.mock.method(getDriver('claude'), 'listModels', async () => { discoveryCalls++; throw Error('Native discovery must not run'); });
+  const backends = new ConfiguredPluginAgentBackends({ getModel: () => null,
+    getExternal: () => [{ id: 'selected-claude', name: 'Synthetic Claude', command: '/synthetic/official-claude', enabled: true, sdkBackend: 'claude',
+      env: { CLAUDE_CONFIG_DIR: '/synthetic/selected-profile', ANTHROPIC_API_KEY: 'FIXTURE_ONLY_MARKER' } }],
+    getExternalModel: () => 'synthetic-model' });
+  const host = createTrustedPluginAgentRuntime({ isActive: () => true, chooseTargets: async () => [], backends, runtime: new AgentRuntime({ drivers: [] }) });
+  t.after(() => host.shutdown());
+  const request = { requestId: crypto.randomUUID(), runtimeId: 'r1', actionToken: 'fixture', kind: 'agent.backends', payload: {} } as const;
+  const result = await host.handle(request, new AbortController().signal); assert.ok('backends' in result);
+  const selected = result.backends.find((entry) => entry.backend === 'claude')!; assert.equal(selected.status, 'supported');
+  await backends.resolve(selected.hostHandle, 'r1').prepare();
+  const current = await host.handle({ ...request, kind: 'agent.current', payload: { hostHandle: selected.hostHandle } }, new AbortController().signal);
+  assert.deepEqual(current, { current: true }); assert.equal(discoveryCalls, 0);
+  assert.doesNotMatch(JSON.stringify(result), /FIXTURE_ONLY_MARKER|CLAUDE_CONFIG_DIR|selected-profile|official-claude/);
+});
+
 test('cancelled start replies and runtime release abort exact turns, dropping late events', async (t) => {
   const entered = deferred(); const resume = deferred(); let signal: AbortSignal | undefined;
   const f = fixture(t, { backend: 'catty', run: async (_input, context) => { signal = context.signal; entered.resolve(); await resume.promise; context.emit({ id: 'late', type: 'model_delta', text: 'LATE_TEXT' } as Parameters<typeof context.emit>[0]); } });

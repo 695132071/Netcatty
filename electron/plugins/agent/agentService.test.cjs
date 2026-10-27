@@ -84,9 +84,12 @@ function fixture(t) {
 
 test("registered Agent routes validate opaque authority, report unsupported modes and preserve core-only native history", async (t) => {
   const f = fixture(t); const backends = await f.call("listBackends");
+  assert.deepEqual(f.hostRequests.map((request) => request.kind), ["agent.backends"], "public backend listing never starts native model discovery");
+  await assert.rejects(f.call("listBackends", { delegatedAgent: true }));
   assert.equal(backends.items.find((entry) => entry.backend === "codex").status, "unsupported");
   await assert.rejects(f.call("openChat", { backendRef: randomUUID(), selectionHandle: randomUUID(), permissionMode: "auto" }));
   const chat = await f.open(); const turn = await f.call("send", { chatHandle: chat.chatHandle, text: "Synthetic conversation" });
+  await assert.rejects(f.call("send", { chatHandle: chat.chatHandle, text: "Spoof delegated mode", delegatedAgent: false }));
   const [handle, session] = [...f.sessions][0];
   session.messages = [{ role: "user", content: "Synthetic conversation" }, { role: "assistant", content: "Synthetic answer" }];
   session.externalSessionId = "NATIVE_PRIVATE_SESSION"; f.events.push({ kind: "text", text: "Synthetic answer" });

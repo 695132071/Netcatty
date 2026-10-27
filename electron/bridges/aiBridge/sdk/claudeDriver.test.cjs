@@ -1,6 +1,12 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
+// SDK queries in this file are synthetic. Never repair real user config.
+const configPath = require.resolve("./claudeConfig.cjs");
+const priorConfigModule = require.cache[configPath];
+require.cache[configPath] = { id: configPath, filename: configPath, loaded: true, exports: { ensureClaudeConfig() {} } };
 const { translateClaudeMessage, buildClaudeQueryOptions, buildClaudePromptInput, classifyClaudeSpawnError, listClaudeModels, mapClaudeModels, parseClaudeSettings, splitClaudeModelSelection } = require("./claudeDriver.cjs");
+if (priorConfigModule) require.cache[configPath] = priorConfigModule;
+else delete require.cache[configPath];
 
 function collector() {
   const events = [];

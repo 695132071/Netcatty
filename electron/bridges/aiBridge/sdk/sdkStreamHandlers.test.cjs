@@ -2218,6 +2218,32 @@ test("delegated Agent entry rejects unverified runtimes and Skills before native
   assert.equal(validated, 1);
 });
 
+test("actual SDK entry derives delegated mode from main authority, ignoring caller flag spoofing", async (t) => {
+  const { PluginAgentMcpDelegations } = require("../../../plugins/agent/mcpDelegation.cjs");
+  const registry = new PluginAgentMcpDelegations(); t.after(() => registry.shutdown());
+  const chat = "plugin-agent:11111111-1111-4111-8111-111111111111";
+  const tag = "22222222-2222-4222-8222-222222222222";
+  registry.register(chat, { turnTag: tag, senderId: 7, tools: [], assertCurrent() {}, dispatch() {} });
+  const h = createPrivacyStreamHarness(createTestPrivacy(false));
+  const directory = fs.mkdtempSync(nodePath.join(os.tmpdir(), "netcatty-claude-flag-"));
+  t.after(() => fs.rmSync(directory, { recursive: true, force: true }));
+  h.ctx.tempDirBridge = { getTempDir: () => directory };
+  Object.assign(h.ctx.mcpServerBridge, {
+    isPluginAgentConversation: (id) => registry.isReserved(id),
+    assertPluginAgentCaller: (...args) => registry.assertCaller(...args),
+    getPluginAgentMcpConfiguration: (...args) => registry.configuration(...args),
+    onPluginAgentRelease: (...args) => registry.onRelease(...args),
+  });
+  const handler = h.handlers.get("netcatty:ai:sdk-agent:stream");
+  const payload = { requestId: `plugin-agent_${tag}_fixture`, chatSessionId: chat, sdkBackend: "claude", toolIntegrationMode: "mcp", prompt: "Synthetic", delegatedAgent: false };
+  assert.equal((await handler({ sender: { id: 7 } }, payload)).ok, true);
+  assert.equal(h.turns[0].delegatedAgent, true, "caller cannot turn off delegated protection");
+  assert.equal((await h.stream({ delegatedAgent: true })).ok, true);
+  assert.equal(h.turns[1].delegatedAgent, false, "builtin caller cannot opt into the delegated branch");
+  await assert.rejects(handler({ sender: { id: 99 } }, { ...payload, requestId: `plugin-agent_${tag}_foreign`, delegatedAgent: true }));
+  assert.equal(h.turns.length, 2, "a spoofed flag cannot replace current sender/turn authority");
+});
+
 test("delegated native cancellation is exact-request and cannot mark replacement chat work cancelled", async () => {
   const broad = [];
   const { handlers, ctx } = registerWithStubbedCtx({ mcpServerBridge: {
