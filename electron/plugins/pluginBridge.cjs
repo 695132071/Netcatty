@@ -41,7 +41,9 @@ const CHANNELS = Object.freeze({
   updateSource: "netcatty:plugins:update-source",
   removeSource: "netcatty:plugins:remove-source",
   catalog: "netcatty:plugins:catalog",
+  catalogChanged: "netcatty:plugins:catalog-changed",
   catalogReadme: "netcatty:plugins:catalog-readme",
+  author: "netcatty:plugins:author",
   catalogInstall: "netcatty:plugins:catalog-install",
   install: "netcatty:plugins:install",
   setEnabled: "netcatty:plugins:set-enabled",
@@ -679,6 +681,10 @@ function registerPluginBridge(ipcMain, options) {
   handle(CHANNELS.updateSource, async (_manager, payload) => options.catalogService.updateSource(payload));
   handle(CHANNELS.removeSource, async (_manager, payload) => options.catalogService.removeSource(payload));
   handle(CHANNELS.catalog, async (_manager, payload) => options.catalogService?.list(payload?.sourceId) ?? { entries: [], source: "builtin", error: "Plugin catalog unavailable" });
+  handle(CHANNELS.author, async (_manager, payload) => {
+    if (!options.catalogService) throw new Error("Plugin catalog unavailable");
+    return options.catalogService.author(payload);
+  });
   handle(CHANNELS.catalogReadme, async (_manager, payload) => {
     if (!options.catalogService) throw new Error("Plugin catalog unavailable");
     return options.catalogService.readme(payload?.id, payload?.selectionToken, payload?.sourceId);
@@ -1703,6 +1709,7 @@ function registerPluginBridge(ipcMain, options) {
     publishScopeCatalog(event);
     return null;
   });
+  options.catalogService?.onDidChange?.((event) => options.broadcast?.(CHANNELS.catalogChanged, event));
   contributionService?.onDidChange?.((event) => options.broadcast?.(CHANNELS.contributionsChanged, event));
   contributionService?.onDidPostViewMessage?.((event) => options.broadcast?.(CHANNELS.viewMessagePosted, event));
   viewHost?.onDidClose?.((event) => options.broadcast?.(CHANNELS.viewClosed, event));

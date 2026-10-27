@@ -14,3 +14,12 @@ The fixture includes no executable plugin package, avatar or credentials.
 
 Schema revisions must be coordinated with the registry publisher. In particular,
 artifact/avatar are deliberately null in v1; do not expand this consumer alone.
+
+`delivery-v2.schema.json` is vendored without changes from
+`binaricat/netcatty-plugins@2ffed31ad6a430e3711a63a902305063bd2504f8`,
+`schema/delivery-v2.schema.json` (Git blob
+`7a57504fbea272ca0e873725e050d1f15352cb5b`). The v2 consumer retains the pinned v1
+schema and permits positive-size package references up to 16MiB and PNG/WebP avatar references.
+Avatar references require positive size up to 256KiB and exact content-addressed
+paths. No v3 path is added. The original bootstrap bytes remain unchanged, and
+client support does not publish or activate live metadata.

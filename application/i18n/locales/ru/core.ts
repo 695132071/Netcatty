@@ -1132,6 +1132,8 @@ export const ruCoreMessages: Messages = {
   'deepLink.jms.unsupported': 'Неподдерживаемый протокол JumpServer: {{protocol}}',
 
   'settings.tab.plugins': 'Плагины',
+  "settings.plugins.author.official": "Официальная поддержка",
+  "settings.plugins.author.officialMeaning": "Поддерживается проектом Netcatty. Это не сертификат безопасности.",
   "settings.plugins.manager.installed": "Установленные плагины",
   "settings.plugins.manager.import": "Импорт .ncpkg",
   "settings.plugins.manager.preview": "Импортированные пакеты отключены до проверки и включения.",
@@ -1286,7 +1288,7 @@ export const ruCoreMessages: Messages = {
   'plugins.authentication.responseFailedWithMessage': 'Не удалось отправить ответ аутентификации: {message}. Повторите попытку или отмените запрос.',
   'plugins.authentication.continue': 'Продолжить',
   'plugins.hostActions.select': 'Передать метаданные выбранных хостов',
-  'plugins.hostActions.selectionNote': 'Плагину будут переданы сохранённые имена, адреса, пользователи, протоколы, группы и теги. Группа включает только выбранные сейчас хосты. Подключение требует отдельного подтверждения.',
+  'plugins.hostActions.selectionNote': 'Передаются только метаданные выбранных хостов: сохранённые имена, адреса, пользователи, протоколы, группы и теги. Группа включает только выбранные сейчас хосты. Дальнейшие запросы изменения или подключения зависят от настроек разрешений плагина.',
   'plugins.hostActions.create': 'Проверить черновик хоста',
   'plugins.hostActions.edit': 'Проверить изменения хоста',
   'plugins.hostActions.connect': 'Подтвердить подключение',

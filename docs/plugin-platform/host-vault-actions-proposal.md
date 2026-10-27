@@ -1,8 +1,8 @@
 # Host and Vault actions
 
 Feature: `vault.host-actions`. The SDK registers three methods under
-`context.vault`. Netcatty owns the picker, field-diff review, and connection
-confirmation. Plugin business logic stays in the offline browser sandbox.
+`context.vault`. Netcatty owns the picker, field-diff review, permission routing,
+and normal connection dispatch. Plugin business logic stays in the offline browser sandbox.
 
 Base: source integration #3981 at
 `4213d8e6726c44e7a479418ece3adf16ea494782`.
@@ -36,10 +36,12 @@ remain behind the typed target reference; its revision is the expected revision.
 Group metadata describes the explicitly selected current member handles. The
 grant never expands when another host joins a group.
 
-Selection grants metadata access only. Each draft save and each connection
-requires its own host-owned confirmation. A connection confirmation displays the
-saved target and whether saved scripts can run. It does not grant terminal input,
-terminal output, or session access.
+Selection shares the chosen metadata only. Later edit and connection requests
+follow the plugin's Allow, Ask, or Deny settings. Draft saves retain the mandatory
+host editor. Connection Ask displays the saved target and whether saved scripts
+can run; Allow can dispatch without that permission-only dialog. Normal SSH
+authentication remains unchanged. These actions grant no terminal input, output,
+or session access.
 
 All requests are bounded and cancel on runtime stop, source replacement, revoke,
 Vault lock, owner window replacement, expiry, or user cancellation. The host
@@ -47,7 +49,7 @@ revalidates authority and expected revision after asynchronous work and before
 the Vault write or connection dispatch.
 
 Bounds reuse `HostInteractionLimits`: one pending request per runtime,
-eight total, ten per minute, a 60-second confirmation deadline, and a 64-KiB
+eight total, ten per minute, a 60-second host-interaction deadline, and a 64-KiB
 request ceiling. Selection adds a maximum of 50 current hosts. Titles use the
 existing 128-character single-line limit. Draft field lengths use
 `ImporterHostDraft`. Unknown properties are rejected by the shared schema.
@@ -86,15 +88,16 @@ It revalidates after asynchronous authentication. AI selected-context handles ar
 text-disclosure handles and cannot target these actions.
 
 The permission engine gates selection with `vault.metadata`, drafts with
-`vault.write`, and connection requests with `ui.interact`. Every save or connection
-also requires a separate host-owned confirmation and a signed one-use action
-claim. A stored permission grant cannot bypass this review.
+`vault.write`, and connection requests with `ui.interact`. Each committed save or
+connection uses a signed one-use action claim. Permission settings control the
+permission-only prompt; an Allow setting does not bypass the draft editor or
+normal SSH authentication.
 
 After review, the renderer prepares the existing transaction or connection
 request. It claims action authority after the final asynchronous preparation,
 immediately before persistence or dispatch. This claim is the action's commit
 point. Completion only acknowledges the committed action. Automation changes
-during connection review require fresh confirmation.
+during an Ask connection review require fresh confirmation.
 The connection label uses the same `resolveEffectiveTerminalProtocol` helper as
 the launcher, including Mosh/ET flags and implicit localhost shells. Local
 execution displays an explicit on-device shell notice and omits the remote SSH

@@ -29,6 +29,13 @@ for brand icons. This v1 publishing schema requires **avatar and artifact to
 be null**. The client rejects unsupported delivery metadata rather than
 inventing installable packages or deriving a GitHub avatar URL.
 
+Delivery v2 retains those fields and admits hash-bound packages plus the reserved
+avatar as null or a positive-size PNG/WebP asset reference of at most 256KiB.
+The host fetches only the selected source's same-origin asset, verifies bytes,
+and reuses its bounded icon rasterizer and cache. The renderer receives a PNG
+data URI. Author imagery does not verify a GitHub account, and no GitHub avatar
+URL is derived. See [author presentation](author-identity.md).
+
 Index is validated with its pinned schema. Plugin/version identities must be
 unique; each catalog entry must exactly equal the index's current, non-withdrawn,
 source-only entry. Withdrawal does not disable, uninstall or delete any existing
@@ -73,7 +80,7 @@ exact SHA-256 bytes; it does not relax those future gates or auto-enable code.
 | README details | Exact delivery `/assets/<hash>.md` | Visible error/Retry, no upstream fallback |
 | Uninstalled brand icons | Existing reviewed bundled previews | Default icon; delivery icon metadata validated but not fetched by UI |
 | Installed brand icons | Host-owned local package decoder | Default icon; no activation/network request |
-| Author avatars | Not implemented; delivery v1 requires null | Existing local presentation; no avatar lookup |
+| Author avatars | Visible-row host fetch of a validated v2 same-origin resource; v1 remains null | Default placeholder; no GitHub lookup or renderer URL fetch |
 | Package artifacts | Not published or admitted by delivery v1 | Source-only; no download action fabricated |
 | Source/README links | Explicit user-opened external HTTPS link | May open GitHub; no background dependency |
 
