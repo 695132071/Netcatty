@@ -207,6 +207,12 @@ class PluginFilesystemBroker {
     };
   }
   validatePath(params) { return assertPathParams(params); }
+  validateDirectory(params) {
+    if (typeof this.openDirectoryHandle !== "function") {
+      throw new PluginRpcError(RPC_ERRORS.unsupported, "Secure plugin directory enumeration is unavailable on this runtime");
+    }
+    return assertPathParams(params);
+  }
 
   describeReadAuthorization(params, resourceKind = "exact") {
     const value = assertPathParams(params);
@@ -329,17 +335,11 @@ class PluginFilesystemBroker {
   }
 
   async readDirectory(params, context) {
-    const value = assertPathParams(params);
+    const value = this.validateDirectory(params);
     assertAuthorizedPath(context, "filesystem.read", value.path);
     const { canonical, stats } = await resolveExistingPath(value.path, this.fileSystem);
     assertAuthorizedPath(context, "filesystem.read", canonical);
     if (!stats.isDirectory()) throw invalidArgument("Plugin filesystem directory target is not a directory");
-    if (!this.openDirectoryHandle) {
-      throw new PluginRpcError(
-        RPC_ERRORS.unsupported,
-        "Secure plugin directory enumeration is unavailable on this runtime",
-      );
-    }
     const directory = await this.openDirectoryHandle(canonical, { signal: context.signal });
     if (
       !directory

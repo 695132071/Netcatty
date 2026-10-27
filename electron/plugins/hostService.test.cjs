@@ -335,6 +335,8 @@ test("host service wires a handle-bound directory adapter without changing the R
     },
   });
   context.after(() => service.manager.shutdown());
+  assert.ok(service.runtimeSupervisor.supportedFeatures.includes("filesystem.directory-enumeration"));
+  assert.ok(service.packageStore.supportedFeatures.includes("filesystem.directory-enumeration"));
   const pluginManifest = {
     id: "com.example.directory",
     name: "directory",
@@ -480,4 +482,28 @@ test("Deny for the privileged development runtime stops its activation through t
   await assert.rejects(pending, /source changed/);
   assert.equal(stops, 1); assert.equal(current, identity); assert.equal(service.database.getActivePlugin(manifest.id).enabled, true);
   service.database.privateOwner = privateOwner;
+});
+
+test("production host composition does not advertise or prompt for unavailable directory enumeration", async (context) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "netcatty-plugin-directory-availability-"));
+  context.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  let prompts = 0;
+  const feature = "filesystem.directory-enumeration";
+  // Same adapter-free composition as main/registerBridges; even an explicit extra
+  // supportedFeatures entry cannot claim an adapter that was never supplied.
+  const service = createPluginHostService({ ...createOptions(root), supportedFeatures: [feature],
+    requestPermissionDecision: async () => { prompts++; throw new Error("must not prompt"); } });
+  context.after(() => service.manager.shutdown());
+  assert.equal(service.runtimeSupervisor.supportedFeatures.includes(feature), false);
+  assert.equal(service.packageStore.supportedFeatures.includes(feature), false);
+  let authorizations = 0, probes = 0;
+  service.permissionEngine.authorize = async () => { authorizations++; throw new Error("must not authorize"); };
+  service.filesystemBroker.fileSystem = new Proxy({}, { get() { probes++; throw new Error("must not probe"); } });
+  const manifest = { id: "com.example.unavailable-directory", version: "1.0.0",
+    permissions: { optional: [{ permission: "filesystem.read", resources: [root] }] } };
+  const routes = service.rpcRegistry.createRoutes({ pluginId: manifest.id, pluginVersion: manifest.version,
+    runtimeId: "runtime-unavailable", runtimeKind: "browser", manifest });
+  await assert.rejects(routes.requestHandlers["filesystem.readDirectory"]({ path: root }, transportContext()),
+    (error) => error.code === -32012 && /unavailable/.test(error.message));
+  assert.equal(authorizations, 0); assert.equal(prompts, 0); assert.equal(probes, 0);
 });

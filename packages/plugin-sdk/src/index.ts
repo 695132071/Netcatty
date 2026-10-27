@@ -711,6 +711,7 @@ export interface PluginFilesystemClient {
     overwrite: true;
   }>): Promise<void>;
   stat(path: string): Promise<PluginFilesystemStat>;
+  /** Requires filesystem.directory-enumeration and an authorized filesystem.read directory. */
   readDirectory(path: string): Promise<readonly PluginFilesystemEntry[]>;
 }
 
@@ -981,3 +982,4 @@ export { PLUGIN_THEME_PACK_FEATURE } from "@netcatty/plugin-contract";
 export { PLUGIN_TERMINAL_SELECTION_SHARING_FEATURE } from "@netcatty/plugin-contract";
 
 export { PLUGIN_TERMINAL_INPUT_DRAFT_FEATURE } from "@netcatty/plugin-contract";
+export { PLUGIN_FILESYSTEM_DIRECTORY_ENUMERATION_FEATURE } from "@netcatty/plugin-contract";
