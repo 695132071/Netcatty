@@ -131,7 +131,7 @@ function createPluginHostService(options) {
       moduleResources,
     });
     const { PluginPermissionDecisionHost } = require("./permissionDecisionHost.cjs");
-    permissionDecisionHost = new PluginPermissionDecisionHost({ getWindow: options.getInteractionWindow,
+    permissionDecisionHost = new PluginPermissionDecisionHost({ getWindows: options.getPermissionWindows, getWindow: options.getInteractionWindow,
       isLocked: options.isAppLocked, subscribeLock: options.subscribeAppLock });
     const permissionEngine = new PluginPermissionEngine({
       database,

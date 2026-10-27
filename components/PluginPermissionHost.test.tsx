@@ -25,6 +25,7 @@ test('registered Ask uses one in-app dialog; policy controls apply Allow and Den
   const { I18nProvider } = await import('../application/i18n/I18nProvider');
   const { PluginPermissionHost } = await import('./plugins/PluginPermissionHost');
   const { PluginPermissionPanel } = await import('./settings/tabs/PluginPermissionPanel');
+  const { observePluginHostSecurityVisibility } = await import('../application/state/pluginHostSecurityVisibility');
   const { PluginPermissionDecisionHost } = require('../electron/plugins/permissionDecisionHost.cjs');
   const { PluginPermissionEngine } = require('../electron/plugins/permissionEngine.cjs');
   const { PluginHostRpcRegistry } = require('../electron/plugins/hostRpcRegistry.cjs');
@@ -50,6 +51,9 @@ test('registered Ask uses one in-app dialog; policy controls apply Allow and Den
     },
   } });
   const root = createRoot(document.getElementById('root')!);
+  const nativeMount = document.createElement('div'); document.body.append(nativeMount);
+  const nativeVisibility: boolean[] = [];
+  const stopVisibility = observePluginHostSecurityVisibility(nativeMount, (visible) => nativeVisibility.push(visible));
   const settle = () => new Promise((resolve) => setTimeout(resolve, 20));
   const button = (text: string) => Array.from(document.querySelectorAll<HTMLButtonElement>('button')).find((element) => element.textContent === text)!;
   const choose = async (text: string) => {
@@ -65,14 +69,22 @@ test('registered Ask uses one in-app dialog; policy controls apply Allow and Den
     let operation!: Promise<string>;
     await act(async () => { operation = route({}, {}); await settle(); });
     assert.equal(document.querySelectorAll('[role="dialog"]').length, 1);
+    assert.ok(document.querySelector('[role="dialog"][data-host-security-surface]'));
+    assert.equal(nativeVisibility.at(-1), false, 'the existing native-view lifecycle must yield to the trusted Ask');
     assert.match(document.querySelector('[role="dialog"]')!.textContent!, /https:\/\/example.com/);
     assert.equal(effects, 1);
     await act(async () => { button('Allow this operation').click(); await operation; await settle(); });
     assert.equal(effects, 2); assert.equal(document.querySelector('[role="dialog"]'), null);
+    await new Promise<void>((resolve) => dom.window.queueMicrotask(resolve));
+    assert.equal(nativeVisibility.at(-1), false, 'visible permission settings remain a security surface after Ask closes');
     await choose('Deny'); assert.equal(mode, 'deny');
     await assert.rejects(route({}, {}), /disabled/); assert.equal(effects, 2); assert.equal(document.querySelector('[role="dialog"]'), null);
     await choose('Allow'); assert.equal(mode, 'allow');
     await route({}, {}); assert.equal(effects, 3); assert.equal(document.querySelector('[role="dialog"]'), null);
+    // Model the settings editor closing before interacting with a native view.
+    document.querySelector('section[data-host-security-surface]')!.setAttribute('hidden', '');
+    await new Promise<void>((resolve) => dom.window.queueMicrotask(resolve));
+    assert.equal(nativeVisibility.at(-1), true);
     let displayed!: Promise<unknown>;
     const opaque = 'selected:0cfc16d6-3448-4333-82ef-dd4ffbddfdab:v1';
     await act(async () => {
@@ -82,11 +94,14 @@ test('registered Ask uses one in-app dialog; policy controls apply Allow and Den
       }); await settle();
     });
     const text = document.querySelector('[role="dialog"]')!.textContent!;
+    assert.equal(nativeVisibility.at(-1), false, 'Ask alone must hide the attached plugin view');
     assert.match(text, /QA fixture · deterministic-fixture/); assert.match(text, /Synthetic retry plan/);
     assert.doesNotMatch(text, /selected:|0cfc16d6|bf304994/);
     await act(async () => { button('Deny').click(); await displayed; await settle(); });
+    await new Promise<void>((resolve) => dom.window.queueMicrotask(resolve));
+    assert.equal(nativeVisibility.at(-1), true, 'dismissing Ask restores the existing view without closing it');
   } finally {
-    await act(async () => root.unmount()); host.shutdown(); engine.shutdown(); dom.window.close();
+    await act(async () => root.unmount()); stopVisibility(); host.shutdown(); engine.shutdown(); dom.window.close();
     for (const [key, descriptor] of previous) { if (descriptor) Object.defineProperty(globalThis, key, descriptor); else Reflect.deleteProperty(globalThis, key); }
   }
 });

@@ -163,6 +163,7 @@ function createBridgeRegistrar(context) {
           electron: electronModule,
           safeStorage,
           getInteractionWindow: () => win,
+          getPermissionWindows: () => getWindowManager().getManagedAppWindows(),
           getTerminalWorkerManager: () => terminalWorkerManager,
           isAppLocked: () => getAppLockController?.()?.getRuntimeState?.()?.locked !== false,
           subscribeAppLock: (listener) => getAppLockController?.()?.subscribe?.(listener),
