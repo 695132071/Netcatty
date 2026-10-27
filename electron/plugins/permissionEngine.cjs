@@ -166,6 +166,7 @@ class PluginPermissionEngine {
   constructor(options) {
     this.database = options.database;
     this.requestDecision = options.requestDecision ?? null;
+    this.onPolicyChanged = options.onPolicyChanged ?? null;
     if (this.requestDecision != null && typeof this.requestDecision !== "function") {
       throw new TypeError("Plugin permission decision provider must be a function");
     }
@@ -360,6 +361,7 @@ class PluginPermissionEngine {
     // Clear every old grant and invalidate pending/in-flight work before the
     // next operation. A later Allow is a new operation, never a revived prompt.
     this.revokeAll(plugin.id);
+    return this.onPolicyChanged?.(plugin, permission, mode);
   }
 
   async authorize(context, descriptor) {
@@ -396,7 +398,7 @@ class PluginPermissionEngine {
     );
     const resources = resourceDescriptors.map(({ resource }) => resource);
     const resourceKinds = resourceDescriptors.map(({ resourceKind }) => resourceKind);
-    const { declaration, declarationHash } = this.#assertDeclared(context, permission, resources);
+    const { declaration, declarationHash, securityPrincipal } = this.#assertDeclared(context, permission, resources);
     const revision = this.policyRevisions.get(context.pluginId) ?? 0;
     const mode = this.getMode(context, permission);
     if (mode === "deny") {
@@ -417,8 +419,13 @@ class PluginPermissionEngine {
       return { permission: item.permission, resources: relatedResources, mode: relatedMode };
     });
     const relatedAsk = related.some((item) => item.mode === "ask");
-    const receipt = this.operationDecisions.get(context);
-    const operationApproved = receipt?.revision === revision && receipt.permissions.some((item) => (
+    const operation = context.permissionOperation ?? context;
+    const receipt = this.operationDecisions.get(operation);
+    const sourceOwner = context.sourceOwner ?? this.database.privateOwner?.(context.pluginId) ?? null;
+    const operationApproved = receipt?.revision === revision
+      && receipt.pluginId === context.pluginId && receipt.runtimeId === (context.runtimeId ?? null)
+      && receipt.securityPrincipal === securityPrincipal && receipt.sourceOwner === sourceOwner
+      && receipt.permissions.some((item) => (
       item.permission === permission && resources.every((resource) => item.resources.includes(resource))
     ));
     if ((mode === "allow" && !relatedAsk) || descriptor.deferDecision === true || operationApproved) {
@@ -492,8 +499,9 @@ class PluginPermissionEngine {
     if (!ownsPrompt && grant.scope === "once") {
       return this.authorize(context, descriptor);
     }
-    if (related.length || context.addAuthorizationGuard) this.operationDecisions.set(context, {
-      revision, permissions: [{ permission, resources }, ...related],
+    if (related.length || context.permissionOperation) this.operationDecisions.set(operation, {
+      revision, pluginId: context.pluginId, runtimeId: context.runtimeId ?? null, securityPrincipal, sourceOwner,
+      permissions: [{ permission, resources }, ...related],
     });
     return Object.freeze({ declaration, resources, scope: grant.scope });
   }
@@ -518,6 +526,7 @@ class PluginPermissionEngine {
       permission: descriptor.permission,
       resources,
       resourceKinds,
+      ...(descriptor.displayContext ? { displayContext: descriptor.displayContext } : {}),
       ...(descriptor.relatedPermissions?.length ? { relatedPermissions: descriptor.relatedPermissions.map(({ permission, resources }) => ({ permission, resources })) } : {}),
       reason: descriptor.reason,
       ...(descriptor.operationId === undefined ? {} : { operationId: descriptor.operationId }),

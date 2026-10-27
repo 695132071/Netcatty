@@ -722,7 +722,7 @@ function registerPluginBridge(ipcMain, options) {
     if (typeof payload?.policyRevision !== "string" || payload.policyRevision !== options.permissionEngine.getPolicyRevision(plugin)) {
       throw new Error("Plugin permissions changed; refresh before editing");
     }
-    options.permissionEngine.setMode(plugin, payload?.permission, payload?.mode);
+    await options.permissionEngine.setMode(plugin, payload?.permission, payload?.mode);
     return true;
   });
   handle(CHANNELS.permissions, async (_manager, payload) => {

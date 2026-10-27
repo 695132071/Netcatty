@@ -174,6 +174,9 @@ class PluginHostRpcRegistry {
       const operationController = new AbortController();
       const signal = transportContext.signal ? AbortSignal.any([transportContext.signal, operationController.signal]) : operationController.signal;
       const authorizationGuards = [];
+      // Host-only identity shared by internal derived contexts, never a wire
+      // field or a plugin-provided token. Every RPC receives a fresh object.
+      const permissionOperation = Object.freeze({});
       const assertActive = async () => {
         signal.throwIfAborted();
         for (const guard of authorizationGuards) guard();
@@ -199,6 +202,7 @@ class PluginHostRpcRegistry {
           ...transportContext,
           ...identity,
           signal,
+          permissionOperation,
           addAuthorizationGuard: (guard) => authorizationGuards.push(guard),
           cancelAuthorization: (reason) => operationController.abort(reason),
           assertActive,

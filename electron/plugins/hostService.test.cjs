@@ -455,3 +455,29 @@ test("required browser capabilities activate without a permission ceremony", asy
   assert.equal(await host.runtimeSupervisor.resolveRuntimeKind({ plugin: { id: manifest.id, activeVersion: manifest.version, manifest }, availableKinds: ["browser"], signal: new AbortController().signal }), "browser");
   assert.equal(prompts, 0);
 });
+
+test("Deny for the privileged development runtime stops its activation through the manager queue", async (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "netcatty-advanced-policy-"));
+  const service = createPluginHostService(createOptions(root));
+  t.after(async () => { await service.manager.shutdown(); fs.rmSync(root, { recursive: true, force: true }); });
+  await service.manager.initialize();
+  const manifest = { id: "com.example.advanced-policy", version: "1.0.0", publisher: "example", main: { node: "index.js" }, permissions: { required: ["runtime.advanced"] } };
+  service.database.installVersion({ pluginId: manifest.id, version: manifest.version, manifest, archiveSha256: "a".repeat(64), packageRelativePath: "synthetic/package" }, { enable: true });
+  const identity = { pluginId: manifest.id, pluginVersion: manifest.version, runtimeId: "synthetic-utility", runtimeKind: "utility" };
+  let current = identity, stops = 0;
+  service.runtimeSupervisor.getRuntimeIdentity = () => current;
+  service.runtimeSupervisor.stop = async (pluginId) => { assert.equal(pluginId, manifest.id); stops++; current = null; };
+  await service.permissionEngine.setMode(service.database.getActivePlugin(manifest.id), "runtime.advanced", "deny");
+  assert.equal(stops, 1); assert.equal(current, null);
+  assert.equal(service.database.getActivePlugin(manifest.id).enabled, false);
+  assert.equal(service.database.getPermissionMode(manifest.id, "runtime.advanced"), "deny");
+  await assert.rejects(service.permissionEngine.authorize({ ...identity, manifest }, { permission: "runtime.advanced" }), /disabled/);
+  // A queued teardown for the old source must not disable its replacement.
+  service.database.setEnabled(manifest.id, true); current = identity;
+  const privateOwner = service.database.privateOwner.bind(service.database);
+  const pending = service.permissionEngine.setMode(service.database.getActivePlugin(manifest.id), "runtime.advanced", "deny");
+  service.database.privateOwner = () => "synthetic-replacement-owner";
+  await assert.rejects(pending, /source changed/);
+  assert.equal(stops, 1); assert.equal(current, identity); assert.equal(service.database.getActivePlugin(manifest.id).enabled, true);
+  service.database.privateOwner = privateOwner;
+});

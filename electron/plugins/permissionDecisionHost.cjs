@@ -73,6 +73,12 @@ class PluginPermissionDecisionHost {
         sender.send(CHANNEL, { ...request, actionToken,
           ...(request.pluginName ? { pluginName: escapePermissionText(request.pluginName) } : {}),
           resources: (request.resources ?? []).map((resource) => escapePermissionText(resource)),
+          ...(request.displayContext ? { displayContext: {
+            ...(request.displayContext.modelLabel ? { modelLabel: escapePermissionText(request.displayContext.modelLabel) } : {}),
+            selections: (request.displayContext.selections ?? []).map((item) => ({
+              scope: item.scope, title: escapePermissionText(item.title), version: escapePermissionText(item.version),
+            })),
+          } } : {}),
           ...(request.relatedPermissions ? { relatedPermissions: request.relatedPermissions.map((item) => ({
             permission: item.permission, resources: item.resources.map((resource) => escapePermissionText(resource)),
           })) } : {}),

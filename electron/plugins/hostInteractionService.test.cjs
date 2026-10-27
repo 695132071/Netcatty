@@ -195,9 +195,15 @@ test("wrong windows, forged tokens and stale runtimes cannot commit a native act
 });
 
 test("quota, deadline, locked host, unknown fields, duplicate choices and text bounds fail closed", async (t) => {
+  // Keep quota ownership independent from the short expiry timer. Under load,
+  // the original 20ms request could expire before the quota assertion ran.
+  const quota = fixture(t);
+  const held = await quota.begin({ kind: "input", title: "Input" });
+  await assert.rejects(quota.service.request(assertInteractionRequest({ kind: "input", title: "Another" }), quota.context), /limit/);
+  await quota.respond(held.prompt, "cancel");
+  await held.promise;
   const f = fixture(t, { timeoutMs: 20 });
   const request = await f.begin({ kind: "input", title: "Input" });
-  await assert.rejects(f.service.request(assertInteractionRequest({ kind: "input", title: "Another" }), f.context), /limit/);
   const keepAlive = setTimeout(() => {}, 100);
   await assert.rejects(request.promise, /expired/); clearTimeout(keepAlive);
   f.lock();

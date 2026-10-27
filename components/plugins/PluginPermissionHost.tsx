@@ -11,19 +11,24 @@ export function PluginPermissionHost() {
   const { prompt, busy, respond } = usePluginPermissionPrompt();
   if (!prompt) return null;
   const description = describePluginPermission(prompt.permission, resolvedLocale);
+  const resources = prompt.resources.filter((resource) => resource !== '*' && !resource.startsWith('selected:'));
   return <Dialog open onOpenChange={(open) => { if (!open) void respond('cancel'); }}>
-    <DialogContent className="sm:max-w-[480px]">
+    <DialogContent className="max-h-[85vh] overflow-y-auto sm:max-w-[480px]">
       <DialogHeader>
         <DialogTitle>{description.label}</DialogTitle>
         <DialogDescription className="break-words">{prompt.pluginName ?? prompt.pluginId} · {prompt.pluginVersion}</DialogDescription>
       </DialogHeader>
       <p className="text-sm">{description.description}</p>
-      {(prompt.relatedPermissions ?? []).map((item, index) => <div key={index} className="space-y-1 text-sm">
+      {prompt.displayContext?.modelLabel && <p className="text-sm break-words">{zh ? '模型' : 'Model'}: {prompt.displayContext.modelLabel}</p>}
+      {(prompt.displayContext?.selections ?? []).map((item, index) => <p key={index} className="text-sm break-words">
+        {item.title} <span className="text-xs text-muted-foreground">· {item.scope}</span>
+      </p>)}
+      {(prompt.relatedPermissions ?? []).filter((item, index, items) => items.findIndex((other) => other.permission === item.permission) === index).map((item, index) => <div key={index} className="space-y-1 text-sm">
         <p>{describePluginPermission(item.permission, resolvedLocale).description}</p>
-        <p className="text-xs text-muted-foreground break-all">{item.resources.join(', ')}</p>
+        <p className="text-xs text-muted-foreground break-all">{item.resources.filter((resource) => !resource.startsWith('selected:')).join(', ')}</p>
       </div>)}
       <p className="text-xs text-muted-foreground break-all">{prompt.pluginId}</p>
-      <ul className="max-h-44 overflow-auto space-y-1 text-xs text-muted-foreground">{prompt.resources.map((resource) => <li key={resource} className="break-all">{resource}</li>)}</ul>
+      {resources.length > 0 && <ul className="max-h-44 overflow-auto space-y-1 text-xs text-muted-foreground">{resources.map((resource) => <li key={resource} className="break-all">{resource}</li>)}</ul>}
       <DialogFooter>
         <Button variant="outline" disabled={busy} onClick={() => void respond('deny')}>{zh ? '拒绝' : 'Deny'}</Button>
         <Button disabled={busy} onClick={() => void respond('allow')}>{prompt.sessionId && prompt.allowedScopes && !prompt.allowedScopes.includes('once') ? zh ? '允许此会话' : 'Allow for this session' : zh ? '允许此次操作' : 'Allow this operation'}</Button>

@@ -15,6 +15,7 @@ if (!schema.$defs.PluginAIChatResult) {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), "netcatty-assistant-entry-"));
     let service; let contentAllowed = false; let modelAllowed = true; let reviewed = true; let invoked = 0; let versionCurrent = true;
     const decisions = [];
+    let holdDecision = false, decisionOpened, completeDecision;
     t.after(async () => { await service?.manager.shutdown(); await fs.rm(root, { recursive: true, force: true }); });
     service = createPluginHostService({
       app: { getAppPath: () => path.resolve(__dirname, "../../.."), getPath: () => root, getVersion: () => "0.0.0" }, electron: {}, env: {},
@@ -28,6 +29,10 @@ if (!schema.$defs.PluginAIChatResult) {
       },
       requestPermissionDecision: async (request) => {
         decisions.push(request);
+        if (holdDecision) {
+          decisionOpened();
+          return new Promise((resolve) => { completeDecision = () => resolve({ requestId: request.requestId, decision: "allow", scope: "once" }); });
+        }
         if (((request.permission === "context.selected.read" || request.relatedPermissions?.some((item) => item.permission === "context.selected.read")) && !contentAllowed) || (request.permission === "ai.invoke" && !modelAllowed)) return { requestId: request.requestId, decision: "deny" };
         return { requestId: request.requestId, decision: "allow", scope: request.permission === "context.selected.read" ? "once" : "application" };
       },
@@ -61,11 +66,21 @@ if (!schema.$defs.PluginAIChatResult) {
     service.database.setPermissionMode(id, "context.selected.read", "ask");
     await assert.rejects(run("send", input)); assert.equal(invoked, 0);
     contentAllowed = true; reviewed = false; // No separate body-sharing ceremony.
+    const beforeStart = decisions.length;
     const turn = await run("send", input);
+    assert.equal(decisions.length, beforeStart + 1, "one registered AI turn must not lose its content receipt in a derived context");
+    assert.deepEqual(decisions.at(-1).displayContext, { modelLabel: "Synthetic fixture", selections: [{ title: "Synthetic retry plan", scope: "note", version: "v1" }] });
+    const { createDefinitionValidator } = require("../contractValidator.cjs");
+    assert.equal(createDefinitionValidator("PermissionRequest")(decisions.at(-1)), true);
+    const auditMetadata = JSON.stringify(service.database.listSecurityAudit(id, 1000));
+    assert.equal(auditMetadata.includes("Synthetic retry plan"), false);
+    assert.equal(auditMetadata.includes("Synthetic fixture"), false);
     assert.deepEqual(await run("read", { turnHandle: turn.turnHandle }), { kind: "text", sequence: 0, text: "Synthetic summary" });
     assert.deepEqual(await run("read", { turnHandle: turn.turnHandle }), { kind: "usage", sequence: 1, inputTokens: 12, outputTokens: 6, totalTokens: 18 });
     assert.deepEqual(await run("read", { turnHandle: turn.turnHandle }), { kind: "end", sequence: 2 });
     await assert.rejects(run("send", { ...input, privateOwner: "spoofed" }));
+    await assert.rejects(run("send", { ...input, permissionOperation: {} }));
+    await assert.rejects(run("send", { ...input, displayContext: { modelLabel: "Plugin spoof" } }));
     await assert.rejects(run("send", { ...input, contexts: [null] }));
     await assert.rejects(run("read", { turnHandle: turn.turnHandle, source: "spoofed" }));
     const pending = await run("send", input);
@@ -73,6 +88,23 @@ if (!schema.$defs.PluginAIChatResult) {
     assert.equal(service.aiContextService.broker.turns.size, 0);
     await assert.rejects(run("read", { turnHandle: pending.turnHandle }));
     assert.ok(decisions.some((decision) => decision.relatedPermissions?.some((item) => item.permission === "context.selected.read" && item.resources[0].startsWith("selected:"))));
+    const owned = { id, manifest: service.database.getActivePlugin(id).manifest };
+    const queuedChat = await run("open"); const [queuedReference] = await run("contexts");
+    holdDecision = true;
+    const promptOpened = new Promise((resolve) => { decisionOpened = resolve; });
+    const beforeRevocation = invoked;
+    const queued = run("send", { chatHandle: queuedChat.chatHandle, prompt: "Do not invoke", contexts: [{ handle: queuedReference.handle, version: queuedReference.version }] });
+    const rejected = assert.rejects(queued, /changed|revoked|cancel/);
+    await promptOpened;
+    service.permissionEngine.setMode(owned, "context.selected.read", "deny");
+    completeDecision(); await rejected;
+    assert.equal(invoked, beforeRevocation);
+    holdDecision = false;
+    const deniedChat = await run("open"); const [deniedReference] = await run("contexts");
+    const beforeDeny = decisions.length;
+    await assert.rejects(run("send", { chatHandle: deniedChat.chatHandle, prompt: "Still denied", contexts: [{ handle: deniedReference.handle, version: deniedReference.version }] }), /disabled/);
+    assert.equal(decisions.length, beforeDeny); assert.equal(invoked, beforeRevocation);
+    service.permissionEngine.setMode(owned, "context.selected.read", "allow");
     const fresh = await run("open"); const [reference] = await run("contexts");
     versionCurrent = false;
     await assert.rejects(run("send", { chatHandle: fresh.chatHandle, prompt: "Hi", contexts: [{ handle: reference.handle, version: reference.version }] }));

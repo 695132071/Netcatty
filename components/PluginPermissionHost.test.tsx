@@ -73,6 +73,18 @@ test('registered Ask uses one in-app dialog; policy controls apply Allow and Den
     await assert.rejects(route({}, {}), /disabled/); assert.equal(effects, 2); assert.equal(document.querySelector('[role="dialog"]'), null);
     await choose('Allow'); assert.equal(mode, 'allow');
     await route({}, {}); assert.equal(effects, 3); assert.equal(document.querySelector('[role="dialog"]'), null);
+    let displayed!: Promise<unknown>;
+    const opaque = 'selected:0cfc16d6-3448-4333-82ef-dd4ffbddfdab:v1';
+    await act(async () => {
+      displayed = host.request({ requestId: 'host-display-fixture', pluginId: plugin.id, permission: 'ai.invoke', resources: ['*'], reason: 'Host model invocation',
+        relatedPermissions: [{ permission: 'context.selected.read', resources: [opaque] }],
+        displayContext: { modelLabel: 'QA fixture · deterministic-fixture', selections: [{ title: 'Synthetic retry plan', scope: 'note', version: 'bf304994-039a-4884-a707-3a1a40a5d3a9' }] },
+      }); await settle();
+    });
+    const text = document.querySelector('[role="dialog"]')!.textContent!;
+    assert.match(text, /QA fixture · deterministic-fixture/); assert.match(text, /Synthetic retry plan/);
+    assert.doesNotMatch(text, /selected:|0cfc16d6|bf304994/);
+    await act(async () => { button('Deny').click(); await displayed; await settle(); });
   } finally {
     await act(async () => root.unmount()); host.shutdown(); engine.shutdown(); dom.window.close();
     for (const [key, descriptor] of previous) { if (descriptor) Object.defineProperty(globalThis, key, descriptor); else Reflect.deleteProperty(globalThis, key); }

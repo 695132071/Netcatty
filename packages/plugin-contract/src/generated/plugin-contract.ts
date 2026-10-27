@@ -521,6 +521,14 @@ export type PermissionRequest = {
   permission: PluginPermission;
   resources?: Array<PermissionResource>;
   resourceKinds?: Array<PermissionResourceKind>;
+  displayContext?: {
+    modelLabel?: string;
+    selections?: Array<{
+      title: string;
+      scope: "workspace" | "tab" | "session" | "host" | "note";
+      version: string;
+    }>;
+  };
   relatedPermissions?: Array<{
     permission: PluginPermission;
     resources: Array<PermissionResource>;

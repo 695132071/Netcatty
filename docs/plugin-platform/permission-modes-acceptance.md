@@ -44,6 +44,88 @@ update rules. The separate AI cold-start provider-sync fix is not included;
 `configuredModel.ts`, `trustedHostRuntime.ts` and `usePluginAIContextHost.ts`
 were left untouched for parent integration.
 
+## Review corrections after the initial 643e71b checkpoint
+
+The initial commit and its screenshots remain in history. Registered regressions
+reproduce three concrete issues on that exact tree and pass with these repairs:
+
+- Selected-summary Ask now delegates its decision to the existing host chooser.
+  The first and only interaction is target selection; Allow uses that same
+  necessary chooser, while Deny opens none and releases no summaries.
+- The registry creates a fresh host-only operation identity for every RPC.
+  Internal model contexts retain it when replacing a cancellation signal, so a
+  combined model/content Ask receipt survives that derivation. Receipts also
+  bind plugin, runtime, source, principal and policy revision, and cannot cross
+  operations. Current declaration, policy and selection checks still run.
+- Changing the privileged development-only `runtime.advanced` policy to Ask or
+  Deny disables/stops the activation through the existing manager mutation queue
+  before the policy IPC completes. A source-owner check inside that queue prevents
+  an old source's teardown from disabling a replacement. Browser sandbox policy
+  and development admission guards remain unchanged.
+
+Ask now presents the current host-selected model label and Note title/scope.
+Exact versions remain bound internally. Labels come from the checked broker chat
+and owned selected summaries;
+plugins cannot supply operation identities or display fields through RPC params.
+Opaque selected handles remain internal, and display metadata is not added to
+audit records. The chooser copy reflects Allow / Ask / Deny without claiming a
+mandatory second text review. Spanish keys preserve the existing locale parity
+contract. The quota and expiry regression now uses independent requests to avoid
+its former 20ms timer race.
+
+Updated component previews use a realistic opaque selected handle internally:
+
+| Light Ask | Dark Ask |
+| --- | --- |
+| ![Model and Note labels in light Ask](evidence/permission-modes/plugin-permission-model-ask-light.png) | ![Model and Note labels in dark Ask](evidence/permission-modes/plugin-permission-model-ask-dark.png) |
+
+These remain synthetic Chromium component previews, not native QA or a recording.
+No Library item was created. The original four screenshots below are retained as
+initial-checkpoint evidence.
+
+## Latest checks and remaining environment blockers
+
+- Registered runtime recheck: **695 tests, 694 passed, zero failed/cancelled, one
+  native skip**. Separate final registered receipt/authority group: **21 passed**.
+- Serial mounted renderer/Host/selected-summary/panel/locale group: **35 passed**.
+  A preceding concurrent run timed out during build/lint load; its failure log is
+  retained. No timeout result is reclassified as a pass.
+- Advanced-runtime manager/source lifecycle and AI group: **35 passed**.
+  Receipt/declaration group: **32 passed**. Final engine/registry/manager/host
+  boundary group: **71 passed**. Final registered AI audit/receipt check: **one
+  passed**; an earlier 15-second timeout while the preview was active is retained.
+  The serial rerun passed in five seconds. Contract/SDK/CLI: **91 passed**.
+- Final production build passed in **45 seconds**. Full lint has zero errors/seven
+  existing warnings. Full TypeScript remains **774 diagnostics**, identical to
+  frozen 677 after path normalization, with zero added/removed diagnostics.
+- The normal official Electron installer succeeded using its documented proxy
+  support and a task-local cache. Exact **42.11.12** executes in Node mode; no
+  shared libraries are missing. This is not native GUI acceptance.
+- Exact-header setup via the installed node-gyp 12.4.0 and the unchanged rebuild
+  tool's official URL failed. The proxy returns **403 Forbidden** for
+  `https://www.electronjs.org/headers/v42.11.12/node-v42.11.12-headers.tar.gz`.
+  That download stopped; no mirror, alternate host, checksum bypass, dependency
+  shim, native-rebuild skip, HOME change or sandbox change was used. Normal
+  postinstall/native rebuild and desktop packaging remain incomplete.
+- A private task-local `TMPDIR` uses Netcatty's existing safe-temp resolution to
+  its normal `Netcatty` subdirectory; HOME remains unchanged. This fixes the
+  earlier fallback-to-unwritable-home prerequisite without changing app code.
+- A **diagnostic full-suite run on the evolving worktree**, after those environment
+  repairs, reported **15,059 tests: 14,922 passed, 92 failed, two cancelled, 43
+  skipped**. A stuck FIDO child was terminated after its timeout; this is not a
+  successful completed exact-head aggregate. Frozen-baseline focused runs
+  reproduce its FIDO timeout and **28 failures** across native imports, Cursor
+  fixtures and repository postinstall patch checks, plus the earlier six
+  Markdown comparison assertions. Other failures remain unclassified. The
+  permission locale parity and obsolete forced-review expectations found by that
+  run were corrected and pass focused checks. Original failed/incomplete runs
+  below are preserved.
+
+The independent AI cold-start production files remain untouched. This branch
+updates only policy expectations in `components/PluginAIContextHost.test.tsx`;
+parent integration must retain the AI owner's actual-main-allowlist and provider
+sync assertions when merging that test file.
+
 ## Local evidence
 
 These are local code/test results, not native acceptance:

@@ -5781,6 +5781,50 @@
             "$ref": "#/$defs/PermissionResourceKind"
           }
         },
+        "displayContext": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "modelLabel": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 160
+            },
+            "selections": {
+              "type": "array",
+              "maxItems": 5,
+              "items": {
+                "type": "object",
+                "required": [
+                  "title",
+                  "scope",
+                  "version"
+                ],
+                "additionalProperties": false,
+                "properties": {
+                  "title": {
+                    "type": "string",
+                    "maxLength": 160
+                  },
+                  "scope": {
+                    "enum": [
+                      "workspace",
+                      "tab",
+                      "session",
+                      "host",
+                      "note"
+                    ]
+                  },
+                  "version": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 128
+                  }
+                }
+              }
+            }
+          }
+        },
         "relatedPermissions": {
           "type": "array",
           "maxItems": 5,

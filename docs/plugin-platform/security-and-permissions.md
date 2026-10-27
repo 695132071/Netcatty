@@ -46,7 +46,11 @@ with that workflow instead of opening a second capability dialog. Allow skips
 sharing and connection permission confirmations while retaining validation and
 operation/resource binding. AI start combines model access and exact selected
 context handles into one Ask decision; its receipt is limited to that operation.
-Stream reads, stop and close validate broker handles without prompting per chunk.
+Stream reads, stop and close validate broker handles without prompting per chunk. The receipt uses a host-created RPC operation identity retained by derived
+model contexts, with source/runtime/principal/revision binding. It is never a
+plugin-provided field. The selected-summary chooser owns its Ask interaction;
+there is no preceding generic capability prompt. Ask displays checked host
+model/selection labels rather than opaque selected handles.
 Selected-context reads remain selected-only and never enumerate the whole Vault.
 
 ## Authority model
@@ -110,6 +114,12 @@ or body payloads. A response must match its request and action token. Ordinary
 Ask decisions apply once; long-lived stream attachment may use a host session.
 The older grant lifetimes remain supported by the engine, not exposed as a
 mandatory install flow.
+
+Changing `runtime.advanced` to Ask or Deny disables and stops the privileged
+development activation through the existing manager queue. Policy IPC awaits
+that teardown. Queued lifecycle updates check the original source owner, so a
+replacement source cannot be stopped by a stale edit. Ordinary browser sandboxes
+are unchanged.
 
 ## Host-mediated capabilities
 

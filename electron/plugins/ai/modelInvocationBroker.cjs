@@ -120,6 +120,13 @@ class ModelInvocationBroker {
     } finally { this.openings.delete(opening); }
   }
 
+  async describeChat(chatHandle, context) {
+    const chat = this.chats.get(chatHandle);
+    if (!chat) throw fail("permissionDenied", "Plugin chat is unavailable");
+    await this.#check(chat, context);
+    return { modelLabel: chat.model.label };
+  }
+
   async start({ chatHandle, prompt, contexts = [] }, context) {
     assertPluginJsonValue({ chatHandle, prompt, contexts }, { maxBytes: this.limits.inputBytes + 2048 });
     if (typeof prompt !== "string" || !prompt.trim() || prompt.includes("\0") || !Array.isArray(contexts)
