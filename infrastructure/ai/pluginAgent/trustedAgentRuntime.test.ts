@@ -18,11 +18,11 @@ function fixture(t: TestContext, driver: TurnDriver, prepare = async () => {}) {
     prepareModel: prepare, getExternal: () => [] });
   const runtime = createTrustedPluginAgentRuntime({ isActive: () => true, chooseTargets: async () => [], backends, runtime: new AgentRuntime({ drivers: [driver] }) });
   const session = { conversationRef: crypto.randomUUID(), id: `plugin-agent:${crypto.randomUUID()}`, agentId: 'catty', title: 'Synthetic', scope: { type: 'global' }, messages: [], createdAt: 1, updatedAt: 1 };
-  const call = (kind: string, payload: unknown, requestId: string = crypto.randomUUID(), runtimeId = 'r1'): Promise<PluginAgentHostResult> => runtime.handle({ requestId, kind, payload, runtimeId, actionToken: 'fixture' } as PluginAgentHostRequest, new AbortController().signal);
+  const call = (kind: string, payload: unknown, requestId: string = crypto.randomUUID(), runtimeId = 'r1', signal = new AbortController().signal): Promise<PluginAgentHostResult> => runtime.handle({ requestId, kind, payload, runtimeId, actionToken: 'fixture' } as PluginAgentHostRequest, signal);
   t.after(() => { runtime.shutdown(); if (old) Object.defineProperty(globalThis, 'window', old); else Reflect.deleteProperty(globalThis, 'window'); });
-  const start = async (requestId?: string) => {
+  const start = async (requestId?: string, signal?: AbortSignal) => {
     const result = await call('agent.backends', {}); assert.ok('backends' in result);
-    return call('agent.run', { session, backendHandle: result.backends[0].hostHandle, terminalSessions: [], text: 'Synthetic user intent', maxIterations: 12, delegationTag: crypto.randomUUID(), capabilities: [] }, requestId);
+    return call('agent.run', { session, backendHandle: result.backends[0].hostHandle, terminalSessions: [], text: 'Synthetic user intent', maxIterations: 12, delegationTag: crypto.randomUUID(), capabilities: [] }, requestId, 'r1', signal);
   };
   return { runtime, call, start, modelTo: (value: string) => { revision = value; } };
 }
@@ -75,4 +75,33 @@ test('host configuration changes abort a pending existing runtime turn and suppr
   const started = await f.start(); f.modelTo('2'); f.runtime.invalidateConfiguration(); assert.equal(signal?.aborted, true);
   resume.resolve(); const value = await f.call('agent.next', started); assert.ok('event' in value);
   assert.deepEqual(value.event, { kind: 'end', reason: 'unavailable' });
+});
+
+test('Stop then Send waits for the actual runtime driver to unwind before starting replacement B', async (t) => {
+  const resume = deferred(); t.after(resume.resolve); let starts = 0;
+  const f = fixture(t, { backend: 'catty', run: async (_input, context) => {
+    if (++starts === 1) await resume.promise;
+    context.emit({ id: 'delta', type: 'model_delta', text: starts === 1 ? 'LATE_A' : 'Replacement B' } as Parameters<typeof context.emit>[0]);
+  } });
+  const first = await f.start(); assert.ok('hostHandle' in first);
+  await f.call('agent.release', first);
+  let published = false; const pending = f.start().then((value) => { published = true; return value; });
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  assert.equal(published, false, 'replacement handle must not precede runtime availability');
+  assert.equal(starts, 1); resume.resolve();
+  const second = await pending; assert.ok('hostHandle' in second);
+  const next = await f.call('agent.next', second); assert.ok('event' in next);
+  assert.deepEqual(next.event, { kind: 'text', text: 'Replacement B' }); assert.equal(starts, 2);
+});
+
+for (const change of ['cancel', 'release', 'configuration'] as const) test(`replacement waiting for old runtime revalidates ${change} before starting`, async (t) => {
+  const resume = deferred(); t.after(resume.resolve); let starts = 0;
+  const f = fixture(t, { backend: 'catty', run: async () => { starts++; await resume.promise; } });
+  const first = await f.start(); await f.call('agent.release', first);
+  const caller = new AbortController(); const pending = f.start(undefined, caller.signal); const rejected = assert.rejects(pending);
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  if (change === 'cancel') caller.abort();
+  else if (change === 'release') f.runtime.releaseRuntime('r1');
+  else f.modelTo('2');
+  resume.resolve(); await rejected; assert.equal(starts, 1);
 });

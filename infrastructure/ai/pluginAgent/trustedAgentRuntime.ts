@@ -112,6 +112,12 @@ export function createTrustedPluginAgentRuntime(options: {
         await backend.prepare(); active(); signal.throwIfAborted();
         if (backends.resolve(payload.backendHandle, runtimeId) !== backend) throw Error('Selected Agent configuration changed');
         if ([...turns.values()].some((entry) => entry.session.id === payload.session.id && !entry.done)) throw Error('Agent chat is busy');
+        // Stop acknowledges cancellation before an asynchronous driver has
+        // necessarily unwound. Reuse the runtime's existing session barrier.
+        await runtime.waitForActiveTurn(payload.session.id);
+        active(); signal.throwIfAborted();
+        if (backends.resolve(payload.backendHandle, runtimeId) !== backend) throw Error('Selected Agent configuration changed');
+        if ([...turns.values()].some((entry) => entry.session.id === payload.session.id && !entry.done)) throw Error('Agent chat is busy');
         const session = structuredClone(payload.session);
         const prior = structuredClone(session) as unknown as AISession;
         const assistantMsgId = crypto.randomUUID();
