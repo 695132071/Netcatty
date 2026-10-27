@@ -85,6 +85,30 @@ initial-checkpoint evidence.
 
 ## Latest checks and remaining environment blockers
 
+- Subsequent exact `da4e809` workflows **40444934631** (tests) and
+  **40444934738** (packages) passed. The full suite reports **15,392 tests:
+  15,342 passed, 50 skipped, zero failures/cancellations**. The runtime group
+  reports 694 passed/one native skip, and package settings 35 passed. All four
+  platform package jobs passed; release jobs were skipped. This does not replace
+  manual plugin native acceptance or erase the local failures below.
+- A focused wording follow-up removes the implication of mandatory prompts from
+  the package detail's sensitive/unbounded scope text in English, Spanish,
+  Russian and both Chinese locales. The Russian declaration note now also
+  reflects default Allow instead of pre-activation permission ceremonies.
+  The complete local CI boundary command passes after this copy change:
+  contract generation is current, runtime 694 passed/one skip, examples five
+  passed/one skip, and package settings 35 passed. Locale parity six passed;
+  changed-file lint has no errors/warnings.
+- Exact `2eee561` packaging workflow **40443396402 passed** on Linux x64,
+  Linux arm64, macOS and Windows; release jobs were skipped. Its first Linux
+  test job **121988800130** stopped on a runner shutdown signal, with no observed
+  assertion failure. Parent requested one retry. Fresh job **121992430185**
+  passed the 694-test runtime aggregate (one native skip) and failed two
+  package-detail assertions still expecting the superseded "not a grant" copy.
+  The full suite was skipped. Those assertions now verify default Allow,
+  adjustable Ask/Deny and retained host/resource validation; development-runtime
+  disclosure and HTML escaping remain checked. No production behavior changes
+  accompany this test correction. Original interruption/failure logs are kept.
 - Registered runtime recheck: **695 tests, 694 passed, zero failed/cancelled, one
   native skip**. Separate final registered receipt/authority group: **21 passed**.
 - Serial mounted renderer/Host/selected-summary/panel/locale group: **35 passed**.

@@ -91,6 +91,8 @@ test('README failure leaves the permissions and source visible, before the failu
   assert.match(html, /Declared supported capabilities default to Allow/);
   assert.match(html, /Ask or Deny/);
   assert.match(html, /Host validation and resource scope always apply/);
+  assert.match(html, /Host validation and the selected permission mode still apply/);
+  assert.doesNotMatch(html, /Check the actual scope in the permission prompt/);
   assert.match(html, /Source example/);
   assert.ok(html.indexOf('settings.read') < html.indexOf('Network unavailable'));
   assert.match(html, /Retry/);
