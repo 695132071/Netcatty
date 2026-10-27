@@ -1,5 +1,11 @@
 # Permission-policy and AI acceptance candidate
 
+This records frozen 020 and its predecessor evidence. For the later managed-
+window Ask correction, use [the isolated Ask integration record](ask-routing-integration.md).
+020 native Default Allow/Stop/Deny/restore/themes passed; Ask had no visible
+dialog and timed out with zero new model requests. Ask acceptance/cancel and
+the content-read matrix remain unrun until that new candidate is checked.
+
 Use the dedicated `integration/plugin-policy-ai-acceptance` branch. Its Draft PR
 records the exact published head and aggregate CI. Frozen #3997 at
 `677aac33b1eec9dbd4a367417a49c964cdea63e7` remains the historical native baseline;
