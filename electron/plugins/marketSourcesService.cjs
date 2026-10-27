@@ -12,6 +12,15 @@ class MarketSourcesService {
     this.manager = options.manager;
     this.registry = new PluginSourceRegistry(options.database);
     this.catalogs = new Map();
+    this.catalogIdentities = new Map();
+    this.changeListeners = new Set();
+  }
+  onDidChange(listener) {
+    this.changeListeners.add(listener);
+    return { dispose: () => this.changeListeners.delete(listener) };
+  }
+  #changed(sourceId) {
+    for (const listener of this.changeListeners) listener({ sourceId });
   }
   #catalog(sourceId = "official") {
     const source = this.registry.get(sourceId);
@@ -25,7 +34,16 @@ class MarketSourcesService {
     }
     return catalog;
   }
-  list(sourceId) { return this.#catalog(sourceId).list(); }
+  async list(sourceId = "official") {
+    const snapshot = await this.#catalog(sourceId).list();
+    // Selection tokens bind the validated entry and its delivery resources.
+    const identity = JSON.stringify(snapshot.entries.map((entry) => [entry.id, entry.selectionToken]));
+    if (this.catalogIdentities.get(sourceId) !== identity) {
+      this.catalogIdentities.set(sourceId, identity);
+      this.#changed(sourceId);
+    }
+    return snapshot;
+  }
   readme(id, token, sourceId) { return this.#catalog(sourceId).readme(id, token); }
   async author(request) {
     if (!request || typeof request !== "object" || Array.isArray(request)
@@ -60,13 +78,19 @@ class MarketSourcesService {
   }
   listSources() { return this.registry.list(); }
   addSource(payload) { return this.manager.changeMarketSource(() => this.registry.add(payload?.name, payload?.address)); }
-  updateSource(payload) { return this.manager.changeMarketSource(() => this.registry.update(payload?.id, payload?.name, payload?.enabled)); }
+  async updateSource(payload) {
+    const source = await this.manager.changeMarketSource(() => this.registry.update(payload?.id, payload?.name, payload?.enabled));
+    this.#changed(source.id);
+    return source;
+  }
   async removeSource(payload) {
     if (typeof payload?.disablePlugins !== "boolean") throw new Error("Choose whether to disable installed plugins");
     await this.manager.changeMarketSource(() => {
       this.registry.remove(payload.id);
       this.catalogs.delete(payload.id);
+      this.catalogIdentities.delete(payload.id);
     }, payload.disablePlugins ? payload.id : undefined);
+    this.#changed(payload.id);
   }
 }
 module.exports = { MarketSourcesService };

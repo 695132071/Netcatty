@@ -41,6 +41,7 @@ const CHANNELS = Object.freeze({
   updateSource: "netcatty:plugins:update-source",
   removeSource: "netcatty:plugins:remove-source",
   catalog: "netcatty:plugins:catalog",
+  catalogChanged: "netcatty:plugins:catalog-changed",
   catalogReadme: "netcatty:plugins:catalog-readme",
   author: "netcatty:plugins:author",
   catalogInstall: "netcatty:plugins:catalog-install",
@@ -1708,6 +1709,7 @@ function registerPluginBridge(ipcMain, options) {
     publishScopeCatalog(event);
     return null;
   });
+  options.catalogService?.onDidChange?.((event) => options.broadcast?.(CHANNELS.catalogChanged, event));
   contributionService?.onDidChange?.((event) => options.broadcast?.(CHANNELS.contributionsChanged, event));
   contributionService?.onDidPostViewMessage?.((event) => options.broadcast?.(CHANNELS.viewMessagePosted, event));
   viewHost?.onDidClose?.((event) => options.broadcast?.(CHANNELS.viewClosed, event));

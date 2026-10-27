@@ -1,5 +1,21 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState, useSyncExternalStore } from 'react';
 import { netcattyBridge } from '../../infrastructure/services/netcattyBridge';
+
+// All visible rows share one IPC subscription. No catalog fetch or polling here.
+const generations = new Map<string, number>();
+const listeners = new Set<() => void>();
+let unsubscribe: (() => void) | undefined;
+function subscribe(listener: () => void) {
+  listeners.add(listener);
+  if (listeners.size === 1) unsubscribe = netcattyBridge.get()?.onPluginCatalogChanged?.(({ sourceId }) => {
+    generations.set(sourceId, (generations.get(sourceId) ?? 0) + 1);
+    for (const notify of listeners) notify();
+  });
+  return () => {
+    listeners.delete(listener);
+    if (!listeners.size) { unsubscribe?.(); unsubscribe = undefined; generations.clear(); }
+  };
+}
 
 export function usePluginAuthorIdentity({ entry, plugin, sourceId = 'official' }: {
   entry?: NetcattyPluginCatalogEntry; plugin?: NetcattyInstalledPlugin; sourceId?: string;
@@ -13,7 +29,9 @@ export function usePluginAuthorIdentity({ entry, plugin, sourceId = 'official' }
     ? { kind: 'installed', pluginId }
     : entryId && selectionToken ? { kind: 'catalog', pluginId: entryId, selectionToken, sourceId } : null,
   [pluginId, entryId, selectionToken, sourceId]);
-  const key = JSON.stringify([request, plugin?.activeVersion, plugin?.archiveSha256, plugin?.source?.id, plugin?.runtime?.quarantinedAt]);
+  const identitySource = plugin?.source?.id ?? sourceId;
+  const generation = useSyncExternalStore(subscribe, () => generations.get(identitySource) ?? 0, () => 0);
+  const key = JSON.stringify([request, plugin?.activeVersion, plugin?.archiveSha256, plugin?.source?.id, plugin?.runtime?.quarantinedAt, generation]);
   const installed = Boolean(plugin);
   const version = plugin?.activeVersion;
   const archiveSha256 = plugin?.archiveSha256 ?? null;

@@ -490,6 +490,7 @@ declare global {
     removePluginSource?(id: string, disablePlugins: boolean): Promise<void>;
     listPluginCatalog?(sourceId?: string): Promise<NetcattyPluginCatalogSnapshot>;
     getPluginAuthorPresentation?(request: NetcattyPluginAuthorRequest): Promise<NetcattyPluginAuthorPresentation | null>;
+    onPluginCatalogChanged?(callback: (event: { sourceId: string }) => void): () => void;
     getPluginCatalogReadme?(id: string, selectionToken?: string, sourceId?: string): Promise<string>;
     installCatalogPlugin?(id: string, selectionToken?: string, sourceId?: string, acceptedSourceId?: string): Promise<NetcattyInstalledPlugin>;
     setPluginAIHostReady?(ready: boolean): Promise<boolean>;
