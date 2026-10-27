@@ -4,6 +4,11 @@ A minimal browser plugin that uses Netcatty's selected configured model and one
 explicitly selected reference. It provides Send, streamed text, Stop, and usage.
 It has no tools, terminal commands, direct network access, Node runtime, or storage.
 
+The page follows light/dark mode and accent updates through the existing
+`netcattyView.onDidChangeEnvironment()` API and seven public HSL theme tokens.
+Missing tokens fall back to the standard sample palettes. Its theme subscription
+is disposed on page hide and restored on page show.
+
 An expired chat is reopened before the next explicit Send. If the configured
 model changes or a request fails, use **Refresh model** to reopen the session,
 then click **Send** yourself. Refresh keeps your draft and never retries model

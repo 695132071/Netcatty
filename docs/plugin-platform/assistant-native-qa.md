@@ -29,9 +29,9 @@ browser runtime entry. It has no Node entry, networking, filesystem, secrets,
 storage, terminal, or command-execution permission. Its `commands` permission
 registers its own view callbacks. It cannot execute terminal commands.
 The six-file artifact at this checkpoint has SHA-256
-`c7d784d5c3bd2feb463afd58eae3a9594615395b168174cb8a3d0677584ae395`.
-This replaces the earlier `c0f73369...` artifact after the selected-Note expiry
-recovery repair.
+`7943d4c3800914fe0acd3d0f3a3d7f7c1910c212a5dc58a044871a6a82485274`.
+This replaces the earlier `c7d784d5...` artifact with the sample-only appearance
+update. The host provider cold-start correction remains a separate app change.
 
 ## Start the deterministic fixture
 
@@ -119,6 +119,11 @@ Synthetic retry plan: add a retry button and show a connection status label.
     in the dropdown, and click Send yourself. Deny the fresh content permission
     once and cancel text review once before allowing a successful fixture run.
     The draft must survive all steps, and no request may be silently retried.
+14. With the sample idle, switch the host between light and dark and change its
+    accent. The page, controls, muted surfaces, text, focus ring, and Send button
+    must follow the existing view environment tokens without model requests or
+    new permission prompts. Capture both appearances on the same host window.
+    This check does not change or bypass the separately owned permission policy.
 
 The expiry regression in `scripts/plugin-assistant-panel.test.cjs` controls the
 panel and actual host service/selected-context authority clocks and advances past

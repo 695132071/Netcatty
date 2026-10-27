@@ -9,12 +9,24 @@ async function fixture(t, options = {}) {
   const root = path.resolve(__dirname, "../examples/plugins/assistant");
   const dom = new JSDOM(fs.readFileSync(path.join(root, "panel.html"), "utf8"), { runScripts: "outside-only" });
   t.after(() => dom.window.close());
+  const stylesheet = dom.window.document.createElement("style");
+  stylesheet.textContent = fs.readFileSync(path.join(root, "panel.css"), "utf8");
+  dom.window.document.head.append(stylesheet);
   let now = 0; let opens = 0; let modelCalls = 0; let changed = false;
   const calls = [];
+  const environmentListeners = new Set(); let environment;
   const element = (id) => dom.window.document.getElementById(id);
   dom.window.Date.now = options.clock ?? (() => now);
   Object.defineProperty(dom.window, "netcattyView", { value: {
     onDidReceiveMessage: () => () => {},
+    onDidChangeEnvironment: (listener) => {
+      environmentListeners.add(listener);
+      if (environment) {
+        const replay = environment;
+        queueMicrotask(() => { if (environmentListeners.has(listener) && replay === environment) listener(replay); });
+      }
+      return { dispose: () => environmentListeners.delete(listener) };
+    },
     executeCommand: async (id, params) => {
       const operation = id.replace("com.netcatty.assistant.", ""); calls.push({ operation, params });
       if (options.commands) return options.commands(operation, structuredClone(params));
@@ -45,10 +57,42 @@ async function fixture(t, options = {}) {
   dom.window.eval(fs.readFileSync(path.join(root, "panel.js"), "utf8"));
   await waitFor(() => element("status").textContent === "Ready");
   element("prompt").value = "Synthetic draft must survive session recovery";
-  return { element, calls, waitFor, opens: () => opens, modelCalls: () => modelCalls,
+  return { element, calls, waitFor, window: dom.window, opens: () => opens, modelCalls: () => modelCalls,
+    emitEnvironment: (value) => { environment = value; for (const listener of environmentListeners) listener(value); },
+    environmentListeners: () => environmentListeners.size,
     timeTo: (value) => { now = value; }, changeModel: () => { changed = true; },
     send: () => element("compose").dispatchEvent(new dom.window.Event("submit", { cancelable: true })) };
 }
+
+test("assistant follows host light/dark and accent updates with safe fallbacks and subscription cleanup", async (t) => {
+  const f = await fixture(t); const root = f.window.document.documentElement;
+  const computed = () => f.window.getComputedStyle(root);
+  const calls = f.calls.length;
+  assert.equal(computed().colorScheme, "light dark");
+  assert.equal(computed().getPropertyValue("--background").trim(), "0 0% 100%");
+  assert.equal(f.environmentListeners(), 1);
+  f.emitEnvironment({ theme: "light", themeTokens: { "--background": "20 20% 98%", "--primary": "145 60% 35%", "--muted": "30 10% 90%", "--private-token": "ignored" } });
+  assert.equal(root.style.colorScheme, "light"); assert.equal(root.dataset.theme, "light");
+  assert.equal(root.style.getPropertyValue("--primary"), "145 60% 35%");
+  assert.equal(root.style.getPropertyValue("--private-token"), "");
+  f.emitEnvironment({ theme: "dark", themeTokens: { "--background": "220 20% 10%", "--primary": "280 80% 75%" } });
+  assert.equal(root.style.colorScheme, "dark");
+  assert.equal(root.style.getPropertyValue("--primary"), "280 80% 75%");
+  assert.equal(root.style.getPropertyValue("--muted"), "");
+  assert.equal(computed().getPropertyValue("--muted").trim(), "219 27% 21%");
+  f.emitEnvironment({ theme: "light", themeTokens: { "--primary": "x".repeat(97) } });
+  assert.equal(root.style.colorScheme, "light"); assert.equal(root.style.getPropertyValue("--primary"), "");
+  assert.equal(computed().getPropertyValue("--background").trim(), "0 0% 100%");
+  f.emitEnvironment({ theme: "system" }); assert.equal(root.style.colorScheme, "light dark");
+  assert.equal(f.calls.length, calls); assert.equal(f.modelCalls(), 0);
+  f.window.dispatchEvent(new f.window.Event("pagehide")); assert.equal(f.environmentListeners(), 0);
+  f.emitEnvironment({ theme: "dark", themeTokens: { "--primary": "210 90% 70%" } });
+  assert.equal(root.style.colorScheme, "light dark");
+  f.window.dispatchEvent(new f.window.Event("pageshow"));
+  await new Promise(setImmediate);
+  assert.equal(f.environmentListeners(), 1); assert.equal(root.style.colorScheme, "dark");
+  assert.equal(root.style.getPropertyValue("--primary"), "210 90% 70%");
+});
 
 test("expired sample chat reopens before one explicit send and preserves the draft", async (t) => {
   const f = await fixture(t); f.timeTo(300_001); f.send();
