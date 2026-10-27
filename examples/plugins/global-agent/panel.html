@@ -1,8 +1,8 @@
 <!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Global Agent Chat</title><link rel="stylesheet" href="panel.css"></head>
-<body><main><header><span class="badge">AGENT PLATFORM EXAMPLE</span><h1>Global Agent Chat</h1><p>A conversation independent of the active terminal or workspace.</p><p id="qa" class="hint"></p></header>
-<section class="card"><label for="backend">Configured Agent backend</label><select id="backend" disabled></select><button id="refresh" type="button">Refresh backends</button>
-<label for="conversation">Owned conversation</label><select id="conversation"><option value="">New conversation</option></select>
-<div class="actions"><button id="targets" type="button">Choose terminals</button><button id="open" type="button" disabled>Open conversation</button></div><p id="selection" class="hint">No targets selected yet.</p></section>
+<body><main><p id="qa" class="hint"></p>
+<section class="card setup"><div><label for="backend">Configured Agent backend</label><select id="backend" disabled></select></div>
+<div><label for="conversation">Owned conversation</label><select id="conversation"><option value="">New conversation</option></select></div>
+<div class="actions"><button id="refresh" type="button">Refresh backends</button><button id="targets" type="button">Choose terminals</button><button id="open" type="button" disabled>Open conversation</button></div><p id="selection" class="hint">No targets selected yet.</p></section>
 <section class="card response"><pre id="transcript" aria-live="polite"></pre><p id="usage" class="hint"></p><p id="activity" class="hint"></p></section>
 <form id="compose"><label for="prompt">Message</label><textarea id="prompt" maxlength="16384" placeholder="Ask about the selected terminals"></textarea><div class="actions"><button id="send" type="submit" disabled>Send</button><button id="stop" type="button" disabled>Stop</button><span id="status" role="status">Loading configured backends…</span></div></form>
-<footer>Core owns Agent execution and conversation history. Actions follow this plugin's Allow / Ask / Deny setting. Only Catty and Claude Code MCP mode are eligible in this version; other native modes are unavailable here.</footer></main><script src="panel.js"></script></body></html>
+<footer>Actions follow this plugin's Allow / Ask / Deny setting.</footer></main><script src="panel.js"></script></body></html>

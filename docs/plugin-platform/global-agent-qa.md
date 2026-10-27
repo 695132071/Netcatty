@@ -18,9 +18,19 @@ sha256sum /tmp/netcatty-global-agent.ncpkg
 ```
 
 The reproducible sample SHA-256 is
-`e9457dcced5619ed69cdf4e490ec6d1c04c90f85826daa91f5660213956db299`.
+`7f2f0b2a1d37344012a14a50e428fa41a2dfbac09db663d638d6a7f0a57b35af`.
 Two independent package builds matched. Build scripts and tests are excluded
 from the six-file installed package.
+
+The sample reserves transcript space inside the actual 798-by-548-pixel plugin
+viewport measured during native QA. In a scheduled native test environment, run
+`npm run test:plugin-global-agent-layout` for the bounded render regression. It
+loads the real sample HTML/CSS with synthetic history, including the fixture
+notice, and checks transcript scrolling, reachable configuration, and visible
+mouse Stop. It does not load the plugin script or start an Agent/provider. This
+render check remains pending where the normal browser sandbox cannot start;
+do not disable the sandbox to run it. Also verify the installed sample visually
+at the 1188-by-848-pixel app window before accepting the viewport correction.
 
 ## Native fixture acceptance (parent-scheduled GUI only)
 
