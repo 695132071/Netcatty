@@ -432,6 +432,7 @@ function applyWindowOpacity(opacity) {
   if (settingsWindow && !settingsWindow.isDestroyed()) {
     applyWindowOpacityToWindow(settingsWindow);
   }
+  applyTrayPanelBackgroundBlur(getGlobalShortcutBridge().getTrayPanelWindow?.());
   return currentWindowOpacity;
 }
 
@@ -439,6 +440,15 @@ function isWindowBackgroundBlurActive() {
   return process.platform === "darwin"
     && currentWindowBackgroundBlurRequested
     && currentWindowOpacity < 1;
+}
+
+function applyTrayPanelBackgroundBlur(win) {
+  if (process.platform !== "darwin" || !win || win.isDestroyed?.()) return;
+  try {
+    win.setVibrancy?.(isWindowBackgroundBlurActive() ? "hud" : null);
+  } catch {
+    // ignore platform-specific chrome failures
+  }
 }
 
 function applyWindowBackgroundChromeToWindow(win, options = {}) {
@@ -492,6 +502,7 @@ function applyWindowBackgroundBlur(enabled) {
   if (settingsWindow && !settingsWindow.isDestroyed()) {
     applyWindowOpacityToWindow(settingsWindow);
   }
+  applyTrayPanelBackgroundBlur(getGlobalShortcutBridge().getTrayPanelWindow?.());
   return supported;
 }
 
@@ -1662,4 +1673,5 @@ module.exports = {
   clampWindowOpacity,
   applyWindowOpacity,
   applyWindowOpacityToWindow,
+  applyTrayPanelBackgroundBlur,
 };
