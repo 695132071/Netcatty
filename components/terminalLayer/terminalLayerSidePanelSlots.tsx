@@ -665,6 +665,7 @@ function SidePanelAiSlotInner({
         onOpenVaultHostFromChat={onOpenVaultHostFromChat}
         onOpenVaultSectionFromChat={onOpenVaultSectionFromChat}
         onOpenVaultSnippetFromChat={onOpenVaultSnippetFromChat}
+        workspaces={workspaces}
       />
     </AISidePanelStateRoot>
   );

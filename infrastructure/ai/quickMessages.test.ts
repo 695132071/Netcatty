@@ -3,6 +3,7 @@ import test from 'node:test';
 import {
   buildSlashCommandItems,
   filterQuickMessages,
+  getRenameSlashCommandTitle,
   getSystemSlashCommand,
   isValidQuickMessageSlug,
   normalizeQuickMessageSlug,
@@ -83,11 +84,29 @@ test('getSystemSlashCommand recognizes /compact and /stop only', () => {
   assert.equal(getSystemSlashCommand('/compress'), null);
 });
 
+test('getSystemSlashCommand recognizes /rename with an argument and bare /chats', () => {
+  assert.equal(getSystemSlashCommand('/rename'), 'rename');
+  assert.equal(getSystemSlashCommand('/rename New title'), 'rename');
+  assert.equal(getSystemSlashCommand('  /RENAME  stuff  '), 'rename');
+  assert.equal(getSystemSlashCommand('/renamex'), null);
+  assert.equal(getSystemSlashCommand('/chats'), 'chats');
+  assert.equal(getSystemSlashCommand('  /Chats  '), 'chats');
+  assert.equal(getSystemSlashCommand('/chats now'), null);
+  assert.equal(getSystemSlashCommand('/chat'), null);
+});
+
+test('getRenameSlashCommandTitle extracts the argument and trims it', () => {
+  assert.equal(getRenameSlashCommandTitle('/rename New title'), 'New title');
+  assert.equal(getRenameSlashCommandTitle('  /RENAME   spaced  '), 'spaced');
+  assert.equal(getRenameSlashCommandTitle('/rename'), '');
+  assert.equal(getRenameSlashCommandTitle('/rename   '), '');
+});
+
 test('buildSlashCommandItems reserves system slugs over quick messages and skills', () => {
   const emptyQuery = buildSlashCommandItems([], [], '', true);
   assert.deepEqual(
     emptyQuery.filter((item) => item.kind === 'system').map((item) => item.kind === 'system' ? item.command.slug : ''),
-    ['compact', 'stop'],
+    ['compact', 'stop', 'rename', 'chats'],
   );
 
   const withCollision = buildSlashCommandItems(
@@ -102,7 +121,7 @@ test('buildSlashCommandItems reserves system slugs over quick messages and skill
         : item.kind === 'quickMessage' ? `qm:${item.message.slug}`
           : `sk:${item.skill.slug}`
     )),
-    ['sys:compact', 'sys:stop'],
+    ['sys:compact', 'sys:stop', 'sys:rename', 'sys:chats'],
   );
 });
 

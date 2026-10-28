@@ -24,6 +24,7 @@ import {
 } from './aiScopeCleanup';
 import { emitAIStateChanged } from './aiStateEvents';
 import { getAgentRuntime } from '../../infrastructure/ai/harness/globalAgentRuntime';
+import { DebouncedBackupMirror } from './aiSessionsBackup';
 
 /** Typed accessor for the Electron IPC bridge exposed on `window.netcatty`. */
 export interface AIBridge {
@@ -35,6 +36,11 @@ export interface AIBridge {
   aiMcpSetCommandBlocklist?: (blocklist: string[]) => Promise<unknown> | unknown;
   aiMcpSetCommandTimeout?: (timeout: number) => Promise<unknown> | unknown;
   aiMcpSetMaxIterations?: (maxIterations: number) => Promise<unknown> | unknown;
+  /** Durability mirror: write one timestamped backup generation to disk. */
+  aiSessionsBackupWrite?: (payload: { json: string }) => Promise<{ ok: boolean }>;
+  aiSessionsBackupReadLatest?: () => Promise<{ ok: boolean; json?: string }>;
+  aiSessionsBackupExport?: (payload: { json: string }) => Promise<{ success: boolean; filePath?: string }>;
+  aiSessionsBackupImport?: () => Promise<{ success: boolean; json?: string }>;
 }
 
 export function getAIBridge() {
@@ -349,6 +355,10 @@ export function pruneSessionsForStorage(sessions: AISession[]): AISession[] {
   });
 }
 
+export function prepareRestoredSessions(sessions: AISession[], syncEnabled: boolean): AISession[] {
+  return syncEnabled ? sessions : pruneSessionsForStorage(sessions);
+}
+
 /**
  * Serialize sessions for localStorage under a byte budget, escalating pruning
  * as needed. Returns the JSON to persist plus the (possibly) further-pruned
@@ -486,11 +496,47 @@ export function serializeSessionsForStorage(
  * Returns true when the write succeeded; a false result means the payload
  * could not be persisted even after escalation (it stays memory-only).
  */
+
+// Durability mirror (issue #4015 follow-up): every successful store write
+// also schedules a debounced disk backup so a wiped/recreated profile does
+// not take the chat history with it. The exact JSON that landed in
+// localStorage is mirrored (already byte-budgeted), throttled to at most one
+// write per mutation batch.
+const backupMirror = new DebouncedBackupMirror((json) => {
+  try {
+    void getAIBridge()?.aiSessionsBackupWrite?.({ json })?.catch(() => {});
+  } catch {
+    // Backup failures must never break chat persistence.
+  }
+});
+
+export function flushBackupMirror() {
+  try {
+    backupMirror.flushNow();
+  } catch {
+    // Unload and persistence must remain fail-safe.
+  }
+}
+
+export function __resetBackupMirrorForTests() {
+  backupMirror.reset();
+}
+
+export function scheduleBackupMirror(json: string) {
+  try {
+    backupMirror.schedule(json);
+  } catch {
+    // ignore
+  }
+}
+
 export function writeSessionsForStorage(sessions: AISession[]): boolean {
   // Synced records are authoritative after restart: silently evicting a
   // session or turn here would turn local retention into cloud deletion.
   if (localStorageAdapter.read<{ enabled?: boolean }>(STORAGE_KEY_CLOUD_SYNC_AI_SESSIONS)?.enabled) {
-    return localStorageAdapter.write(STORAGE_KEY_AI_SESSIONS, sessions);
+    const syncedOk = localStorageAdapter.write(STORAGE_KEY_AI_SESSIONS, sessions);
+    if (syncedOk) scheduleBackupMirror(JSON.stringify(sessions));
+    return syncedOk;
   }
   let previousLength = Number.POSITIVE_INFINITY;
   for (const configuredBudget of [MAX_SESSIONS_JSON_BYTES, ...RETRY_SESSIONS_JSON_BYTES]) {
@@ -505,7 +551,10 @@ export function writeSessionsForStorage(sessions: AISession[]): boolean {
     if (budget < 2) break;
     const candidate = serializeSessionsForStorage(sessions, budget);
     if (candidate.json.length >= previousLength) continue;
-    if (localStorageAdapter.writeString(STORAGE_KEY_AI_SESSIONS, candidate.json)) return true;
+    if (localStorageAdapter.writeString(STORAGE_KEY_AI_SESSIONS, candidate.json)) {
+      scheduleBackupMirror(candidate.json);
+      return true;
+    }
     previousLength = candidate.json.length;
   }
   // Last resort: attempt the smallest representation this serializer can
@@ -516,6 +565,7 @@ export function writeSessionsForStorage(sessions: AISession[]): boolean {
     minimalCandidate.json.length < previousLength
     && localStorageAdapter.writeString(STORAGE_KEY_AI_SESSIONS, minimalCandidate.json)
   ) {
+    scheduleBackupMirror(minimalCandidate.json);
     return true;
   }
   console.warn(

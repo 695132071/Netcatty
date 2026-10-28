@@ -817,3 +817,44 @@ for (const [budget, expectedCalls] of [[128 * 1024, 160], [0, 161]]) {
     assert.equal(result.sessions.length, budget === 0 ? 1 : 4);
   });
 }
+test('successful store writes schedule a throttled disk backup mirror', async (t) => {
+  const { writeSessionsForStorage, flushBackupMirror, __resetBackupMirrorForTests } =
+    await import('./aiStateSnapshots');
+  __resetBackupMirrorForTests();
+  const backupWrites: string[] = [];
+  const previousWindow = globalThis.window;
+  Object.defineProperty(globalThis, 'window', {
+    configurable: true,
+    value: {
+      netcatty: {
+        aiSessionsBackupWrite: async (payload: { json: string }) => {
+          backupWrites.push(payload.json);
+          return { ok: true };
+        },
+      },
+    },
+  });
+  const sessions = freezeHistory(makePersistenceHistory(3, 10));
+  const writeString = t.mock.method(localStorageAdapter, 'writeString', () => true);
+  t.mock.method(localStorageAdapter, 'read', () => null);
+  try {
+    assert.equal(writeSessionsForStorage(sessions), true);
+    // Throttled: nothing has been written to disk yet.
+    assert.equal(backupWrites.length, 0);
+    flushBackupMirror();
+    assert.equal(backupWrites.length, 1);
+    // The mirror carries exactly the JSON that landed in localStorage.
+    assert.equal(backupWrites[0], writeString.mock.calls[0].arguments[1]);
+    // Failed store writes never schedule a mirror.
+    writeString.mock.mockImplementation(() => false);
+    assert.equal(writeSessionsForStorage(sessions), false);
+    flushBackupMirror();
+    assert.equal(backupWrites.length, 1);
+  } finally {
+    __resetBackupMirrorForTests();
+    Object.defineProperty(globalThis, 'window', {
+      configurable: true,
+      value: previousWindow,
+    });
+  }
+});

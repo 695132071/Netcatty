@@ -298,6 +298,8 @@ interface AIChatPanelsHostProps {
   onOpenVaultHostFromChat?: (hostId: string) => void;
   onOpenVaultSectionFromChat?: (section: 'notes' | 'hosts' | 'snippets') => void;
   onOpenVaultSnippetFromChat?: (snippetId: string) => void;
+  /** Live workspaces, threaded to AI chats for `/chats` scope titles. */
+  workspaces?: Workspace[] | null;
 }
 
 const EMPTY_WORKSPACES: Workspace[] = [];
@@ -462,6 +464,7 @@ function aiChatPanelsHostAreEqual(
   if (prev.onOpenVaultHostFromChat !== next.onOpenVaultHostFromChat) return false;
   if (prev.onOpenVaultSectionFromChat !== next.onOpenVaultSectionFromChat) return false;
   if (prev.onOpenVaultSnippetFromChat !== next.onOpenVaultSnippetFromChat) return false;
+  if (prev.workspaces !== next.workspaces) return false;
   if (prev.activeTabId === next.activeTabId) return true;
 
   for (let i = 0; i < prev.mountedTabIds.length; i += 1) {
@@ -500,6 +503,7 @@ const AIChatPanelsHostInner: React.FC<AIChatPanelsHostProps> = ({
   onOpenVaultHostFromChat,
   onOpenVaultSectionFromChat,
   onOpenVaultSnippetFromChat,
+  workspaces,
 }) => {
   const aiConfig = useContext(AIConfigContext);
 
@@ -517,6 +521,10 @@ const AIChatPanelsHostInner: React.FC<AIChatPanelsHostProps> = ({
     showDraftView,
     updateDraft,
   } = aiConfig;
+  const aiPanelWorkspaces = useMemo(
+    () => (workspaces ?? []).map((workspace) => ({ id: workspace.id, title: workspace.title })),
+    [workspaces],
+  );
 
   useEffect(() => {
     if (!pendingTerminalSelection) return;
@@ -621,6 +629,7 @@ const AIChatPanelsHostInner: React.FC<AIChatPanelsHostProps> = ({
                     scopeHostIds={context.scopeHostIds}
                     scopeLabel={context.scopeLabel}
                     focusedSessionId={context.focusedSessionId}
+                    workspaces={aiPanelWorkspaces}
                     terminalSessions={context.terminalSessions}
                     resolveExecutorContext={resolveExecutorContext}
                     isVisible={isVisible}

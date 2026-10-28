@@ -20,6 +20,7 @@ import {
   STORAGE_KEY_AI_AGENT_THINKING_MAP,
   STORAGE_KEY_AI_WEB_SEARCH,
   STORAGE_KEY_AI_QUICK_MESSAGES,
+  STORAGE_KEY_CLOUD_SYNC_AI_SESSIONS,
 } from '../../infrastructure/config/storageKeys';
 import type { AIQuickMessage } from '../../infrastructure/ai/quickMessages';
 import { sanitizeQuickMessages } from '../../infrastructure/ai/quickMessages';
@@ -64,11 +65,14 @@ import {
   cleanupDeletedAIChatSessions,
   cleanupOrphanedAISessions,
   getAIBridge,
+  flushBackupMirror,
   getDraftUploadGeneration,
   latestAIActiveSessionMapSnapshot,
   latestAIDraftsByScopeSnapshot,
   latestAIPanelViewByScopeSnapshot,
   latestAISessionsSnapshot,
+  prepareRestoredSessions,
+  scheduleBackupMirror,
   writeSessionsForStorage,
   setLatestAIActiveSessionMapSnapshot,
   setLatestAIDraftsByScopeSnapshot,
@@ -77,6 +81,12 @@ import {
   type DraftsByScope,
   type PanelViewByScope,
 } from './aiStateSnapshots';
+import {
+  isMissingOrCorruptSessionsStore,
+  mergeImportedSessions,
+  parseBackupSessions,
+  readLiveSessionsArray,
+} from './aiSessionsBackup';
 import { AI_STATE_CHANGED_EVENT, emitAIStateChanged } from './aiStateEvents';
 import {
   persistCommandBlocklistSetting,
@@ -168,9 +178,53 @@ export function useAIState() {
   // ── Sessions ──
   const [sessions, setSessionsRaw] = useState<AISession[]>(() =>
     latestAISessionsSnapshot
-      ?? localStorageAdapter.read<AISession[]>(STORAGE_KEY_AI_SESSIONS)
-      ?? []
+      ?? readLiveSessionsArray(localStorageAdapter.readString(STORAGE_KEY_AI_SESSIONS))
   );
+  // An explicit empty array is authoritative, even if the backup is stale.
+  // Only a missing or corrupt store can be restored from disk.
+  useEffect(() => {
+    window.addEventListener('beforeunload', flushBackupMirror);
+    return () => window.removeEventListener('beforeunload', flushBackupMirror);
+  }, []);
+  useEffect(() => {
+    const liveRaw = localStorageAdapter.readString(STORAGE_KEY_AI_SESSIONS);
+    if (!isMissingOrCorruptSessionsStore(liveRaw)) {
+      if (readLiveSessionsArray(liveRaw).length > 0 && liveRaw != null) scheduleBackupMirror(liveRaw);
+      return;
+    }
+    if (latestAISessionsSnapshot && latestAISessionsSnapshot.length > 0) return;
+    const bridge = getAIBridge();
+    if (!bridge?.aiSessionsBackupReadLatest) return;
+    let cancelled = false;
+    void (async () => {
+      try {
+        const liveRaw = localStorageAdapter.readString(STORAGE_KEY_AI_SESSIONS);
+        if (!isMissingOrCorruptSessionsStore(liveRaw)) return;
+        const backup = await bridge.aiSessionsBackupReadLatest?.();
+        if (cancelled || !backup?.ok) return;
+        // Re-check after the async gap: a session may have been created
+        // while the backup was being read; never restore over live state.
+        if (!isMissingOrCorruptSessionsStore(localStorageAdapter.readString(STORAGE_KEY_AI_SESSIONS))) {
+          return;
+        }
+        const syncEnabled = !!localStorageAdapter.read<{ enabled?: boolean }>(STORAGE_KEY_CLOUD_SYNC_AI_SESSIONS)?.enabled;
+        const restored = prepareRestoredSessions(parseBackupSessions(backup.json) ?? [], syncEnabled);
+        if (restored.length === 0) return;
+        setLatestAISessionsSnapshot(restored);
+        setSessionsRaw(prev => (prev.length > 0 ? prev : restored));
+        writeSessionsForStorage(restored);
+        emitAIStateChanged(STORAGE_KEY_AI_SESSIONS);
+        console.info(
+          `[AIState] Restored ${restored.length} AI session(s) from the disk backup.`,
+        );
+      } catch {
+        // Backup restore must never break startup.
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
   // Ref that always holds the latest sessions for use inside debounced callbacks
   const sessionsRef = useRef(sessions);
   useEffect(() => {
@@ -866,6 +920,37 @@ export function useAIState() {
     });
   }, [persistSessions]);
 
+  // Manual durability escape hatch (issue #4015 follow-up): export the
+  // current store to a user-chosen JSON file, or import one back in.
+  // Import is an explicit action, so it may overwrite the live store.
+  const exportSessionsBackup = useCallback(async (): Promise<string | null> => {
+    const bridge = getAIBridge();
+    if (!bridge?.aiSessionsBackupExport) return null;
+    const result = await bridge.aiSessionsBackupExport({
+      json: JSON.stringify(sessionsRef.current),
+    });
+    return result?.success ? (result.filePath ?? '') : null;
+  }, []);
+
+  const importSessionsBackup = useCallback(async (): Promise<number> => {
+    const bridge = getAIBridge();
+    if (!bridge?.aiSessionsBackupImport) return 0;
+    const result = await bridge.aiSessionsBackupImport();
+    if (!result?.success || !result.json) return 0;
+    const imported = parseBackupSessions(result.json);
+    if (!imported || imported.length === 0) return 0;
+    const syncEnabled = !!localStorageAdapter.read<{ enabled?: boolean }>(STORAGE_KEY_CLOUD_SYNC_AI_SESSIONS)?.enabled;
+    const next = prepareRestoredSessions(mergeImportedSessions(sessionsRef.current, imported), syncEnabled);
+    if (!writeSessionsForStorage(next)) return 0;
+    const persisted = readLiveSessionsArray(localStorageAdapter.readString(STORAGE_KEY_AI_SESSIONS));
+    const importedIds = new Set(imported.map(session => session.id));
+    sessionsRef.current = persisted;
+    setLatestAISessionsSnapshot(persisted);
+    setSessionsRaw(persisted);
+    emitAIStateChanged(STORAGE_KEY_AI_SESSIONS);
+    return persisted.filter(session => importedIds.has(session.id)).length;
+  }, []);
+
   const updateSessionExternalSessionId = useCallback((sessionId: string, externalSessionId: string | undefined) => {
     setSessionsRaw(prev => {
       const next = prev.map(s => (
@@ -1370,6 +1455,8 @@ export function useAIState() {
     deleteSession,
     deleteSessionsByTarget,
     updateSessionTitle,
+    exportSessionsBackup,
+    importSessionsBackup,
     updateSessionExternalSessionId,
     addMessageToSession,
     updateLastMessage,
@@ -1432,6 +1519,8 @@ export function useAIState() {
     deleteSession,
     deleteSessionsByTarget,
     updateSessionTitle,
+    exportSessionsBackup,
+    importSessionsBackup,
     updateSessionExternalSessionId,
     addMessageToSession,
     updateLastMessage,

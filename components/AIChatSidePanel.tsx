@@ -64,6 +64,7 @@ import {
   type DefaultTargetSessionHint,
 } from '../application/state/useAIChatStreaming';
 import { getScopedHistorySessions } from './ai/scopedHistorySessions';
+import { buildAiChatsListingEntries, formatAiChatsListingNote } from './ai/aiChatsListing';
 import { resolveInheritedAIActiveSessionId } from '../domain/aiWorkspaceScopeInherit';
 import { resolveUndoLastTurnBoundary } from '../domain/aiUndoLastTurn';
 import { aiSessionIdSetEqual, exactScopeAISessionsEqual } from '../domain/aiSessionsForScope';
@@ -279,6 +280,8 @@ const AIChatSidePanelActive: React.FC<AIChatSidePanelProps> = ({
   undoLastTurnInSession,
   deleteSession,
   updateSessionTitle,
+  exportSessionsBackup,
+  importSessionsBackup,
   updateSessionExternalSessionId,
   addMessageToSession,
   updateLastMessage,
@@ -312,6 +315,7 @@ const AIChatSidePanelActive: React.FC<AIChatSidePanelProps> = ({
   scopeHostIds,
   scopeLabel,
   focusedSessionId,
+  workspaces = [],
   terminalSessions = [],
   resolveExecutorContext,
   isVisible = true,
@@ -327,6 +331,9 @@ const AIChatSidePanelActive: React.FC<AIChatSidePanelProps> = ({
   const scopeKey = `${scopeType}:${scopeTargetId ?? ''}`;
 
   const [showHistory, setShowHistory] = useState(false);
+  // Inline system-style note above the composer (e.g. `/chats` listing).
+  // Panel-command output, never agent content.
+  const [panelCommandNote, setPanelCommandNote] = useState<string | null>(null);
   const [isSending, setIsSending] = useState(false);
   // Undo-last-turn is still
   // running. Unlike the send flow this is not reflected in `isSending`, so it
@@ -483,6 +490,69 @@ const AIChatSidePanelActive: React.FC<AIChatSidePanelProps> = ({
   }
   const activeSessionRef = useRef(activeSession);
   activeSessionRef.current = activeSession;
+
+  /** Rename a chat (slash command + history drawer affordance). Panel action: nothing is sent to the agent. */
+  const handleRenameSession = useCallback((sessionId: string, rawTitle: string) => {
+    const title = rawTitle.trim();
+    if (!title) {
+      toast.warning(t('ai.chat.renameUsage'));
+      return;
+    }
+    if (!sessionId) {
+      toast.warning(t('ai.chat.renameNoActive'));
+      return;
+    }
+    updateSessionTitle(sessionId, title);
+    toast.success(t('ai.chat.renameDone').replace('{title}', title));
+  }, [t, updateSessionTitle]);
+
+  const handleRenameSlashCommand = useCallback((title: string) => {
+    handleRenameSession(activeSessionRef.current?.id ?? null, title);
+  }, [handleRenameSession]);
+
+  const handleListChats = useCallback(() => {
+    const liveTerminalIds = scopeType === 'workspace' && workspaceMemberTerminalIds
+      ? workspaceMemberTerminalIds
+      : new Set(scopeTargetId ? [scopeTargetId] : []);
+    const entries = buildAiChatsListingEntries({
+      sessions: historySessions,
+      activeSessionId,
+      externalAgents,
+      workspaces,
+      liveTerminalIds,
+      currentScopeLabel: scopeLabel,
+      scopeTargetId,
+      t,
+    });
+    setPanelCommandNote(formatAiChatsListingNote(entries, t));
+  }, [activeSessionId, externalAgents, historySessions, scopeLabel, scopeTargetId, scopeType, t, workspaces, workspaceMemberTerminalIds]);
+
+  // Manual durability actions (history drawer header). Export writes the
+  // whole store to a user-chosen JSON file; import merges by id.
+  const handleExportSessions = useCallback(() => {
+    void exportSessionsBackup?.().then((filePath) => {
+      if (filePath == null) {
+        toast.warning(t('ai.chat.exportUnavailable'));
+        return;
+      }
+      toast.success(
+        filePath
+          ? t('ai.chat.exportDone').replace('{path}', filePath)
+          : t('ai.chat.exportDoneNoPath'),
+      );
+    });
+  }, [exportSessionsBackup, t]);
+
+  const handleImportSessions = useCallback(() => {
+    void importSessionsBackup?.().then((count) => {
+      if (count <= 0) {
+        toast.warning(t('ai.chat.importNone'));
+        return;
+      }
+      toast.success(t('ai.chat.importDone').replace('{n}', String(count)));
+    });
+  }, [importSessionsBackup, t]);
+
 
   const defaultTargetSession = useMemo<DefaultTargetSessionHint | undefined>(() => {
     const connectedSessions = terminalSessions.filter((session) => session.connected !== false);
@@ -2065,6 +2135,13 @@ const AIChatSidePanelActive: React.FC<AIChatSidePanelProps> = ({
         setInputValue={setInputValue}
         handleSend={handleSend}
         handleCompact={handleCompact}
+        onRenameSession={handleRenameSession}
+        onRenameActiveChat={handleRenameSlashCommand}
+        onListChats={handleListChats}
+        panelCommandNote={panelCommandNote}
+        onDismissPanelCommandNote={() => setPanelCommandNote(null)}
+        onExportSessions={handleExportSessions}
+        onImportSessions={handleImportSessions}
         canUndoLastTurn={canUndoLastTurn}
         handleUndoLastTurn={undoLastTurnInSession ? handleUndoLastTurn : undefined}
         handleSteer={handleSteer}

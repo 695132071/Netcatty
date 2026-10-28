@@ -33,6 +33,7 @@ import {
   filterQuickMessages,
   filterSystemSlashCommands,
   filterUserSkillsForSlash,
+  getRenameSlashCommandTitle,
   getSlashCommandItemKey,
   getSystemSlashCommand,
   SYSTEM_BUILTIN_SLASH_COMMANDS,
@@ -79,6 +80,10 @@ const THINKING_PICKER_WIDTH = 168;
 const MENU_VIEWPORT_GUTTER = 8;
 const CONTEXT_USAGE_RING_RADIUS = 10;
 const CONTEXT_USAGE_RING_CIRCUMFERENCE = 2 * Math.PI * CONTEXT_USAGE_RING_RADIUS;
+
+export function replaceSlashQueryWithRename(text: string, range: { start: number; end: number } | null): string {
+  return range ? `${text.slice(0, range.start)}/rename ${text.slice(range.end)}` : '/rename ';
+}
 
 function formatContextTokens(tokens: number): string {
   if (tokens >= 1_000_000) return `${(tokens / 1_000_000).toFixed(1)}M`;
@@ -266,6 +271,10 @@ interface ChatInputProps {
   onThinkingLevelChange?: (level: string) => void;
   /** Hidden retained panels must not leave body-portaled menus open. */
   parked?: boolean;
+  /** `/rename <title>`: rename the current chat (panel action, never sent to the agent). */
+  onRenameSession?: (title: string) => void;
+  /** `/chats`: list the chats visible to this panel (panel action, never sent to the agent). */
+  onListChats?: () => void;
 }
 
 const ChatInput: React.FC<ChatInputProps> = ({
@@ -313,6 +322,8 @@ const ChatInput: React.FC<ChatInputProps> = ({
   thinkingLevel,
   onThinkingLevelChange,
   parked = false,
+  onRenameSession,
+  onListChats,
 }) => {
   const { t } = useI18n();
   const hasTerminalSelectionAttachment = files.some((file) => file.terminalSelection || file.vaultNoteId);
@@ -750,6 +761,12 @@ const ChatInput: React.FC<ChatInputProps> = ({
         onCompact?.();
       }
       if (command === 'stop') onStop?.();
+      if (command === 'chats') onListChats?.();
+      if (command === 'rename') {
+        commitComposerText(replaceSlashQueryWithRename(readComposerText(), slashRange));
+        closeAllMenus();
+        return;
+      }
       commitComposerText('');
       closeAllMenus();
       return;
@@ -759,7 +776,7 @@ const ChatInput: React.FC<ChatInputProps> = ({
       return;
     }
     insertUserSkillToken(item.skill);
-  }, [canCompact, closeAllMenus, commitComposerText, insertQuickMessage, insertUserSkillToken, onCompact, onStop]);
+  }, [canCompact, closeAllMenus, commitComposerText, insertQuickMessage, insertUserSkillToken, onCompact, onListChats, onStop, readComposerText, slashRange]);
 
   // Reset active highlight when a menu opens or when the *identity* of the
   // visible items changes. Watching only `.length` misses cases where the
@@ -962,6 +979,16 @@ const ChatInput: React.FC<ChatInputProps> = ({
           commitComposerText('');
           return;
         }
+        if (systemCommand === 'rename') {
+          onRenameSession?.(getRenameSlashCommandTitle(submittedText));
+          commitComposerText('');
+          return;
+        }
+        if (systemCommand === 'chats') {
+          onListChats?.();
+          commitComposerText('');
+          return;
+        }
         return;
       }
       if (isStreaming && canSteer) {
@@ -972,7 +999,7 @@ const ChatInput: React.FC<ChatInputProps> = ({
       // abort; the parent clears value only after the user message is accepted.
       onSend();
     },
-    [canCompact, canSteer, commitComposerText, isStreaming, onCompact, onSend, onSteer, onStop, readComposerText],
+    [canCompact, canSteer, commitComposerText, isStreaming, onCompact, onListChats, onRenameSession, onSend, onSteer, onStop, readComposerText],
   );
 
   const status: PromptInputStatus = isStreaming ? 'streaming' : 'idle';
