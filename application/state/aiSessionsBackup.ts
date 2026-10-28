@@ -48,6 +48,7 @@ export function readLiveSessionsArray(raw: string | null | undefined): AISession
  * usable required fields. Backup generations are written by the same serializer as the
  * live store, so entries are expected to be full AISession objects.
  */
+
 export function parseBackupSessions(json: string | null | undefined): AISession[] | null {
   if (typeof json !== 'string' || json === '') return null;
   let parsed: unknown;

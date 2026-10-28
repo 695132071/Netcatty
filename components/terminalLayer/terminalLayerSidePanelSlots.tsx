@@ -654,6 +654,7 @@ function SidePanelAiSlotInner({
         mountedTabIds={mountedAiTabIds}
         activeTabId={activeTabId}
         activeSidePanelTab={isVisible ? 'ai' : null}
+        liveScopeTargetIds={validAIScopeTargetIds}
         contextsByTabId={aiContextsByTabId}
         resolveExecutorContext={resolveAIExecutorContext}
         pendingTerminalSelection={pendingTerminalSelectionForAI}

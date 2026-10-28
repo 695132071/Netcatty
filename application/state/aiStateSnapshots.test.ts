@@ -16,6 +16,7 @@ import {
   latestAISessionsSnapshot,
   setLatestAIActiveSessionMapSnapshot,
   setLatestAISessionsSnapshot,
+  rebindActiveSessionMap,
 } from './aiStateSnapshots';
 
 test('orphan cleanup keeps durable Catty output while explicit deletion removes it', async () => {
@@ -90,7 +91,9 @@ test('orphan cleanup preserves resumable privacy maps until explicit chat deleti
   const previousWindow = globalThis.window;
   const previousSessions = latestAISessionsSnapshot;
   const previousActiveSessionMap = latestAIActiveSessionMapSnapshot;
+  t.mock.method(localStorageAdapter, 'read', () => null);
   t.mock.method(localStorageAdapter, 'write', () => true);
+  t.mock.method(localStorageAdapter, 'writeString', () => true);
   Object.defineProperty(globalThis, 'window', {
     configurable: true,
     value: {
@@ -122,8 +125,24 @@ test('orphan cleanup preserves resumable privacy maps until explicit chat deleti
   try {
     cleanupOrphanedAISessions(new Set(['open', 'resumed-into']));
 
-    assert.equal(latestAISessionsSnapshot, sessions);
+    // Issue #4015 R2: the dropped chat is marked dangling but its record and
+    // its active pointer stay intact so /chats can offer a rebind.
+    const persistedSessions = latestAISessionsSnapshot;
+    assert.ok(persistedSessions);
+    assert.equal(
+      persistedSessions.find((session) => session.id === 'privacy-orphan')?.scopeDangling,
+      true,
+    );
+    assert.equal(
+      persistedSessions.find((session) => session.id === 'privacy-live')?.scopeDangling,
+      undefined,
+    );
+    assert.equal(
+      persistedSessions.find((session) => session.id === 'privacy-resumed')?.scopeDangling,
+      undefined,
+    );
     assert.deepEqual(latestAIActiveSessionMapSnapshot, {
+      'terminal:closed': 'privacy-orphan',
       'terminal:open': 'privacy-live',
       'terminal:resumed-into': 'privacy-resumed',
     });
@@ -155,6 +174,95 @@ test('orphan cleanup preserves resumable privacy maps until explicit chat deleti
     setLatestAISessionsSnapshot(previousSessions ?? []);
     setLatestAIActiveSessionMapSnapshot(previousActiveSessionMap ?? {});
     Object.defineProperty(globalThis, 'window', { configurable: true, value: previousWindow });
+  }
+});
+
+test('orphan cleanup marks dangling chats instead of stripping them, and clears the flag when the target returns', (t) => {
+  const previousSessions = latestAISessionsSnapshot;
+  const previousActiveSessionMap = latestAIActiveSessionMapSnapshot;
+  const read = t.mock.method(localStorageAdapter, 'read', () => null);
+  t.mock.method(localStorageAdapter, 'write', () => true);
+  const writeString = t.mock.method(localStorageAdapter, 'writeString', () => true);
+  const previousWindow = globalThis.window;
+  Object.defineProperty(globalThis, 'window', {
+    configurable: true,
+    value: { dispatchEvent: () => true, netcatty: {} },
+  });
+  const dangling = {
+    ...makeSession('dangling-chat', 1, []),
+    scope: { type: 'terminal' as const, targetId: 'closed-ws' },
+  };
+  const live = {
+    ...makeSession('live-chat', 2, []),
+    scope: { type: 'terminal' as const, targetId: 'open' },
+  };
+  setLatestAISessionsSnapshot([dangling, live]);
+  setLatestAIActiveSessionMapSnapshot({
+    'terminal:closed-ws': 'dangling-chat',
+    'terminal:open': 'live-chat',
+  });
+
+  try {
+    cleanupOrphanedAISessions(new Set(['open']));
+
+    let persisted = latestAISessionsSnapshot;
+    assert.ok(persisted);
+    assert.equal(persisted.find((s) => s.id === 'dangling-chat')?.scopeDangling, true);
+    assert.equal(persisted.find((s) => s.id === 'live-chat')?.scopeDangling, undefined);
+    // The active pointer survives the dangling marking.
+    assert.deepEqual(latestAIActiveSessionMapSnapshot, {
+      'terminal:closed-ws': 'dangling-chat',
+      'terminal:open': 'live-chat',
+    });
+    assert.ok(writeString.mock.callCount() > 0);
+
+    // The scope target becomes live again → the dangling flag clears.
+    read.mock.mockImplementation(() => null);
+    cleanupOrphanedAISessions(new Set(['open', 'closed-ws']));
+    persisted = latestAISessionsSnapshot;
+    assert.ok(persisted);
+    assert.equal(persisted.find((s) => s.id === 'dangling-chat')?.scopeDangling, undefined);
+  } finally {
+    setLatestAISessionsSnapshot(previousSessions ?? []);
+    setLatestAIActiveSessionMapSnapshot(previousActiveSessionMap ?? {});
+    Object.defineProperty(globalThis, 'window', {
+      configurable: true,
+      value: previousWindow,
+    });
+  }
+});
+
+test('orphan cleanup with an empty live-target set marks all scoped chats dangling', (t) => {
+  const previousSessions = latestAISessionsSnapshot;
+  const previousActiveSessionMap = latestAIActiveSessionMapSnapshot;
+  t.mock.method(localStorageAdapter, 'read', () => null);
+  t.mock.method(localStorageAdapter, 'write', () => true);
+  t.mock.method(localStorageAdapter, 'writeString', () => true);
+  const previousWindow = globalThis.window;
+  Object.defineProperty(globalThis, 'window', {
+    configurable: true,
+    value: { dispatchEvent: () => true, netcatty: {} },
+  });
+  const orphan = {
+    ...makeSession('orphan-chat', 1, []),
+    scope: { type: 'terminal' as const, targetId: 'gone' },
+  };
+  setLatestAISessionsSnapshot([orphan]);
+  setLatestAIActiveSessionMapSnapshot({ 'terminal:gone': 'orphan-chat' });
+
+  try {
+    // Empty is a valid observed live set (nothing mounted), not "unknown".
+    cleanupOrphanedAISessions(new Set());
+    const persisted = latestAISessionsSnapshot;
+    assert.ok(persisted);
+    assert.equal(persisted.find((s) => s.id === 'orphan-chat')?.scopeDangling, true);
+  } finally {
+    setLatestAISessionsSnapshot(previousSessions ?? []);
+    setLatestAIActiveSessionMapSnapshot(previousActiveSessionMap ?? {});
+    Object.defineProperty(globalThis, 'window', {
+      configurable: true,
+      value: previousWindow,
+    });
   }
 });
 
@@ -857,4 +965,25 @@ test('successful store writes schedule a throttled disk backup mirror', async (t
       value: previousWindow,
     });
   }
+});
+
+test('rebindActiveSessionMap drops stale pointers and sets the new scope', () => {
+  const cleaned = rebindActiveSessionMap(
+    {
+      'terminal:old-ws': 'chat-1',
+      'terminal:other': 'chat-2',
+      'workspace:keep': 'chat-1',
+    },
+    'chat-1',
+    'terminal:new-ws',
+  );
+  assert.deepEqual(cleaned, {
+    'terminal:other': 'chat-2',
+    'terminal:new-ws': 'chat-1',
+  });
+  // Idempotent when already bound to the target scope with no other pointers.
+  assert.deepEqual(
+    rebindActiveSessionMap({ 'terminal:new-ws': 'chat-1' }, 'chat-1', 'terminal:new-ws'),
+    { 'terminal:new-ws': 'chat-1' },
+  );
 });

@@ -64,6 +64,7 @@ import {
   bumpDraftUploadGeneration,
   cleanupDeletedAIChatSessions,
   cleanupOrphanedAISessions,
+  latestAIActiveTargetIdsSnapshot,
   getAIBridge,
   flushBackupMirror,
   getDraftUploadGeneration,
@@ -73,6 +74,7 @@ import {
   latestAISessionsSnapshot,
   prepareRestoredSessions,
   scheduleBackupMirror,
+  rebindActiveSessionMap,
   writeSessionsForStorage,
   setLatestAIActiveSessionMapSnapshot,
   setLatestAIDraftsByScopeSnapshot,
@@ -204,16 +206,39 @@ export function useAIState() {
         if (cancelled || !backup?.ok) return;
         // Re-check after the async gap: a session may have been created
         // while the backup was being read; never restore over live state.
+        // Cover both persisted storage and in-memory snapshot/React state —
+        // createSession updates the snapshot before the debounced disk write.
         if (!isMissingOrCorruptSessionsStore(localStorageAdapter.readString(STORAGE_KEY_AI_SESSIONS))) {
           return;
         }
+        if ((latestAISessionsSnapshot?.length ?? 0) > 0) return;
         const syncEnabled = !!localStorageAdapter.read<{ enabled?: boolean }>(STORAGE_KEY_CLOUD_SYNC_AI_SESSIONS)?.enabled;
         const restored = prepareRestoredSessions(parseBackupSessions(backup.json) ?? [], syncEnabled);
         if (restored.length === 0) return;
+        // Apply restore synchronously (not inside a setState updater). A
+        // deferred updater would leave didRestore false and skip dangling
+        // marking even when the records later land in React state.
+        if ((latestAISessionsSnapshot?.length ?? 0) > 0) return;
+        if (sessionsRef.current.length > 0) return;
+        if (!isMissingOrCorruptSessionsStore(localStorageAdapter.readString(STORAGE_KEY_AI_SESSIONS))) {
+          return;
+        }
         setLatestAISessionsSnapshot(restored);
-        setSessionsRaw(prev => (prev.length > 0 ? prev : restored));
         writeSessionsForStorage(restored);
         emitAIStateChanged(STORAGE_KEY_AI_SESSIONS);
+        // Restore does not change live terminals/workspaces, so the orphan-
+        // cleanup effect will not run. Reuse the last known live target set
+        // (empty is valid: nothing live) so chats bound to missing scopes
+        // become dangling and /chats can offer /rebind.
+        cleanupOrphanedAISessions(latestAIActiveTargetIdsSnapshot);
+        const nextSessions = latestAISessionsSnapshot ?? restored;
+        sessionsRef.current = nextSessions;
+        setSessionsRaw(nextSessions);
+        setActiveSessionIdMapRaw(
+          latestAIActiveSessionMapSnapshot
+            ?? localStorageAdapter.read<Record<string, string | null>>(STORAGE_KEY_AI_ACTIVE_SESSION_MAP)
+            ?? {},
+        );
         console.info(
           `[AIState] Restored ${restored.length} AI session(s) from the disk backup.`,
         );
@@ -920,6 +945,53 @@ export function useAIState() {
     });
   }, [persistSessions]);
 
+  // Issue #4015 R2: rebind a dangling chat to the panel's current scope.
+  // Rewrites `scope`, clears the dangling marker and makes the chat the
+  // active session of its new scope so it shows in the scoped history again.
+  const rebindSessionScope = useCallback((
+    sessionId: string,
+    scope: { type: 'terminal' | 'workspace'; targetId: string; hostIds?: string[] },
+  ) => {
+    const scopeKey = `${scope.type}:${scope.targetId}`;
+    setSessionsRaw(prev => {
+      const next = prev.map(s => {
+        if (s.id !== sessionId) return s;
+        const { scopeDangling: _cleared, ...rest } = s;
+        // Replace scope entirely (including hostIds) so history matching follows
+        // the destination terminal/workspace rather than the chat's old host.
+        const nextScope: AISession['scope'] = {
+          type: scope.type,
+          targetId: scope.targetId,
+        };
+        if (scope.hostIds && scope.hostIds.length > 0) {
+          nextScope.hostIds = [...scope.hostIds];
+        }
+        return {
+          ...rest,
+          scope: nextScope,
+          updatedAt: Date.now(),
+        } as AISession;
+      });
+      setLatestAISessionsSnapshot(next);
+      persistSessions(next);
+      return next;
+    });
+    // Drop stale pointers that still reference this chat under its previous
+    // scope key, then restore the active pointer for the new scope.
+    // Compute + persist inside the updater so a deferred React setState still
+    // writes the cleaned map (outer capture would stay null and skip persist).
+    setActiveSessionIdMapRaw(prev => {
+      const next = rebindActiveSessionMap(prev, sessionId, scopeKey);
+      setLatestAIActiveSessionMapSnapshot(next);
+      localStorageAdapter.write(STORAGE_KEY_AI_ACTIVE_SESSION_MAP, next);
+      emitAIStateChanged(STORAGE_KEY_AI_ACTIVE_SESSION_MAP);
+      return next;
+    });
+    // Open the rebound chat in this panel; active-map alone loses to an
+    // explicit draft/session panelView that still points elsewhere.
+    setPanelViewByScope((prev) => setSessionView(prev, scopeKey, sessionId));
+  }, [persistSessions, setPanelViewByScope]);
+
   // Manual durability escape hatch (issue #4015 follow-up): export the
   // current store to a user-chosen JSON file, or import one back in.
   // Import is an explicit action, so it may overwrite the live store.
@@ -939,6 +1011,8 @@ export function useAIState() {
     if (!result?.success || !result.json) return 0;
     const imported = parseBackupSessions(result.json);
     if (!imported || imported.length === 0) return 0;
+    // Merge synchronously against the live ref so orphan cleanup sees the
+    // imported chats even if React would defer a setState updater.
     const syncEnabled = !!localStorageAdapter.read<{ enabled?: boolean }>(STORAGE_KEY_CLOUD_SYNC_AI_SESSIONS)?.enabled;
     const next = prepareRestoredSessions(mergeImportedSessions(sessionsRef.current, imported), syncEnabled);
     if (!writeSessionsForStorage(next)) return 0;
@@ -948,6 +1022,21 @@ export function useAIState() {
     setLatestAISessionsSnapshot(persisted);
     setSessionsRaw(persisted);
     emitAIStateChanged(STORAGE_KEY_AI_SESSIONS);
+    // Import does not change live terminals/workspaces, so the orphan-cleanup
+    // effect will not run. Reuse the last known live target set (empty is
+    // valid: nothing live) to mark chats bound to missing scopes as dangling
+    // so /chats can offer /rebind.
+    cleanupOrphanedAISessions(latestAIActiveTargetIdsSnapshot);
+    const nextSessions =
+      latestAISessionsSnapshot
+      ?? persisted;
+    sessionsRef.current = nextSessions;
+    setSessionsRaw(nextSessions);
+    setActiveSessionIdMapRaw(
+      latestAIActiveSessionMapSnapshot
+        ?? localStorageAdapter.read<Record<string, string | null>>(STORAGE_KEY_AI_ACTIVE_SESSION_MAP)
+        ?? {},
+    );
     return persisted.filter(session => importedIds.has(session.id)).length;
   }, []);
 
@@ -1455,6 +1544,7 @@ export function useAIState() {
     deleteSession,
     deleteSessionsByTarget,
     updateSessionTitle,
+    rebindSessionScope,
     exportSessionsBackup,
     importSessionsBackup,
     updateSessionExternalSessionId,
@@ -1519,6 +1609,7 @@ export function useAIState() {
     deleteSession,
     deleteSessionsByTarget,
     updateSessionTitle,
+    rebindSessionScope,
     exportSessionsBackup,
     importSessionsBackup,
     updateSessionExternalSessionId,

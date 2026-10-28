@@ -63,6 +63,8 @@ interface AIChatPanelContentProps {
   onRenameActiveChat?: (title: string) => void;
   /** `/chats`: list the chats visible to this panel. Panel action, never agent content. */
   onListChats?: () => void;
+  /** `/rebind <n>`: rebind a dangling chat to this panel's scope. Panel action, never agent content. */
+  onRebindChat?: (arg: string) => void;
   /** `/chats` listing output, rendered as a system-style note above the composer. */
   panelCommandNote?: string | null;
   onDismissPanelCommandNote?: () => void;
@@ -157,6 +159,7 @@ export const AIChatPanelContent: React.FC<AIChatPanelContentProps> = ({
   onRenameSession,
   onRenameActiveChat,
   onListChats,
+  onRebindChat,
   panelCommandNote,
   onDismissPanelCommandNote,
   onExportSessions,
@@ -435,6 +438,7 @@ export const AIChatPanelContent: React.FC<AIChatPanelContentProps> = ({
                   onCompact={handleCompact}
                   onRenameSession={onRenameActiveChat}
                   onListChats={onListChats}
+                  onRebindChat={onRebindChat}
                   canCompact={canCompact}
                   onSteer={handleSteer}
                   onStop={handleStop}

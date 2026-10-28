@@ -135,3 +135,13 @@ test('DebouncedBackupMirror flushNow writes the pending payload immediately', ()
   mirror.flushNow();
   assert.deepEqual(writes, ['{"gen":1}']);
 });
+
+test('readLiveSessionsArray treats non-array JSON as empty (corrupt)', () => {
+  assert.deepEqual(readLiveSessionsArray(null), []);
+  assert.deepEqual(readLiveSessionsArray(''), []);
+  assert.deepEqual(readLiveSessionsArray('{}'), []);
+  assert.deepEqual(readLiveSessionsArray('{"sessions":[]}'), []);
+  assert.deepEqual(readLiveSessionsArray('not-json'), []);
+  assert.deepEqual(readLiveSessionsArray('[]'), []);
+  assert.equal(readLiveSessionsArray('[{"id":"a"}]').length, 1);
+});

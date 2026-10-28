@@ -29,6 +29,8 @@ export interface AiChatsListingEntry {
   scopeLabel: string;
   /** Scope target no longer resolves to a live workspace/terminal. */
   isDangling: boolean;
+  /** 1-based number among dangling entries, used by `/rebind <n>`. */
+  rebindNumber?: number;
   isCurrent: boolean;
   relativeTime: string;
 }
@@ -62,7 +64,7 @@ export function buildAiChatsListingEntries(input: AiChatsListingInput): AiChatsL
   const workspaceTitles = new Map(workspaces.map((workspace) => [workspace.id, workspace.title]));
   const liveTerminals = new Set(liveTerminalIds);
 
-  return sessions.map((session) => {
+  const entries: AiChatsListingEntry[] = sessions.map((session) => {
     const isCurrent = session.id === activeSessionId;
     let scopeLabel = '';
     let isDangling = false;
@@ -102,6 +104,38 @@ export function buildAiChatsListingEntries(input: AiChatsListingInput): AiChatsL
       relativeTime: formatRelativeTime(new Date(session.updatedAt), t),
     };
   });
+
+  // Number the dangling entries so the note can advertise `/rebind <n>`.
+  let danglingCounter = 0;
+  for (const entry of entries) {
+    if (!entry.isDangling) continue;
+    danglingCounter += 1;
+    entry.rebindNumber = danglingCounter;
+  }
+
+  return entries;
+}
+
+/**
+ * Resolve a `/rebind <n>` argument against a `/chats` listing. Only dangling
+ * entries are rebindable; a non-dangling target (or a bad index) yields null.
+ */
+export function resolveRebindTargetFromArg(
+  arg: string,
+  entries: AiChatsListingEntry[],
+): AiChatsListingEntry | null {
+  const trimmed = arg.trim();
+  if (!/^\d+$/.test(trimmed)) return null;
+  const index = Number.parseInt(trimmed, 10);
+  if (!Number.isInteger(index) || index < 1) return null;
+  const dangling = entries.filter((entry) => entry.isDangling);
+  return dangling[index - 1] ?? null;
+}
+
+/** Revalidate a cached listing entry against the current session and live scopes. */
+export function canRebindChat(session: AISession | undefined, liveScopeTargetIds: ReadonlySet<string>): boolean {
+  if (!session) return false;
+  return !!session.scopeDangling || !session.scope.targetId || !liveScopeTargetIds.has(session.scope.targetId);
 }
 
 export function formatAiChatsListingNote(
@@ -111,9 +145,17 @@ export function formatAiChatsListingNote(
   if (entries.length === 0) {
     return t('ai.chat.chatsEmpty');
   }
+  let hasDangling = false;
   const lines = entries.map((entry) => {
     const marker = entry.isCurrent ? '•' : ' ';
-    return `${marker} ${entry.title} — ${entry.agentLabel} · ${entry.scopeLabel} · ${entry.relativeTime}`;
+    const rebindHint = entry.isDangling && entry.rebindNumber != null
+      ? ` · /rebind ${entry.rebindNumber}`
+      : '';
+    if (entry.isDangling) hasDangling = true;
+    return `${marker} ${entry.title} — ${entry.agentLabel} · ${entry.scopeLabel} · ${entry.relativeTime}${rebindHint}`;
   });
+  if (hasDangling) {
+    lines.push(t('ai.chat.chatsRebindHint'));
+  }
   return [t('ai.chat.chatsHeader'), ...lines].join('\n');
 }

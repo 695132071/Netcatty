@@ -10,6 +10,16 @@ export type SplitHint = {
   targetSessionId?: string;
 };
 
+export const invertSplitPosition = (position: SplitPosition): SplitPosition => {
+  switch (position) {
+    case 'left': return 'right';
+    case 'right': return 'left';
+    case 'top': return 'bottom';
+    case 'bottom': return 'top';
+  }
+};
+
+
 export const pruneWorkspaceNode = (node: WorkspaceNode, targetSessionId: string): WorkspaceNode | null => {
   if (node.type === 'pane') {
     return node.sessionId === targetSessionId ? null : node;

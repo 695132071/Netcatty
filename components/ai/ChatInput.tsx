@@ -33,6 +33,7 @@ import {
   filterQuickMessages,
   filterSystemSlashCommands,
   filterUserSkillsForSlash,
+  getRebindSlashCommandArg,
   getRenameSlashCommandTitle,
   getSlashCommandItemKey,
   getSystemSlashCommand,
@@ -81,8 +82,17 @@ const MENU_VIEWPORT_GUTTER = 8;
 const CONTEXT_USAGE_RING_RADIUS = 10;
 const CONTEXT_USAGE_RING_CIRCUMFERENCE = 2 * Math.PI * CONTEXT_USAGE_RING_RADIUS;
 
+export function replaceSlashQueryWithCommand(
+  text: string,
+  range: { start: number; end: number } | null,
+  command: string,
+): string {
+  const replacement = `/${command} `;
+  return range ? `${text.slice(0, range.start)}${replacement}${text.slice(range.end)}` : replacement;
+}
+
 export function replaceSlashQueryWithRename(text: string, range: { start: number; end: number } | null): string {
-  return range ? `${text.slice(0, range.start)}/rename ${text.slice(range.end)}` : '/rename ';
+  return replaceSlashQueryWithCommand(text, range, 'rename');
 }
 
 function formatContextTokens(tokens: number): string {
@@ -275,6 +285,8 @@ interface ChatInputProps {
   onRenameSession?: (title: string) => void;
   /** `/chats`: list the chats visible to this panel (panel action, never sent to the agent). */
   onListChats?: () => void;
+  /** `/rebind <n>`: rebind a dangling chat to this panel's scope (panel action, never sent to the agent). */
+  onRebindChat?: (arg: string) => void;
 }
 
 const ChatInput: React.FC<ChatInputProps> = ({
@@ -324,6 +336,7 @@ const ChatInput: React.FC<ChatInputProps> = ({
   parked = false,
   onRenameSession,
   onListChats,
+  onRebindChat,
 }) => {
   const { t } = useI18n();
   const hasTerminalSelectionAttachment = files.some((file) => file.terminalSelection || file.vaultNoteId);
@@ -762,6 +775,14 @@ const ChatInput: React.FC<ChatInputProps> = ({
       }
       if (command === 'stop') onStop?.();
       if (command === 'chats') onListChats?.();
+      if (command === 'rebind') {
+        // Replace a partial slash query (e.g. `/re`) with `/rebind ` so the
+        // user can finish the dangling-chat number; never leave `/re 1` to
+        // be sent to the agent.
+        commitComposerText(replaceSlashQueryWithCommand(readComposerText(), slashRange, 'rebind'));
+        closeAllMenus();
+        return;
+      }
       if (command === 'rename') {
         commitComposerText(replaceSlashQueryWithRename(readComposerText(), slashRange));
         closeAllMenus();
@@ -989,6 +1010,11 @@ const ChatInput: React.FC<ChatInputProps> = ({
           commitComposerText('');
           return;
         }
+        if (systemCommand === 'rebind') {
+          onRebindChat?.(getRebindSlashCommandArg(submittedText));
+          commitComposerText('');
+          return;
+        }
         return;
       }
       if (isStreaming && canSteer) {
@@ -999,7 +1025,7 @@ const ChatInput: React.FC<ChatInputProps> = ({
       // abort; the parent clears value only after the user message is accepted.
       onSend();
     },
-    [canCompact, canSteer, commitComposerText, isStreaming, onCompact, onListChats, onRenameSession, onSend, onSteer, onStop, readComposerText],
+    [canCompact, canSteer, commitComposerText, isStreaming, onCompact, onListChats, onRebindChat, onRenameSession, onSend, onSteer, onStop, readComposerText],
   );
 
   const status: PromptInputStatus = isStreaming ? 'streaming' : 'idle';

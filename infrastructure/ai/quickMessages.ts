@@ -17,7 +17,7 @@ export interface UserSkillSlashOption {
   description: string;
 }
 
-export type SystemSlashCommandSlug = 'stop' | 'compact' | 'rename' | 'chats';
+export type SystemSlashCommandSlug = 'stop' | 'compact' | 'rename' | 'chats' | 'rebind';
 
 export interface SystemSlashCommand {
   slug: SystemSlashCommandSlug;
@@ -126,6 +126,7 @@ export const SYSTEM_BUILTIN_SLASH_COMMANDS: SystemSlashCommand[] = [
   { slug: 'stop', name: 'Stop', descriptionKey: 'ai.chat.slashStopDesc' },
   { slug: 'rename', name: 'Rename chat', descriptionKey: 'ai.chat.slashRenameDesc' },
   { slug: 'chats', name: 'List chats', descriptionKey: 'ai.chat.slashChatsDesc' },
+  { slug: 'rebind', name: 'Rebind chat', descriptionKey: 'ai.chat.slashRebindDesc' },
 ];
 
 export function filterSystemSlashCommands(
@@ -206,7 +207,17 @@ export function getSystemSlashCommand(input: string): SystemSlashCommandSlug | n
   if (trimmed === '/compact') return 'compact';
   if (/^\/rename(?:\s|$)/.test(trimmed)) return 'rename';
   if (trimmed === '/chats') return 'chats';
+  if (/^\/rebind(?:\s|$)/.test(trimmed)) return 'rebind';
   return null;
+}
+
+/**
+ * Extracts the argument from a `/rebind <n>` submission (the 1-based number
+ * of a dangling entry in the last `/chats` listing). Returns the empty string
+ * when no argument was provided (the caller shows a usage hint).
+ */
+export function getRebindSlashCommandArg(input: string): string {
+  return input.trim().replace(/^\/rebind\s*/i, '').trim();
 }
 
 /**

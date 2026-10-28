@@ -4,7 +4,7 @@ import { readFileSync } from 'node:fs';
 import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 
-import ChatInput, { replaceSlashQueryWithRename } from './ChatInput';
+import ChatInput, { replaceSlashQueryWithCommand, replaceSlashQueryWithRename } from './ChatInput';
 import {
   CHAT_INPUT_MAX_HEIGHT,
   CHAT_INPUT_MIN_HEIGHT,
@@ -230,13 +230,33 @@ test('selecting rename completes a partial slash query without sending', () => {
   assert.doesNotMatch(branch, /onSend/);
 });
 
+test('selecting rebind completes a partial slash query without sending', () => {
+  assert.equal(replaceSlashQueryWithCommand('/re', { start: 0, end: 3 }, 'rebind'), '/rebind ');
+  assert.equal(replaceSlashQueryWithCommand('/', { start: 0, end: 1 }, 'rebind'), '/rebind ');
+  assert.equal(replaceSlashQueryWithCommand('before /re after', { start: 7, end: 10 }, 'rebind'), 'before /rebind  after');
+  assert.equal(replaceSlashQueryWithCommand('old text', null, 'rebind'), '/rebind ');
+
+  const source = readFileSync(new URL('./ChatInput.tsx', import.meta.url), 'utf8');
+  const branch = source.slice(source.indexOf("if (command === 'rebind')"), source.indexOf("if (command === 'rename')"));
+  assert.match(branch, /commitComposerText\(replaceSlashQueryWithCommand\(readComposerText\(\), slashRange, 'rebind'\)\)/);
+  assert.match(branch, /closeAllMenus\(\);[\s\S]*?return;/);
+  assert.doesNotMatch(branch, /onSend/);
+});
+
 test('slash picker system commands clear the local composer', () => {
   const source = readFileSync(new URL('./ChatInput.tsx', import.meta.url), 'utf8');
-  // /stop falls through to the shared clear; /rename and /chats have their own
-  // branches above it (rename keeps the composer so the user can type a title).
+  // /stop falls through to the shared clear; /rename, /chats and /rebind have
+  // their own branches above it (rename/rebind keep the composer so the user
+  // can type an argument).
   assert.match(source, /if \(command === 'stop'\) onStop\?\.\(\);[\s\S]*?commitComposerText\(''\);/);
   assert.match(source, /if \(command === 'chats'\) onListChats\?\.\(\);/);
   assert.match(source, /if \(command === 'rename'\) \{[\s\S]*?closeAllMenus\(\);[\s\S]*?return;/);
+  assert.match(source, /if \(command === 'rebind'\) \{[\s\S]*?closeAllMenus\(\);[\s\S]*?return;/);
+});
+
+test('/rebind routes its argument to onRebindChat as a panel action', () => {
+  const source = readFileSync(new URL('./ChatInput.tsx', import.meta.url), 'utf8');
+  assert.match(source, /if \(systemCommand === 'rebind'\) \{[\s\S]*?onRebindChat\?\.\(getRebindSlashCommandArg\(submittedText\)\);/);
 });
 
 test('keeps thinking on a separate chip instead of mixing it into the model list', () => {

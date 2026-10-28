@@ -24,6 +24,7 @@ reorderWorkspaceFocusSessionOrder,
 SplitDirection,
 SplitHint,
 updateWorkspaceSplitSizes,
+  invertSplitPosition,
 } from '../../domain/workspace';
 import { clearSessionFontSizeOverride as clearSessionFontSizeOverrideFields } from '../../domain/terminalAppearance';
 import {
@@ -795,12 +796,68 @@ export const useSessionState = ({
     return workspace.id;
   }, [setActiveTabId]);
 
+  const addSessionToWorkspace = useCallback((
+    workspaceId: string,
+    sessionId: string,
+    hint: SplitHint
+  ) => {
+    if (!hint) return;
+    
+	    setSessions(prevSessions => {
+      const session = prevSessions.find(s => s.id === sessionId);
+      if (!session || session.workspaceId) return prevSessions;
+      
+      setWorkspaces(prevWorkspaces => {
+        const targetWorkspace = prevWorkspaces.find(w => w.id === workspaceId);
+        if (!targetWorkspace) return prevWorkspaces;
+        
+        return insertWorkspacePaneIfMissing(prevWorkspaces, workspaceId, sessionId, hint);
+      });
+      
+      setActiveTabId(workspaceId);
+      return prevSessions.map(s => s.id === sessionId ? { ...s, workspaceId } : s);
+	    });
+	  }, [setActiveTabId]);
+
+  // Merge two tabs into one workspace. When one of them already belongs to a
+  // workspace, that workspace (and its id) is reused instead of dissolving
+  // and recreating: the id is what workspace-scoped AI chats bind to, so
+  // regenerating it used to strand every conversation anchored to it
+  // (issue #4015 R3). Only two genuinely standalone tabs create a new id.
   const createWorkspaceFromSessions = useCallback((
     baseSessionId: string,
     joiningSessionId: string,
     hint: SplitHint
   ) => {
     if (!hint || baseSessionId === joiningSessionId) return;
+    const baseSession = sessionsRef.current.find((s) => s.id === baseSessionId);
+    const joiningSession = sessionsRef.current.find((s) => s.id === joiningSessionId);
+    const anchorWorkspaceId = baseSession?.workspaceId ?? joiningSession?.workspaceId;
+    if (anchorWorkspaceId) {
+      const anchorSessionId = baseSession?.workspaceId ? baseSessionId : joiningSessionId;
+      const orphanSessionId = anchorSessionId === baseSessionId ? joiningSessionId : baseSessionId;
+      const orphanSession = sessionsRef.current.find((s) => s.id === orphanSessionId);
+      if (!orphanSession || orphanSession.workspaceId) return;
+      // Split next to the anchor's existing pane: the raw drop hint targets
+      // the orphan's pane, which is not part of this workspace tree yet.
+      // When the dragged (joining) pane already owns the workspace, the orphan
+      // is what gets inserted — invert the drop position so the previewed
+      // side still matches (hint describes where the dragged pane should sit).
+      const joinOwnsWorkspace = Boolean(joiningSession?.workspaceId) && !baseSession?.workspaceId;
+      const insertHint = {
+        ...hint,
+        targetSessionId: anchorSessionId,
+        position: joinOwnsWorkspace ? invertSplitPosition(hint.position) : hint.position,
+      };
+      addSessionToWorkspace(
+        anchorWorkspaceId,
+        orphanSessionId,
+        insertHint,
+      );
+      // The orphan's standalone tab slot is replaced by the workspace tab.
+      setTabOrder((prevTabOrder) => prevTabOrder.filter((id) => id !== orphanSessionId));
+      return;
+    }
     // Name the merged workspace after both tabs' connection labels (e.g.
     // "01/02") so the window title and the rename dialog show the merged
     // identity instead of the generic "Workspace". Falls back to the default
@@ -855,30 +912,7 @@ export const useSessionState = ({
         return s;
       });
     });
-  }, [setActiveTabId]);
-
-  const addSessionToWorkspace = useCallback((
-    workspaceId: string,
-    sessionId: string,
-    hint: SplitHint
-  ) => {
-    if (!hint) return;
-    
-	    setSessions(prevSessions => {
-      const session = prevSessions.find(s => s.id === sessionId);
-      if (!session || session.workspaceId) return prevSessions;
-      
-      setWorkspaces(prevWorkspaces => {
-        const targetWorkspace = prevWorkspaces.find(w => w.id === workspaceId);
-        if (!targetWorkspace) return prevWorkspaces;
-        
-        return insertWorkspacePaneIfMissing(prevWorkspaces, workspaceId, sessionId, hint);
-      });
-      
-      setActiveTabId(workspaceId);
-      return prevSessions.map(s => s.id === sessionId ? { ...s, workspaceId } : s);
-	    });
-	  }, [setActiveTabId]);
+  }, [addSessionToWorkspace, setActiveTabId]);
 
   // Add a host into an existing workspace by creating a new session for
   // that host and appending it as the last pane at the workspace root.

@@ -44,6 +44,8 @@ export interface AIChatSidePanelProps {
   ) => Promise<{ sessionId: string; restored: { text: string; attachments: import('../infrastructure/ai/types').UploadedFile[]; selectedUserSkillSlugs: string[] } } | null>;
   deleteSession: (sessionId: string, scopeKey?: string) => void;
   updateSessionTitle: (sessionId: string, title: string) => void;
+  /** Issue #4015 R2: rebind a dangling chat to this panel's scope (panel action, never agent content). */
+  rebindSessionScope?: (sessionId: string, scope: { type: 'terminal' | 'workspace'; targetId: string; hostIds?: string[] }) => void;
   /** Manual durability escape hatch: export the store to a JSON file (returns the path, '' when fixed-path). */
   exportSessionsBackup?: () => Promise<string | null>;
   /** Import sessions from a JSON export; merges by id. Returns the imported count. */
@@ -109,6 +111,8 @@ export interface AIChatSidePanelProps {
   focusedSessionId?: string;
   /** Live workspaces, used to resolve workspace titles for `/chats`. */
   workspaces?: Array<{ id: string; title: string }>;
+  /** All currently live terminal (and workspace) scope target ids. */
+  liveScopeTargetIds?: Set<string>;
 
   // Terminal session context (from parent)
   terminalSessions?: Array<{

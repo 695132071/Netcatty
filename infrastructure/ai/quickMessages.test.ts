@@ -3,6 +3,7 @@ import test from 'node:test';
 import {
   buildSlashCommandItems,
   filterQuickMessages,
+  getRebindSlashCommandArg,
   getRenameSlashCommandTitle,
   getSystemSlashCommand,
   isValidQuickMessageSlug,
@@ -102,11 +103,26 @@ test('getRenameSlashCommandTitle extracts the argument and trims it', () => {
   assert.equal(getRenameSlashCommandTitle('/rename   '), '');
 });
 
+test('getSystemSlashCommand recognizes /rebind with an argument', () => {
+  assert.equal(getSystemSlashCommand('/rebind'), 'rebind');
+  assert.equal(getSystemSlashCommand('/rebind 2'), 'rebind');
+  assert.equal(getSystemSlashCommand('  /Rebind   1  '), 'rebind');
+  assert.equal(getSystemSlashCommand('/rebindx'), null);
+  assert.equal(getSystemSlashCommand('/re'), null);
+});
+
+test('getRebindSlashCommandArg extracts the dangling entry number', () => {
+  assert.equal(getRebindSlashCommandArg('/rebind 2'), '2');
+  assert.equal(getRebindSlashCommandArg('  /REBIND   1  '), '1');
+  assert.equal(getRebindSlashCommandArg('/rebind'), '');
+  assert.equal(getRebindSlashCommandArg('/rebind   '), '');
+});
+
 test('buildSlashCommandItems reserves system slugs over quick messages and skills', () => {
   const emptyQuery = buildSlashCommandItems([], [], '', true);
   assert.deepEqual(
     emptyQuery.filter((item) => item.kind === 'system').map((item) => item.kind === 'system' ? item.command.slug : ''),
-    ['compact', 'stop', 'rename', 'chats'],
+    ['compact', 'stop', 'rename', 'chats', 'rebind'],
   );
 
   const withCollision = buildSlashCommandItems(
@@ -121,7 +137,7 @@ test('buildSlashCommandItems reserves system slugs over quick messages and skill
         : item.kind === 'quickMessage' ? `qm:${item.message.slug}`
           : `sk:${item.skill.slug}`
     )),
-    ['sys:compact', 'sys:stop', 'sys:rename', 'sys:chats'],
+    ['sys:compact', 'sys:stop', 'sys:rename', 'sys:chats', 'sys:rebind'],
   );
 });
 
