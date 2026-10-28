@@ -312,6 +312,21 @@ test("recognizes PowerShell on Linux/macOS prompts (`PS /home/alice>`)", () => {
   );
 });
 
+test("recognizes the macOS zsh default prompt without changing PowerShell/cmd detection", () => {
+  assert.equal(
+    resolveEffectiveShellKind(undefined, "hexiao@JosephdeMacBook-Pro-2 ~ % "),
+    "posix",
+  );
+  assert.equal(
+    resolveEffectiveShellKind(undefined, "hexiao@MacBook-Pro ~/git %", { loginShellHint: "powershell" }),
+    "posix",
+  );
+  assert.equal(
+    resolveEffectiveShellKind("posix", "hexiao@MacBook-Pro ~ % echo half-typed"),
+    "posix",
+  );
+});
+
 test("ignores ANSI-coloured PowerShell prompts when detecting the shell", () => {
   assert.equal(
     resolveEffectiveShellKind(undefined, "[32mPS C:\\Users\\alice>[0m"),

@@ -36,6 +36,79 @@ test('PTY sends no bytes while a slow shell is starting, then runs once ready', 
   assert.equal(pty.writes.length, 1);
 });
 
+test('macOS default zsh prompt is recognized as an idle prompt', async () => {
+  const pty = new TestPty();
+  const session = { _promptTrackTail: '', lastIdlePrompt: '' };
+  const prompt = 'hexiao@JosephdeMacBook-Pro-2 ~ % ';
+  trackSessionIdlePrompt(session, `Last login: Mon Oct 26\r\n${prompt}`);
+  assert.equal(session.lastIdlePrompt, prompt);
+  assert.equal(readyPrompt(session), prompt);
+
+  const job = startPtyJob(pty, 'echo OK', {
+    shellKind: 'posix',
+    getReadyPrompt: () => readyPrompt(session),
+    promptWaitTimeoutMs: 200,
+    timeoutMs: 1000,
+  });
+  const result = await job.resultPromise;
+  assert.equal(result.ok, true);
+  assert.equal(pty.writes.length, 1);
+});
+
+test('zsh prompt with pending input does not become ready', async (t) => {
+  t.mock.timers.enable({ apis: ['Date', 'setTimeout'] });
+  const pty = new TestPty();
+  const session = { _promptTrackTail: '', lastIdlePrompt: '' };
+  trackSessionIdlePrompt(session, 'hexiao@JosephdeMacBook-Pro-2 ~ % echo half-typed');
+  assert.equal(readyPrompt(session), '');
+
+  const job = startPtyJob(pty, 'echo OK', {
+    shellKind: 'posix',
+    getReadyPrompt: () => readyPrompt(session),
+    promptWaitTimeoutMs: 50,
+    timeoutMs: 1000,
+  });
+  t.mock.timers.tick(50);
+  const result = await job.resultPromise;
+  assert.equal(result.code, 'SHELL_NOT_READY');
+  assert.deepEqual(pty.writes, []);
+});
+
+test('zsh default prompts allow directory spaces and the privileged marker', async () => {
+  for (const prompt of ['alice@MacBook-Pro My Project % ', 'root@MacBook-Pro ~ # ', 'root@MacBook-Pro My Project # ']) {
+    const pty = new TestPty();
+    const session = { _promptTrackTail: '', lastIdlePrompt: '' };
+    trackSessionIdlePrompt(session, `Last login\r\n${prompt}`);
+    assert.equal(getFreshIdlePrompt(session), prompt);
+    assert.equal(getVisibleIdlePrompt(session), prompt);
+
+    const result = await startPtyJob(pty, 'echo OK', {
+      shellKind: 'posix',
+      getReadyPrompt: () => readyPrompt(session),
+      promptWaitTimeoutMs: 200,
+      timeoutMs: 1000,
+    }).resultPromise;
+    assert.equal(result.ok, true, prompt);
+    assert.equal(pty.writes.length, 1, prompt);
+  }
+});
+
+test('zsh spaced-directory prompts with pending input stay unready', async () => {
+  for (const line of ['alice@MacBook-Pro My Project % echo %', 'root@MacBook-Pro My Project # echo #']) {
+    const pty = new TestPty();
+    const session = { _promptTrackTail: '', lastIdlePrompt: '' };
+    trackSessionIdlePrompt(session, line);
+    assert.equal(readyPrompt(session), '', line);
+    const result = await startPtyJob(pty, 'echo forbidden', {
+      getReadyPrompt: () => readyPrompt(session),
+      promptWaitTimeoutMs: 25,
+      timeoutMs: 1000,
+    }).resultPromise;
+    assert.equal(result.code, 'SHELL_NOT_READY', line);
+    assert.deepEqual(pty.writes, [], line);
+  }
+});
+
 test('PTY readiness timeout does not send command or interrupt to a busy program', async () => {
   const pty = new TestPty();
   const job = startPtyJob(pty, 'echo OK', { getReadyPrompt:()=>'', promptWaitTimeoutMs:25, timeoutMs:1000 });
