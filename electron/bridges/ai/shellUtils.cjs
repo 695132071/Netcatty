@@ -76,6 +76,11 @@ const POSIX_PROMPT_PATTERN = /^(?:[^\s@]+@[^\s:]+(?::[^\n\r]*)?|\[[^\s@\]]+@[^\s
 // whitespace before the marker also rejects output such as `user@host 100%`.
 const ZSH_PROMPT_PATTERN = /^[^\s@]+@[^\s:]+ [^\s%#$][^%#$\r\n]* [%#]$/;
 
+// SteamOS/Deck-style prompt: `(user@host path)$`. Allow markers and balanced
+// single-level parentheses in the path, but not an early closing delimiter:
+// otherwise a prompt followed by pending input could look like an idle prompt.
+const PAREN_POSIX_PROMPT_PATTERN = /^\([^\s@()]+@[^\s:()]+\s+(?:[^()\r\n]|\([^()\r\n]*\))+\)[#$]$/;
+
 // Host line of a two-line bash PS1 (`\u@\h: \w` then a following `$` or `#`).
 // Same user@host[:path] class as POSIX_PROMPT_PATTERN's first alternative,
 // without a prompt marker on this line. Oh My Zsh `ys` uses a different host
@@ -110,6 +115,7 @@ function isDefaultPosixPromptLine(line) {
   const withoutEnvPrefix = normalized.replace(/^\([^()\n\r]+\)\s+/, "");
   return (
     POSIX_PROMPT_PATTERN.test(withoutEnvPrefix) ||
+    PAREN_POSIX_PROMPT_PATTERN.test(withoutEnvPrefix) ||
     ALPINE_PROMPT_PATTERN.test(withoutEnvPrefix) ||
     ZSH_PROMPT_PATTERN.test(withoutEnvPrefix)
   );
