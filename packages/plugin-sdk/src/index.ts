@@ -686,6 +686,19 @@ export interface PluginSelectedContextClient {
   read(params: import("@netcatty/plugin-contract").PluginSelectedContextRef): Promise<import("@netcatty/plugin-contract").PluginSelectedContextContent>;
 }
 
+/** Configurations, targets and native resume IDs stay in the trusted host. */
+export interface PluginAgentClient {
+  listBackends(params: import("@netcatty/plugin-contract").PluginAIEmptyParams): Promise<import("@netcatty/plugin-contract").PluginAgentBackendsResult>;
+  selectTargets(params: import("@netcatty/plugin-contract").PluginAIEmptyParams): Promise<import("@netcatty/plugin-contract").PluginAgentTargetsResult>;
+  listChats(params: import("@netcatty/plugin-contract").PluginAIEmptyParams): Promise<import("@netcatty/plugin-contract").PluginAgentChatsResult>;
+  openChat(params: import("@netcatty/plugin-contract").PluginAgentOpenParams): Promise<import("@netcatty/plugin-contract").PluginAgentChatResult>;
+  send(params: import("@netcatty/plugin-contract").PluginAgentSendParams): Promise<import("@netcatty/plugin-contract").PluginAgentTurnResult>;
+  read(params: import("@netcatty/plugin-contract").PluginAgentTurnRef): Promise<import("@netcatty/plugin-contract").PluginAgentEvent>;
+  history(params: import("@netcatty/plugin-contract").PluginAgentChatRef): Promise<import("@netcatty/plugin-contract").PluginAgentHistoryResult>;
+  stop(params: import("@netcatty/plugin-contract").PluginAgentTurnRef): Promise<import("@netcatty/plugin-contract").PluginAIBooleanResult>;
+  closeChat(params: import("@netcatty/plugin-contract").PluginAgentChatRef): Promise<import("@netcatty/plugin-contract").PluginAIBooleanResult>;
+}
+
 export interface PluginByteConnection extends Disposable {
   readonly endpoint: string;
   readonly readable: PluginReadableByteStream;
@@ -786,6 +799,7 @@ export interface PluginContext {
   readonly credentials: PluginCredentialBroker;
   readonly network: PluginNetworkClient;
   readonly ai: PluginAIClient;
+  readonly agent: PluginAgentClient;
   readonly selectedContext: PluginSelectedContextClient;
   readonly filesystem: PluginFilesystemClient;
   readonly companions: PluginCompanionService;

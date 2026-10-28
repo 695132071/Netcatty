@@ -100,6 +100,21 @@ test('registered Ask uses one in-app dialog; policy controls apply Allow and Den
     await act(async () => { button('Deny').click(); await displayed; await settle(); });
     await new Promise<void>((resolve) => dom.window.queueMicrotask(resolve));
     assert.equal(nativeVisibility.at(-1), true, 'dismissing Ask restores the existing view without closing it');
+    for (const selections of [[], [{ title: 'Synthetic terminal B', scope: 'session', version: 'opaque-worker-revision' }]]) {
+      await act(async () => {
+        displayed = host.request({ requestId: 'agent-empty-args', pluginId: plugin.id, permission: 'ai.agent.actions', resources: ['*'],
+          displayContext: { modelLabel: 'Synthetic configured Catty', action: { capabilityId: 'session.environment', text: '{}', label: 'PLUGIN_SUPPLIED_OPERATION_NAME' }, selections },
+        }); await settle();
+      });
+      const dialog = document.querySelector('[role="dialog"]')!;
+      assert.match(dialog.textContent!, /Operation:.*get_environment/);
+      assert.match(dialog.textContent!, /session\.environment/);
+      assert.equal(dialog.querySelector('pre')!.textContent, '{}');
+      if (selections.length) assert.match(dialog.textContent!, /Targets:.*Synthetic terminal B/);
+      else assert.match(dialog.textContent!, /Targets:.*No targets selected/);
+      assert.doesNotMatch(dialog.textContent!, /opaque-worker-revision|PLUGIN_SUPPLIED_OPERATION_NAME/);
+      await act(async () => { button('Deny').click(); await displayed; await settle(); });
+    }
   } finally {
     await act(async () => root.unmount()); stopVisibility(); host.shutdown(); engine.shutdown(); dom.window.close();
     for (const [key, descriptor] of previous) { if (descriptor) Object.defineProperty(globalThis, key, descriptor); else Reflect.deleteProperty(globalThis, key); }

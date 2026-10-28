@@ -11,6 +11,12 @@ const CHANNELS = Object.freeze({ request: "netcatty:plugins:ai-host-request", re
 // supplied by the shared contract task; no provider config or key crosses it.
 class PluginAITrustedHostAdapter {
   constructor(options) {
+    // Separate trusted Agent transport instances reuse the same sender/nonce
+    // guards. These construction options never come from a plugin request.
+    this.channels = options.channels ?? CHANNELS;
+    this.requestDefinition = options.requestDefinition ?? "PluginAIHostRequest";
+    this.responseDefinition = options.responseDefinition ?? "PluginAIHostResponse";
+    this.maxEnvelopeBytes = Math.min(options.maxEnvelopeBytes ?? 24_576, 1_048_576);
     this.getWindow = options.getWindow;
     this.isLocked = options.isLocked ?? (() => true);
     this.dialog = options.dialog;
@@ -25,11 +31,11 @@ class PluginAITrustedHostAdapter {
 
   registerIpc(ipcMain) {
     if (this.ipcRegistration) throw new Error("Trusted AI host IPC is already registered");
-    this.validateRequest ??= createDefinitionValidator("PluginAIHostRequest");
-    this.validateResponse ??= createDefinitionValidator("PluginAIHostResponse");
-    ipcMain.handle(CHANNELS.ready, (event, ready) => this.setReady(event.sender, ready));
-    ipcMain.handle(CHANNELS.response, (event, response) => this.respond(event.sender, response));
-    this.ipcRegistration = { dispose: () => { ipcMain.removeHandler(CHANNELS.ready); ipcMain.removeHandler(CHANNELS.response); } };
+    this.validateRequest ??= createDefinitionValidator(this.requestDefinition);
+    this.validateResponse ??= createDefinitionValidator(this.responseDefinition);
+    ipcMain.handle(this.channels.ready, (event, ready) => this.setReady(event.sender, ready));
+    ipcMain.handle(this.channels.response, (event, response) => this.respond(event.sender, response));
+    this.ipcRegistration = { dispose: () => { ipcMain.removeHandler(this.channels.ready); ipcMain.removeHandler(this.channels.response); } };
     return this.ipcRegistration;
   }
 
@@ -68,7 +74,7 @@ class PluginAITrustedHostAdapter {
 
   #envelope(kind, payload, runtimeId) {
     const request = { requestId: randomUUID(), actionToken: randomBytes(24).toString("base64url"), kind, payload, runtimeId };
-    assertPluginJsonValue(request, { maxBytes: 24_576 });
+    assertPluginJsonValue(request, { maxBytes: this.maxEnvelopeBytes });
     if (!this.validateRequest?.(request)) throw fail("internal", "Trusted AI host request is invalid");
     return request;
   }
@@ -80,7 +86,7 @@ class PluginAITrustedHostAdapter {
 
   #cleanup(kind, payload, runtimeId, sender = this.owner) {
     if (!sender || sender !== this.getWindow?.()?.webContents || sender.isDestroyed?.()) return;
-    try { sender.send(CHANNELS.request, this.#envelope(kind, payload, runtimeId)); } catch {}
+    try { sender.send(this.channels.request, this.#envelope(kind, payload, runtimeId)); } catch {}
   }
 
   async #request(kind, payload, context) {
@@ -102,14 +108,14 @@ class PluginAITrustedHostAdapter {
       this.pending.set(request.requestId, entry);
       context.signal?.addEventListener("abort", entry.abort, { once: true });
       if (context.signal?.aborted) { entry.abort(); return; }
-      try { sender.send(CHANNELS.request, request); }
+      try { sender.send(this.channels.request, request); }
       catch { entry.finish(null, fail("unavailable", "Trusted AI host disconnected")); }
     });
   }
 
   async respond(sender, response) {
     if (sender !== this.#owner()) throw fail("permissionDenied", "AI host response sender is invalid");
-    assertPluginJsonValue(response, { maxBytes: 24_576 });
+    assertPluginJsonValue(response, { maxBytes: this.maxEnvelopeBytes });
     if (!this.validateResponse?.(response)) throw fail("invalidArgument", "AI host response is invalid");
     const entry = this.pending.get(response.requestId);
     if (!entry || entry.sender !== sender || entry.generation !== this.generation) return false;
@@ -124,6 +130,18 @@ class PluginAITrustedHostAdapter {
       else entry.finish(response.result);
       return true;
     } catch { entry.finish(null, fail("cancelled", "Trusted AI host response became stale")); return false; }
+  }
+
+  // Host-only, canonical typed request path for a separate Agent instance.
+  requestAgent(kind, payload, context) {
+    if (this.requestDefinition !== "PluginAgentHostRequest" || !kind.startsWith("agent.")) throw fail("unsupported", "Agent host route unavailable");
+    return this.#request(kind, payload, context);
+  }
+
+  getSenderId() { return this.#owner().id; }
+  releaseAgentChat(chatSessionId, runtimeId) {
+    if (this.requestDefinition !== "PluginAgentHostRequest" || !/^plugin-agent:[0-9a-f-]{36}$/u.test(chatSessionId)) throw fail("invalidArgument", "Agent conversation unavailable");
+    this.#cleanup("agent.close", { chatSessionId }, runtimeId);
   }
 
   async selectModel(context) {

@@ -1698,6 +1698,8 @@
       "enum": [
         "storage",
         "ai.invoke",
+        "ai.agent.use",
+        "ai.agent.actions",
         "context.selected.list",
         "context.selected.read",
         "runtime.advanced",
@@ -1742,6 +1744,8 @@
       "enum": [
         "storage",
         "ai.invoke",
+        "ai.agent.use",
+        "ai.agent.actions",
         "context.selected.list",
         "context.selected.read",
         "runtime.advanced",
@@ -3741,9 +3745,10 @@
         "displayContext": {
           "type": "object", "additionalProperties": false,
           "properties": {
+            "action": { "$ref": "#/$defs/PluginAgentActionPreview" },
             "modelLabel": { "type": "string", "minLength": 1, "maxLength": 160 },
             "selections": {
-              "type": "array", "maxItems": 5,
+              "type": "array", "maxItems": 32,
               "items": {
                 "type": "object", "required": ["title", "scope", "version"], "additionalProperties": false,
                 "properties": {
@@ -5007,6 +5012,1187 @@
         }
       },
       "additionalProperties": false
+    },
+    "PluginAgentFeature": {
+      "const": "ai.agent-sessions"
+    },
+    "PluginAgentBackendKind": {
+      "enum": [
+        "catty",
+        "claude",
+        "codex",
+        "copilot",
+        "cursor",
+        "codebuddy",
+        "opencode",
+        "grok",
+        "mimo"
+      ]
+    },
+    "PluginAgentBackend": {
+      "type": "object",
+      "required": [
+        "backendRef",
+        "label",
+        "backend",
+        "status",
+        "reason"
+      ],
+      "properties": {
+        "backendRef": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "label": {
+          "type": "string",
+          "maxLength": 160
+        },
+        "backend": {
+          "$ref": "#/$defs/PluginAgentBackendKind"
+        },
+        "status": {
+          "enum": [
+            "supported",
+            "unsupported",
+            "unavailable"
+          ]
+        },
+        "reason": {
+          "enum": [
+            "ready",
+            "not-configured",
+            "native-boundary-unverified",
+            "configuration-unavailable"
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    "PluginAgentBackendsResult": {
+      "type": "object",
+      "required": [
+        "items"
+      ],
+      "properties": {
+        "items": {
+          "type": "array",
+          "maxItems": 32,
+          "items": {
+            "$ref": "#/$defs/PluginAgentBackend"
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "PluginAgentTargetSummary": {
+      "type": "object",
+      "required": [
+        "title",
+        "kind"
+      ],
+      "properties": {
+        "title": {
+          "type": "string",
+          "maxLength": 160
+        },
+        "kind": {
+          "const": "terminal"
+        }
+      },
+      "additionalProperties": false
+    },
+    "PluginAgentTargetsResult": {
+      "type": "object",
+      "required": [
+        "selectionHandle",
+        "expiresAt",
+        "items"
+      ],
+      "properties": {
+        "selectionHandle": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "expiresAt": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "items": {
+          "type": "array",
+          "maxItems": 32,
+          "items": {
+            "$ref": "#/$defs/PluginAgentTargetSummary"
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "PluginAgentOpenParams": {
+      "type": "object",
+      "required": [
+        "backendRef",
+        "selectionHandle"
+      ],
+      "properties": {
+        "backendRef": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "selectionHandle": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "conversationRef": {
+          "type": "string",
+          "format": "uuid"
+        }
+      },
+      "additionalProperties": false
+    },
+    "PluginAgentChatRef": {
+      "type": "object",
+      "required": [
+        "chatHandle"
+      ],
+      "properties": {
+        "chatHandle": {
+          "type": "string",
+          "format": "uuid"
+        }
+      },
+      "additionalProperties": false
+    },
+    "PluginAgentChatResult": {
+      "type": "object",
+      "required": [
+        "chatHandle",
+        "conversationRef",
+        "backendLabel",
+        "expiresAt"
+      ],
+      "properties": {
+        "chatHandle": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "conversationRef": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "backendLabel": {
+          "type": "string",
+          "maxLength": 160
+        },
+        "expiresAt": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "additionalProperties": false
+    },
+    "PluginAgentChatSummary": {
+      "type": "object",
+      "required": [
+        "conversationRef",
+        "title",
+        "backend",
+        "updatedAt"
+      ],
+      "properties": {
+        "conversationRef": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "title": {
+          "type": "string",
+          "maxLength": 160
+        },
+        "backend": {
+          "$ref": "#/$defs/PluginAgentBackendKind"
+        },
+        "updatedAt": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "additionalProperties": false
+    },
+    "PluginAgentChatsResult": {
+      "type": "object",
+      "required": [
+        "items"
+      ],
+      "properties": {
+        "items": {
+          "type": "array",
+          "maxItems": 64,
+          "items": {
+            "$ref": "#/$defs/PluginAgentChatSummary"
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "PluginAgentSendParams": {
+      "type": "object",
+      "required": [
+        "chatHandle",
+        "text"
+      ],
+      "properties": {
+        "chatHandle": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "text": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 16384,
+          "pattern": "^[^\\u0000]*$"
+        }
+      },
+      "additionalProperties": false
+    },
+    "PluginAgentTurnRef": {
+      "type": "object",
+      "required": [
+        "turnHandle"
+      ],
+      "properties": {
+        "turnHandle": {
+          "type": "string",
+          "format": "uuid"
+        }
+      },
+      "additionalProperties": false
+    },
+    "PluginAgentTurnResult": {
+      "type": "object",
+      "required": [
+        "turnHandle",
+        "expiresAt"
+      ],
+      "properties": {
+        "turnHandle": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "expiresAt": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "additionalProperties": false
+    },
+    "PluginAgentMessage": {
+      "type": "object",
+      "required": [
+        "role",
+        "text"
+      ],
+      "properties": {
+        "role": {
+          "enum": [
+            "user",
+            "assistant"
+          ]
+        },
+        "text": {
+          "type": "string",
+          "maxLength": 32768
+        }
+      },
+      "additionalProperties": false
+    },
+    "PluginAgentHistoryResult": {
+      "type": "object",
+      "required": [
+        "items"
+      ],
+      "properties": {
+        "items": {
+          "type": "array",
+          "maxItems": 200,
+          "items": {
+            "$ref": "#/$defs/PluginAgentMessage"
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "PluginAgentEvent": {
+      "oneOf": [
+        {
+          "type": "object",
+          "required": [
+            "kind",
+            "text"
+          ],
+          "properties": {
+            "kind": {
+              "const": "text"
+            },
+            "text": {
+              "type": "string",
+              "maxLength": 4096
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": [
+            "kind",
+            "capabilityId",
+            "state"
+          ],
+          "properties": {
+            "kind": {
+              "const": "activity"
+            },
+            "capabilityId": {
+              "type": "string",
+              "maxLength": 160
+            },
+            "state": {
+              "enum": [
+                "started",
+                "completed",
+                "denied"
+              ]
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": [
+            "kind",
+            "inputTokens",
+            "outputTokens"
+          ],
+          "properties": {
+            "kind": {
+              "const": "usage"
+            },
+            "inputTokens": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "outputTokens": {
+              "type": "integer",
+              "minimum": 0
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": [
+            "kind",
+            "reason"
+          ],
+          "properties": {
+            "kind": {
+              "const": "end"
+            },
+            "reason": {
+              "enum": [
+                "completed",
+                "cancelled",
+                "unavailable",
+                "budget-exceeded"
+              ]
+            }
+          },
+          "additionalProperties": false
+        }
+      ]
+    },
+    "PluginAgentHostBackend": {
+      "type": "object",
+      "required": [
+        "hostHandle",
+        "label",
+        "backend",
+        "status",
+        "reason"
+      ],
+      "properties": {
+        "hostHandle": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "label": {
+          "type": "string",
+          "maxLength": 160
+        },
+        "backend": {
+          "$ref": "#/$defs/PluginAgentBackendKind"
+        },
+        "status": {
+          "enum": [
+            "supported",
+            "unsupported",
+            "unavailable"
+          ]
+        },
+        "reason": {
+          "enum": [
+            "ready",
+            "not-configured",
+            "native-boundary-unverified",
+            "configuration-unavailable"
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    "PluginAgentHostTerminal": {
+      "type": "object",
+      "required": [
+        "sessionId",
+        "hostname",
+        "label",
+        "connected"
+      ],
+      "properties": {
+        "sessionId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "hostId": {
+          "type": "string",
+          "maxLength": 128
+        },
+        "hostname": {
+          "type": "string",
+          "maxLength": 256
+        },
+        "label": {
+          "type": "string",
+          "maxLength": 160
+        },
+        "protocol": {
+          "type": "string",
+          "maxLength": 32
+        },
+        "username": {
+          "type": "string",
+          "maxLength": 256
+        },
+        "connected": {
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": false
+    },
+    "PluginAgentHostSession": {
+      "type": "object",
+      "required": [
+        "conversationRef",
+        "id",
+        "title",
+        "agentId",
+        "scope",
+        "messages",
+        "createdAt",
+        "updatedAt"
+      ],
+      "properties": {
+        "conversationRef": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "id": {
+          "type": "string",
+          "maxLength": 128,
+          "pattern": "^plugin-agent:[0-9a-f-]+$"
+        },
+        "title": {
+          "type": "string",
+          "maxLength": 160
+        },
+        "agentId": {
+          "type": "string",
+          "maxLength": 128
+        },
+        "scope": {
+          "type": "object",
+          "required": [
+            "type"
+          ],
+          "properties": {
+            "type": {
+              "const": "global"
+            }
+          },
+          "additionalProperties": false
+        },
+        "messages": {
+          "type": "array",
+          "maxItems": 200,
+          "items": {
+            "$ref": "#/$defs/JsonValue"
+          }
+        },
+        "createdAt": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "updatedAt": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "externalSessionId": {
+          "type": "string",
+          "maxLength": 4096
+        },
+        "contextCompaction": {
+          "$ref": "#/$defs/JsonValue"
+        }
+      },
+      "additionalProperties": false
+    },
+    "PluginAgentHostRequest": {
+      "description": "Private main-to-trusted-app Agent envelopes. Never exposed in plugin views. Configuration and credentials remain in the host.",
+      "oneOf": [
+        {
+          "type": "object",
+          "required": [
+            "requestId",
+            "actionToken",
+            "runtimeId",
+            "kind",
+            "payload"
+          ],
+          "properties": {
+            "requestId": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "actionToken": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{32}$"
+            },
+            "runtimeId": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128,
+              "pattern": "^[A-Za-z0-9-]+$"
+            },
+            "kind": {
+              "const": "agent.backends"
+            },
+            "payload": {
+              "$ref": "#/$defs/PluginAIEmptyParams"
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": [
+            "requestId",
+            "actionToken",
+            "runtimeId",
+            "kind",
+            "payload"
+          ],
+          "properties": {
+            "requestId": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "actionToken": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{32}$"
+            },
+            "runtimeId": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128,
+              "pattern": "^[A-Za-z0-9-]+$"
+            },
+            "kind": {
+              "const": "agent.targets"
+            },
+            "payload": {
+              "$ref": "#/$defs/PluginAIEmptyParams"
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": [
+            "requestId",
+            "actionToken",
+            "runtimeId",
+            "kind",
+            "payload"
+          ],
+          "properties": {
+            "requestId": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "actionToken": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{32}$"
+            },
+            "runtimeId": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128,
+              "pattern": "^[A-Za-z0-9-]+$"
+            },
+            "kind": {
+              "const": "agent.current"
+            },
+            "payload": {
+              "type": "object",
+              "required": [
+                "hostHandle"
+              ],
+              "properties": {
+                "hostHandle": {
+                  "type": "string",
+                  "format": "uuid"
+                }
+              },
+              "additionalProperties": false
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": [
+            "requestId",
+            "actionToken",
+            "runtimeId",
+            "kind",
+            "payload"
+          ],
+          "properties": {
+            "requestId": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "actionToken": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{32}$"
+            },
+            "runtimeId": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128,
+              "pattern": "^[A-Za-z0-9-]+$"
+            },
+            "kind": {
+              "const": "agent.run"
+            },
+            "payload": {
+              "type": "object",
+              "required": [
+                "backendHandle",
+                "delegationTag",
+                "session",
+                "terminalSessions",
+                "text",
+                "capabilities",
+                "maxIterations"
+              ],
+              "properties": {
+                "backendHandle": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "delegationTag": {
+                  "type": "string",
+                  "format": "uuid"
+                },
+                "session": {
+                  "$ref": "#/$defs/PluginAgentHostSession"
+                },
+                "terminalSessions": {
+                  "type": "array",
+                  "maxItems": 32,
+                  "items": {
+                    "$ref": "#/$defs/PluginAgentHostTerminal"
+                  }
+                },
+                "text": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 16384
+                },
+                "capabilities": {
+                  "type": "array",
+                  "maxItems": 6,
+                  "uniqueItems": true,
+                  "items": {
+                    "enum": [
+                      "session.environment",
+                      "terminal.execute",
+                      "terminal.start",
+                      "terminal.poll",
+                      "terminal.stop",
+                      "harness.terminal.read_context"
+                    ]
+                  }
+                },
+                "maxIterations": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 12
+                }
+              },
+              "additionalProperties": false
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": [
+            "requestId",
+            "actionToken",
+            "runtimeId",
+            "kind",
+            "payload"
+          ],
+          "properties": {
+            "requestId": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "actionToken": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{32}$"
+            },
+            "runtimeId": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128,
+              "pattern": "^[A-Za-z0-9-]+$"
+            },
+            "kind": {
+              "const": "agent.next"
+            },
+            "payload": {
+              "type": "object",
+              "required": [
+                "hostHandle"
+              ],
+              "properties": {
+                "hostHandle": {
+                  "type": "string",
+                  "format": "uuid"
+                }
+              },
+              "additionalProperties": false
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": [
+            "requestId",
+            "actionToken",
+            "runtimeId",
+            "kind",
+            "payload"
+          ],
+          "properties": {
+            "requestId": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "actionToken": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{32}$"
+            },
+            "runtimeId": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128,
+              "pattern": "^[A-Za-z0-9-]+$"
+            },
+            "kind": {
+              "const": "agent.stop"
+            },
+            "payload": {
+              "type": "object",
+              "required": [
+                "hostHandle"
+              ],
+              "properties": {
+                "hostHandle": {
+                  "type": "string",
+                  "format": "uuid"
+                }
+              },
+              "additionalProperties": false
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": [
+            "requestId",
+            "actionToken",
+            "runtimeId",
+            "kind",
+            "payload"
+          ],
+          "properties": {
+            "requestId": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "actionToken": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{32}$"
+            },
+            "runtimeId": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128,
+              "pattern": "^[A-Za-z0-9-]+$"
+            },
+            "kind": {
+              "const": "agent.release"
+            },
+            "payload": {
+              "type": "object",
+              "required": [
+                "hostHandle"
+              ],
+              "properties": {
+                "hostHandle": {
+                  "type": "string",
+                  "format": "uuid"
+                }
+              },
+              "additionalProperties": false
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": [
+            "requestId",
+            "actionToken",
+            "runtimeId",
+            "kind",
+            "payload"
+          ],
+          "properties": {
+            "requestId": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "actionToken": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{32}$"
+            },
+            "runtimeId": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128,
+              "pattern": "^[A-Za-z0-9-]+$"
+            },
+            "kind": {
+              "const": "request.cancel"
+            },
+            "payload": {
+              "type": "object",
+              "required": [
+                "requestId"
+              ],
+              "properties": {
+                "requestId": {
+                  "type": "string",
+                  "format": "uuid"
+                }
+              },
+              "additionalProperties": false
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": [
+            "requestId",
+            "actionToken",
+            "runtimeId",
+            "kind",
+            "payload"
+          ],
+          "properties": {
+            "requestId": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "actionToken": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{32}$"
+            },
+            "runtimeId": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128,
+              "pattern": "^[A-Za-z0-9-]+$"
+            },
+            "kind": {
+              "const": "runtime.release"
+            },
+            "payload": {
+              "$ref": "#/$defs/PluginAIEmptyParams"
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": [
+            "requestId",
+            "actionToken",
+            "runtimeId",
+            "kind",
+            "payload"
+          ],
+          "properties": {
+            "requestId": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "actionToken": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{32}$"
+            },
+            "runtimeId": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 128,
+              "pattern": "^[A-Za-z0-9-]+$"
+            },
+            "kind": {
+              "const": "agent.close"
+            },
+            "payload": {
+              "type": "object",
+              "required": [
+                "chatSessionId"
+              ],
+              "properties": {
+                "chatSessionId": {
+                  "type": "string",
+                  "maxLength": 128,
+                  "pattern": "^plugin-agent:[0-9a-f-]+$"
+                }
+              },
+              "additionalProperties": false
+            }
+          },
+          "additionalProperties": false
+        }
+      ]
+    },
+    "PluginAgentHostResult": {
+      "oneOf": [
+        {
+          "type": "object",
+          "required": [
+            "backends"
+          ],
+          "properties": {
+            "backends": {
+              "type": "array",
+              "maxItems": 32,
+              "items": {
+                "$ref": "#/$defs/PluginAgentHostBackend"
+              }
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": [
+            "targets"
+          ],
+          "properties": {
+            "targets": {
+              "type": "array",
+              "maxItems": 32,
+              "items": {
+                "$ref": "#/$defs/PluginAgentHostTerminal"
+              }
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": [
+            "current"
+          ],
+          "properties": {
+            "current": {
+              "type": "boolean"
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": [
+            "hostHandle"
+          ],
+          "properties": {
+            "hostHandle": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": [
+            "ok"
+          ],
+          "properties": {
+            "ok": {
+              "type": "boolean"
+            },
+            "session": {
+              "$ref": "#/$defs/PluginAgentHostSession"
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": [
+            "done",
+            "event"
+          ],
+          "properties": {
+            "done": {
+              "const": false
+            },
+            "event": {
+              "$ref": "#/$defs/PluginAgentEvent"
+            },
+            "session": {
+              "$ref": "#/$defs/PluginAgentHostSession"
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": [
+            "done",
+            "session"
+          ],
+          "properties": {
+            "done": {
+              "const": true
+            },
+            "session": {
+              "$ref": "#/$defs/PluginAgentHostSession"
+            }
+          },
+          "additionalProperties": false
+        }
+      ]
+    },
+    "PluginAgentHostResponse": {
+      "description": "Private one-use trusted application Agent response. Core history may include native resume identity; public plugin responses must project it out.",
+      "oneOf": [
+        {
+          "type": "object",
+          "required": [
+            "requestId",
+            "actionToken",
+            "result"
+          ],
+          "properties": {
+            "requestId": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "actionToken": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{32}$"
+            },
+            "result": {
+              "$ref": "#/$defs/PluginAgentHostResult"
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": [
+            "requestId",
+            "actionToken",
+            "error"
+          ],
+          "properties": {
+            "requestId": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "actionToken": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{32}$"
+            },
+            "error": {
+              "const": true
+            }
+          },
+          "additionalProperties": false
+        }
+      ]
+    },
+    "PluginAgentCapabilities": {
+      "const": [
+        "session.environment",
+        "terminal.execute",
+        "terminal.start",
+        "terminal.poll",
+        "terminal.stop",
+        "harness.terminal.read_context"
+      ]
+    },
+    "PluginAgentActionPreview": {
+      "type": "object",
+      "required": [
+        "capabilityId",
+        "text"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "capabilityId": {
+          "type": "string",
+          "maxLength": 160
+        },
+        "text": {
+          "type": "string",
+          "maxLength": 98304
+        }
+      }
     }
   }
 }

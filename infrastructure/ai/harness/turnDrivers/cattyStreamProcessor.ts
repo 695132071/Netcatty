@@ -145,7 +145,7 @@ export async function processCattyStream(input: ProcessCattyStreamInput): Promis
     tools,
     toolsContext,
     runtimeContext,
-    toolApproval: buildCattyToolApproval({
+    toolApproval: runtimeContext.delegated ? undefined : buildCattyToolApproval({
       permissionMode: runtimeContext.permissionMode,
       chatSessionId: runtimeContext.chatSessionId,
     }),
@@ -523,7 +523,8 @@ export async function processCattyStream(input: ProcessCattyStreamInput): Promis
         case 'error': {
           const typedChunk = chunk as ErrorChunk;
           if (isSdkStreamStateError(typedChunk.error)) {
-            console.warn('[Catty] suppressed SDK stream state error:', typedChunk.error);
+            if (runtimeContext.delegated) console.warn('[Plugin Agent] SDK stream state unavailable');
+            else console.warn('[Catty] suppressed SDK stream state error:', typedChunk.error);
             break;
           }
           if (isRequestTooLargeError(typedChunk.error)) {

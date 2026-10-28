@@ -207,7 +207,9 @@ test('cold plugin host reaches the local fixture through the actual main provide
     assert.deepEqual(sdkErrorNames, []);
   } finally {
     console.error = originalConsoleError;
-    panel?.window.close();
+    // JSDOM.close does not deliver the browser pagehide lifecycle. Invalidate
+    // the sample's pending callbacks before teardown closes its document.
+    if (panel) { panel.window.dispatchEvent(new panel.window.Event('pagehide')); panel.window.close(); }
     await act(async () => root.unmount());
     await service?.manager.shutdown(); aiBridge.cleanup();
     publishNotesSnapshot(oldNotes); registerAppAppLockRuntime(oldLock);

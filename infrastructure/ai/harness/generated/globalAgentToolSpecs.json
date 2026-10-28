@@ -2313,5 +2313,44 @@
       "bypassesChatCancel": false
     },
     "agentKind": "global"
+  },
+  {
+    "capabilityId": "harness.terminal.read_context",
+    "toolName": "terminal_read_context",
+    "rpcMethod": "netcatty/readContext",
+    "localExecution": false,
+    "description": "Read a bounded slice of the current terminal screen or scrollback from the active AI scope.",
+    "inputShape": {
+      "sessionId": {
+        "type": "string",
+        "optional": true,
+        "description": "Terminal session ID. Required when the current AI scope contains more than one terminal."
+      },
+      "range": {
+        "type": "string",
+        "optional": true,
+        "description": "Which terminal slice to read: viewport, tail, head, or lines. Defaults to viewport."
+      },
+      "startLine": {
+        "type": "number",
+        "optional": true,
+        "description": "Zero-based terminal buffer line to start from when range is lines."
+      },
+      "maxLines": {
+        "type": "number",
+        "optional": true,
+        "description": "Maximum terminal rows to return. Defaults to 80, capped at 300."
+      }
+    },
+    "policy": {
+      "write": false,
+      "sensitiveRead": false,
+      "longRunning": false,
+      "requiresChatSession": true,
+      "bypassesObserverBlock": false,
+      "bypassesApproval": true,
+      "bypassesChatCancel": true
+    },
+    "agentKind": "global"
   }
 ]

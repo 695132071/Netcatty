@@ -51,6 +51,15 @@ class PluginAISourceBinding {
     return binding;
   }
 
+  // Main-owned final dispatch guard. Only a previously authenticated binding
+  // object can reach this path; it is never reconstructed from plugin fields.
+  assertCurrent(binding) {
+    if (!binding || this.bindings.get(binding.runtimeId) !== binding) throw denied();
+    const current = this.#snapshot(binding);
+    if (current.sourceKey !== binding.sourceKey || current.privateOwner !== binding.privateOwner
+      || current.pluginId !== binding.pluginId || current.pluginVersion !== binding.pluginVersion) throw denied();
+  }
+
   releaseRuntime(runtimeId) { this.bindings.delete(runtimeId); }
   releasePlugin(pluginId) {
     for (const [runtimeId, binding] of this.bindings) if (binding.pluginId === pluginId) this.bindings.delete(runtimeId);

@@ -39,3 +39,12 @@ test("source/owner changes during asynchronous authentication cannot commit a bi
   const context = { ...f.context, assertActive: async () => { if (++checks === 2) f.ownerTo("changed-owner"); } };
   await assert.rejects(f.binding.resolve(context)); assert.equal(f.binding.bindings.size, 0);
 });
+
+test("final dispatch checks require the exact authenticated binding and current host provenance", async () => {
+  const f = fixture(); const binding = await f.binding.resolve(f.context);
+  assert.doesNotThrow(() => f.binding.assertCurrent(binding));
+  assert.throws(() => f.binding.assertCurrent({ ...binding }));
+  f.ownerTo("changed-owner"); assert.throws(() => f.binding.assertCurrent(binding));
+  f.ownerTo("source:opaque-a:com.example.assistant");
+  f.binding.releaseRuntime("r1"); assert.throws(() => f.binding.assertCurrent(binding));
+});

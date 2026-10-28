@@ -188,6 +188,7 @@ class PluginFilesystemBroker {
   constructor(options = {}) {
     this.quotaManager = options.quotaManager ?? null;
     this.protectedDirectories = options.protectedDirectories ?? [];
+    this.protectedReadDirectories = options.protectedReadDirectories ?? [];
     this.protectedFiles = options.protectedFiles ?? [];
     this.fileSystem = options.fileSystem ?? fsp;
     this.openDirectoryHandle = options.openDirectoryHandle ?? null;
@@ -241,8 +242,10 @@ class PluginFilesystemBroker {
 
   async readFile(params, context) {
     const value = assertReadParams(params);
+    await this.#assertReadable(value.path);
     assertAuthorizedPath(context, "filesystem.read", value.path);
     const { canonical, stats } = await resolveExistingPath(value.path, this.fileSystem);
+    await this.#assertReadable(canonical);
     assertAuthorizedPath(context, "filesystem.read", canonical);
     if (!stats.isFile()) throw invalidArgument("Plugin filesystem read target is not a file");
     if (stats.size > value.maxBytes) {
@@ -259,7 +262,9 @@ class PluginFilesystemBroker {
       if (openedStats.size > value.maxBytes) {
         throw new PluginRpcError(RPC_ERRORS.resourceExhausted, "Plugin filesystem file changed or is too large");
       }
-      assertAuthorizedPath(context, "filesystem.read", await this.fileSystem.realpath(canonical));
+      const current = await this.fileSystem.realpath(canonical);
+      await this.#assertReadable(current);
+      assertAuthorizedPath(context, "filesystem.read", current);
       const bytes = await readBoundedFileHandle(handle, value.maxBytes);
       this.quotaManager?.chargeBytes(context.runtimeId, "filesystem", bytes.byteLength);
       await context.assertActive();
@@ -285,6 +290,20 @@ class PluginFilesystemBroker {
         const relative = path.relative(parent, canonical);
         if (relative === "" || (!path.isAbsolute(relative) && relative !== ".." && !relative.startsWith(`..${path.sep}`))) {
           throw new PluginRpcError(RPC_ERRORS.permissionDenied, "Host audit storage is protected");
+        }
+      }
+    }
+  }
+
+  async #assertReadable(candidate) {
+    for (const directory of this.protectedReadDirectories) {
+      const variants = [path.resolve(directory)];
+      try { variants.push(await this.fileSystem.realpath(directory)); }
+      catch (error) { if (error?.code !== "ENOENT") throw error; }
+      for (const parent of variants) {
+        const relative = path.relative(parent, candidate);
+        if (relative === "" || (!path.isAbsolute(relative) && relative !== ".." && !relative.startsWith(`..${path.sep}`))) {
+          throw new PluginRpcError(RPC_ERRORS.permissionDenied, "Private host conversation storage is protected");
         }
       }
     }
@@ -323,8 +342,10 @@ class PluginFilesystemBroker {
 
   async stat(params, context) {
     const value = assertPathParams(params);
+    await this.#assertReadable(value.path);
     assertAuthorizedPath(context, "filesystem.read", value.path);
     const { canonical, stats } = await resolveExistingPath(value.path, this.fileSystem);
+    await this.#assertReadable(canonical);
     assertAuthorizedPath(context, "filesystem.read", canonical);
     await context.assertActive();
     return {
@@ -336,8 +357,10 @@ class PluginFilesystemBroker {
 
   async readDirectory(params, context) {
     const value = this.validateDirectory(params);
+    await this.#assertReadable(value.path);
     assertAuthorizedPath(context, "filesystem.read", value.path);
     const { canonical, stats } = await resolveExistingPath(value.path, this.fileSystem);
+    await this.#assertReadable(canonical);
     assertAuthorizedPath(context, "filesystem.read", canonical);
     if (!stats.isDirectory()) throw invalidArgument("Plugin filesystem directory target is not a directory");
     const directory = await this.openDirectoryHandle(canonical, { signal: context.signal });

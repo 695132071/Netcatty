@@ -488,7 +488,7 @@ export type MenuLocation = "commandPalette" | "application" | "host/context" | "
 
 export type NetworkCredentialLeaseFeature = "network.credential-lease";
 
-export type NonResourceScopedPermission = "storage" | "ai.invoke" | "context.selected.list" | "context.selected.read" | "runtime.advanced" | "settings.read" | "settings.write" | "commands" | "menus" | "views" | "ui.interact" | "clipboard.read" | "clipboard.write" | "terminal.metadata" | "terminal.output" | "terminal.input" | "terminal.decorate" | "terminal.complete" | "terminal.intercept.input" | "terminal.intercept.output" | "vault.metadata" | "vault.write" | "vault.credentials" | "sftp.read" | "sftp.write" | "secrets" | "provider.terminal" | "provider.connection" | "provider.authentication" | "provider.sync" | "provider.importer" | "terminal.selection.read" | "terminal.input.propose";
+export type NonResourceScopedPermission = "storage" | "ai.invoke" | "ai.agent.use" | "ai.agent.actions" | "context.selected.list" | "context.selected.read" | "runtime.advanced" | "settings.read" | "settings.write" | "commands" | "menus" | "views" | "ui.interact" | "clipboard.read" | "clipboard.write" | "terminal.metadata" | "terminal.output" | "terminal.input" | "terminal.decorate" | "terminal.complete" | "terminal.intercept.input" | "terminal.intercept.output" | "vault.metadata" | "vault.write" | "vault.credentials" | "sftp.read" | "sftp.write" | "secrets" | "provider.terminal" | "provider.connection" | "provider.authentication" | "provider.sync" | "provider.importer" | "terminal.selection.read" | "terminal.input.propose";
 
 export type NullableRpcId = (RpcId) | (null);
 
@@ -524,6 +524,7 @@ export type PermissionRequest = {
   resources?: Array<PermissionResource>;
   resourceKinds?: Array<PermissionResourceKind>;
   displayContext?: {
+    action?: PluginAgentActionPreview;
     modelLabel?: string;
     selections?: Array<{
       title: string;
@@ -554,6 +555,252 @@ export type PermissionResourceKind = "exact" | "directory";
 export type PermissionSet = {
   required?: Array<RequiredPermissionDeclaration>;
   optional?: Array<PermissionDeclaration>;
+};
+
+export type PluginAgentActionPreview = {
+  capabilityId: string;
+  text: string;
+};
+
+export type PluginAgentBackend = {
+  backendRef: string;
+  label: string;
+  backend: PluginAgentBackendKind;
+  status: "supported" | "unsupported" | "unavailable";
+  reason: "ready" | "not-configured" | "native-boundary-unverified" | "configuration-unavailable";
+};
+
+export type PluginAgentBackendKind = "catty" | "claude" | "codex" | "copilot" | "cursor" | "codebuddy" | "opencode" | "grok" | "mimo";
+
+export type PluginAgentBackendsResult = {
+  items: Array<PluginAgentBackend>;
+};
+
+export type PluginAgentCapabilities = ["session.environment","terminal.execute","terminal.start","terminal.poll","terminal.stop","harness.terminal.read_context"];
+
+export type PluginAgentChatRef = {
+  chatHandle: string;
+};
+
+export type PluginAgentChatResult = {
+  chatHandle: string;
+  conversationRef: string;
+  backendLabel: string;
+  expiresAt: number;
+};
+
+export type PluginAgentChatsResult = {
+  items: Array<PluginAgentChatSummary>;
+};
+
+export type PluginAgentChatSummary = {
+  conversationRef: string;
+  title: string;
+  backend: PluginAgentBackendKind;
+  updatedAt: number;
+};
+
+export type PluginAgentEvent = ({
+  kind: "text";
+  text: string;
+}) | ({
+  kind: "activity";
+  capabilityId: string;
+  state: "started" | "completed" | "denied";
+}) | ({
+  kind: "usage";
+  inputTokens: number;
+  outputTokens: number;
+}) | ({
+  kind: "end";
+  reason: "completed" | "cancelled" | "unavailable" | "budget-exceeded";
+});
+
+export type PluginAgentFeature = "ai.agent-sessions";
+
+export type PluginAgentHistoryResult = {
+  items: Array<PluginAgentMessage>;
+};
+
+export type PluginAgentHostBackend = {
+  hostHandle: string;
+  label: string;
+  backend: PluginAgentBackendKind;
+  status: "supported" | "unsupported" | "unavailable";
+  reason: "ready" | "not-configured" | "native-boundary-unverified" | "configuration-unavailable";
+};
+
+export type PluginAgentHostRequest = ({
+  requestId: string;
+  actionToken: string;
+  runtimeId: string;
+  kind: "agent.backends";
+  payload: PluginAIEmptyParams;
+}) | ({
+  requestId: string;
+  actionToken: string;
+  runtimeId: string;
+  kind: "agent.targets";
+  payload: PluginAIEmptyParams;
+}) | ({
+  requestId: string;
+  actionToken: string;
+  runtimeId: string;
+  kind: "agent.current";
+  payload: {
+    hostHandle: string;
+  };
+}) | ({
+  requestId: string;
+  actionToken: string;
+  runtimeId: string;
+  kind: "agent.run";
+  payload: {
+    backendHandle: string;
+    delegationTag: string;
+    session: PluginAgentHostSession;
+    terminalSessions: Array<PluginAgentHostTerminal>;
+    text: string;
+    capabilities: Array<"session.environment" | "terminal.execute" | "terminal.start" | "terminal.poll" | "terminal.stop" | "harness.terminal.read_context">;
+    maxIterations: number;
+  };
+}) | ({
+  requestId: string;
+  actionToken: string;
+  runtimeId: string;
+  kind: "agent.next";
+  payload: {
+    hostHandle: string;
+  };
+}) | ({
+  requestId: string;
+  actionToken: string;
+  runtimeId: string;
+  kind: "agent.stop";
+  payload: {
+    hostHandle: string;
+  };
+}) | ({
+  requestId: string;
+  actionToken: string;
+  runtimeId: string;
+  kind: "agent.release";
+  payload: {
+    hostHandle: string;
+  };
+}) | ({
+  requestId: string;
+  actionToken: string;
+  runtimeId: string;
+  kind: "request.cancel";
+  payload: {
+    requestId: string;
+  };
+}) | ({
+  requestId: string;
+  actionToken: string;
+  runtimeId: string;
+  kind: "runtime.release";
+  payload: PluginAIEmptyParams;
+}) | ({
+  requestId: string;
+  actionToken: string;
+  runtimeId: string;
+  kind: "agent.close";
+  payload: {
+    chatSessionId: string;
+  };
+});
+
+export type PluginAgentHostResponse = ({
+  requestId: string;
+  actionToken: string;
+  result: PluginAgentHostResult;
+}) | ({
+  requestId: string;
+  actionToken: string;
+  error: true;
+});
+
+export type PluginAgentHostResult = ({
+  backends: Array<PluginAgentHostBackend>;
+}) | ({
+  targets: Array<PluginAgentHostTerminal>;
+}) | ({
+  current: boolean;
+}) | ({
+  hostHandle: string;
+}) | ({
+  ok: boolean;
+  session?: PluginAgentHostSession;
+}) | ({
+  done: false;
+  event: PluginAgentEvent;
+  session?: PluginAgentHostSession;
+}) | ({
+  done: true;
+  session: PluginAgentHostSession;
+});
+
+export type PluginAgentHostSession = {
+  conversationRef: string;
+  id: string;
+  title: string;
+  agentId: string;
+  scope: {
+    type: "global";
+  };
+  messages: Array<JsonValue>;
+  createdAt: number;
+  updatedAt: number;
+  externalSessionId?: string;
+  contextCompaction?: JsonValue;
+};
+
+export type PluginAgentHostTerminal = {
+  sessionId: string;
+  hostId?: string;
+  hostname: string;
+  label: string;
+  protocol?: string;
+  username?: string;
+  connected: boolean;
+};
+
+export type PluginAgentMessage = {
+  role: "user" | "assistant";
+  text: string;
+};
+
+export type PluginAgentOpenParams = {
+  backendRef: string;
+  selectionHandle: string;
+  conversationRef?: string;
+};
+
+export type PluginAgentSendParams = {
+  chatHandle: string;
+  text: string;
+};
+
+export type PluginAgentTargetsResult = {
+  selectionHandle: string;
+  expiresAt: number;
+  items: Array<PluginAgentTargetSummary>;
+};
+
+export type PluginAgentTargetSummary = {
+  title: string;
+  kind: "terminal";
+};
+
+export type PluginAgentTurnRef = {
+  turnHandle: string;
+};
+
+export type PluginAgentTurnResult = {
+  turnHandle: string;
+  expiresAt: number;
 };
 
 export type PluginAIBooleanResult = {
@@ -841,7 +1088,7 @@ export type PluginNetworkResponse = {
   };
 };
 
-export type PluginPermission = "storage" | "ai.invoke" | "context.selected.list" | "context.selected.read" | "runtime.advanced" | "settings.read" | "settings.write" | "commands" | "menus" | "views" | "ui.interact" | "clipboard.read" | "clipboard.write" | "terminal.metadata" | "terminal.output" | "terminal.input" | "terminal.decorate" | "terminal.complete" | "terminal.intercept.input" | "terminal.intercept.output" | "vault.metadata" | "vault.write" | "vault.credentials" | "sftp.read" | "sftp.write" | "network" | "network.stream" | "filesystem.read" | "filesystem.write" | "secrets" | "companion.execute" | "provider.terminal" | "provider.connection" | "provider.authentication" | "provider.sync" | "provider.importer" | "terminal.selection.read" | "terminal.input.propose";
+export type PluginPermission = "storage" | "ai.invoke" | "ai.agent.use" | "ai.agent.actions" | "context.selected.list" | "context.selected.read" | "runtime.advanced" | "settings.read" | "settings.write" | "commands" | "menus" | "views" | "ui.interact" | "clipboard.read" | "clipboard.write" | "terminal.metadata" | "terminal.output" | "terminal.input" | "terminal.decorate" | "terminal.complete" | "terminal.intercept.input" | "terminal.intercept.output" | "vault.metadata" | "vault.write" | "vault.credentials" | "sftp.read" | "sftp.write" | "network" | "network.stream" | "filesystem.read" | "filesystem.write" | "secrets" | "companion.execute" | "provider.terminal" | "provider.connection" | "provider.authentication" | "provider.sync" | "provider.importer" | "terminal.selection.read" | "terminal.input.propose";
 
 export type PluginSelectedContextContent = {
   handle: string;

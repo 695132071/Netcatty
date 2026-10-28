@@ -93,6 +93,24 @@ test("filesystem broker uses canonical authorization for bounded read, write, st
   ]);
 });
 
+test("host conversation roots are unreadable through explicit filesystem grants, including symlink aliases", async (context) => {
+  const root = createRoot(context); const privateRoot = path.join(root, "agent-chats");
+  await fsp.mkdir(privateRoot); const file = path.join(privateRoot, "synthetic.json"); await fsp.writeFile(file, "PRIVATE_OTHER_SOURCE_HISTORY");
+  const broker = new PluginFilesystemBroker({ protectedReadDirectories: [privateRoot], openDirectoryHandle: openTestDirectoryHandle });
+  const authorize = (candidate, kind = "exact") => runtimeContext(broker.describeReadAuthorization({ path: candidate }, kind));
+  await assert.rejects(broker.readFile({ path: file }, authorize(file)), (error) => error.code === RPC_ERRORS.permissionDenied);
+  await assert.rejects(broker.stat({ path: privateRoot }, authorize(privateRoot)), (error) => error.code === RPC_ERRORS.permissionDenied);
+  await assert.rejects(broker.readDirectory({ path: privateRoot }, authorize(privateRoot, "directory")), (error) => error.code === RPC_ERRORS.permissionDenied);
+  if (process.platform !== "win32") {
+    const alias = path.join(root, "alias.json"); await fsp.symlink(file, alias);
+    await assert.rejects(broker.readFile({ path: alias }, authorize(root, "directory")), (error) => error.code === RPC_ERRORS.permissionDenied);
+    const directoryAlias = path.join(root, "directory-alias"); await fsp.symlink(privateRoot, directoryAlias);
+    await assert.rejects(broker.readDirectory({ path: directoryAlias }, authorize(root, "directory")), (error) => error.code === RPC_ERRORS.permissionDenied);
+  }
+  const ordinary = path.join(root, "ordinary.txt"); await fsp.writeFile(ordinary, "Synthetic public file");
+  assert.deepEqual(await broker.readFile({ path: ordinary }, authorize(ordinary)), { data: "Synthetic public file" });
+});
+
 test("filesystem authorization removes trailing directory separators before permission", async (context) => {
   const root = createRoot(context);
   const requestedPath = `${root}${path.sep}`;

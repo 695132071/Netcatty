@@ -148,7 +148,7 @@ async function runCattyTurn(input: CattyTurnInput, ctx: TurnDriverContext): Prom
   if (attachments?.length && netcattyBridge.aiMcpUpdateAttachments) {
     await netcattyBridge.aiMcpUpdateAttachments(attachments, sessionId);
   }
-  const userSkillsContext = await resolveUserSkillsContext(
+  const userSkillsContext = context.delegated ? '' : await resolveUserSkillsContext(
     netcattyBridge,
     trimmed,
     context.selectedUserSkillSlugs,
@@ -168,6 +168,7 @@ async function runCattyTurn(input: CattyTurnInput, ctx: TurnDriverContext): Prom
     sessionId,
     ctx.toolOutputStore,
     ctx.toolResultDedup,
+    { agentKind: context.agentKind, allowedCapabilityIds: context.allowedCapabilityIds },
   );
   const { tools } = toolsBundle;
 
@@ -187,6 +188,7 @@ async function runCattyTurn(input: CattyTurnInput, ctx: TurnDriverContext): Prom
 
   const activeModelId = context.activeModelId || context.activeProvider.defaultModel || '';
   const promptContext = buildPromptContextSnapshot({
+    agentKind: context.agentKind,
     providerId: context.activeProvider.providerId,
     modelId: activeModelId,
     permissionMode: context.permissionMode ?? context.globalPermissionMode,
@@ -251,6 +253,8 @@ async function runCattyTurn(input: CattyTurnInput, ctx: TurnDriverContext): Prom
             : undefined,
           streamIdleTimeoutMs: responseIdleTimeoutMs,
           chatSessionId: sessionId,
+          requestIdPrefix: context.delegated && context.delegationTag
+            ? `agent-model_${sessionId.slice('plugin-agent:'.length)}_${context.delegationTag}_` : undefined,
         },
       ), privacy, {
         // Compaction can run before prepareMessagesForStream selects replay
@@ -261,7 +265,8 @@ async function runCattyTurn(input: CattyTurnInput, ctx: TurnDriverContext): Prom
         ],
       });
     } catch (e) {
-      console.error('[Catty] Model creation failed:', e);
+      if (context.delegated) console.error('[Plugin Agent] Model setup unavailable');
+      else console.error('[Catty] Model creation failed:', e);
       ui.reportStreamError(sessionId, signal, `Model creation failed: ${e instanceof Error ? e.message : String(e)}`);
       return;
     }
@@ -437,6 +442,8 @@ async function runCattyTurn(input: CattyTurnInput, ctx: TurnDriverContext): Prom
     emitContextSnapshot(messagesForStream);
 
     const runtimeContext = createInitialCattyRuntimeContext({
+      agentKind: context.agentKind,
+      delegated: context.delegated,
       chatSessionId: sessionId,
       turnId: ctx.turnId,
       providerId: context.activeProvider?.providerId,
@@ -510,7 +517,8 @@ async function runCattyTurn(input: CattyTurnInput, ctx: TurnDriverContext): Prom
         throw streamErr;
       }
 
-      console.warn('[Catty] Request hit HTTP 413; forcing context compaction and retrying once.', streamErr);
+      if (context.delegated) console.warn('[Plugin Agent] Context compaction requested');
+      else console.warn('[Catty] Request hit HTTP 413; forcing context compaction and retrying once.', streamErr);
       const hadToolProgress = hadToolProgressBeforeRequestTooLarge(streamErr);
       let retryBaseMessages = messagesForStream;
       let retryAssistantMsgId = assistantMsgId;
@@ -556,7 +564,9 @@ async function runCattyTurn(input: CattyTurnInput, ctx: TurnDriverContext): Prom
       await runStream(retryMessages, retryAssistantMsgId);
     }
   } catch (err) {
-    console.error('[Catty] streamText error:', err);
+    if (context.delegated && signal.aborted) return;
+    if (context.delegated) console.error('[Plugin Agent] Turn unavailable');
+    else console.error('[Catty] streamText error:', err);
     ui.reportStreamError(sessionId, signal, err);
   } finally {
     ui.updateLastMessage(sessionId, msg => msg.statusText ? { ...msg, statusText: '' } : msg);

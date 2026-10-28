@@ -401,6 +401,9 @@ function createPluginContext(config, client, runtimeApi) {
     list: (params) => client.request("context.selected.list", params),
     read: (params) => client.request("context.selected.read", params),
   };
+  const agent = Object.fromEntries(["listBackends", "selectTargets", "listChats", "openChat", "send", "read", "history", "stop", "closeChat"].map((operation) => [
+    operation, (params) => client.request(`agent.${operation}`, params, operation === "read" ? { deadlineMs: 65_000 } : {}),
+  ]));
   const filesystem = {
     readFile: (filePath, options = {}) => client.request("filesystem.readFile", {
       path: filePath,
@@ -587,6 +590,7 @@ function createPluginContext(config, client, runtimeApi) {
     credentials,
     network,
     ai,
+    agent,
     selectedContext,
     ui,
     vault,
