@@ -187,6 +187,8 @@ function assertSameOpenedDirectory(expectedStats, pathStats) {
 class PluginFilesystemBroker {
   constructor(options = {}) {
     this.quotaManager = options.quotaManager ?? null;
+    this.protectedDirectories = options.protectedDirectories ?? [];
+    this.protectedFiles = options.protectedFiles ?? [];
     this.fileSystem = options.fileSystem ?? fsp;
     this.openDirectoryHandle = options.openDirectoryHandle ?? null;
     if (this.openDirectoryHandle != null && typeof this.openDirectoryHandle !== "function") {
@@ -205,6 +207,12 @@ class PluginFilesystemBroker {
     };
   }
   validatePath(params) { return assertPathParams(params); }
+  validateDirectory(params) {
+    if (typeof this.openDirectoryHandle !== "function") {
+      throw new PluginRpcError(RPC_ERRORS.unsupported, "Secure plugin directory enumeration is unavailable on this runtime");
+    }
+    return assertPathParams(params);
+  }
 
   describeReadAuthorization(params, resourceKind = "exact") {
     const value = assertPathParams(params);
@@ -261,10 +269,33 @@ class PluginFilesystemBroker {
     }
   }
 
+  async #assertWritable(canonical) {
+    const variants = async (entry) => {
+      const lexical = path.resolve(entry);
+      try { return [lexical, await this.fileSystem.realpath(lexical)]; }
+      catch (error) { if (error?.code !== "ENOENT") throw error; return [lexical]; }
+    };
+    for (const file of this.protectedFiles) {
+      if ((await variants(file)).includes(canonical)) {
+        throw new PluginRpcError(RPC_ERRORS.permissionDenied, "Host audit storage is protected");
+      }
+    }
+    for (const directory of this.protectedDirectories) {
+      for (const parent of await variants(directory)) {
+        const relative = path.relative(parent, canonical);
+        if (relative === "" || (!path.isAbsolute(relative) && relative !== ".." && !relative.startsWith(`..${path.sep}`))) {
+          throw new PluginRpcError(RPC_ERRORS.permissionDenied, "Host audit storage is protected");
+        }
+      }
+    }
+  }
+
   async writeFile(params, context) {
     const value = assertSecureWriteMode(assertWriteParams(params));
+    await this.#assertWritable(path.resolve(value.path));
     assertAuthorizedPath(context, "filesystem.write", value.path);
     const { canonical, stats } = await resolveWritePath(value.path, this.fileSystem);
+    await this.#assertWritable(canonical);
     assertAuthorizedPath(context, "filesystem.write", canonical);
     this.quotaManager?.chargeBytes(context.runtimeId, "filesystem", value.bytes.byteLength);
     await context.assertActive();
@@ -278,6 +309,7 @@ class PluginFilesystemBroker {
       ]);
       assertSameOpenedFile(openedStats, stats);
       assertSameOpenedFile(openedStats, pathStats);
+      await this.#assertWritable(canonical);
       await context.assertActive();
       if (value.overwrite) await handle.truncate(0);
       await handle.writeFile(value.bytes);
@@ -303,17 +335,11 @@ class PluginFilesystemBroker {
   }
 
   async readDirectory(params, context) {
-    const value = assertPathParams(params);
+    const value = this.validateDirectory(params);
     assertAuthorizedPath(context, "filesystem.read", value.path);
     const { canonical, stats } = await resolveExistingPath(value.path, this.fileSystem);
     assertAuthorizedPath(context, "filesystem.read", canonical);
     if (!stats.isDirectory()) throw invalidArgument("Plugin filesystem directory target is not a directory");
-    if (!this.openDirectoryHandle) {
-      throw new PluginRpcError(
-        RPC_ERRORS.unsupported,
-        "Secure plugin directory enumeration is unavailable on this runtime",
-      );
-    }
     const directory = await this.openDirectoryHandle(canonical, { signal: context.signal });
     if (
       !directory

@@ -346,6 +346,12 @@ function getAppContentWindowList() {
   return Array.from(appContentWindows).filter((win) => isWindowUsable(win));
 }
 
+// Settings has its own reusable window lifecycle, outside app-content editors.
+// Enumerate only managed app renderers; remote/pop-up/plugin contents are absent.
+function getManagedAppWindowList() {
+  return [...new Set([...getAppContentWindowList(), getSettingsWindow()])].filter((win) => isWindowUsable(win));
+}
+
 function getDirtyEditorWindowList() {
   pruneAppContentWindows();
   return Array.from(dirtyEditorWindows).filter((win) => isWindowUsable(win));
@@ -1624,6 +1630,7 @@ module.exports = {
   getMainWindow,
   getMainWindows: getMainWindowList,
   getAppContentWindows: getAppContentWindowList,
+  getManagedAppWindows: getManagedAppWindowList,
   getDirtyEditorWindows: getDirtyEditorWindowList,
   getMainWindowCount,
   isMainWindow,

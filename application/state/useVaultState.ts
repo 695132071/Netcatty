@@ -777,6 +777,13 @@ export const useVaultState = (options?: UseVaultStateOptions) => {
     }
   }, [waitForPendingVaultWrites]);
 
+  // Host-owned action guards need the synchronous mutation snapshot, including
+  // edits that React has not published yet. This accessor never crosses RPC.
+  const readCurrentHostActionState = useCallback(() => ({
+    hosts: hostsRef.current, groupConfigs: groupConfigsRef.current, snippets: snippetsRef.current,
+    managedSources: managedSourcesRef.current,
+  }), []);
+
   const updateKeys = useCallback((data: SSHKey[]) => {
     const cleaned = normalizeVaultOrder(data);
     setKeys(cleaned);
@@ -1249,6 +1256,7 @@ export const useVaultState = (options?: UseVaultStateOptions) => {
     updateGroupConfigs?: (current: GroupConfig[]) => GroupConfig[],
     expectedHosts?: Host[],
     lock?: VaultLockHandle | null,
+    assertAuthorized?: () => void | Promise<void>,
   ): Promise<
     | {
       status: "persisted";
@@ -1323,6 +1331,10 @@ export const useVaultState = (options?: UseVaultStateOptions) => {
         encryptHosts(cleanedHosts),
         encryptGroupConfigs(nextGroupConfigs),
       ]);
+      // Optional plugin draft guard: runtime/source/revoke/lock authority must
+      // still hold after encryption, immediately before the existing atomic
+      // persistence boundary. Ordinary imports retain their existing behavior.
+      if (assertAuthorized) await assertAuthorized();
       if (
         version !== hostsWriteVersion.current
         || groupConfigsVersion !== groupConfigsWriteVersion.current
@@ -2527,6 +2539,7 @@ export const useVaultState = (options?: UseVaultStateOptions) => {
     groupConfigs,
     updateHosts,
     readPersistedHosts,
+    readCurrentHostActionState,
     updateKeys,
     importOrReuseKey,
     updateIdentities,

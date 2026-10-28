@@ -693,7 +693,7 @@ export function movePersistentPortalNode(
   }
 }
 
-function PersistentSidePanelPortal({
+export function PersistentSidePanelPortal({
   portalKey,
   target,
   children,

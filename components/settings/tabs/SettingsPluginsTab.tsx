@@ -1,9 +1,18 @@
+import { PluginThirdPartyMarket } from './PluginThirdPartyMarket';
+import { usePluginUpdateCheck } from '../../../application/state/usePluginUpdateCheck';
+import { usePluginManager } from '../../../application/state/usePluginManager';
+import { PluginManagementDialog } from './PluginManagementDialog';
+import { PluginMarketplace } from './PluginMarketplace';
+import { PluginPackageManager } from './PluginPackageManager';
 import { FolderOpen } from 'lucide-react';
-import React, { useEffect, useMemo, useState } from 'react';
+import { PluginStatus } from './PluginStatus';
+import { PluginSettingsLanding } from './PluginSettingsLanding';
+import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 
 import { normalizePluginKeyboardEvent } from '../../../application/state/pluginKeybindings';
 import { usePluginContributions } from '../../../application/state/usePluginContributions';
 import { useI18n } from '../../../application/i18n/I18nProvider';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '../../ui/tabs';
 import { Button } from '../../ui/button';
 import { Input } from '../../ui/input';
 import { SettingsAnchor, SettingsTabContent } from '../settings-ui';
@@ -278,8 +287,16 @@ export function PluginSettingField({
   );
 }
 
-export default function SettingsPluginsTab() {
+function PluginManagementContent({ handoff, manager, initialSelectedId, active }: {
+  handoff: (action: () => void) => void;
+  manager: ReturnType<typeof usePluginManager>;
+  initialSelectedId: string | null;
+  active: boolean;
+}) {
   const { t } = useI18n();
+  const [catalogToolbar, setCatalogToolbar] = useState<HTMLDivElement | null>(null);
+  const [selectedInstalled, setSelectedInstalled] = useState<string | null>(initialSelectedId);
+  const [pluginView, setPluginView] = useState<'installed' | 'marketplace' | 'thirdparty'>('installed');
   const availableFonts = useAvailableFonts();
   const scopeCatalog = usePluginSettingScopeCatalog();
   const [scopeIds, setScopeIds] = useState<Partial<Record<NetcattyPluginSettingScopeKind, string>>>({});
@@ -291,22 +308,57 @@ export default function SettingsPluginsTab() {
     scopeIds,
   }), [scopeIds]);
   const contributions = usePluginContributions(query);
+  const settingsSection = useRef<HTMLElement | null>(null);
+  const installed = manager.plugins.find((plugin) => plugin.id === selectedInstalled);
+  const ownerKey = JSON.stringify(installed && [installed.id, installed.activeVersion, installed.archiveSha256,
+    installed.source?.id, installed.source?.kind, installed.source?.origin]);
+  const gearEntry = useRef(initialSelectedId ? { pluginId: initialSelectedId, ownerKey } : null);
+  useLayoutEffect(() => {
+    const intent = gearEntry.current;
+    if (!intent) return;
+    if (!active || pluginView !== 'installed' || selectedInstalled !== intent.pluginId || ownerKey !== intent.ownerKey) {
+      gearEntry.current = null;
+      return;
+    }
+    const section = settingsSection.current;
+    if (contributions.loading || contributions.error || !contributions.available || !section) return;
+    // Let dialog autofocus settle first, including when contributions arrive late.
+    let frame = requestAnimationFrame(() => {
+      frame = requestAnimationFrame(() => {
+        if (gearEntry.current !== intent || !section.isConnected) return;
+        gearEntry.current = null;
+        section.scrollIntoView({ block: 'start' });
+        section.focus({ preventScroll: true });
+      });
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [active, pluginView, selectedInstalled, ownerKey, contributions.loading, contributions.error, contributions.available, contributions.snapshot]);
   const contextualScopes = useMemo(() => new Set(contributions.snapshot.plugins
+    .filter((plugin) => plugin.id === selectedInstalled)
     .flatMap((plugin) => plugin.settings.map((setting) => setting.scope))
     .filter((scope): scope is NetcattyPluginSettingScopeKind => scope !== 'application')),
-  [contributions.snapshot.plugins]);
-  const hasVisibleContributions = contributions.snapshot.plugins.some((plugin) => (
-    plugin.settings.some((setting) => setting.visible)
-    || plugin.views.some((view) => view.visible && view.location === 'settings')
-  ));
+  [contributions.snapshot.plugins, selectedInstalled]);
+
 
   return (
-    <SettingsTabContent value="plugins">
-      <SettingsAnchor anchorId="plugins-root" className="mx-auto w-full max-w-3xl space-y-6 px-8 py-8">
-        <div>
-          <h2 className="text-xl font-semibold">{t('settings.plugins.title')}</h2>
-          <p className="mt-1 text-sm text-muted-foreground">{t('settings.plugins.description')}</p>
+    <div className="space-y-5">
+        <Tabs value={pluginView} onValueChange={(value) => { gearEntry.current = null; setSelectedInstalled(null); setPluginView(value as 'installed' | 'marketplace' | 'thirdparty'); }} className="space-y-5">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <TabsList className="h-auto flex-wrap justify-start bg-muted/50">
+            <TabsTrigger value="installed">{t('settings.plugins.manager.installed')} <span className="ml-2 text-muted-foreground">{manager.plugins.length}</span></TabsTrigger>
+            <TabsTrigger value="marketplace">{t('settings.plugins.sources.official')}</TabsTrigger>
+            <TabsTrigger value="thirdparty">{t('settings.plugins.sources.thirdparty')}</TabsTrigger>
+          </TabsList>
+          <div className="flex items-center gap-2">
+          {pluginView === 'installed' && <PluginStatus noVault={manager.credentialStorageAvailable === false} />}
+          <div ref={setCatalogToolbar} className="flex items-center gap-2" />
+          <Button variant="outline" size="sm" disabled={!manager.available || manager.busy} onClick={() => { setPluginView('installed'); void manager.importPackage(); }}><FolderOpen size={14} className="mr-2" />{t('settings.plugins.manager.import')}</Button>
+          </div>
         </div>
+        <TabsContent forceMount hidden={pluginView !== 'marketplace'} value="marketplace" className="m-0 space-y-6"><PluginMarketplace installed={manager.plugins} toolbarContainer={pluginView === 'marketplace' ? catalogToolbar : undefined} noVault={manager.credentialStorageAvailable === false} /></TabsContent>
+        <TabsContent forceMount hidden={pluginView !== 'thirdparty'} value="thirdparty" className="m-0 space-y-6"><PluginThirdPartyMarket installed={manager.plugins} toolbarContainer={pluginView === 'thirdparty' ? catalogToolbar : undefined} noVault={manager.credentialStorageAvailable === false} /></TabsContent>
+        <TabsContent value="installed" className="m-0 space-y-6">
+        <PluginPackageManager manager={manager} initialSelectedId={selectedInstalled} onSelectionChange={(id) => { gearEntry.current = null; setSelectedInstalled(id); }} />
         {contextualScopes.size > 0 && (
           <section className="grid gap-3 rounded-lg border border-border/70 bg-muted/10 p-4 sm:grid-cols-2" aria-label={t('settings.plugins.scopeTargets')}>
             {[...contextualScopes].map((kind) => (
@@ -326,12 +378,12 @@ export default function SettingsPluginsTab() {
         )}
         {contributions.loading && <p className="text-sm text-muted-foreground">{t('settings.plugins.loading')}</p>}
         {contributions.error && <p role="alert" className="text-sm text-destructive">{contributions.error.message}</p>}
-        {contributions.snapshot.plugins.map((plugin) => {
+        {contributions.snapshot.plugins.filter((plugin) => plugin.id === selectedInstalled).map((plugin) => {
           const settings = plugin.settings.filter((setting) => setting.visible);
           const views = plugin.views.filter((view) => view.visible && view.location === 'settings');
           if (!settings.length && !views.length) return null;
           return (
-            <section key={plugin.id} className="space-y-3" aria-labelledby={`plugin-settings-${plugin.id}`}>
+            <section key={plugin.id} ref={settingsSection} tabIndex={-1} className="space-y-3 scroll-mt-4 focus:outline-none" aria-labelledby={`plugin-settings-${plugin.id}`}>
               <div>
                 <h3 id={`plugin-settings-${plugin.id}`} className="text-base font-semibold">{plugin.displayName}</h3>
                 {plugin.description && <p className="text-xs text-muted-foreground">{plugin.description}</p>}
@@ -356,18 +408,44 @@ export default function SettingsPluginsTab() {
                     <div className="font-mono text-[10px] text-muted-foreground">{view.id}</div>
                     </div>
                   </div>
-                  <Button type="button" variant="outline" size="sm" onClick={() => requestOpenPluginView({
+                  <Button type="button" variant="outline" size="sm" onClick={() => handoff(() => requestOpenPluginView({
                     viewId: view.id,
                     context: { 'netcatty.surface': 'settings' },
-                  })}>{t('common.open')}</Button>
+                  }))}>{t('settings.plugins.openView')}</Button>
                 </div>
               ))}
             </section>
           );
         })}
-        {!contributions.loading && contributions.available && !hasVisibleContributions && (
-          <p className="text-sm text-muted-foreground">{t('settings.plugins.empty')}</p>
-        )}
+        </TabsContent>
+        </Tabs>
+    </div>
+  );
+}
+
+
+export default function SettingsPluginsTab() {
+  const manager = usePluginManager();
+  const updates = usePluginUpdateCheck(manager.plugins);
+  const [open, setOpen] = useState(false);
+  const [initialSelectedId, setInitialSelectedId] = useState<string | null>(null);
+  const opener = useRef<HTMLElement | null>(null);
+  const managerButton = useRef<HTMLButtonElement | null>(null);
+  const contributions = usePluginContributions({ context: { 'netcatty.surface': 'settings' } });
+  const settingsAvailable = useMemo(() => new Set(contributions.snapshot.plugins
+    .filter((plugin) => plugin.settings.some((setting) => setting.visible) || plugin.views.some((view) => view.location === 'settings' && view.visible))
+    .map((plugin) => plugin.id)), [contributions.snapshot]);
+  return (
+    <SettingsTabContent value="plugins">
+      <SettingsAnchor anchorId="plugins-root" className="space-y-6">
+        <PluginSettingsLanding manager={manager} updates={updates} managerButtonRef={managerButton} settingsAvailable={settingsAvailable} settingsError={contributions.error?.message} onManage={(pluginId, element) => {
+          opener.current = element;
+          setInitialSelectedId(pluginId);
+          setOpen(true);
+        }} />
+        <PluginManagementDialog open={open} onOpenChange={setOpen} trigger={null} restoreFocusTo={opener} fallbackFocusTo={managerButton}>
+          {(handoff) => <PluginManagementContent handoff={handoff} manager={manager} initialSelectedId={initialSelectedId} active={open} />}
+        </PluginManagementDialog>
       </SettingsAnchor>
     </SettingsTabContent>
   );

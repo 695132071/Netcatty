@@ -1,5 +1,6 @@
 /* eslint-disable @typescript-eslint/no-explicit-any, react-hooks/exhaustive-deps */
 import { useRef } from 'react';
+import { publishTerminalSelectionTarget } from '../../infrastructure/plugins/terminalSelectionRegistry';
 import type { TerminalSettings } from '../../types';
 import { publishPluginTerminalRuntimeLifecycleEvent } from '../../application/state/pluginTerminalRuntimeLifecycle';
 import { markTerminalCommandCompletionPending } from './runtime/promptLineBreak';
@@ -517,6 +518,7 @@ export function useTerminalEffects(ctx: TerminalEffectsContext) {
         searchAddonRef.current = null;
         hasRuntimeRef.current = false;
         previousCursorPreferenceRef.current = null;
+        publishTerminalSelectionTarget();
       }
       try {
         runtime.dispose();
@@ -640,6 +642,7 @@ export function useTerminalEffects(ctx: TerminalEffectsContext) {
         serializeAddonRef.current = runtime.serializeAddon;
         searchAddonRef.current = runtime.searchAddon;
         hasRuntimeRef.current = true;
+        publishTerminalSelectionTarget();
         // Runtime construction already applied the current cursor shape and blink
         // settings. Publishing records that snapshot so a first width-only update
         // cannot clear a DEC/vi cursor-style override emitted after boot.

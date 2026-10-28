@@ -44,6 +44,7 @@ import { collectOwnedPluginMenus, comparePluginMenus, usePluginContributions } f
 import { buildTerminalPluginContributionContext } from '../../application/state/pluginContributionContexts';
 import { PluginContributionIcon } from '../plugins/PluginContributionIcon';
 import { isPluginHostProtocol } from '../../domain/pluginConnection';
+import { PluginTerminalSidebarLauncher } from '../plugins/PluginTerminalSidebar';
 
 export const TERMINAL_TOOLBAR_ITEM_IDS = [
   'highlight',
@@ -1158,6 +1159,7 @@ export const TerminalToolbar: React.FC<TerminalToolbarProps> = ({
         )}
         </ToolbarCustomizeContextMenu>
 
+        {!compactToolbar && <PluginTerminalSidebarLauncher sessionId={sessionId} />}
         {pluginToolbarMenus.map((menu) => (
         <Tooltip key={menu.id}>
           <TooltipTrigger asChild>

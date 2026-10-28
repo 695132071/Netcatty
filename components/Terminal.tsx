@@ -1,3 +1,5 @@
+import { publishTerminalSelectionTarget } from "../infrastructure/plugins/terminalSelectionRegistry";
+import { usePluginTerminalSelection } from "../application/state/usePluginTerminalSelection";
 import { clearTerminalBroadcastUserInput, markTerminalBroadcastUserInput } from "./terminal/runtime/terminalPacedBroadcast";
 import { shouldBroadcastDuringSensitivePrompt } from "../domain/terminalBroadcast";
 import { STORAGE_KEY_TERMINAL_BROADCAST_PASSWORD_BYPASS } from "../infrastructure/config/storageKeys";
@@ -926,6 +928,18 @@ const TerminalComponent: React.FC<TerminalProps> = ({
   statusRef.current = status;
   const getSessionConnectedRef = useRef(() => statusRef.current === "connected" && Boolean(sessionRef.current));
   getSessionConnectedRef.current = () => statusRef.current === "connected" && Boolean(sessionRef.current);
+  // Split input ownership is omitted for solo/Focus mode; the legacy focus bit is false there.
+  usePluginTerminalSelection(sessionId, () => ({
+    sessionId: sessionRef.current,
+    bootEpoch: bootEpochRef.current,
+    term: termRef.current,
+    visible: isVisibleRef.current === true,
+    isFocusedPane,
+    connected: getSessionConnectedRef.current(),
+    sensitive: passwordPromptActiveRef.current,
+    normalize: terminalSettings?.normalizeTextOnCopy ?? true,
+    label: sessionDisplayName ?? host.label,
+  }), JSON.stringify([sessionId, status, isVisible, isFocusedPane, sessionDisplayName, host.label]));
   const sudoAutofillRef = useRef<SudoPasswordAutofill | null>(null);
   // Prefer parent-supplied candidates (TerminalLayer); otherwise derive from
   // host/keys/identities so standalone popups (TerminalPopupPage) still work.
@@ -1969,6 +1983,7 @@ const TerminalComponent: React.FC<TerminalProps> = ({
     serializeAddonRef.current = null;
     searchAddonRef.current = null;
     hasRuntimeRef.current = false;
+    publishTerminalSelectionTarget();
   };
 
   const clearHibernateRuntimeState = useCallback(() => {
@@ -4710,7 +4725,10 @@ const TerminalComponent: React.FC<TerminalProps> = ({
       updateStatus: (next) => updateStatusRef.current(next),
       replayChunkBytes: resolveTerminalHibernateReplayChunkBytes(terminalSettings),
       additionalKeywordHighlightRules: pluginDecorationRulesRef.current,
-    }).then((ok) => ok).catch((err) => {
+    }).then((ok) => {
+      publishTerminalSelectionTarget();
+      return ok;
+    }).catch((err) => {
       logger.error("[Terminal] Failed to resume from hibernate", err);
       return false;
     }).finally(() => {

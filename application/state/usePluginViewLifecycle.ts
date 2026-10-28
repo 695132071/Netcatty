@@ -26,6 +26,7 @@ import {
   resolvePluginViewWindowScope,
 } from './pluginViewScopes';
 import { usePluginContributions } from './usePluginContributions';
+import { observePluginHostSecurityVisibility } from './pluginHostSecurityVisibility';
 
 export const OPEN_PLUGIN_VIEW_EVENT = 'netcatty:open-plugin-view';
 
@@ -82,7 +83,7 @@ export function usePluginViewLifecycle({
   const mountRef = useRef<HTMLDivElement>(null);
   const resolvedActiveView = useMemo(() => viewContributions.snapshot.plugins
     .flatMap((plugin) => plugin.views.map((view) => ({ plugin, view })))
-    .find(({ view }) => view.id === effectiveRequested?.viewId && view.visible) ?? null,
+    .find(({ view }) => view.id === effectiveRequested?.viewId && view.visible && !['vault-page', 'terminal-sidebar'].includes(view.location)) ?? null,
   [effectiveRequested?.viewId, viewContributions.snapshot.plugins]);
   const stableActiveViewRef = useRef<PluginViewSnapshotSelection<ResolvedPluginView> | null>(null);
   const activeView = resolvePluginViewSnapshotSelection({
@@ -306,6 +307,17 @@ export function usePluginViewLifecycle({
     setViewVisibility,
     viewScopeId,
   ]);
+
+  useEffect(() => {
+    if (!instance || !mountRef.current) return;
+    let disposed = false;
+    const stop = observePluginHostSecurityVisibility(mountRef.current, (visible) => {
+      void setViewVisibility(instance.id, visible).catch(() => {
+        if (!disposed) void closeView(instance.id).catch(() => {});
+      });
+    });
+    return () => { disposed = true; stop(); };
+  }, [closeView, instance, setViewVisibility]);
 
   useEffect(() => {
     if (!instance || !mountRef.current) return;
