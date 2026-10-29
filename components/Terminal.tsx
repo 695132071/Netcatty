@@ -167,7 +167,7 @@ import {
 } from "./terminal/runtime/createXTermRuntime";
 import { clearKittyKeyboardBroadcastSession } from "./terminal/runtime/kittyKeyboardBroadcast";
 import { registerTerminalSensitiveInputReader } from "./terminal/runtime/terminalSensitiveInputRegistry";
-import { registerTerminalCommandInjectionReadyReader } from "./terminal/runtime/terminalCommandInjectionReadyRegistry";
+import { isTerminalReadyForCommandInjection, registerTerminalCommandInjectionReadyReader } from "./terminal/runtime/terminalCommandInjectionReadyRegistry";
 import {
   isIdleShellReadyForCommandInjection,
   isShellPromptReadyForInsertion,
@@ -206,7 +206,7 @@ import { useTerminalFilePaste } from "./terminal/hooks/useTerminalFilePaste";
 import { getRememberedYmodemSendDefaultPath, rememberYmodemSendFilePath } from "../application/state/ymodemFileMemory";
 import { TerminalAutocomplete } from "./terminal/TerminalAutocomplete";
 import { resolveTerminalAutocompleteSettings } from "./terminal/autocomplete/terminalAutocompleteSettings";
-import { buildOsc7SetupExecCommand, runOsc7SetupAction, shouldOfferOsc7SetupAction } from "./terminal/osc7Setup";
+import { buildOsc7SetupExecCommand, runOsc7SetupAction, shouldOfferOsc7SetupAction, waitForOsc7SessionOutput } from "./terminal/osc7Setup";
 import {
   getRemoteClipboardImageUploadErrorMessageKey,
   type RemoteClipboardImageUploadResult,
@@ -1390,6 +1390,9 @@ const TerminalComponent: React.FC<TerminalProps> = ({
       setupOsc7Tracking: terminalBackend.setupOsc7Tracking,
       writeToSession: terminalBackend.writeToSession,
       writeLocalTerminalData,
+      isTerminalReadyForCommandInjection: () => isTerminalReadyForCommandInjection(sessionId),
+      waitForSessionOutput: (id, predicate, timeoutMs) =>
+        waitForOsc7SessionOutput(terminalBackend.onSessionData, id, predicate, timeoutMs),
     }).then((result) => {
       handleOsc7SetupOpenChange(false);
       if (result.success) {
@@ -1413,6 +1416,7 @@ const TerminalComponent: React.FC<TerminalProps> = ({
     terminalCwdTracker,
     terminalBackend.setupOsc7Tracking,
     terminalBackend.writeToSession,
+    terminalBackend.onSessionData,
     writeLocalTerminalData,
   ]);
 
