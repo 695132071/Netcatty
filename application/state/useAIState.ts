@@ -1053,16 +1053,17 @@ export function useAIState() {
     });
   }, [debouncedPersistSessions]);
 
-  // Maximum messages per session to prevent unbounded memory growth
+  // Local-only retention. Synced history must match the full-history storage policy.
   const MAX_MESSAGES_PER_SESSION = 500;
 
   const addMessageToSession = useCallback((sessionId: string, message: ChatMessage) => {
+    const syncEnabled = localStorageAdapter.read<{ enabled?: boolean }>(STORAGE_KEY_CLOUD_SYNC_AI_SESSIONS)?.enabled === true;
     setSessionsRaw(prev => {
       const next = prev.map(s => {
         if (s.id !== sessionId) return s;
         let msgs = [...s.messages, message];
-        // Trim oldest messages if exceeding limit (keep system messages)
-        if (msgs.length > MAX_MESSAGES_PER_SESSION) {
+        // Dropping synced prefixes makes the next cloud merge add them back.
+        if (!syncEnabled && msgs.length > MAX_MESSAGES_PER_SESSION) {
           const systemMsgs = msgs.filter(m => m.role === 'system');
           const nonSystemMsgs = msgs.filter(m => m.role !== 'system');
           const dropped = nonSystemMsgs.length - (MAX_MESSAGES_PER_SESSION - systemMsgs.length);
